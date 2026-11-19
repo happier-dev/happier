@@ -9097,6 +9097,7 @@ export const zhHans: TranslationStructure = {
     noMatchesInSearchedResults: '已搜索的范围内没有匹配结果',
     sections: {
       sessions: '会议',
+      pinned: '已固定',
       projects: '项目',
       settings: '设置',
       messages: '消息',
@@ -9124,6 +9125,8 @@ export const zhHans: TranslationStructure = {
             systemCategory: '系统',
             developerCategory: '开发商',
             newSessionTitle: '新会议',
+            chooseModelTitle: '选择模型…',
+            chooseModelSubtitle: '用于此会话',
             viewAllSessionsTitle: '查看所有会议',
             settingsTitle: '设置',
             accountTitle: '账户',

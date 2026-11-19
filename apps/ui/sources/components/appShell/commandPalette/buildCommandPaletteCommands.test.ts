@@ -427,6 +427,27 @@ describe('buildCommandPaletteCommands', () => {
       .toEqual(['new-session', 'app-destination:sessions', 'app-destination:settings']);
   });
 
+  it('offers Choose a model only while the Session composer offers its picker, and opens that picker', async () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    const open = vi.fn();
+    const commands = buildCommandPaletteCommands({
+      sessionsById: { 'session-1': { id: 'session-1', serverId: 'server-a', metadata: {} } },
+      isDev: false,
+      activeSessionId: 'session-1',
+      activeSessionServerId: 'server-a',
+      features: { executionRunsEnabled: false, voiceEnabled: false },
+      sessionModelPicker: { open },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+    const choose = commands.find((command) => command.id === 'session.model.choose');
+    expect(choose?.emptyQuerySuggested).toBe(true);
+    expect(choose?.shortcut).toBeUndefined();
+    await choose?.action();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
   it('names a recent Session the way the list does: its folder when nothing else names it', () => {
     mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
     const commands = buildCommandPaletteCommands({

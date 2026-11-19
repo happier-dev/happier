@@ -9727,6 +9727,7 @@ localTailscale: {
     noMatchesInSearchedResults: '検索済みの範囲には一致する結果がありません',
     sections: {
       sessions: 'セッション',
+      pinned: 'ピン留め',
       projects: 'プロジェクト',
       settings: '設定',
       messages: 'メッセージ',
@@ -9754,6 +9755,8 @@ localTailscale: {
             systemCategory: 'システム',
             developerCategory: '開発者',
             newSessionTitle: '新しいセッション',
+            chooseModelTitle: 'モデルを選ぶ…',
+            chooseModelSubtitle: 'このセッション用',
             viewAllSessionsTitle: 'すべてのセッションを表示',
             settingsTitle: '設定',
             accountTitle: 'アカウント',

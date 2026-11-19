@@ -1125,6 +1125,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         previousSections: previousSearchSections.current,
         commands: props.commands,
         sessions: sessionEntities,
+        pinnedSessionIds: sessionOrganizationProjection?.pinnedSessionIds,
         sessionInventoryStatus,
         projects,
         searchSettingsPages,
@@ -1156,7 +1157,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             },
         } : {}),
         onCommitResult: commitSearchResult,
-    }, 'virtualized'), [commitSearchResult, activeFilePath, activeSession, searchEverything, fileContentFolderLabel, beginExternalConversationSearch, canonicalScopeServerId, emptyFileProjection, commits, conversationMachineId, fileContent, fileContentFolders, fileContentScopeLabel, files, machineNameById, pluginAccount.lifetime, pluginSections, projects, props.commands, query, recentFileResults, scanAvailability.result, scope.accountId, scope.machineScope, searchSettingsPages, selectedCredentialIsCurrent, sessionEntities, sessionInventoryStatus, settingsCatalog.searchRevision, showAllFileMatches, source, symbolsSource, transcript, workspaceResolverKey]);
+    }, 'virtualized'), [commitSearchResult, activeFilePath, activeSession, searchEverything, fileContentFolderLabel, beginExternalConversationSearch, canonicalScopeServerId, emptyFileProjection, commits, conversationMachineId, fileContent, fileContentFolders, fileContentScopeLabel, files, machineNameById, pluginAccount.lifetime, pluginSections, projects, props.commands, query, recentFileResults, scanAvailability.result, scope.accountId, scope.machineScope, searchSettingsPages, selectedCredentialIsCurrent, sessionEntities, sessionInventoryStatus, sessionOrganizationProjection?.pinnedSessionIds, settingsCatalog.searchRevision, showAllFileMatches, source, symbolsSource, transcript, workspaceResolverKey]);
     previousSearchSections.current = searchSections.sections;
     const sections = replaceSections ?? searchSections.sections;
     const rootStep = React.useMemo<SelectionListStep>(() => ({

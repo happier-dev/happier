@@ -9882,6 +9882,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     noMatchesInSearchedResults: 'В проверенной части совпадений нет',
     sections: {
       sessions: 'Сессии',
+      pinned: 'Закреплённые',
       projects: 'Проекты',
       settings: 'Настройки',
       messages: 'Сообщения',
@@ -9909,6 +9910,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
             systemCategory: 'Система',
             developerCategory: 'Разработчик',
             newSessionTitle: 'Новая сессия',
+            chooseModelTitle: 'Выбрать модель…',
+            chooseModelSubtitle: 'Для этой сессии',
             viewAllSessionsTitle: 'Просмотреть все сеансы',
             settingsTitle: 'Настройки',
             accountTitle: 'Аккаунт',

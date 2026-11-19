@@ -7833,6 +7833,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         noMatchesInSearchedResults: '已搜尋的範圍內沒有相符結果',
         sections: {
             sessions: '工作階段',
+            pinned: '已釘選',
             projects: '專案',
             settings: '設定',
             messages: '訊息',

@@ -705,6 +705,18 @@ describe('buildUniversalSearchSections', () => {
         expect(commitsResolve).not.toHaveBeenCalled();
     });
 
+    it('leads the empty query with pinned Sessions in pin order and keeps them out of Recent (lab palette Pinned)', () => {
+        const sessions = Array.from({ length: 12 }, (_, index) => sessionEntity(`s${11 - index}`, 11 - index));
+        const empty = buildUniversalSearchSections(input({ query: '', sessions, pinnedSessionIds: ['s2', 'gone', 's10'] }));
+        expect(empty.map(section => section.id).slice(0, 2)).toEqual(['sessions:pinned', 'sessions']);
+        expect(staticOptionIds(empty, 'sessions:pinned').map(id => id.split(':').at(-1))).toEqual(['s2', 's10']);
+        expect(staticOptionIds(empty, 'sessions').map(id => id.split(':').at(-1))).toEqual(['s11', 's9', 's8', 's7', 's6']);
+
+        const typed = buildUniversalSearchSections(input({ query: 'Session', sessions, pinnedSessionIds: ['s2'] }));
+        expect(typed.some(section => section.id === 'sessions:pinned')).toBe(false);
+        expect(staticOptionIds(typed, 'sessions')).toHaveLength(12);
+    });
+
     it('bounds empty-query local recents and offers the complete candidate set to the host matcher once a query is typed', () => {
         const sessions = Array.from({ length: 25 }, (_, index) => ({
             ...sessionEntity(`s${index}`, index),

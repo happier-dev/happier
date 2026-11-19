@@ -10967,6 +10967,7 @@ const enUniversalSearch = {
     'Some Sessions could not be loaded. Clear the search and try again.',
   sections: {
     sessions: 'Sessions',
+    pinned: 'Pinned',
     projects: 'Projects',
     settings: 'Settings',
     messages: 'Messages',
@@ -10995,6 +10996,8 @@ const enCommandPalette = {
     systemCategory: 'System',
     developerCategory: 'Developer',
     newSessionTitle: 'New session',
+    chooseModelTitle: 'Choose a model…',
+    chooseModelSubtitle: 'For this session',
     viewAllSessionsTitle: 'All sessions',
     settingsTitle: 'Settings',
     accountTitle: 'Account',

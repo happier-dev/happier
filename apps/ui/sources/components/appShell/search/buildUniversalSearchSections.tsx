@@ -189,6 +189,8 @@ export type BuildUniversalSearchSectionsInput = Readonly<{
     previousSections?: readonly SelectionListSectionDescriptor[];
     commands: readonly Command[];
     sessions: readonly UniversalSearchSessionEntity[];
+    /** The Session list's pins, in their order (the organization projection); the empty query leads with them. */
+    pinnedSessionIds?: readonly string[];
     sessionInventoryStatus?: 'idle' | 'loading' | 'ready' | 'error';
     projects: readonly UniversalSearchProjectEntity[];
     /** The resolved settings catalog's own Fuse owner; never a second matcher. */
@@ -933,7 +935,13 @@ export function buildUniversalSearchSections(
             .filter((command) => command.emptyQuerySuggested === true);
     const commandSections = buildCommandPaletteSelectionListSections(visibleCommands, previousSections);
 
-    const sessions = narrowLocalEntities(input.sessions, query, EMPTY_QUERY_RECENT_LIMIT);
+    // Empty query: pinned Sessions lead (lab palette "Pinned"), and Recent shows only the unpinned ones.
+    const pinnedSessionIds = query.length === 0 ? input.pinnedSessionIds ?? [] : [];
+    const pinnedSessionIdSet = new Set(pinnedSessionIds);
+    const sessionsById = pinnedSessionIds.length > 0 ? new Map(input.sessions.map(session => [session.sessionId, session])) : null;
+    const pinnedSessions = sessionsById ? pinnedSessionIds.flatMap(sessionId => sessionsById.get(sessionId) ?? []) : [];
+    const sessions = narrowLocalEntities(pinnedSessions.length > 0
+        ? input.sessions.filter(session => !pinnedSessionIdSet.has(session.sessionId)) : input.sessions, query, EMPTY_QUERY_RECENT_LIMIT);
     const sessionInventoryHint = query.length > 0
         ? input.sessionInventoryStatus === 'loading'
             ? t('universalSearch.sessionInventoryLoading')
@@ -941,6 +949,27 @@ export function buildUniversalSearchSections(
                 ? t('universalSearch.sessionInventoryIncomplete')
                 : undefined
         : undefined;
+    const sessionOption = (session: UniversalSearchSessionEntity) => localOption({
+        id: session.sessionId,
+        // The same session id can exist on two Homes; the Home the row
+        // was projected from is part of what the user selected.
+        scopeKey: buildUniversalSearchScopeKey([session.accountId, session.serverId]),
+        sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.sessions,
+        kind: 'session',
+        title: session.title,
+        ...(session.subtitle ? { subtitle: session.subtitle } : {}),
+        ...(session.searchText ? { searchText: session.searchText } : {}),
+        ...(session.exactSearchText ? { exactSearchText: session.exactSearchText } : {}),
+        target: {
+            kind: 'session',
+            sessionId: session.sessionId,
+            serverId: session.serverId,
+            accountId: session.accountId,
+        },
+    }, 'chats-circle', query || undefined);
+    const pinnedSessionSection: SelectionListSectionDescriptor | null = pinnedSessions.length > 0
+        ? { kind: 'static', id: `${UNIVERSAL_SEARCH_SOURCE_IDS.sessions}:pinned`, title: t('universalSearch.sections.pinned'), options: pinnedSessions.map(sessionOption) }
+        : null;
     const sessionSection: SelectionListSectionDescriptor | null = sessions.length > 0 || sessionInventoryHint
         ? {
             kind: 'static',
@@ -948,24 +977,7 @@ export function buildUniversalSearchSections(
             title: query.length === 0
                 ? t('commandPalette.commands.recentSessionsCategory')
                 : t('universalSearch.sections.sessions'),
-            options: sessions.map((session) => localOption({
-                id: session.sessionId,
-                // The same session id can exist on two Homes; the Home the row
-                // was projected from is part of what the user selected.
-                scopeKey: buildUniversalSearchScopeKey([session.accountId, session.serverId]),
-                sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.sessions,
-                kind: 'session',
-                title: session.title,
-                ...(session.subtitle ? { subtitle: session.subtitle } : {}),
-                ...(session.searchText ? { searchText: session.searchText } : {}),
-                ...(session.exactSearchText ? { exactSearchText: session.exactSearchText } : {}),
-                target: {
-                    kind: 'session',
-                    sessionId: session.sessionId,
-                    serverId: session.serverId,
-                    accountId: session.accountId,
-                },
-            }, 'chats-circle', query || undefined)),
+            options: sessions.map(sessionOption),
             ...(sessionInventoryHint ? { resultHint: sessionInventoryHint } : {}),
         }
         : null;
@@ -1011,6 +1023,7 @@ export function buildUniversalSearchSections(
     // Empty query: what you had open first, then the suggested commands (Actions, Go to).
     // With a query: matching commands, then Settings, then Sessions.
     if (query.length === 0) {
+        if (pinnedSessionSection) sections.push(pinnedSessionSection);
         if (sessionSection) sections.push(sessionSection);
         sections.push(...commandSections);
     } else {

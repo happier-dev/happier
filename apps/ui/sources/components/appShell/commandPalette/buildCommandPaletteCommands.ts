@@ -124,6 +124,8 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   paneControls?: PaneCommandControls;
   fileViewControls?: FileViewCommandControls;
   themeCommands?: () => Promise<readonly Command[]>;
+  /** Present only while the active Session's composer offers its model picker (the composer decides). */
+  sessionModelPicker?: Readonly<{ open: () => void }>;
   askHappierRelease?: AskHappierContext['release'];
   nav: Readonly<{
     push: (path: string) => void;
@@ -237,6 +239,13 @@ export function buildCommandPaletteCommands(
       action: () => nav.push('/scan/terminal'),
     },
   ];
+
+  // Lab palette "Choose a model…": opens the Session's own model picker; no default key binding.
+  if (params.sessionModelPicker) cmds.push({
+    id: 'session.model.choose', emptyQuerySuggested: true,
+    title: t('commandPalette.commands.chooseModelTitle'), subtitle: t('commandPalette.commands.chooseModelSubtitle'),
+    icon: 'sparkle', category: t('commandPalette.commands.actionsCategory'), action: params.sessionModelPicker.open,
+  });
 
   if (params.themeCommands) cmds.push({
     id: 'theme.change', title: t('themePalette.change'), icon: 'palette',

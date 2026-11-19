@@ -67,6 +67,8 @@ import { readActiveFileViewActionOwner, readShellColumnActionOwner } from '@/syn
 import { focusPaneRegion } from '@/components/appShell/panes/paneRegionFocus';
 import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
+import { readSessionComposerActionChipOffer, requestRegisteredSessionComposerActionChip } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { SESSION_MODEL_PICKER_CHIP_KEY } from '@/components/sessions/presentation/useSessionModelPickerEntry';
 
 export function readActiveSessionIdFromRoute(
     segments: readonly string[],
@@ -288,6 +290,15 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             ? pluginActionPresentation
             : null;
         const askHappierLifetime = captureActiveServerAccountScopeLifetime();
+        // The Session's composer decides whether its model picker is offered; read once as the palette opens.
+        const modelPickerServerId = requestedScope?.serverId
+            ?? (requestedActiveSessionId === commandContextSessionId ? commandContextServerId : null);
+        const modelPickerAddress = requestedActiveSessionId && modelPickerServerId
+            ? { serverId: modelPickerServerId, sessionId: requestedActiveSessionId } : null;
+        const sessionModelPicker = modelPickerAddress
+            && readSessionComposerActionChipOffer(modelPickerAddress, SESSION_MODEL_PICKER_CHIP_KEY) === 'offered'
+            ? { open: () => { requestRegisteredSessionComposerActionChip(modelPickerAddress, SESSION_MODEL_PICKER_CHIP_KEY); } }
+            : undefined;
         const askHappierCurrentContext = readCurrentUiContextActionReader({ surface: 'ui' })?.readCurrentUiContext() ?? null;
         return buildCommandPaletteCommands({
             sessionsById: storage.getState().sessions,
@@ -300,6 +311,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             petControls,
             fileViewControls,
             themeCommands: loadThemeCommands,
+            ...(sessionModelPicker ? { sessionModelPicker } : {}),
             paneControls: {
                 readColumn: readShellColumnActionOwner,
                 focusRegion: direction => { focusPaneRegion(direction); },
