@@ -172,11 +172,13 @@ export async function requireManagedCreationAccessInTx(tx: Tx,
     await requireManagedMachineAccessInTx(tx, row, actorAccountId, true);
     return 'manage';
 }
-export async function getManagedMachine(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.get"> }>) {
+export async function getManagedMachine(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.get">;
+    enrolledMachineId?: string }>) {
     const input = ManagedGetInputV1Schema.parse(params.input);
     return await inTx(async tx => {
         await requireHome(tx, input.homeId);
         if ('creationRequestId' in input) {
+            if (params.enrolledMachineId !== undefined) throw new ManagedMachineError('managed_not_found');
             const row = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
                 homeId: input.homeId, admittedActionRequestId: input.creationRequestId,
             } } });
@@ -196,6 +198,9 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
             return { ...await projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId), retainedWorkflowRoot: root };
         }
         const row = await readManagedMachineInTx(tx, input);
+        if (params.enrolledMachineId !== undefined && row.enrolledMachineId !== params.enrolledMachineId) {
+            throw new ManagedMachineError('managed_not_found');
+        }
         await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false);
         return projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId);
     });

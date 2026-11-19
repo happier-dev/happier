@@ -3,7 +3,14 @@ import { decodeBase64 } from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, MachineOperationProtocolCapabilitiesV1Schema, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_GET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -21,6 +28,71 @@ describe('managed creation continuation authority', () => {
                 HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: 'true' } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('uses the same requester for direct and Pool-linked Session start on an enrolled guest', async () => {
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const f = await createSignedDiscussionHttpFixture(undefined, [], false, custodian.id, { machineReads: true });
+        try {
+            await db.machine.update({ where: { id: f.machine.id }, data: { active: true, operationProtocolCapabilitiesRevision: 1,
+                operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ requesterExecutionIsolation: { protocolVersions: [1] },
+                    externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
+            const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
+                installationId: crypto.randomUUID(), metadata: '{}' } });
+            const provider = { pluginId: 'native.provisioner', localId: 'guest' };
+            const poolGuest = await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
+                controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+                admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: f.account.id },
+                launch: { provider, schemaVersion: 1, name: 'Pool guest', choices: {} },
+                allocation: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'pool-resource' } },
+                enrolledMachineId: f.machine.id, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+            const input = { executionTarget: { serverId: homeId, machineId: f.machine.id },
+                directory: { kind: 'managed' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
+                modelSelection: { v: 1, updatedAt: 0, ref: { agentTargetKey: 'agent:happier.agent.muse/muse',
+                    providerConnectionId: null, modelId: 'muse-spark-1.3-contributor' } },
+                connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': {
+                    source: 'connected', selection: 'profile', profileId: 'requester-muse-profile',
+                } } } };
+            const body = { homeId, managedId: poolGuest.id };
+            const [direct, linked] = await Promise.all([
+                f.mint(SESSION_SPAWN_NEW_ACTION_ID_V1, input, true),
+                f.mint(SESSION_SPAWN_NEW_ACTION_ID_V1, { ...input, managedCreation: { ...body,
+                    controller: { machineId: controller.id, installationId: controller.installationId! } } }, true),
+            ]);
+            const requester = await f.verify(direct, { method: 'GET', path: '/v1/account/encryption/currentness' });
+            expect(requester?.principal.accountId).toBe(f.account.id);
+            const path = managedMachineActionEndpointPathV1(MANAGED_GET_ACTION_ID_V1);
+            const compare = await f.app.inject({ method: 'POST', url: path, payload: body, headers: {
+                authorization: `Bearer ${f.presentUserToken}`, 'x-happier-account-stored-content-protocol': '4',
+            } });
+            expect(compare.statusCode, compare.body).toBe(200);
+            const read = (payload: typeof body) => f.app.inject({ method: 'POST', url: path, payload, headers: {
+                'x-happier-account-stored-content-protocol': '4',
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: linked.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: SESSION_SPAWN_NEW_ACTION_ID_V1,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(linked.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: linked.token, effectActionId: SESSION_SPAWN_NEW_ACTION_ID_V1,
+                    target: linked.binding.target, installationId: f.machine.installationId!,
+                    requestId: linked.binding.requestId, method: 'POST', path, body: payload, privateKey: f.keyPair.secretKey }),
+            } });
+            const selected = await read(body);
+            expect(selected.statusCode, selected.body).toBe(200);
+            expect(selected.json()).toEqual(compare.json());
+            const resolved = await f.verify(linked, { method: 'POST', path, body });
+            expect(resolved?.principal).toEqual(requester?.principal);
+            expect(resolved?.binding.custodianAccountId).toBe(custodian.id);
+
+            const otherGuest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id, metadata: '{}' } });
+            await db.managedMachine.update({ where: { id: poolGuest.id }, data: { enrolledMachineId: otherGuest.id } });
+            const mismatch = await read(body);
+            expect(mismatch.statusCode).toBe(404);
+            expect(mismatch.json()).toMatchObject({ code: 'managed_not_found' });
+            expect((await read({ ...body, homeId: `srv_${'x'.repeat(32)}` })).statusCode).toBe(401);
+        } finally {
+            await f.app.close();
+        }
+    });
 
     it.each([false, true].flatMap(controllerPresent => (['account', 'pat'] as const).map(credentialKind => ({ controllerPresent, credentialKind }))))('accepts the reviewed creator/custodian and refuses a guest Machine manager (controller=$controllerPresent credential=$credentialKind)', async ({ controllerPresent, credentialKind }) => {
         const owner = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });

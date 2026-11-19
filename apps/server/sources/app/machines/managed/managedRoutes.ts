@@ -359,9 +359,12 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         return admitted?.kind === 'restore-read' ? { machines: admitted.machines }
             : listManagedMachines({ actorAccountId: request.userId, input: request.body });
     }));
-    app.post(managedMachineActionEndpointPathV1("machines.managed.get"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.get"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.get"] } } }, async (request, reply) => respond(reply, async () =>
-        request.externalActionDeploymentChildAdmission?.snapshotManagedMachine
-            ?? getManagedMachine({ actorAccountId: request.userId, input: request.body })));
+    app.post(managedMachineActionEndpointPathV1("machines.managed.get"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.get"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.get"] } } }, async (request, reply) => respond(reply, async () => {
+        const binding = request.externalActionExecutionAuthorizationBinding;
+        return request.externalActionDeploymentChildAdmission?.snapshotManagedMachine
+            ?? getManagedMachine({ actorAccountId: request.userId, input: request.body,
+                ...(binding && isSessionSpawnNewActionIdV1(binding.actionId) ? { enrolledMachineId: binding.machineId } : {}) });
+    }));
     app.post(managedMachineActionEndpointPathV1("machines.managed.cancel"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.cancel"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.cancel"] } } }, async (request, reply) => respond(reply, async () => {
         await requireManagedOperationRequest(request, request.body, ['machines.managed.cancel'], { creationMutation: true });
         return cancelManagedCreation({ actorAccountId: request.userId, input: request.body },

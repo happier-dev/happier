@@ -1,14 +1,22 @@
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { MachineSetupReportInputV1Schema, ManagedControllerContextInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_GET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineSetupReportInputV1Schema, ManagedControllerContextInputV1Schema, ManagedResourceTargetV1Schema,
+    managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { db } from '@/storage/db';
 
-/** Bound Session follow-ups consume the active birth association, without another admission. */
+/** A Session start uses the requester's managed-target read and its bound birth follow-ups. */
 export async function readManagedBoundSessionHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, proof: Readonly<{ method: string; path: string; body?: unknown }>): Promise<boolean | null> {
     const path = proof.path.split('?')[0];
-    if (binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || proof.method.toUpperCase() !== 'POST'
-        || path !== '/v1/machines/setup/report' && path !== '/v1/machines/managed/controller/context') return null;
+    if (binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || proof.method.toUpperCase() !== 'POST') return null;
+    if (proof.path === managedMachineActionEndpointPathV1(MANAGED_GET_ACTION_ID_V1)) {
+        const target = ManagedResourceTargetV1Schema.safeParse(proof.body);
+        // The managed reader binds the selected row to the admitted guest and projects it for the requester.
+        return effectActionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && target.success
+            && target.data.homeId === binding.serverIdentityId;
+    }
+    if (path !== '/v1/machines/setup/report' && path !== '/v1/machines/managed/controller/context') return null;
     const report = path === '/v1/machines/setup/report' ? MachineSetupReportInputV1Schema.safeParse(proof.body) : null;
     const context = path === '/v1/machines/managed/controller/context'
         ? ManagedControllerContextInputV1Schema.safeParse(proof.body) : null;
