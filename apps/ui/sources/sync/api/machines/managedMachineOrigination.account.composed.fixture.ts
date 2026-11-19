@@ -1148,7 +1148,9 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             admissions: missingPolicy && !plainPreset ? 2 : 1, allocations: 1, approvals: 1, machineRpcs: 0, guestDispatches: startAgent ? 1 : 0,
         });
         expect(roleDispatches).toBe(0);
-        expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
+        expect(guestContinuation).toEqual(startAgent
+            ? { managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 }
+            : undefined);
         if (exportedHomePayload) {
             expect(releaseRequests).toBe(0);
             const installCommands = [...commands.values()].filter(command => command.includes(homePayloadArchive.url));
