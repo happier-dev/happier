@@ -73,9 +73,8 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     for (const key of ['user.name', 'user.email']) {
       if (!git('config', '--get', key)) throw new Error(`Missing Git ${key}`);
     }
-    let gatedTree;
-    for (;;) {
-      const head = git('rev-parse', 'HEAD');
+    const { runCommitGate, formatCommitGateRefusal, withCommitLock } = await import('../workspaces/commitGate.mjs');
+    const prepare = async (head, prior) => {
       git('read-tree', head);
       if (paths.length) git('add', '--', ...paths);
       if (patchFile) git('apply', '--cached', '--check', patchFile);
@@ -85,29 +84,33 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       if (!committed.length) throw new Error('Refusing an empty commit');
       if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
       const tree = git('write-tree');
-      // The commit gate: the same checks every HEAD writer runs (scripts/workspaces/commitGate.mjs), on every CAS attempt.
-      // After a lost CAS the packet is rechecked as a replay of the tree that already passed.
-      const { runCommitGate, formatCommitGateRefusal, moveRefUnderCommitLock } = await import('../workspaces/commitGate.mjs');
-      const gate = await runCommitGate({ repo: cwd, base: head, tree, prior: gatedTree, label: 'commitFromPrivateIndex' });
+      const gate = await runCommitGate({ repo: cwd, base: head, tree, prior, label: 'commitFromPrivateIndex' });
       for (const note of gate.notes) console.error(`commit gate: ${note}`);
       if (gate.verdict !== 'pass') throw new Error(formatCommitGateRefusal(gate));
-      gatedTree = tree;
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
-      try {
-        // Under the commit lock, so HEAD never moves between the commit wrapper's locked recheck and its CAS. The reflog
-        // names the committer.
-        moveRefUnderCommitLock({ repo: cwd, ref: 'HEAD', commit, head, reason: `commitFromPrivateIndex: pid ${process.pid}` });
-      } catch (error) {
-        if (git('rev-parse', 'HEAD') !== head) continue; // Rebuild, never attach an old tree to a new parent.
-        throw error;
+      return { head, tree, commit, committed };
+    };
+
+    let packet = await prepare(git('rev-parse', 'HEAD'));
+    const commit = await withCommitLock({ repo: cwd }, async (moveRef) => {
+      for (;;) {
+        const head = git('rev-parse', 'HEAD');
+        if (head !== packet.head) packet = await prepare(head, packet.tree);
+        try {
+          moveRef({ commit: packet.commit, head, reason: `commitFromPrivateIndex: pid ${process.pid}` });
+          return packet.commit;
+        } catch (error) {
+          // A writer outside the lock (or on a host without flock) may still move HEAD.
+          if (git('rev-parse', 'HEAD') === head) throw error;
+        }
       }
-      console.error(`Committed ${commit}; synchronizing shared index`);
-      // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
-      const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
-      console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
-      await syncSharedIndex(cwd, commit, committed);
-      return commit;
-    }
+    });
+    console.error(`Committed ${commit}; synchronizing shared index`);
+    // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
+    const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
+    console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
+    await syncSharedIndex(cwd, commit, packet.committed);
+    return commit;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

@@ -6,11 +6,13 @@
 // import cycle, a manifest or lockfile break) landed through another.
 //
 //   node scripts/workspaces/commitGate.mjs --base=<rev> --tree=<tree-ish> [--prior=<tree-ish>] [--cheap-only]
-//   exit 0 pass, 10 refused, 3 needs a run outside the commit lock (--cheap-only), 75 unavailable (never the candidate's fault)
+//   exit 0 pass, 10 refused, 3 needs a full recheck (--cheap-only), 75 unavailable (never the candidate's fault)
 //
 // Every check reads the candidate's Git objects, never the moving checkout, and refuses only what the packet adds over
 // its base. The commit wrapper adds its cached bundle and export-scan tier (gate.sh) on top of this list.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { closeSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,8 +54,8 @@ class CommitGateUnavailable extends Error {
  * Runs every check for the packet `base..tree`. Returns `{ verdict: 'pass' | 'refused' | 'needs-full', check, findings,
  * notes }`; `check` names the first refusing check. Throws (`error.unavailable`) when a check cannot judge.
  * `prior`: the tree this packet passed as before HEAD moved (a recheck): work its earlier pass already judged and the
- * landed commits cannot change is reused, and nothing detached is started again. `cheapOnly`: the caller holds the commit
- * lock, so a check that takes minutes returns `needs-full` instead of running.
+ * landed commits cannot change is reused, and nothing detached is started again. `cheapOnly`: try the quick recheck first;
+ * a check that takes minutes returns `needs-full`.
  */
 export async function runCommitGate({ repo, base, tree, prior, cheapOnly = false, env = process.env, cacheDir = commitGateCacheDir(env), label = 'commit-gate' }) {
   const notes = [];
@@ -121,31 +123,39 @@ export function formatCommitGateRefusal(result) {
     ...result.findings.map(finding => `  ${finding}`)].join('\n');
 }
 
-/** The lock every HEAD writer moves the ref under; the commit wrapper holds it across its locked recheck and CAS. */
+/** The lock every HEAD writer holds during a stale recheck and CAS. */
 export function commitGateLockPath(repo) {
   const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf8' }).trim();
   return join(common, 'p03-commit-partial.lock');
 }
 
 /**
- * Compare-and-swap of `ref` from `head` to `commit` under the commit lock, so it never lands between the wrapper's locked
- * recheck and its CAS (P03-GATE-FIX 2026-11-17: DBW-SPINE lost its final CAS to an unlocked writer). Throws when the CAS
- * fails; the caller rebuilds on a moved HEAD. Where no `flock` exists (native Windows, stock macOS) the commit wrapper
- * cannot run either, so the plain CAS is the whole protocol there; that case says so on stderr.
+ * Serialize a writer's stale recheck and compare-and-swap. flock locks the inherited descriptor;
+ * the parent holds it until the writer settles. Await acquisition so another writer in this process
+ * can finish its gate and release the lock. Hosts without flock retain the plain CAS fallback.
  */
-export function moveRefUnderCommitLock({ repo, ref = 'HEAD', commit, head, reason }) {
-  const update = ['update-ref', '-m', reason, ref, commit, head];
-  const options = { cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] };
-  if (process.platform !== 'win32') {
+export async function withCommitLock({ repo, ref = 'HEAD' }, run) {
+  const moveRef = ({ commit, head, reason }) => {
+    execFileSync('git', ['update-ref', '-m', reason, ref, commit, head], {
+      cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  };
+  if (process.platform === 'win32') return run(moveRef);
+
+  const lock = openSync(commitGateLockPath(repo), 'a');
+  try {
     try {
-      execFileSync('flock', ['-x', commitGateLockPath(repo), 'git', ...update], options);
-      return;
+      const child = spawn('flock', ['-x', '3'], { cwd: repo, stdio: ['ignore', 'ignore', 'inherit', lock] });
+      const [code, signal] = await once(child, 'exit');
+      if (code !== 0) throw new Error(`commit gate: flock failed (${signal ?? code})`);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       process.stderr.write('commit gate: no flock on this host (the commit wrapper cannot run here either); plain compare-and-swap\n');
     }
+    return await run(moveRef);
+  } finally {
+    closeSync(lock);
   }
-  execFileSync('git', update, options);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -161,7 +171,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log(formatCommitGateRefusal(result));
       process.exitCode = COMMIT_GATE_EXIT.refused;
     } else if (result.verdict === 'needs-full') {
-      console.log(`commit gate: ${result.check} is not cheap; rechecking outside the commit lock`);
+      console.log(`commit gate: ${result.check} needs a full recheck`);
       process.exitCode = COMMIT_GATE_EXIT.needsFull;
     }
   } catch (error) {

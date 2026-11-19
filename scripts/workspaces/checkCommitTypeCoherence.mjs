@@ -674,7 +674,7 @@ function replayPacket(git, base, tree, head) {
 }
 
 /** Finalizes an in-memory checker result. The caller still owns identity, hooks, own-hunk
- * verification and shared-index synchronization. No lock is held while the compiler queues. Before every
+ * verification and shared-index synchronization. CLI compiler admission precedes finalization. Before every
  * compare-and-swap the packet passes the commit gate every HEAD writer runs (commitGate.mjs); a refusal
  * returns with `checked.gate` and no commit. The ref moves under the commit wrapper's lock. */
 export async function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEAD' }) {
@@ -690,12 +690,31 @@ export async function finalizeCommitTypeCoherence({ repo, checked, message, ref 
   });
   // Loaded here, not at module scope: the gate's import-cycle check loads the TypeScript compiler, and the CLI loads no
   // compiler module before its admission (the plain TS CLI re-enters admitted).
-  const { moveRefUnderCommitLock, runCommitGate } = await import('./commitGate.mjs');
-  let gatedTree;
-  while (true) {
-    if (checked.fresh.length || checked.unowned.length || checked.gate) return outcome();
-    const head = git.gitText(['rev-parse', 'HEAD']).trim();
-    if (head !== checked.base) {
+  const { withCommitLock, runCommitGate } = await import('./commitGate.mjs');
+  const currentHead = () => git.gitText(['rev-parse', 'HEAD']).trim();
+  const blocked = () => checked.fresh.length || checked.unowned.length || checked.gate;
+  let accepted;
+  const prepare = async () => {
+    const { base, tree } = checked;
+    const gate = await runCommitGate({ repo, base, tree, prior: accepted?.checked.tree, label: 'checkCommitTypeCoherence' });
+    for (const note of gate.notes) console.error(`commit gate: ${note}`);
+    if (gate.verdict !== 'pass') {
+      checked = { ...checked, gate };
+      return;
+    }
+    const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
+    const commit = git.git(['commit-tree', ...(sign ? ['-S'] : []), tree, '-p', base], { input: message, encoding: 'utf8' }).trim();
+    accepted = { checked, commit };
+  };
+  if (blocked()) return outcome();
+  // An already stale result needs a replay before it can get a gate verdict.
+  if (currentHead() === checked.base) {
+    await prepare();
+    if (blocked()) return outcome();
+  }
+
+  return withCommitLock({ repo, ref }, async (moveRef) => {
+    const refresh = (head) => {
       const replayStarted = Date.now();
       git.git(['merge-base', '--is-ancestor', checked.base, head]);
       const tree = replayPacket(git, original.base, original.tree, head);
@@ -760,27 +779,28 @@ export async function finalizeCommitTypeCoherence({ repo, checked, message, ref 
         fresh: groups.flatMap(group => group.fresh),
       };
       console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
-      continue;
+    };
+    while (true) {
+      if (blocked()) return outcome();
+      const head = currentHead();
+      if (head !== checked.base) {
+        refresh(head);
+        continue;
+      }
+      if (accepted?.checked !== checked) {
+        await prepare();
+        if (blocked()) return outcome();
+      }
+      const { commit } = accepted;
+      try {
+        moveRef({ commit, head, reason: `checkCommitTypeCoherence: pid ${process.pid}` });
+        return outcome(commit);
+      } catch (error) {
+        if (currentHead() === head) throw error;
+        // A writer outside the lock (or on a host without flock) may still move HEAD.
+      }
     }
-    // The commit gate judges the packet against the parent it lands on; after HEAD moved, the replayed packet is a
-    // recheck of the tree that already passed (a landed commit can drop an export or module the packet reads).
-    const gate = await runCommitGate({ repo, base: head, tree: checked.tree, prior: gatedTree, label: 'checkCommitTypeCoherence' });
-    for (const note of gate.notes) console.error(`commit gate: ${note}`);
-    if (gate.verdict !== 'pass') {
-      checked = { ...checked, gate };
-      continue;
-    }
-    gatedTree = checked.tree;
-    const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
-    const commit = git.git(['commit-tree', ...(sign ? ['-S'] : []), checked.tree, '-p', head], { input: message, encoding: 'utf8' }).trim();
-    try {
-      moveRefUnderCommitLock({ repo, ref, commit, head, reason: `checkCommitTypeCoherence: pid ${process.pid}` });
-      return outcome(commit);
-    } catch (error) {
-      if (git.gitText(['rev-parse', 'HEAD']).trim() === head) throw error;
-      // Another writer won CAS. Its commits are examined by the same owner on the next pass.
-    }
-  }
+  });
 }
 
 async function main(argv) {

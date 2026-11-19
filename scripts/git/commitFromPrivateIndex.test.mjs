@@ -306,3 +306,112 @@ test('waits for the commit wrapper lock before moving HEAD', { skip: !hasFlock }
   assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
   assert.match(f.git('reflog', '-1', '--format=%gs', 'HEAD'), /^commitFromPrivateIndex: pid \d+/);
 });
+
+function runWithCommitLockContender(f, winner, name) {
+  const base = f.git('rev-parse', 'HEAD').trim();
+  const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
+  const bin = path.join(f.cwd, 'bin');
+  const acquisitions = path.join(f.cwd, 'acquisitions');
+  const flock = execFileSync('sh', ['-c', 'command -v flock'], { encoding: 'utf8' }).trim();
+  fs.mkdirSync(bin);
+  // Advance the real ref under the real lock immediately before the writer's first acquisition.
+  fs.writeFileSync(path.join(bin, 'flock'), `#!/bin/sh
+set -eu
+head=$(git rev-parse HEAD)
+printf '%s\\n' "$head" >> "$TEST_ACQUISITIONS"
+if [ "$head" = "$TEST_BASE" ]; then
+  "$TEST_FLOCK" -x "$TEST_LOCK" git update-ref HEAD "$TEST_WINNER" "$head"
+fi
+exec "$TEST_FLOCK" "$@"
+`, { mode: 0o755 });
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', name,
+  ], {
+    cwd: f.cwd, encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      HAPPIER_COMMIT_TREE_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+      TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
+  });
+  return { result, acquisitions: fs.readFileSync(acquisitions, 'utf8').trim().split('\n'), flock, lock };
+}
+
+test('replays onto a competing commit and lands without rejoining the commit lock queue', { skip: !hasFlock }, (t) => {
+  const f = fixture(t);
+  const base = f.git('rev-parse', 'HEAD').trim();
+  f.write('unrelated', 'competitor\n');
+  f.git('add', '--', 'unrelated');
+  const winner = f.git('commit-tree', f.git('write-tree').trim(), '-p', base, '-m', 'test: competing writer').trim();
+  f.git('read-tree', base);
+  f.write('changed', 'selected\n');
+
+  const { result, acquisitions } = runWithCommitLockContender(f, winner, 'changed');
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
+  assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
+  assert.equal(f.git('show', 'HEAD:unrelated'), 'competitor\n');
+  assert.deepEqual(acquisitions, [base]);
+});
+
+test('refuses a replay when the winning commit removed its producer and releases the commit lock', { skip: !hasFlock }, (t) => {
+  const f = fixture(t);
+  f.write('producer.mjs', 'export const producer = true;\n');
+  f.git('add', '--', 'producer.mjs');
+  f.git('commit', '-qm', 'test: producer');
+  const base = f.git('rev-parse', 'HEAD').trim();
+  f.git('update-index', '--force-remove', '--', 'producer.mjs');
+  const winner = f.git('commit-tree', f.git('write-tree').trim(), '-p', base, '-m', 'test: remove producer').trim();
+  f.git('read-tree', base);
+  f.write('consumer.mjs', "export { producer } from './producer.mjs';\n");
+
+  const { result, acquisitions, flock, lock } = runWithCommitLockContender(f, winner, 'consumer.mjs');
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /refused by the commit gate \(producer closure\)[\s\S]*consumer\.mjs -> \.\/producer\.mjs/);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), winner);
+  assert.deepEqual(acquisitions, [base]);
+  assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
+});
+
+test('uses compare-and-swap when the host has no flock', { skip: process.platform === 'win32' }, (t) => {
+  const f = fixture(t);
+  const base = f.git('rev-parse', 'HEAD').trim();
+  const bin = path.join(f.cwd, 'bin');
+  const git = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.mkdirSync(bin);
+  fs.symlinkSync(git, path.join(bin, 'git'));
+  f.write('changed', 'selected\n');
+
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', 'changed',
+  ], { cwd: f.cwd, encoding: 'utf8', env: { ...process.env, PATH: bin } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /no flock on this host/);
+  assert.equal(f.git('rev-parse', 'HEAD^').trim(), base);
+  assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
+});
+
+test('the commit lock stays held across awaits and another writer in the same process can acquire it', { skip: !hasFlock }, async (t) => {
+  const f = fixture(t);
+  const { commitGateLockPath, withCommitLock } = await import('../workspaces/commitGate.mjs');
+  const repo = f.cwd;
+  const lock = commitGateLockPath(repo);
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const order = [];
+  const holder = withCommitLock({ repo }, async () => {
+    entered.resolve();
+    await release.promise;
+    order.push('holder');
+  });
+  await Promise.race([entered.promise, holder]);
+  const contender = withCommitLock({ repo }, () => { order.push('contender'); });
+  try {
+    assert.equal(spawnSync('flock', ['-n', lock, 'true']).status, 1);
+  } finally {
+    release.resolve();
+    await Promise.all([holder, contender]);
+  }
+  assert.deepEqual(order, ['holder', 'contender']);
+});
