@@ -10,10 +10,7 @@ import type { PetAddOutcomeState } from '@/components/pets/add/petAddOutcome';
 import { BotFacePet } from '@/components/sessions/bots/face/BotFacePet';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { Text } from '@/components/ui/text/Text';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -22,6 +19,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { StorePetArt } from './catalog/storePets';
+import { StoreListingFacts, type StoreListingFactRow } from './StoreListingFacts';
 
 /** The listing's hero (DECISIONS-R12 spec): 148 on a page or pane, 132 on a phone; poses at 40. */
 const HERO_PX = 148;
@@ -78,8 +76,8 @@ export const StorePetListing = React.memo(function StorePetListing(
   const motionMode = useSetting('botMotion');
   const version = usePetSheetSpriteVersion(props.art?.spritesheetSource, props.art?.spriteVersionNumber);
   // A v2 sheet turns toward the pointer as a Bot's face (decision 4): the listing says so, from the decoded atlas.
-  const facts = React.useMemo(() => version === 2 ? [{ key: 'looksAround' as const, value: t('settingsPets.store.yes'),
-    note: t('settingsPets.store.looksAroundNote') }, ...props.facts] : props.facts, [version, props.facts]);
+  const factRows = React.useMemo(() => (version === 2 ? [{ key: 'looksAround' as const, value: t('settingsPets.store.yes'),
+    note: t('settingsPets.store.looksAroundNote') }, ...props.facts] : props.facts).map(petFactRow), [version, props.facts]);
   const id = (suffix: string) =>
     props.testID ? `${props.testID}:${suffix}` : undefined;
   const buttonSize = phone ? 'normal' : 'small';
@@ -172,16 +170,7 @@ export const StorePetListing = React.memo(function StorePetListing(
           )}
         </View>
 
-        {facts.length > 0 ? (
-          // The facts card stands on the listing's edges like everything above it: a contained scope adds no second inset.
-          <ListPresentationProvider value="page" pageInsets="contained">
-          <ItemGroup testID={id('facts')} header="none">
-            {facts.map((fact) => (
-              <FactRow key={fact.key} fact={fact} />
-            ))}
-          </ItemGroup>
-          </ListPresentationProvider>
-        ) : null}
+        <StoreListingFacts facts={factRows} testID={id('facts')} />
 
         {props.reportUrl ? (
           <View style={styles.inline} testID={id('report')}>
@@ -218,17 +207,8 @@ const FACT_LABEL_KEY = {
   published: 'settingsPets.store.published',
 } as const;
 
-function FactRow(props: Readonly<{ fact: StorePetListingFact }>) {
-  return (
-    <Item
-      mode="info"
-      title={t(FACT_LABEL_KEY[props.fact.key])}
-      detail={props.fact.value}
-      {...(props.fact.note ? { subtitle: props.fact.note } : {})}
-      accessoryLayout="adaptive"
-      showChevron={false}
-    />
-  );
+function petFactRow(fact: StorePetListingFact): StoreListingFactRow {
+  return { ...fact, label: t(FACT_LABEL_KEY[fact.key]) };
 }
 
 const styles = StyleSheet.create((theme) => ({

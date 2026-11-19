@@ -28,6 +28,9 @@ export type HappierPageRowDensity = 'comfortable' | 'cozy' | 'compact' | 'inspec
  */
 export type HappierPageRowShape = 'standard' | 'list';
 
+/** What a page section's rows are: settings (the default, label first) or `facts` about one thing (value first). */
+export type HappierPageRowRole = 'rows' | 'facts';
+
 type PageRowText = Readonly<{ fontSize: number; lineHeight: number; letterSpacing: number }>;
 
 export type HappierPageRowMetrics = Readonly<{
@@ -37,8 +40,9 @@ export type HappierPageRowMetrics = Readonly<{
     /** A settings row's title is medium; an inspector row's is the body face, its value carrying the weight. */
     titleWeight: 'regular' | 'medium';
     /**
-     * A fact row (an inspector's list of facts: Run on, Folder, Started) reads value first: its label
-     * steps back to secondary and the value takes the primary ink. Settings rows keep label first.
+     * A fact row (an inspector's list of facts: Run on, Folder, Started; a section of `facts` rows) reads
+     * value first: its label steps back to secondary and the value takes the primary ink. Settings rows keep
+     * label first.
      */
     valueLeads: boolean;
     subtitle: PageRowText & Readonly<{ marginTop: number }>;
@@ -110,10 +114,16 @@ const resolvedHappierPageRowMetrics = new Map<string, HappierPageRowMetrics>();
 export function resolveHappierPageRowMetrics(input: Readonly<{
     density: HappierPageRowDensity;
     shape: HappierPageRowShape;
+    /**
+     * `facts`: the section lists facts about one thing (a Store listing's Includes, Licence), not
+     * settings. At the user's density, its labels take the regular face and step back so each value leads.
+     */
+    role?: HappierPageRowRole;
     /** @deprecated A row's height no longer depends on the pointer: its hit area is the row itself. Ignored. */
     touch?: boolean;
 }>): HappierPageRowMetrics {
-    const key = `${input.density}:${input.shape}`;
+    const facts = input.role === 'facts';
+    const key = `${input.density}:${input.shape}:${facts ? 'facts' : 'rows'}`;
     const cached = resolvedHappierPageRowMetrics.get(key);
     if (cached) return cached;
     const table = PAGE_ROW_DENSITY_METRICS[input.density];
@@ -122,8 +132,8 @@ export function resolveHappierPageRowMetrics(input: Readonly<{
         minHeightPx: box.minHeightPx,
         paddingVerticalPx: box.paddingVerticalPx,
         title: table.title,
-        titleWeight: table.titleWeight ?? 'medium',
-        valueLeads: input.density === 'inspector' && input.shape === 'list',
+        titleWeight: facts ? 'regular' : table.titleWeight ?? 'medium',
+        valueLeads: facts || (input.density === 'inspector' && input.shape === 'list'),
         subtitle: Object.freeze({ ...table.subtitle, marginTop: PAGE_ROW_SUBTITLE_GAP_PX }),
         iconGlyphPx: table.iconGlyphPx,
     });

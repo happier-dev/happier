@@ -8,10 +8,7 @@ import { ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeMod
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
@@ -19,8 +16,8 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
+import { StoreListingFacts, type StoreListingFactRow } from './StoreListingFacts';
 import type {
   StoreThemeListingFact,
   StoreThemeListingViewProps,
@@ -48,6 +45,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
       : face.mode === 'dark' ? t('themeCard.dark') : t('themeCard.light'),
     preview: <ThemeMiniaturePreview miniature={face.miniature} />,
   })), [props.faces, props.tryingFaceId]);
+  const factRows = React.useMemo(() => props.facts.map(themeFactRow), [props.facts]);
   const id = (suffix: string) =>
     props.testID ? `${props.testID}:${suffix}` : undefined;
   // What Install would do while trying, or where an installed theme is picked; at rest the Try button says it all.
@@ -208,16 +206,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
         </View>
       ) : null}
 
-      {props.facts.length > 0 ? (
-        // The facts card stands on the listing's edges like everything above it: a contained scope adds no second inset.
-        <ListPresentationProvider value="page" pageInsets="contained">
-          <ItemGroup testID={id('facts')} header="none">
-            {props.facts.map((fact) => (
-              <FactRow key={fact.key} fact={fact} />
-            ))}
-          </ItemGroup>
-        </ListPresentationProvider>
-      ) : null}
+      <StoreListingFacts facts={factRows} testID={id('facts')} />
     </View>
     </ItemList>
   );
@@ -249,18 +238,8 @@ const FACT_LABEL_KEY = {
   licence: 'themeStore.factLicence',
 } as const;
 
-function FactRow(props: Readonly<{ fact: StoreThemeListingFact }>) {
-  return (
-    <Item
-      mode={props.fact.url ? 'interactive' : 'info'}
-      {...(props.fact.url ? { accessibilityRole: 'link' as const, onPress: () => { void requestOpenExternalUrl(props.fact.url!); } } : {})}
-      title={t(FACT_LABEL_KEY[props.fact.key])}
-      detail={props.fact.value}
-      {...(props.fact.note ? { subtitle: props.fact.note } : {})}
-      accessoryLayout="adaptive"
-      showChevron={false}
-    />
-  );
+function themeFactRow(fact: StoreThemeListingFact): StoreListingFactRow {
+  return { ...fact, label: t(FACT_LABEL_KEY[fact.key]) };
 }
 
 const styles = StyleSheet.create((theme) => ({

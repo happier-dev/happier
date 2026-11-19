@@ -40,7 +40,7 @@ import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { SelectionListOptionPresentationContext } from '@/components/ui/selectionList/SelectionListOptionPresentationContext';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
-import { SectionItemDensityProvider, usePageRowDensityOverride, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
+import { SectionItemDensityProvider, SectionRowRoleProvider, usePageRowDensityOverride, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { ITEM_ROW_PADDING_HORIZONTAL } from './itemDensityMetrics';
 import { SectionLeadingColumnProvider } from './sectionLeadingColumn';
 import { BareRowBleedContext, SectionRowBleedContext } from './bareRowBleed';
@@ -133,6 +133,11 @@ export interface ItemGroupProps {
      * elsewhere it replaces the preference.
      */
     density?: ResolvedItemDensity;
+    /**
+     * `facts`: the rows are facts about one thing (Includes, Licence), not settings. On a page their labels take the
+     * regular face in secondary ink and each value leads in primary ink, at the user's density.
+     */
+    rows?: 'rows' | 'facts';
     /**
      * Performance: when you already know how many selectable rows are inside the group,
      * pass this to avoid walking the full React children tree on every render.
@@ -660,6 +665,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         clipContent = false,
         surface: surfaceProp,
         density,
+        rows = 'rows',
         testID,
     } = props;
     const defaultSurface = React.useContext(ItemGroupDefaultSurfaceContext);
@@ -813,6 +819,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                     empty sheet: an empty card reads as a stray rule (QA-RERUN-1113 F7). */}
                 {hasRows ? <SectionLeadingColumnProvider>
                 <SectionItemDensityProvider value={density}>
+                <SectionRowRoleProvider value={rows}>
                 <BareSectionRowsContext.Provider value={surface === 'none' && !bleedRows}>
                 <BareRowBleedContext.Provider value={0}>
                 <SectionRowBleedContext.Provider value={rowBleedPx}>
@@ -859,6 +866,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 </SectionRowBleedContext.Provider>
                 </BareRowBleedContext.Provider>
                 </BareSectionRowsContext.Provider>
+                </SectionRowRoleProvider>
                 </SectionItemDensityProvider>
                 </SectionLeadingColumnProvider> : null}
 

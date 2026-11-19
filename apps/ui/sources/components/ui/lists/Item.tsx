@@ -27,7 +27,7 @@ import {
     WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
 } from '@/components/ui/text/webStartEllipsisTextStyles';
-import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensity';
+import { useItemDensityInputs, useSectionRowRole } from '@/components/ui/lists/useResolvedItemDensity';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
@@ -578,7 +578,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     titleNormal: {
         color: theme.colors.text.primary,
     },
-    // An inspector fact's label steps back and its value leads (`PageRowMetrics.valueLeads`).
+    // A fact's label (an inspector row, a `facts` section) steps back and its value leads (`PageRowMetrics.valueLeads`).
     titleFact: {
         color: theme.colors.text.secondary,
     },
@@ -1128,6 +1128,7 @@ function ItemRow(props: ItemProps & Readonly<{
     ]);
 
     const densityInputs = useItemDensityInputs(density);
+    const sectionRowRole = useSectionRowRole();
     const isCatalogRow = rowRole === 'catalogRow';
     // A catalog row draws the catalog geometry on a page. In a column (a rail, a phone's collection page) it
     // keeps its content on the column's compact row instead: the column's glyph box, one line each, the
@@ -1192,6 +1193,7 @@ function ItemRow(props: ItemProps & Readonly<{
                 requested: resolvedDensity,
                 requestedExplicitly: densityInputs.requested,
             }),
+            role: sectionRowRole,
         })
         : null;
     const pageRowStyles = pageRowMetrics ? resolvePageRowStyles(pageRowMetrics) : null;

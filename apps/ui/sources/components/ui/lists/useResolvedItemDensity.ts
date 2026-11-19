@@ -14,6 +14,18 @@ const SectionItemDensityContext = React.createContext<ResolvedItemDensity | unde
 export const SectionItemDensityProvider = SectionItemDensityContext.Provider;
 
 /**
+ * What a page section's rows are (`ItemGroup rows`): settings, label first, or `facts` about one thing (a Store
+ * listing's Includes, Licence), whose labels step back so each value leads (`resolvePageRowMetrics` `role`).
+ */
+const SectionRowRoleContext = React.createContext<'rows' | 'facts'>('rows');
+
+export const SectionRowRoleProvider = SectionRowRoleContext.Provider;
+
+export function useSectionRowRole(): 'rows' | 'facts' {
+    return React.useContext(SectionRowRoleContext);
+}
+
+/**
  * A surface that fixes its page rows' density whatever the preference: a page hosted as a side-pane
  * inspector (Session Info, lab csinfo I2) draws `inspector` rows. Menus and popovers opened from it
  * keep their own row role; grouped rows read it as `compact`.
