@@ -277,6 +277,7 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
   let finalAssistantMessageSeq: number | null | undefined = null;
   let endSeqInclusive: number | undefined;
   let outcome: SessionMessageReplyOutcomeV1 | undefined;
+  let hasReplyObligation = false;
   let discussionWorkflow = false;
   let invocation = workflowInvocation;
   let answerVisible = true;
@@ -305,6 +306,7 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
+    if (url.endsWith('/reply') && !hasReplyObligation) return { status: 200, data: { v: 1, status: 'none' } };
     if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
       v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId, ...(outcome ? { outcome } : {}),
       ...(discussionWorkflow ? { workflow: { purpose: 'invocation', ...workflowInvocation }, discussion: {
@@ -344,10 +346,11 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
     messageRef: { messageId: 'retained-row-5' } } });
   if (!result.ok) throw new Error('retained_input_unavailable');
   expect(classifyWorkflowSessionInputResult(result.result)).toMatchObject({ kind: 'completed', result: 'QA-FIN80 CHILD DONE' });
+  hasReplyObligation = true;
   // A Discussion Workflow needs the original C2 fact in its immutable terminal
   // row. Native prose alone may still recover the ordinary retained turn above.
   discussionWorkflow = true;
-  await expect(observe()).resolves.toMatchObject({ ok: true, result: { kind: 'pending' } });
+  await expect(observe()).resolves.toEqual({ ok: false, code: 'session_reply_timeout' });
   let nativeTranscriptRead = () => {};
   const nativeRead = new Promise<void>(resolve => { nativeTranscriptRead = resolve; });
   onNativeTranscriptRead = nativeTranscriptRead;
@@ -370,6 +373,7 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
   await expect(observe()).resolves.toMatchObject({ ok: true, result: { kind: 'fulfilled', outcome } });
   outcome = undefined;
   discussionWorkflow = false;
+  hasReplyObligation = false;
   const recover = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null },
     machineId: 'machine-1', now: () => 0, actionExecutor: { execute: async () => { throw new Error('No detached Run'); } } });
   await expect(recover({ terminalParent: true, cancellationRequested: true,
@@ -390,12 +394,13 @@ it('rejoins only the original completed Workflow turn when retained reply anchor
   answerVisible = false;
   await expect(observe()).resolves.toMatchObject({ ok: true, result: { kind: 'pending' } });
   answerVisible = true;
-  acceptedTurnId = 'later-turn';
-  await expect(observe()).resolves.toMatchObject({ ok: true, result: { kind: 'pending' } });
-  acceptedTurnId = turnId;
   invocation = { ...workflowInvocation, invocationRecordId: '00000000-0000-4000-8000-000000000005' };
   await expect(observe()).resolves.toMatchObject({ ok: true, result: { kind: 'pending' } });
   invocation = workflowInvocation;
+  hasReplyObligation = true;
+  discussionWorkflow = true;
+  outcome = { kind: 'answer', publicationRef: { kind: 'discussion',
+    discussion: { serverId: 'home', discussionId: 'discussion-1' }, messageId: 'published-answer' } };
   const authority = inputBody.meta.happierInputAuthorityV1;
   inputBody.meta.happierInputAuthorityV1 = SessionInputAuthorityV2Schema.parse({ ...authority, workflow: {
     ...workflowInvocation, purpose: 'invocation', stepOrdinal: '1', workDepth: 1,

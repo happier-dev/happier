@@ -4,11 +4,13 @@ import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import axios from 'axios';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
+let observationSocket: EventEmitter;
 vi.mock('@/api/session/sockets', () => ({
   createSessionScopedSocketConnection: () => {
     const socket = Object.assign(new EventEmitter(), {
       connected: false, connect: () => {}, disconnect: () => {}, close: () => {},
     });
+    observationSocket = socket;
     return { socket, transport: createSocketTransportAdapter(socket) };
   },
 }));
@@ -278,9 +280,50 @@ describe('waitForSessionInputResult', () => {
     const observed = await waitForSessionInputResult({ credentials: { token: 'token', encryption: null }, serverId: session.serverId,
       idOrPrefix: sessionId, localId: 'automation:run:run-1', observeReply: true,
       observation: { kind: 'absolute_deadline', deadlineMs: Date.now() } });
+    if (status === 'unfulfilled') {
+      expect(observed).toEqual({ ok: false, code: 'session_reply_timeout' });
+      return;
+    }
     expect(observed).toMatchObject({ ok: true, result: status === 'none' || status === 'answer'
       ? { kind: 'final_text', text: 'exact answer', messageRef: resultMessageRef(1) } : { kind: 'pending' } });
+    if (status === 'none') {
+      expect(observed).toMatchObject({ replyObservation: 'no_obligation' });
+      expect(observed).not.toHaveProperty('replyOutcome');
+    }
     if (status === 'answer') expect(observed).toMatchObject({ replyOutcome: outcome });
+  });
+
+  it('rejoins original reply custody after native Workflow completion', async () => {
+    const localId = 'automation:run:run-1';
+    const { httpGet } = await arrange({ rowsAfterInput: () => [rawAssistantText('answer')] });
+    const previousGet = httpGet.getMockImplementation()!;
+    const outcome = { kind: 'answer' as const, result: { sessionId, messageId: 'row-1' } };
+    let committed = false;
+    let replyReads = 0;
+    const completionRead = Promise.withResolvers<void>();
+    httpGet.mockImplementation(async (url, config) => {
+      if (url.endsWith('/reply')) {
+        if (++replyReads === 2) completionRead.resolve();
+        return { status: 200, data: { v: 1, status: 'available', progress: {
+          v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'turn-1',
+          ...(committed ? { outcome } : {}),
+        } } };
+      }
+      if (url.endsWith('/turns')) return { status: 200, data: { v: 1, sessionId, updatedAt: 102, turns: [{
+        turnId: 'turn-1', status: 'completed', startedAt: 100, updatedAt: 102, initiator: 'workflow', workDepth: 1,
+        transcriptAnchors: { startUserMessageSeq: 7, userMessageSeqs: [7], finalAssistantMessageSeq: 8, endSeqInclusive: 8 },
+      }] } };
+      return previousGet(url, config);
+    });
+    const waiting = waitForSessionInputResult({ credentials: { token: 'token', encryption: null },
+      serverId: session.serverId, idOrPrefix: sessionId, localId, observeReply: true,
+      observation: { kind: 'absolute_deadline', deadlineMs: Date.now() + 1000 } });
+    await completionRead.promise;
+    committed = true;
+    observationSocket.emit('ephemeral', { type: 'session-message-reply-pending-v1', v: 1, sessionId, requestLocalId: localId });
+    const observed = await waiting;
+    expect(observed.ok && observed.result.kind).toBe('final_text');
+    expect(observed.ok && observed.replyOutcome).toEqual(outcome);
   });
 
   it('returns owner-reported turn usage with the exact completed input', async () => {

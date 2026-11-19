@@ -169,6 +169,7 @@ export type WaitForSessionInputReplyResult = Exclude<WaitForSessionInputResult, 
   ok: true; sessionId: string; localId: string; inputMessageRef?: SessionMessageRefV1;
   result: SessionInputResultV1 | Readonly<{ kind: 'fulfilled'; outcome: SessionMessageReplyOutcomeV1 }>;
   replyOutcome?: SessionMessageReplyOutcomeV1;
+  replyObservation?: 'no_obligation';
 }>;
 
 export type SessionInputResultObservationV1 =
@@ -1002,7 +1003,7 @@ type AssistantCompletionObservationParams = Readonly<{
 }>;
 type ReplyObservation = Readonly<{
   credentials: StoredCredentials;
-  onOutcome: (outcome: SessionMessageReplyOutcomeV1) => void;
+  onRead: (original: Awaited<ReturnType<typeof readOriginalReply>>) => void;
 }>;
 function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams & { reply: ReplyObservation }): Promise<AssistantTurnOutcome | FulfilledReplyObservation>;
 function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantCompletionObservationParams): Promise<AssistantTurnOutcome>;
@@ -1019,7 +1020,6 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
       try {
         let replyOutcome: SessionMessageReplyOutcomeV1 | undefined;
         let originalHasNoReply = false;
-        let requiresDiscussionReplyOutcome = false;
         let publishedDiscussionAnswer = false;
         let acceptedTurnId: string | undefined;
         if (params.reply) {
@@ -1029,17 +1029,13 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
           // Historical inputs have no obligation; unavailable custody never
           // authorizes falling back to an unrelated or merely later final.
           originalHasNoReply = original.status === 'none';
-          requiresDiscussionReplyOutcome = original.status === 'available'
-            && Boolean(original.progress.workflow && original.progress.discussion);
+          params.reply.onRead(original);
           replyOutcome = original.status === 'available' ? original.progress.outcome : undefined;
           publishedDiscussionAnswer = original.status === 'available' && isPublishedWorkflowDiscussionAnswer(original.progress);
           acceptedTurnId = original.status === 'available' && (!replyOutcome || replyOutcome.kind === 'failed' || publishedDiscussionAnswer)
             ? original.progress.acceptedTurnId : undefined;
-          if (replyOutcome) {
-            params.reply.onOutcome(replyOutcome);
-            if (!('result' in replyOutcome) && replyOutcome.kind !== 'failed' && !publishedDiscussionAnswer) {
-              return { kind: 'fulfilled', outcome: replyOutcome };
-            }
+          if (replyOutcome && !('result' in replyOutcome) && replyOutcome.kind !== 'failed' && !publishedDiscussionAnswer) {
+            return { kind: 'fulfilled', outcome: replyOutcome };
           }
         }
         const outcome = await readAssistantTurnOutcomeAfterCurrentUserTurn({ ...params,
@@ -1057,17 +1053,10 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
           return outcome.kind === 'failed' ? outcome : { kind: 'fulfilled', outcome: replyOutcome };
         }
         if ((!params.reply || originalHasNoReply) && outcome.kind !== 'missing') return outcome;
-        // Ordinary retained Workflow turns can recover from exact native
-        // completion without reply custody. Discussion Workflow success must
-        // carry C2's independent fact into the immutable terminal invocation;
-        // its existing custody wake reopens the original before completion.
-        // Reclaim can first see an already-published C2 answer. Keep that fact
-        // while recovering text only from this original's accepted native turn.
-        // Account Pending wait consumes the original reply projection, which
-        // can commit after the accepted turn becomes readable.
-        if (params.scope !== 'user' && acceptedTurnId && (outcome.kind === 'failed' || outcome.kind === 'cancelled'
-          || outcome.kind === 'completed' && outcome.finalAssistantText !== null
-            && (!requiresDiscussionReplyOutcome || publishedDiscussionAnswer))) return outcome;
+        // A reclaimed Discussion answer already has custody. Its publication
+        // reference points outside the Session, so read prose from its accepted turn.
+        if (publishedDiscussionAnswer && acceptedTurnId
+          && outcome.kind === 'completed' && outcome.finalAssistantText !== null) return outcome;
         if (replyOutcome && 'result' in replyOutcome
           && replyOutcome.result.sessionId === params.sessionId
           && outcome.kind === 'completed' && outcome.finalAssistantMessageId === replyOutcome.result.messageId) {
@@ -1501,14 +1490,16 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     };
-    let replyOutcome: SessionMessageReplyOutcomeV1 | undefined;
+    let originalReply: Awaited<ReturnType<typeof readOriginalReply>> | undefined;
     const outcome = params.observeReply
       ? await waitForAssistantCompletionAfterCurrentUserTurn({ ...completionParams,
-          reply: { credentials: params.credentials, onOutcome: value => { replyOutcome = value; } } })
+          reply: { credentials: params.credentials, onRead: value => { originalReply = value; } } })
       : await waitForAssistantCompletionAfterCurrentUserTurn(completionParams);
+    const replyOutcome = originalReply?.status === 'available' ? originalReply.progress.outcome : undefined;
     if (outcome.kind === 'missing') {
       if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
-      if (params.scope === 'user' && acceptedDeadlineMs !== null && Date.now() >= acceptedDeadlineMs) {
+      const awaitingReply = originalReply?.status === 'available' && !replyOutcome;
+      if ((awaitingReply || params.scope === 'user') && acceptedDeadlineMs !== null && Date.now() >= acceptedDeadlineMs) {
         return { ok: false, code: 'session_reply_timeout' };
       }
     }
@@ -1518,6 +1509,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       localId,
       inputMessageRef: SessionMessageRefV1Schema.parse({ kind: 'session',
         session: { serverId, sessionId: sessionTarget.sessionId }, messageId: promptDelivery.message.id }),
+      ...(originalReply?.status === 'none' ? { replyObservation: 'no_obligation' as const } : {}),
       ...(replyOutcome ? { replyOutcome } : {}),
       result: outcome.kind === 'fulfilled' ? outcome
         : resultFromAssistantTurnOutcome(outcome, { serverId, sessionId: sessionTarget.sessionId }),
