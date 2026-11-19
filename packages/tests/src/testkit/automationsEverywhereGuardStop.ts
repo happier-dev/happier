@@ -79,7 +79,10 @@ export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, acto
 /** Real policy Action → native idle-stop settlement → ordinary observed Run.
  * The minute is the Guard's minimum configured idle deadline, not a test clock. */
 export async function assertGuardStopLifecycle(fixture: TeamSetupFFixture, actor: Account, machine: Machine) {
-  const guarded = await fixture.assertKnownGoodSessionControl(actor, machine);
+  const guarded = await fixture.assertKnownGoodSessionControl(actor, machine).catch(async error => {
+    console.error('F6_GUARD_BASELINE_DAEMON_DIAGNOSTIC', JSON.stringify(await readDaemonDiagnostics(machine.daemon)));
+    throw error;
+  });
   const { saved, selected, readRuns, readSourceStatus } = await attachMachineEventTrigger(fixture, actor, machine, 'guard-stopped',
     { v: 1, all: [{ field: '/sessionId', op: 'eq', value: guarded.sessionId }] });
   const before = await actor.execute('machines.resources.policy.get', machine.target);
