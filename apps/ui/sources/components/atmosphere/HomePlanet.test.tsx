@@ -24,7 +24,7 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
-const nativePictures = vi.hoisted(() => ({ count: 0 }));
+const nativePictures = vi.hoisted(() => ({ count: 0, disposed: 0 }));
 vi.mock('./glyph/glyphAtlas.native', () => ({
   glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
     const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
@@ -41,7 +41,10 @@ vi.mock('@shopify/react-native-skia', async () => {
       Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
       Path: { Make: () => ({ dispose }) },
     },
-    createPicture: () => { nativePictures.count += 1; return { dispose }; },
+    createPicture: () => {
+      nativePictures.count += 1;
+      return { dispose: () => { nativePictures.disposed += 1; } };
+    },
   };
 });
 
@@ -127,6 +130,7 @@ describe('Home glyph subscription locality', () => {
     });
     previous = storage.getState();
     nativePictures.count = 0;
+    nativePictures.disposed = 0;
     storage.setState((state) => ({
       ...state,
       localSettings: { ...localSettingsDefaults },
@@ -191,7 +195,23 @@ describe('Home glyph subscription locality', () => {
     } finally { await screen.unmount(); }
   });
 
-  it('redraws only the digits leaf every two seconds over settled Home, and pauses for writing, focus and reduced motion', async () => {
+  it('firstOpen.01.F1.return draws once per visit, starts no settle and disposes the picture on departure', async () => {
+    const home = <HomePlanet pane={pane} intensity="quiet" digits={false} theme="dark"
+      phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false} focused />;
+    const screen = await renderScreen(<>{home}</>);
+    try {
+      for (let visit = 1; visit <= 12; visit++) {
+        await vi.waitFor(() => expect(nativePictures.count).toBe(visit));
+        expect(screen.findByType(GlyphSurface).props.motion).toBeNull();
+        await screen.update(<></>);
+        expect(nativePictures.disposed).toBe(visit);
+        if (visit < 12) await screen.update(<>{home}</>);
+      }
+      expect(nativePictures.count).toBe(12);
+    } finally { await screen.unmount(); }
+  });
+
+  it('firstOpen.01.F1.rest redraws only the digits leaf every two seconds and pauses for writing, focus and reduced motion', async () => {
     let ticks = 0;
     const interval = globalThis.setInterval;
     vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay, ...args) =>

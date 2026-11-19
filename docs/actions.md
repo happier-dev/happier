@@ -7284,10 +7284,17 @@ write, paired transaction or legacy organization import. Callers that require ap
 valid. Missing preparation is never interpreted as an empty Account document.
 
 In 0.3 development, the Appearance glass section declares `appearance.homeAtmosphere` and
-its source, planet placement/style/digits, picture reference/layout, remembered
+its source, planet intensity and digits, picture reference and layout, remembered
 looks, background places and moments controls (`appearance.atmosphere*`). They use
 `settings.get/set/reset`; the Account CAS owner reapplies nested intents to the
-latest document and preserves sibling preferences. Full atmosphere and look-map
+latest document and preserves sibling preferences.
+`appearance.atmospherePlanetIntensity` accepts `quiet`, `calm` and `full`.
+`appearance.atmospherePlanetDigits` accepts a boolean. Stored Account, Project
+and profile planets from before the intensity setting read as Quiet and retain
+their Digits choice and surrounding backdrop settings.
+`appearance.homeBackgroundField` is an Account preference for Home's dot field.
+It defaults to `animated` and also accepts `still` and `off`.
+Full atmosphere and look-map
 writes use the answering client's picture catalog to retain only differences
 from each known picture's release look; an absent catalog entry retains its
 authored overrides. Look entries contain `look`, `strength` (0–1) and `dissolve`.
