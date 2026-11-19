@@ -1,6 +1,6 @@
 import { ReviewListRequestV1Schema, ReviewListResponseV1Schema, ReviewGetRequestV1Schema, ReviewGetResponseV1Schema, ReviewHistoryRequestV1Schema, ReviewHistoryResponseV1Schema } from '../../reviews/reviewListV1.js';
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../actionIdsReviewHumanV1.js';
-import { ReviewHumanGetInputV1Schema, ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictActionInputV1Schema } from '../../reviews/reviewHumanV1.js';
+import { ReviewHumanGetInputV1Schema, ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictActionInputV1Schema, ReviewVerdictSubmitInputV1Schema } from '../../reviews/reviewHumanV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -66,7 +66,7 @@ function createReviewActionSpecs(): readonly [
   approval: { result: 'required' }, title: 'Submit your verdict', safety: 'safe', sideEffectClass: 'external',
   description: 'Answer a review request as yourself. View access and a request for you are required.',
   placements: [], surfaces: { ui: true, cli: true, agent: false, mcp: false, voice: false, rpc: false },
-  serverTransport: { method: 'POST', path: '/v1/reviews/:reviewId/verdicts' },
+  serverTransport: { method: 'POST', path: '/v1/reviews/:reviewId/verdicts', inputSchema: ReviewVerdictSubmitInputV1Schema },
   cli: { acceptsServerId: true, commands: [{ path: ['review', 'verdict', 'submit'], visibility: 'canonical' }] },
   inputHints: { fields: [{ path: 'reviewId', title: 'Review', widget: 'text', required: true },
     { path: 'roundOrdinal', title: 'Round', widget: 'integer', required: true },

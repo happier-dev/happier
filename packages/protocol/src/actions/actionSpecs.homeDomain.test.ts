@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   HOME_DOMAIN_ACTION_IDS_V1,
   HomeDomainActionIdV1Schema,
+  bindHomeDomainActionHttpRequestV1,
   homeDomainActionInputSchemaV1,
   homeDomainActionOutputSchemaV1,
   homeDomainActionTransportV1,
@@ -13,6 +14,7 @@ import { serializeActionSpec } from './actionCatalog.js';
 import { isActionDiscoverableOnToolSurface } from './actionToolExposure.js';
 import { getActionSpec, listActionSpecs, PublicActionIdSchema } from './actionSpecs.js';
 import { PluginInvocableActionIdSchema } from './pluginActionSurface.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from './actionIdsReviewHumanV1.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js';
 import { HOME_GOVERNANCE_ACTION_SPECS } from './specs/home.js';
@@ -392,6 +394,18 @@ describe('Home and Teams Action family', () => {
       expect(homeDomainActionInputSchemaV1(actionId).safeParse(undefined).success).toBe(false);
       expect(homeDomainActionOutputSchemaV1(actionId).safeParse(undefined).success).toBe(false);
     }
+  });
+
+  it('refuses unsealed person verdict prose at generic Home HTTP binding', () => {
+    const verdict = { reviewId: 'review', roundOrdinal: 1, verdict: 'approve' };
+    expect(() => bindHomeDomainActionHttpRequestV1(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+      { ...verdict, body: 'Private reviewer prose' })).toThrow();
+    const content = { t: 'encrypted', c: 'sealed-reviewer-prose' };
+    expect(bindHomeDomainActionHttpRequestV1(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+      { ...verdict, content, expectedRevision: 0 })).toEqual({
+      method: 'POST', path: '/v1/reviews/review/verdicts',
+      body: { roundOrdinal: 1, verdict: 'approve', content, expectedRevision: 0 },
+    });
   });
 
   it.each(['review_access_forbidden', 'review_not_found', 'review_round_not_admitted'] as const)(
