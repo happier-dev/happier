@@ -4,6 +4,7 @@ import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, openReviewC
   bindReviewCommentEventSensitiveEnvelopeV1, openReviewCommentEventSensitiveEnvelopeV1,
   ReviewCommentEventSensitivePayloadV1Schema, REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 } from './content.js';
 import { executeReviewCommentTransportV1 } from './transport.js';
+import { prepareActionCompletionV1 } from '../../actions/actionCompletion.js';
 import { deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentCommitMutationRequestV1Schema } from './mutation.js';
 import { computeCanonicalDomainSeparatedKeyedDigest } from '../../crypto/canonicalDigest.js';
 
@@ -57,7 +58,10 @@ describe('Review resource content binding', () => {
       actor: { kind: 'user', userId: 'recipient-account' }, randomBytes,
       request: async () => ({ comment: stored }),
     });
-    expect(await execute()).toMatchObject({ comment: { body: comment.body, reviewId: 'review-1', accountId: 'author-account' } });
+    const opened = await execute();
+    expect(opened).toMatchObject({ comment: { body: comment.body, reviewId: 'review-1', accountId: 'author-account' } });
+    expect(prepareActionCompletionV1(undefined, { ok: true, result: opened }))
+      .toMatchObject({ kind: 'completed', value: { comment } });
     await expect(execute('another-review')).rejects.toMatchObject({ code: 'review_comment_content_binding_mismatch' });
   });
 
@@ -79,7 +83,10 @@ describe('Review resource content binding', () => {
       },
       request: async () => { reads++; return { comment: stored }; },
     };
-    await expect(executeReviewCommentTransportV1(request)).resolves.toEqual({ comment });
+    const opened = await executeReviewCommentTransportV1(request);
+    expect(opened).toEqual({ comment });
+    expect(prepareActionCompletionV1(undefined, { ok: true, result: opened }))
+      .toMatchObject({ kind: 'completed', value: { comment } });
     expect(resolved).toEqual([comment.reviewId]);
     expect(reads).toBe(1);
     resolved.length = 0;
