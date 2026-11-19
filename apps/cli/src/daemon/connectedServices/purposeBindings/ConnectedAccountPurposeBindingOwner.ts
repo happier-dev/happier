@@ -280,6 +280,14 @@ export type ConnectedAccountPurposeOperationSelection = Readonly<{
   dispose(): void;
 }>;
 
+export type PrepareConnectedAccountOperationSelection = (input: Readonly<{
+  purpose: QualifiedConnectedAccountPurposeV1;
+  serviceRefs: readonly PluginContributionRef[];
+  account: QualifiedConnectedAccountRef;
+  operationId: string;
+  signal: AbortSignal;
+}>) => Promise<ConnectedAccountPurposeOperationSelection>;
+
 export type ConnectedAccountSessionPurposeBindingLease =
   ConnectedAccountPurposeBindingLease;
 
@@ -522,13 +530,7 @@ export type ConnectedAccountPurposeBindingOwner =
      * durable purpose default. Callers receive only the existing account port,
      * scoped to this finite binding subject.
      */
-    prepareOperationSelection(input: Readonly<{
-      purpose: QualifiedConnectedAccountPurposeV1;
-      serviceRefs: readonly PluginContributionRef[];
-      account: QualifiedConnectedAccountRef;
-      operationId: string;
-      signal: AbortSignal;
-    }>): Promise<ConnectedAccountPurposeOperationSelection>;
+    prepareOperationSelection: PrepareConnectedAccountOperationSelection;
     /**
      * Resolves one current, immutable launch snapshot from already-authorized qualified
      * purpose declarations. This is a read of the canonical selection owner; it neither
@@ -1838,7 +1840,7 @@ export function createConnectedAccountPurposeBindingOwner(
     });
   };
 
-  const prepareOperationSelection: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'] = async input => {
+  const prepareOperationSelection: PrepareConnectedAccountOperationSelection = async input => {
     input.signal.throwIfAborted();
     const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose);
     const target = QualifiedConnectedAccountPurposeBindingTargetV1Schema.parse({
