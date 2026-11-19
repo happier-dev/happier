@@ -614,6 +614,7 @@ describe('AcpBackendEditorScreen', () => {
         await type(screen, `${EDITOR}.command`, 'review');
         expectSaveEnabled(screen);
         await press(screen, `${EDITOR}.save`);
+        expect(screen.findByTestId(`${EDITOR}.error`)?.props.children).toBe('actionConfirmations.turnedOffUnnamedMessage');
         expect(shared.writes).toHaveLength(0);
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Policy retained draft');
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();

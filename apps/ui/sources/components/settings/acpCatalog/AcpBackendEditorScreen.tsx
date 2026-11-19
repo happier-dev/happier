@@ -41,6 +41,7 @@ import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getStorage } from '@/sync/domains/state/storage';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useMachineAdministrationTargetPickerRows } from '@/sync/domains/machines/administration/useTargetSelection';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -293,14 +294,18 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
         let acknowledgedAuthority: DraftAuthority;
         try {
             const execution = await executeAction('agents.acp.backends.upsert', { backend: candidate, ...authority });
-            if (!execution.ok) throw new Error(execution.errorCode);
+            if (!execution.ok && isActionApprovalDeclinedErrorCode(execution.errorCode)) return false;
+            if (!execution.ok) throw createActionExecuteFailureError(execution);
             const receipt = AgentsAcpBackendsUpsertOutputV1Schema.parse(execution.result);
             if ('dryRun' in receipt) throw new Error('acp_backend_write_not_acknowledged');
             saved = receipt.backend;
             acknowledgedAuthority = { expectedRevision: receipt.revision };
         }
-        catch {
-            if (isEditorCurrent()) setState((current) => ({ ...current, errors: { ...current.errors, other: t('common.unavailable') } }));
+        catch (error) {
+            if (isEditorCurrent()) {
+                const other = resolveActionExecutionErrorMessage(error, t('common.unavailable'));
+                setState((current) => ({ ...current, errors: { ...current.errors, other } }));
+            }
             return false;
         }
         if (!isEditorCurrent()) return false;
