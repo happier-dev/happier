@@ -39,6 +39,8 @@ export type SessionTargetLaunch = Readonly<{
     runtimeHome?: string;
     executables: Readonly<Record<string, string>>;
     env: Readonly<Record<string, string>>;
+    /** Names admitted by the Provider/materializer owner; values stay in the runner's launch environment. */
+    providerEnvironmentKeys?: readonly string[];
     workspace?: Readonly<{ hostRoot: string; targetRoot: string }>;
     /** Held shared by every Agent of the Session for its life: marks its delivered files live. */
     lockPath?: string;
@@ -169,8 +171,8 @@ export function assertSessionTargetWorkspaceUnambiguous(workspace: SessionTarget
 
 /** Maps one Agent launch on this Machine to its launch in the target; refuses anything not placed there. */
 export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined,
-    request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>,
-    environmentProjection?: Readonly<Record<string, string>>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }> {
+    request: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }>,
+    environmentProjection?: Readonly<Record<string, string>>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }> {
     const command = launch?.executables[request.command];
     if (!command) throw targetLaunchError('agent_cli_target_unavailable', 'This Agent CLI was not placed in the Session target');
     const hostCwd = request.cwd === undefined ? undefined
@@ -181,10 +183,13 @@ export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined
         : { command: 'flock', args: ['-s', launch.lockPath, command, ...request.args] } : { command, args: request.args };
     // This owner admits target environment keys. Required-file projection can
     // rewrite their paths, but cannot promote any host-only entry.
-    const env = launch?.env ?? {};
+    const env: NodeJS.ProcessEnv = { ...launch?.env };
+    for (const key of launch?.providerEnvironmentKeys ?? []) {
+        env[key] = request.env?.[key];
+    }
     return { ...locked,
         ...(cwd !== undefined ? { cwd } : {}), env: environmentProjection
-            ? Object.fromEntries(Object.keys(env).map(key => [key, environmentProjection[key]!])) : env };
+            ? Object.fromEntries(Object.keys(env).map(key => [key, environmentProjection[key] ?? env[key]])) : env };
 }
 
 export const SESSION_TARGET_PLACEMENT_ENV_KEY = 'HAPPIER_SESSION_TARGET_PLACEMENT';

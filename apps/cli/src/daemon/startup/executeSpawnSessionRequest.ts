@@ -1552,6 +1552,8 @@ export async function executeSpawnSessionRequest(
                     };
                     const launch = await deliverSessionTargetLaunch({ target: sessionTarget.target, sessionKey: sessionTarget.sessionKey,
                         runnerEnvironment: extraEnvForChild, onSessionEnd: sessionTarget.onSessionEnd,
+                        providerEnvironmentKeys: [...new Set([...(spawnEnvironment.providerEnvKeys ?? []),
+                            ...Object.keys(connectedServiceAuth?.env ?? {})])],
                         agent: catalogAgentId ? { id: catalogAgentId, catalog: appliedPluginRuntimeLease.registry } : null,
                         materializedRoot: connectedServiceAuth?.targetMaterializedRoot ?? null,
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,

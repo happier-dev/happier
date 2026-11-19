@@ -412,11 +412,17 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         if (!placed.ok) throw new Error('unreachable');
         const launch = await deliverSessionTargetLaunch({ target: { ...target, exec: (command: string) => target.exec(command, placed.signal) },
             sessionKey: 'spawn-1', onSessionEnd: placed.onSessionEnd, agent: leasedAgent('codex', ['auth.json', 'accounts']),
-            runnerEnvironment: { CODEX_HOME: home, UNRELATED_PATH: '/usr/share', HAPPIER_X: '1' },
+            runnerEnvironment: { CODEX_HOME: home, HAPPIER_CODEX_PROVIDER_API_KEY: 'selected-provider-secret',
+                CONNECTED_AGENT_TOKEN: 'selected-account-secret', UNRELATED_PATH: '/usr/share', HAPPIER_X: '1',
+                HAPPIER_TOKEN: 'host-account-secret', AMBIENT_API_KEY: 'unselected-secret' },
+            providerEnvironmentKeys: ['CODEX_HOME', 'HAPPIER_CODEX_PROVIDER_API_KEY', 'CONNECTED_AGENT_TOKEN', 'UNSET_PROVIDER_KEY'],
             materializedRoot: home, requestAuthMaterializedRoot: null,
             agentCommand: process.execPath, workspace: { hostRoot: '/host/ws', targetRoot: '/workspaces/ws' } });
         const base = join(guest, '.happier', 'sessions', 'spawn-1');
         expect(launch.env).toEqual({ CODEX_HOME: join(base, 'agent-home') });
+        expect(launch.providerEnvironmentKeys).toEqual(['HAPPIER_CODEX_PROVIDER_API_KEY', 'CONNECTED_AGENT_TOKEN', 'UNSET_PROVIDER_KEY']);
+        expect(JSON.stringify(launch)).not.toContain('selected-provider-secret');
+        expect(JSON.stringify(launch)).not.toContain('host-account-secret');
         expect((await readdirAsync(join(base, 'agent-home'))).sort()).toEqual(['accounts', 'auth.json']);
         await expect(readFileAsync(join(base, 'agent-home', 'accounts', 'a1', 'token.json'), 'utf8')).resolves.toBe('fixture-account');
         const placedCli = launch.executables[process.execPath]!;
@@ -500,7 +506,8 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         const launch = await deliverSessionTargetLaunch({ ...base, sessionKey: 'spawn-5',
             onSessionEnd: () => undefined });
         expect(launch.executables[launcher]).toBe(join(guest, '.local', 'bin', 'fake-agent'));
-        expect(channels).toHaveLength(0);
+        expect(channels.flat().join(' ')).not.toContain('CODEX_HOME=');
+        expect(existsSync(join(guest, '.happier', 'sessions', 'spawn-5', 'install.environment'))).toBe(false);
 
         // Installed once per target: a later Session finds it and runs no recipe.
         const again = await deliverSessionTargetLaunch({ ...base, sessionKey: 'spawn-6',
@@ -576,6 +583,7 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
 
     it('reads the Agent\'s declared auth files and install recipe from the leased catalog; a nested auth path (Muse `muse/auth.json`) crosses alone', async () => {
         const { guest, target } = await localGuest();
+        const commands: string[] = [];
         const { mkdir: mkdirAsync, readdir: readdirAsync, writeFile: writeFileAsync, readFile: readFileAsync } = await import('node:fs/promises');
         // The Session's materialized native home (Muse: XDG_CONFIG_HOME) with the auth file next to config that must not cross.
         const home = await mkdtemp(join(tmpdir(), 'stl-muse-')); directories.push(home);
@@ -587,14 +595,17 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         await writeFileAsync(launcher, '#!/bin/sh\n');
         // A fixture-only binary name: the fixture guest is this host, whose own PATH may hold a real `muse`.
         // Muse's installer downloads with the login: it only succeeds when the declared auth file reached the target.
-        const recipe = 'test -f "$XDG_CONFIG_HOME/muse/auth.json" && mkdir -p "$HOME/.local/bin" && printf "#!/bin/sh\\n" > "$HOME/.local/bin/fixture-muse" '
+        const recipe = 'test -n "$SELECTED_INSTALL_TOKEN" && test -f "$XDG_CONFIG_HOME/muse/auth.json" && mkdir -p "$HOME/.local/bin" && printf "#!/bin/sh\\n" > "$HOME/.local/bin/fixture-muse" '
             + '&& chmod 700 "$HOME/.local/bin/fixture-muse" && echo run >> "$HOME/recipe-runs"';
         const runtimeSpec = { id: 'muse', title: 'Muse CLI', binaryName: 'fixture-muse', knownUserBinDirSuffixes: ['.local/bin'],
             sourcePreferenceDefault: 'system-first' as const, managedInstall: null, manualInstallKind: 'vendor_recipe' as const,
             manualInstallRecipes: { linux: [{ cmd: 'sh', args: ['-c', recipe] }] }, acceptsJavaScriptFileOverride: false };
-        const launch = await deliverSessionTargetLaunch({ target, sessionKey: 'spawn-10', agent: leasedAgent('muse', ['muse/auth.json'], runtimeSpec),
+        const launch = await deliverSessionTargetLaunch({ target: { ...target, exec: (command, signal) => {
+            commands.push(command); return target.exec(command, signal);
+        } }, sessionKey: 'spawn-10', agent: leasedAgent('muse', ['muse/auth.json'], runtimeSpec),
             onSessionEnd: () => undefined,
-            runnerEnvironment: { XDG_CONFIG_HOME: home }, materializedRoot: home, requestAuthMaterializedRoot: null,
+            runnerEnvironment: { XDG_CONFIG_HOME: home, SELECTED_INSTALL_TOKEN: 'fixture-install-secret' },
+            providerEnvironmentKeys: ['XDG_CONFIG_HOME', 'SELECTED_INSTALL_TOKEN'], materializedRoot: home, requestAuthMaterializedRoot: null,
             agentCommand: launcher, workspace: { hostRoot: '/h', targetRoot: '/t' } });
         const agentHome = join(guest, '.happier', 'sessions', 'spawn-10', 'agent-home');
         expect(launch.env).toEqual({ XDG_CONFIG_HOME: agentHome });
@@ -602,6 +613,8 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         await expect(readFileAsync(join(agentHome, 'muse', 'auth.json'), 'utf8')).resolves.toBe('fixture-login');
         expect(launch.executables[launcher]).toBe(join(guest, '.local', 'bin', 'fixture-muse'));
         await expect(readFileAsync(join(guest, 'recipe-runs'), 'utf8')).resolves.toBe('run\n');
+        expect(JSON.stringify(commands)).not.toContain('fixture-install-secret');
+        expect(existsSync(join(guest, '.happier', 'sessions', 'spawn-10', 'install.environment'))).toBe(false);
     }, 60_000);
 
     it('refuses what a target cannot use: a loopback credential, an undeclared Agent home, a script or foreign-architecture CLI', async () => {

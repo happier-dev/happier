@@ -6,6 +6,7 @@ import { readdir, readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { ManagedSessionTarget, ManagedSessionTargetRequest } from '@/machines/managed/acquire';
 import { writeManagedChannelFile } from '@/machines/managed/channelFileDelivery';
+import { execWithManagedChannelEnvironment } from '@/machines/managed/channelEnvironmentDelivery';
 import { installAgentCliForTarget, planAgentCliInstallForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { REMOTE_SHA256_FILE_FUNCTION, safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { readExecutablePlatform } from '@happier-dev/cli-common/process';
@@ -262,8 +263,8 @@ async function hashFile(path: string): Promise<string> {
  *   `muse/auth.json`, Codex's `accounts`) are copied from the Session's materialized Agent home to
  *   `~/.happier/sessions/<key>/agent-home`; config, hooks, MCP settings and
  *   plugins never cross. Runner env entries pointing into that home are
- *   rewritten there; no other env crosses (values would sit in the guest's
- *   process list).
+ *   rewritten there. Selected Provider/materializer environment names accompany
+ *   placement; admitted values cross only through the private stdin file publisher.
  * - Lifetime: the guest directory is removed by a Session-end step of the
  *   placement (it runs before the authority ends). Leftovers of Sessions that ended without
  *   cleanup (daemon crash) are swept when a later Session is placed: a directory
@@ -293,6 +294,7 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     target: Pick<ManagedSessionTarget, 'id' | 'holderPath' | 'home' | 'platform' | 'helperPath' | 'exec' | 'putFile' | 'openChannel' | 'agentEnvironment'>;
     sessionKey: string;
     runnerEnvironment: Readonly<Record<string, string>>;
+    providerEnvironmentKeys?: readonly string[];
     materializedRoot: string | null;
     requestAuthMaterializedRoot: string | null;
     agentCommand: string | null;
@@ -425,7 +427,14 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
         }
     }
 
+    // Materialized home selectors already have guest paths, not the runner's host paths.
+    const providerEnvironmentKeys = input.providerEnvironmentKeys?.filter(key => !Object.hasOwn(env, key));
     Object.assign(env, input.target.agentEnvironment);
+    // Provider selection replaces target defaults, including explicit unsets.
+    // Names alone enter placement metadata; each launch supplies its admitted values.
+    for (const key of providerEnvironmentKeys ?? []) delete env[key];
+    const installEnvironment: NodeJS.ProcessEnv = { ...env };
+    for (const key of providerEnvironmentKeys ?? []) installEnvironment[key] = input.runnerEnvironment[key];
 
     const executables: Record<string, string> = {};
     if (input.agentCommand) {
@@ -436,9 +445,11 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
             : await stageAgentCliReleaseForTarget({ platform, runtime, install: input.agentCliInstall, signal });
         executables[input.agentCommand] = release
             ? await placeAgentCliRelease({ target: input.target, sessionKey: input.sessionKey, release, run, signal })
-            : await installAgentCliInTarget({ target: input.target, runtime, env, signal });
+            : await installAgentCliInTarget({ target: input.target, runtime, env: installEnvironment,
+                environmentPath: posix.join(base, 'install.environment'), signal });
     }
-    return { executables, env, workspace, runtimeHome: base, lockPath: posix.join(base, '.live'), lockExecutable: input.target.helperPath };
+    return { executables, env, ...(providerEnvironmentKeys?.length ? { providerEnvironmentKeys } : {}),
+        workspace, runtimeHome: base, lockPath: posix.join(base, '.live'), lockExecutable: input.target.helperPath };
 }
 
 type AgentCliRelease = Readonly<{ root: string; files: ReadonlyArray<string>; command: string }>;
@@ -520,7 +531,6 @@ async function readSessionTargetAgent(agent: Readonly<{ id: string; catalog: Ses
         runtime: agent.catalog.contributes.agentDefinitionsById.get(agent.id)?.runtimeSpec ?? null };
 }
 
-const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 /**
  * The provider's install recipe run in the target (the guest user's own
@@ -530,9 +540,10 @@ const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
  * runtime and is not placeable.
  */
 async function installAgentCliInTarget(input: Readonly<{
-    target: Pick<ManagedSessionTarget, 'home' | 'platform' | 'exec'>;
+    target: Pick<ManagedSessionTarget, 'home' | 'platform' | 'exec' | 'openChannel'>;
     runtime: AgentCliRuntimeDescriptor | null;
-    env: Readonly<Record<string, string>>;
+    env: Readonly<NodeJS.ProcessEnv>;
+    environmentPath: string;
     signal: AbortSignal;
 }>): Promise<string> {
     const { platform } = input.target;
@@ -544,15 +555,18 @@ async function installAgentCliInTarget(input: Readonly<{
     const q = safeBashSingleQuote;
     const binDirectories = (input.runtime.knownUserBinDirSuffixes ?? []).map(suffix => posix.join(input.target.home, suffix));
     const prelude = [`export HOME=${q(input.target.home)}`,
-        ...Object.entries(input.env).filter(([name]) => SHELL_NAME.test(name)).map(([name, value]) => `export ${name}=${q(value)}`),
         ...(binDirectories.length ? [`export PATH=${q(binDirectories.join(':'))}:"$PATH"`] : []), 'cd "$HOME"'].join('; ');
-    const locate = async () => (await input.target.exec(`${prelude}; command -v ${q(input.runtime!.binaryName)} || true`, input.signal)).stdout.trim();
+    const run = (command: string) => execWithManagedChannelEnvironment({ path: input.environmentPath,
+        environment: input.env, command: `${prelude}; ${command}`, signal: input.signal,
+        exec: command => input.target.exec(command, input.signal),
+        openChannel: argv => input.target.openChannel(argv, input.signal) });
+    const locate = async () => (await run(`command -v ${q(input.runtime!.binaryName)} || true`)).stdout.trim();
     const present = await locate();
     if (present.startsWith('/')) return present;
     for (const step of planned.plan.commands) {
-        const runnable = (await input.target.exec(`${prelude}; command -v ${q(step.cmd)} >/dev/null 2>&1 && echo yes`, input.signal)).stdout.trim();
+        const runnable = (await run(`command -v ${q(step.cmd)} >/dev/null 2>&1 && echo yes`)).stdout.trim();
         if (runnable !== 'yes') throw unavailable(`its install recipe needs \`${step.cmd}\` in the target`);
-        const result = await input.target.exec(`${prelude}; ${[step.cmd, ...step.args].map(q).join(' ')}`, input.signal);
+        const result = await run([step.cmd, ...step.args].map(q).join(' '));
         if (result.status !== 0) {
             throw unavailable(result.status === 127 ? 'its install recipe needs a command the target does not have' : 'its install recipe failed in the target');
         }

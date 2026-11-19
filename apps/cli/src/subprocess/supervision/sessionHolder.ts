@@ -15,6 +15,7 @@ import { logger } from '@/ui/logger';
 import { isOwnerOnlyPath, resolveOwnerOnlySocketRoot } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import { execWithManagedChannelEnvironment } from '@/machines/managed/channelEnvironmentDelivery';
 import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPlacement } from './sessionTargetRelay';
 import { PROCESS_TERMINATION_GRACE_MS } from './terminationPolicy';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
@@ -177,8 +178,8 @@ export type SessionHolderTarget = Readonly<{
      * for anything the launch step did not place there.
      */
     prepareLaunch?(launch: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv;
-        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>
-        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }>>;
+        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }>
+        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }>>;
 }>;
 
 export type AgentSessionHolderLaunch =
@@ -1127,8 +1128,7 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
                 ...(launch.env ? { env: launch.env } : {}), ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
                 ...(launch.signal ? { signal: launch.signal } : {}) })
             : { command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), env: {} };
-        const environment = Object.entries(prepared.env).map(([name, value]) => `${name}=${value}`);
-        const argv = [...(environment.length ? ['env', ...environment] : []), prepared.command, ...prepared.args];
+        const argv = [prepared.command, ...prepared.args];
         const ready = `${launch.socketPath}.ready`;
         const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
             ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
@@ -1136,7 +1136,9 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
             `nohup ${[target.holderPath, 'serve', '--socket', launch.socketPath, '--session-mcp', ...holderTerminalArgs(launch), '--', ...argv].map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
             `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
         launch.signal?.throwIfAborted();
-        return target.exec(command);
+        return execWithManagedChannelEnvironment({ path: `${launch.socketPath}.environment`, environment: prepared.env,
+            command, ...(launch.signal ? { signal: launch.signal } : {}),
+            exec: command => target.exec(command), openChannel: argv => target.openChannel(argv) });
     };
     void prepare().then((result) => {
         const line = result.stdout.split('\n')[0] ?? '';

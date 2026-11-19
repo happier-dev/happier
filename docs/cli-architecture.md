@@ -7893,7 +7893,14 @@ channels and exits when the holder closes that connection.
     declares as its auth material (`authIsolation.secretEntries` of its native-home
     descriptor) are copied from the Session's connected-service Agent home to
     `~/.happier/sessions/<key>/agent-home`; config, hooks, MCP settings and plugins never
-    cross. Only env entries pointing into that home are rewritten for the Agent. The
+    cross. Env entries pointing into that home are rewritten for the Agent. Selected
+    Provider and connected-service materializer environment names also accompany the
+    placement, including explicit unsets; their values come from the admitted runner
+    launch. Holder startup and target CLI installation deliver those values through
+    the existing stdin file channel into a 0600 file in a 0700 directory. The target
+    shell sources and removes the file before launching; values never enter provider
+    command arguments. A refused launch removes the file through the same target
+    authority when it remains reachable. The Session
     directory is removed by a Session-end step of the placement (it runs before the
     authority ends) unless an Agent of the Session still holds its `.live` lock (a
     crashed runner's spared Agent keeps its credentials for the adopting respawn);

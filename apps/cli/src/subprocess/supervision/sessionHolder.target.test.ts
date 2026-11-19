@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,7 @@ import { assertSessionTargetArtifactsCurrent } from '@/test-setup';
 
 import { currentSessionHolderScope, registerSessionMcpRelayAcceptor, SessionHolderChild, type SessionHolderTarget } from './sessionHolder';
 import { readSessionTargetHolderArtifacts } from './sessionHolderTargetArtifacts';
+import { prepareTargetAgentLaunch } from './sessionTargetRelay';
 
 /**
  * A Session's Agent held in a target (placement "target"): the holder runs
@@ -48,12 +49,15 @@ function isAlive(pid: number): boolean {
     try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-function localTarget(directory: string, executable: string) {
+function localTarget(directory: string, executable: string, targetEnvironment?: NodeJS.ProcessEnv) {
     const channels: ChildProcess[] = [];
+    const commands: string[] = [];
+    const channelArguments: string[][] = [];
     const target: SessionHolderTarget = {
         id: 'local-test-target', holderPath: executable, socketDirectory: directory,
         exec: command => new Promise((resolve, reject) => {
-            const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+            commands.push(command);
+            const child = spawn('sh', ['-c', command], { env: { ...process.env, ...targetEnvironment, HOME: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
             let stdout = '';
             let stderr = '';
             child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
@@ -66,6 +70,7 @@ function localTarget(directory: string, executable: string) {
             });
         }),
         openChannel: argv => {
+            channelArguments.push([...argv]);
             const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
             channels.push(child);
             const channel = Duplex.from({ readable: child.stdout!, writable: child.stdin! });
@@ -73,7 +78,7 @@ function localTarget(directory: string, executable: string) {
             return channel;
         },
     };
-    return { target, channels };
+    return { target, channels, commands, channelArguments };
 }
 
 describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session holder in a target, reached through provider operations', () => {
@@ -85,6 +90,64 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session hold
         await writeFile(agent, AGENT_SOURCE);
     });
     afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
+
+    it('delivers the admitted credential environment to the Agent without putting values in provider command arguments', async () => {
+        const provider = localTarget(directory, holderExecutable!, { CLEARED_PROVIDER: 'synthetic-target-default' });
+        const secret = "selected-'credential\nwith-newline";
+        const script = join(directory, 'credential-agent.mjs');
+        const environmentPath = join(directory, 'env.sock.environment');
+        let permissions: number[] | null = null;
+        await writeFile(script, `import { existsSync } from 'node:fs'; process.stdout.write(JSON.stringify({ present: process.env.PROVIDER_TOKEN === ${JSON.stringify(secret)}, fileRemoved: !existsSync(${JSON.stringify(environmentPath)}), clearedAbsent: process.env.CLEARED_PROVIDER === undefined, unrelatedAbsent: process.env.HAPPIER_TEST_HOST_ONLY === undefined }) + '\\n'); process.stdin.resume();`);
+        const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: [script], cwd: directory,
+            env: { PROVIDER_TOKEN: secret, HAPPIER_TEST_HOST_ONLY: 'synthetic-host-only' },
+            sessionHolder: { kind: 'spawn', executablePath: holderExecutable!, socketPath: join(directory, 'env.sock'), role: 'primary',
+                target: { ...provider.target, prepareLaunch: request => prepareTargetAgentLaunch({
+                    executables: { [process.execPath]: process.execPath }, env: {},
+                    workspace: { hostRoot: directory, targetRoot: directory },
+                    providerEnvironmentKeys: ['PROVIDER_TOKEN', 'CLEARED_PROVIDER'],
+                }, request),
+                    exec: async command => {
+                        if (command.includes('mkfifo')) {
+                            permissions = await Promise.all([environmentPath, directory].map(async path => (await stat(path)).mode & 0o777)).catch(() => null);
+                        }
+                        return provider.target.exec(command);
+                    } } },
+            spawnOptions: { detached: true } });
+        const child = supervised.child as unknown as SessionHolderChild;
+        let output = '';
+        child.stdout.on('data', (bytes: Buffer) => { output += bytes.toString(); });
+        try {
+            await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); });
+            await expect.poll(() => output).toBe('{"present":true,"fileRemoved":true,"clearedAbsent":true,"unrelatedAbsent":true}\n');
+            expect(permissions).toEqual([0o600, 0o700]);
+            expect(JSON.stringify([provider.commands, provider.channelArguments])).not.toContain('selected-');
+            expect(JSON.stringify([provider.commands, provider.channelArguments])).not.toContain('PROVIDER_TOKEN');
+        } finally { await supervised.dispose(); await supervised.handle.waitForExit(); }
+    }, 60_000);
+
+    it('removes the private credential file when the provider refuses the holder launch', async () => {
+        const provider = localTarget(directory, holderExecutable!);
+        const environmentPath = join(directory, 'refused-env.sock.environment');
+        let delivered = false;
+        const refusal = Object.assign(new Error('fixture provider unavailable'), { code: 'provider_unavailable' });
+        const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: [agent], cwd: directory,
+            sessionHolder: { kind: 'spawn', executablePath: holderExecutable!, socketPath: join(directory, 'refused-env.sock'), role: 'primary',
+                target: { ...provider.target, prepareLaunch: request => ({ ...request, env: { PROVIDER_TOKEN: 'selected-secret' } }),
+                    exec: async command => {
+                        if (command.includes('mkfifo')) {
+                            delivered = (await stat(environmentPath).catch(() => null))?.isFile() === true;
+                            throw refusal;
+                        }
+                        return provider.target.exec(command);
+                    } } },
+            spawnOptions: { detached: true } });
+        const child = supervised.child as unknown as SessionHolderChild;
+        const error = await new Promise<Error>(resolve => child.once('error', resolve));
+        expect(error).toBe(refusal);
+        expect(delivered).toBe(true);
+        await expect(stat(environmentPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(JSON.stringify([provider.commands, provider.channelArguments])).not.toContain('selected-secret');
+    }, 60_000);
 
     it('a dropped channel mid-turn reattaches with no gap or duplicate; Stop ends the Agent group through the holder', async () => {
         const { target, channels } = localTarget(directory, holderExecutable!);
