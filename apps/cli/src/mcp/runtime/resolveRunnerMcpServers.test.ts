@@ -245,7 +245,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       expect(materialReads).toBe(0);
     } else {
       const admitted = await profile;
-      try { expect(Object.keys(admitted.mcpServers)).toEqual(['requester-tools']); expect(materialReads).toBeGreaterThan(0); }
+      try { expect(Object.keys(admitted.mcpServers)).toEqual(['requester_tools']); expect(materialReads).toBeGreaterThan(0); }
       finally { await admitted.happierMcpServer.stop(); }
     }
     expect(machineReads).toBe(1);
@@ -492,14 +492,14 @@ describe('resolveRunnerMcpServers catalog admission', () => {
           credentials, accountSettings: captured.settings, accountSettingsSnapshot: captured,
           machineId: 'machine-1', directory: root, tmpDir: root, includeHappierMcpServer: false, env });
         if (strictMode) {
-          await expect(resolution).rejects.toThrow(/Failed to materialize MCP server package-tools: Configured MCP command npx was not found/);
+          await expect(resolution).rejects.toThrow(/Failed to materialize MCP server package_tools: Configured MCP command npx was not found/);
           expect(notices).toEqual([]);
         } else {
           const result = await resolution;
           try {
             expect(Object.keys(result.mcpServers)).toEqual(['available']);
             expect(notices.map(readSessionCapabilityNoticeV1).filter(Boolean)).toEqual([{ v: 1, items: [{
-              kind: 'mcp_server', name: 'package-tools', itemId: 'unavailable-id', code: 'invalid_server',
+              kind: 'mcp_server', name: 'package_tools', itemId: 'unavailable-id', code: 'invalid_server',
               detail: expect.stringContaining('Configured MCP command npx was not found'),
             }] }]);
           } finally { await result.happierMcpServer.stop(); }
@@ -1050,7 +1050,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
 
   it('materializes the admitted row after the authored root has been removed', async () => {
     const result = await resolve({ snapshot: snapshot([server('row-server')]) });
-    try { expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'row-server']); }
+    try { expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'row_server']); }
     finally { await result.happierMcpServer.stop(); }
   });
 
@@ -1140,7 +1140,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
   it('does not let retained root contents override a row-owned server set', async () => {
     const result = await resolve({ snapshot: { ...snapshot([server('row-server')]),
       rawSettings: { mcpServersSettingsV1: { v: 1, strictMode: false, servers: [server('retained-server')], bindings: [] } } } });
-    try { expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'row-server']); }
+    try { expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'row_server']); }
     finally { await result.happierMcpServer.stop(); }
   });
 
@@ -1184,7 +1184,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       savedSecretResources: [resource], operationContext, machineId: 'machine-1', directory: '/tmp/repo', env: {}, tmpDir: null };
     const result = await resolveRunnerMcpServers(input);
     try {
-      const launch = result.mcpServers['private-server'];
+      const launch = result.mcpServers['private_server'];
       expect(JSON.stringify(launch)).not.toContain('fresh-private-value');
       const configPath = launch?.env?.HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE;
       expect(configPath).toBeDefined();
