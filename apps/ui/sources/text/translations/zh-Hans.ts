@@ -16449,7 +16449,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} 令牌`,
             factIncomplete: "历史不完整",
             flowEmptyTitle: "历史不足以绘制趋势",
-            flowEmptyReason: "用量跨越两个或以上区间后显示。",
+            flowEmptyReason: "记录到更长一段连续用量后显示。",
             efficiencyNoBasisTitle: "暂无可计算比率的依据",
             efficiencyNoBasisReason: "比率需要令牌分类和已知费用。",
             costUnpricedCaption: "总计不可用：部分用量没有上报费用、模型价格或已记录的估算。",

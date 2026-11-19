@@ -230,6 +230,28 @@ describe('shared Usage identity and dependent coverage', () => {
         const partial = trimUsageFlowUnreadTail([at(5, 3, 1), at(2, 4, null)]);
         expect(partial.map(entry => entry.points.length)).toEqual([3, 3]);
     });
+    it('says a flow needs more history when only two adjacent days of a month were recorded, never one stray diagonal (USAGE-ACCEPT 1118 #13)', async () => {
+        const day = 86_400_000;
+        const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 30 * day }, metric: 'tokens' });
+        const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
+        const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
+        const timelineAt = (days: readonly number[]) => days.map(index => ({ bucketStartMs: index * day, bucketEndMs: (index + 1) * day,
+            leaders: [{ key: 'opencode:local', label: 'OpenCode', eventCount: 1, tokens, cost,
+                sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens, cost }] }] }));
+        const sliceFor = (days: readonly number[]) => resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
+            v: 1, totals: { eventCount: days.length, tokens: { ...tokens, total: 10 * days.length, input: 10 * days.length }, cost },
+            engineTimeline: timelineAt(days),
+        } }] }, bundledUsageModelPriceCatalog).results[0]!;
+        const modelFor = (slice: UsageWidgetBodyModel['slice']): UsageWidgetBodyModel => ({ requestedQuery: null, shownQuery: null, slice, pending: false,
+            error: null, freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} });
+        const sparse = sliceFor([26, 27]);
+        const screen = await renderScreen(<UsageFlowWidget query={query} slice={sparse} model={modelFor(sparse)} serverId="home" id="usage_flow" testID="flow-sparse" />);
+        expect(screen.findAllByType(StackedSeriesChart)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain(t('usage.board.page.flowEmptyTitle'));
+        const run = sliceFor([24, 25, 26, 27]);
+        await screen.update(<UsageFlowWidget query={query} slice={run} model={modelFor(run)} serverId="home" id="usage_flow" testID="flow-sparse" />);
+        expect(screen.findAllByType(StackedSeriesChart)).toHaveLength(1);
+    });
     it('keeps a body-replacing insufficient state to one line at a full-width footprint (USAGE-ACCEPT #5)', async () => {
         const { UsageBodyInsufficient } = await import('./usageBodyKit');
         const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');

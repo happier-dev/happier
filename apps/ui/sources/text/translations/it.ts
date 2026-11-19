@@ -17179,7 +17179,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} token`,
             factIncomplete: "cronologia parziale",
             flowEmptyTitle: "Cronologia insufficiente",
-            flowEmptyReason: "Compare quando l'utilizzo copre due o più intervalli.",
+            flowEmptyReason: "Compare quando c'è un periodo più lungo di utilizzo registrato.",
             efficiencyNoBasisTitle: "Ancora nessuna base per i rapporti",
             efficiencyNoBasisReason: "I rapporti richiedono categorie di token e un costo noto.",
             costUnpricedCaption: "Totale non disponibile: parte dell’utilizzo non ha costo riportato, prezzo del modello né stima registrata.",

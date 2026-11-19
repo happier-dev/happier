@@ -15970,7 +15970,7 @@ settingsSession: {
           factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens`,
           factIncomplete: "historial parcial",
           flowEmptyTitle: "No hi ha prou historial per mostrar l’evolució",
-          flowEmptyReason: "Apareix quan l’ús abasta dos o més intervals.",
+          flowEmptyReason: "Apareix quan hi ha un període més llarg d’ús registrat.",
           efficiencyNoBasisTitle: "Encara no hi ha base per calcular ràtios",
           efficiencyNoBasisReason: "Les ràtios necessiten categories de tokens i un cost conegut.",
           costUnpricedCaption: "Total no disponible: part de l’ús no té cost informat, preu de model ni estimació registrada.",

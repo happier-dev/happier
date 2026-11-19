@@ -16920,7 +16920,7 @@ settingsSession: {
       factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokenów`,
       factIncomplete: "niepełna historia",
       flowEmptyTitle: "Za mało historii, aby pokazać przepływ",
-      flowEmptyReason: "Pojawi się, gdy użycie obejmie co najmniej dwa przedziały.",
+      flowEmptyReason: "Pojawi się, gdy zapisane użycie obejmie dłuższy ciągły okres.",
       efficiencyNoBasisTitle: "Brak podstaw do obliczenia wskaźników",
       efficiencyNoBasisReason: "Wskaźniki wymagają kategorii tokenów i znanego kosztu.",
       costUnpricedCaption: "Suma niedostępna: część użycia nie ma zgłoszonego kosztu, ceny modelu ani zapisanego szacunku.",

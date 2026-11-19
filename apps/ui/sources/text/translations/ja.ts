@@ -17085,7 +17085,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} トークン`,
             factIncomplete: "履歴は一部のみ",
             flowEmptyTitle: "推移を描くには履歴が足りません",
-            flowEmptyReason: "2 つ以上の期間に使用があると表示されます。",
+            flowEmptyReason: "記録された使用がもう少し長く続くと表示されます。",
             efficiencyNoBasisTitle: "比率の基準がまだありません",
             efficiencyNoBasisReason: "比率にはトークン区分と既知の費用が必要です。",
             costUnpricedCaption: "合計は利用できません: 一部の使用量には報告コスト、モデル価格、記録された見積もりがありません。",

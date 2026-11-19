@@ -16682,7 +16682,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} jetons`,
             factIncomplete: "historique partiel",
             flowEmptyTitle: "Pas assez d'historique",
-            flowEmptyReason: "Il apparaît dès que l'utilisation couvre au moins deux intervalles.",
+            flowEmptyReason: "Il apparaît dès qu'une période plus longue d'utilisation est enregistrée.",
             efficiencyNoBasisTitle: "Pas encore de base pour les ratios",
             efficiencyNoBasisReason: "Les ratios exigent des catégories de jetons et un coût connu.",
             costUnpricedCaption: "Total indisponible : une partie de l’usage n’a ni coût signalé, ni prix de modèle, ni estimation enregistrée.",

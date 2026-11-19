@@ -16989,7 +16989,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} Tokens`,
             factIncomplete: "unvollständiger Verlauf",
             flowEmptyTitle: "Zu wenig Verlauf für einen Verlauf",
-            flowEmptyReason: "Erscheint, sobald Nutzung mehrere Zeitabschnitte umfasst.",
+            flowEmptyReason: "Erscheint, sobald Nutzung über einen längeren Zeitraum am Stück erfasst ist.",
             efficiencyNoBasisTitle: "Noch keine Basis für Kennzahlen",
             efficiencyNoBasisReason: "Kennzahlen brauchen Token-Kategorien und bekannte Kosten.",
             costUnpricedCaption: "Gesamtwert nicht verfügbar: Für einen Teil der Nutzung gibt es weder gemeldete Kosten noch Modellpreis noch erfasste Schätzung.",

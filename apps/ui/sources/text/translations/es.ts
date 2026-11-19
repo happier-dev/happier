@@ -16808,7 +16808,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens`,
             factIncomplete: "historial parcial",
             flowEmptyTitle: "No hay historial suficiente",
-            flowEmptyReason: "Aparece cuando el uso abarca dos o más intervalos.",
+            flowEmptyReason: "Aparece cuando haya un periodo más largo de uso registrado.",
             efficiencyNoBasisTitle: "Aún sin base para ratios",
             efficiencyNoBasisReason: "Los ratios requieren categorías de tokens y un costo conocido.",
             costUnpricedCaption: "Total no disponible: parte del uso no tiene coste informado, precio de modelo ni estimación registrada.",

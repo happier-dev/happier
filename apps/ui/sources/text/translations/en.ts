@@ -20271,7 +20271,7 @@ const enUsage = {
       factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens`,
       factIncomplete: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.factIncomplete,
       flowEmptyTitle: "Not enough history for a flow",
-      flowEmptyReason: "It appears once usage spans two or more buckets.",
+      flowEmptyReason: "It appears once there's a longer stretch of recorded usage.",
       efficiencyNoBasisTitle: "No basis for ratios yet",
       efficiencyNoBasisReason: "Ratios need token categories and a known cost.",
       costUnpricedCaption: "Total unavailable: some usage has no reported cost, model price or recorded estimate.",

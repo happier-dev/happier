@@ -16752,7 +16752,7 @@ settingsSession: {
             factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} токенов`,
             factIncomplete: "неполная история",
             flowEmptyTitle: "Недостаточно истории",
-            flowEmptyReason: "Появится, когда использование охватит два и более интервала.",
+            flowEmptyReason: "Появится, когда будет записан более длинный непрерывный период использования.",
             efficiencyNoBasisTitle: "Пока нет основы для показателей",
             efficiencyNoBasisReason: "Нужны категории токенов и известная стоимость.",
             costUnpricedCaption: "Итог недоступен: часть использования не имеет ни отчётной стоимости, ни цены модели, ни записанной оценки.",

@@ -161,7 +161,9 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   // A period that recorded nothing says so, like the daily bars beside it; "needs more history" is for real but thin usage.
   if (props.slice.accounting?.totals.eventCount === 0)
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
-  if (series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData))
+  // Two or three recorded buckets among unread ones have no shape to follow: drawn, they are one stray stroke beside the
+  // daily bars that already show them. The flow waits for a stretch of recorded usage (USAGE-ACCEPT 1118 #13).
+  if (series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData) || !usageFlowHasShape(series))
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
@@ -228,6 +230,21 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
       />
     </View>
   );
+}
+
+/** The fewest recorded buckets in a row that draw as a flow; the chart draws shorter runs as a lone line. */
+const USAGE_FLOW_MIN_RUN = 4;
+
+/** A flow has a shape once some stretch of consecutive buckets carries a recorded value (all of them when the period is shorter). */
+function usageFlowHasShape(series: readonly Readonly<{ points: readonly Readonly<{ y: number | null }>[] }>[]): boolean {
+  const length = Math.max(0, ...series.map(entry => entry.points.length));
+  let longest = 0;
+  let run = 0;
+  for (let index = 0; index < length; index += 1) {
+    run = series.some(entry => entry.points[index]?.y != null) ? run + 1 : 0;
+    longest = Math.max(longest, run);
+  }
+  return longest > 0 && longest >= Math.min(USAGE_FLOW_MIN_RUN, length);
 }
 
 /**
