@@ -103,45 +103,53 @@ const createNewProfileRouteId = 'new';
 const themesListRoute = '/settings/appearance/themes' as const;
 
 export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorScreen() {
+    const params = useLocalSearchParams();
+    const profileId = getProfileIdParam(params.profileId);
+    const isNewProfile = profileId === createNewProfileRouteId;
+    const previewRef = isNewProfile ? getProfileIdParam(params.previewRef) : null;
+    const startFrom = isNewProfile && !previewRef ? getProfileIdParam(params.from) : null;
+    const initialView = getProfileIdParam(params.view) === 'css' ? 'css' : 'colors';
+    const draftKey = isNewProfile ? JSON.stringify([profileId, previewRef, startFrom, initialView]) : profileId;
+    return <ThemeProfileEditorDraft key={draftKey} profileId={profileId} previewRef={previewRef}
+        startFrom={startFrom} initialView={initialView} />;
+});
+
+function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, initialView }: Readonly<{
+    profileId: string | null;
+    previewRef: string | null;
+    startFrom: string | null;
+    initialView: ThemeEditorView;
+}>) {
     const presented = useLayoutPresentationActive();
     const router = useRouter();
-    const params = useLocalSearchParams();
     const themePreference = useLocalSetting('themePreference');
     const selection = useThemeProfileReferenceSelection(presented);
     const scope = useAccountSettingsScope();
     const { execute } = useMountedActionExecution(scope);
     const executeTheme = useThemeActionExecution();
     const editorActions = React.useMemo(() => createThemeProfileEditorActions(executeTheme), [executeTheme]);
-    const profileId = getProfileIdParam(params.profileId);
     const isNewProfile = profileId === createNewProfileRouteId;
-    const previewRef = isNewProfile ? getProfileIdParam(params.previewRef) : null;
     const previewSource = React.useMemo(() => {
         try { return { snapshot: previewRef ? getThemeTryOnOwner().read(previewRef) : null, error: null }; }
         catch (error) { return { snapshot: null, error }; }
     }, [previewRef]);
-    const routeKey = previewRef ? `${profileId}:${previewRef}` : profileId;
-    const startFromParam = isNewProfile ? getProfileIdParam(params.from) : null;
     const initialMode = resolveInitialEditorMode(themePreference);
     const reference = previewRef ? null : isNewProfile
-        ? startFromParam ? readThemePresetSourceReferenceId(startFromParam) : selection[initialMode]
+        ? startFrom ? readThemePresetSourceReferenceId(startFrom) : selection[initialMode]
         : readThemePresetSourceReferenceId(profileId);
-    const initialSource = React.useRef({ routeId: routeKey, reference });
+    const initialSource = React.useRef(reference);
     const savedReference = React.useRef<ThemeReference | null>(null);
-    if (initialSource.current.routeId !== routeKey) {
-        initialSource.current = { routeId: routeKey, reference };
-        savedReference.current = null;
-    }
-    const sourceRead = useThemeProfileDocument(initialSource.current.reference, presented);
+    const sourceRead = useThemeProfileDocument(initialSource.current, presented);
     const sourceDocument = previewSource.snapshot?.document ?? sourceRead.document;
     const sourceProfile = sourceDocument?.profile ?? null;
-    const builtInPresetId = initialSource.current.reference?.kind === 'built-in' ? initialSource.current.reference.presetId : null;
+    const builtInPresetId = initialSource.current?.kind === 'built-in' ? initialSource.current.presetId : null;
     const builtInDefinition = BUILT_IN_THEME_PROFILES.find(definition => definition.presetId === builtInPresetId);
     const readonly = !isNewProfile && sourceProfile?.source !== undefined && sourceProfile.source.kind !== 'yours';
     const entries = useThemeLibraryEntries(presented && (isNewProfile || sourceProfile !== null && !readonly));
     const share = useThemePluginShare(executeTheme, entries);
     const persisted = !isNewProfile && sourceDocument !== null;
     const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(entries), [entries]);
-    const initialPresetId = initialSource.current.reference ? getThemePresetSourceReferenceId(initialSource.current.reference) : initialMode;
+    const initialPresetId = initialSource.current ? getThemePresetSourceReferenceId(initialSource.current) : initialMode;
     const [selectedPresetId, setSelectedPresetId] = React.useState(initialPresetId);
     const selectedPreset = React.useMemo(() => presetOptions.find(option => option.id === selectedPresetId) ?? null,
         [presetOptions, selectedPresetId]);
@@ -149,13 +157,13 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         ? resolveThemePresetSourcePreferredMode(sourceProfile) : initialMode);
     const [draft, setDraft] = React.useState<ThemeProfileV1 | null>(null);
     const retainedDocument = React.useRef<ThemeProfileDocument | null>(null);
-    const initializedRoute = React.useRef<string | null>(null);
+    const initialized = React.useRef(false);
     React.useEffect(() => {
         if (!presented) return;
-        if (initializedRoute.current === routeKey) return;
+        if (initialized.current) return;
         if (previewRef && !previewSource.snapshot?.document) return;
-        if (initialSource.current.reference && !sourceDocument && (!isNewProfile || sourceRead.state !== 'missing')) return;
-        initializedRoute.current = routeKey;
+        if (initialSource.current && !sourceDocument && (!isNewProfile || sourceRead.state !== 'missing')) return;
+        initialized.current = true;
         retainedDocument.current = sourceDocument;
         if (previewSource.snapshot?.document) {
             setDraft({ ...previewSource.snapshot.document.profile, assetAppearance: previewSource.snapshot.mode });
@@ -176,7 +184,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         }).profile : { ...profile, assetAppearance: initialMode };
         setDraft(next);
         if (sourceDocument) setMode(resolveThemePresetSourcePreferredMode(sourceDocument.profile));
-    }, [presented, entries, initialMode, isNewProfile, routeKey, previewRef, previewSource, sourceDocument, sourceProfile, sourceRead.state]);
+    }, [presented, entries, initialMode, isNewProfile, previewRef, previewSource, sourceDocument, sourceProfile, sourceRead.state]);
     const draftDocument = React.useCallback((profile: ThemeProfileV1,
         removeKnownFields?: NonNullable<Parameters<typeof mergeThemeProfileDocumentEdit>[2]>['removeKnownFields']): ThemeProfileDocument => {
         const retained = retainedDocument.current;
@@ -188,7 +196,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         if (!parsed.ok) throw new Error(parsed.error);
         return parsed.document;
     }, []);
-    const [view, setView] = React.useState<ThemeEditorView>(() => getProfileIdParam(params.view) === 'css' ? 'css' : 'colors');
+    const [view, setView] = React.useState(initialView);
     const [colorQuery, setColorQuery] = React.useState('');
     const codeEditorRef = React.useRef<CodeEditorHandle>(null);
     const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});
@@ -255,8 +263,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     }, [draft, draftDocument, executeTheme, profileDisplayName, router]);
 
     const exportProfile = React.useCallback(() => {
-        if (!initialSource.current.reference) return;
-        router.push(profileExportRoute(getThemePresetSourceReferenceId(initialSource.current.reference)));
+        if (!initialSource.current) return;
+        router.push(profileExportRoute(getThemePresetSourceReferenceId(initialSource.current)));
     }, [router]);
 
     const updateColor = React.useCallback((tokenId: string, value: string) => {
@@ -302,7 +310,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         const profile = { ...draft, ...(css !== undefined ? { css } : {}), assetAppearance };
         const document = draftDocument(profile);
         try {
-            const reference = savedReference.current ?? (!isNewProfile ? initialSource.current.reference : null);
+            const reference = savedReference.current ?? (!isNewProfile ? initialSource.current : null);
             const saved = await editorActions.saveAndUse({ document, mode: assetAppearance,
                 ...(reference ? { reference } : {}) });
             savedReference.current = saved.reference;
@@ -351,8 +359,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     useThemeProfileEditorPreview({ owner: getThemeTryOnOwner(), draft: previewDraft,
         preview: editorActions.preview, onFailure: reportPreviewFailure });
 
-    const inUse = persisted && initialSource.current.reference !== null
-        && (['light', 'dark'] as const).some(mode => sameStrictJsonValue(selection[mode], initialSource.current.reference));
+    const inUse = persisted && initialSource.current !== null
+        && (['light', 'dark'] as const).some(mode => sameStrictJsonValue(selection[mode], initialSource.current));
     const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => [
         ...(!readonly ? [{ id: 'reset', title: t('settingsAppearance.themeProfiles.resetMode'), onSelect: resetMode }] : []),
         // Duplicating and exporting work on a saved or built-in theme, never an unsaved draft.
@@ -526,4 +534,4 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         css: cssEditor.css,
     };
     return <ThemeProfileEditorView {...viewProps} />;
-});
+}

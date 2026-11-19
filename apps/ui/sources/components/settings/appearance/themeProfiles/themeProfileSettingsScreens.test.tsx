@@ -713,6 +713,47 @@ describe('Theme profile editor', () => {
         expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
     });
 
+    it('opens the palette CSS draft on a retained new-theme tab', async () => {
+        const { JSDOM } = await import('jsdom');
+        const { buildThemeCommands } = await import('@/components/appShell/commandPalette/themeCommands');
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+        vi.stubGlobal('window', dom.window);
+        vi.stubGlobal('document', dom.window.document);
+        onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
+        const pathname = '/settings/appearance/themes/new';
+        const navigation = { push: shared.routerPush, replace: vi.fn(), back: shared.routerBack };
+        const body = (path: string) => (
+            <DestinationInstanceContext.Provider value={{ tabId: 'theme-preview', pathname, navigation,
+                focused: true, visible: true, isFocused: () => true,
+                ref: { kind: 'settings', params: { pageId: 'appearance/themes/new', profileId: 'new',
+                    ...Object.fromEntries(new URL(path, dom.window.location.href).searchParams) } },
+            }}>
+                <ThemeProfileRuntimeSync />
+                <ThemeProfileEditorScreen />
+            </DestinationInstanceContext.Provider>
+        );
+        const screen = await renderSettingsView(body(`${pathname}?from=paperLight`));
+        const editor = () => screen.findAllByType(ThemeProfileEditorView)[0]!.props as ThemeProfileEditorViewProps;
+        expect(editor().startFrom?.selectedKey).toBe('paperLight');
+        await act(async () => { screen.changeTextByTestId('settings-theme-profile-name', 'Old draft'); });
+        const editCss = async (presetId: 'paperLight' | 'premiumLight') => {
+            let href = '';
+            const command = buildThemeCommands({ entries: [], mode: 'light', undoHandle: null,
+                selection: { light: { kind: 'built-in', presetId }, dark: null },
+                execute: async () => undefined, push: path => { href = path; },
+            }).find(item => item.id === 'theme.editCss');
+            await command!.action();
+            await screen.update(body(href));
+        };
+
+        await editCss('paperLight');
+        expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
+        expect(editor().details?.name).toBe('Custom theme 1');
+        await editCss('premiumLight');
+        expect(editor().startFrom?.selectedKey).toBe('premiumLight');
+    });
+
     it('retains unsupported presentation through an unrelated edit and deliberate style changes', async () => {
         const raw = { ...baseProfile('862d417f-f6f9-480d-a7c0-82735194d027'), schemaVersion: 2,
             seeds: { canvas: '#101010', accent: '#abcdef', futureTone: 0.4 },
