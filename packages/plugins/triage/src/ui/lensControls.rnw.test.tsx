@@ -35,6 +35,7 @@ import {
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { filterFacetOption } from './shell/toolbarMenus.test-support.js';
+import { buildTriageRouteSubPathV1, parseTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from './navigation/location.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
 /**
@@ -285,6 +286,27 @@ describe('the page view under a slow host location write', () => {
 });
 
 describe('the PRs & Issues lens controls', () => {
+    it('clears and restores Type without dropping Source, Scope, State or Attention', async () => {
+        const filters = {
+            sources: [{ source: SOURCE }],
+            types: [{ source: SOURCE, kindId: 'pull-request' }],
+            scopes: [{ source: SOURCE, collisionScope: SCOPE }],
+            states: ['open'],
+            attention: ['none'],
+        } as const;
+        const { shell, locations } = await mountShell(buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, filters }));
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+
+        const active = await filterFacetOption(shell, 'Type', { name: 'pull-request', state: { checked: true } });
+        await act(async () => { await shell.press(active); });
+        expect(parseTriageRouteSubPathV1(locations.at(-1)).filters).toEqual({ ...filters, types: [] });
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+
+        const inactive = await filterFacetOption(shell, 'Type', { name: 'pull-request', state: { checked: false } });
+        await act(async () => { await shell.press(inactive); });
+        expect(parseTriageRouteSubPathV1(locations.at(-1)).filters).toEqual(filters);
+    });
+
     it('publishes the cold Tasks route and view once without rewriting on re-render', async () => {
         const subPath = 'tasks,mine/q,normalizer';
         const { shell, locations, views } = await mountShell(subPath);
