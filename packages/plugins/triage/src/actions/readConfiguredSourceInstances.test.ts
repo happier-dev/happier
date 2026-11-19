@@ -211,17 +211,31 @@ describe('the caller-scoped configured-instance read', () => {
         expect(control.sourceInstances.getCallCount()).toBe(2);
         expect(query).not.toHaveBeenCalled();
     });
-    it('filters uninstalled contributions from the host read without retiring their durable configuration', async () => {
+    it('keeps an uninstalled source active in storage and resumes the same configuration on reinstall', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));
-        control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: TRACKER, seed: 2 })));
-        const result = await createTriageReadConfiguredSourceInstancesActionHandler()(INPUT, createContext({
+        const tracked = instanceRow({ source: TRACKER, seed: 2 });
+        const { rowId, revision } = control.sourceInstances.seed(toCorpusStoredValue(tracked));
+        const handler = createTriageReadConfiguredSourceInstancesActionHandler();
+        const result = await handler(INPUT, createContext({
             collections, surface: 'cli', admitted: [admittedSource(FORGE)],
         }));
         expect(result).toMatchObject({ kind: 'read', status: 'complete' });
         expect(result.kind === 'read' && result.instances.map(record => record.configured.instance.source)).toEqual([FORGE]);
         const retained = await readActiveConfiguredSourceRows(collections.sourceInstances);
         expect(retained.rows.map(row => row.configured.instance.source)).toEqual([INTERNAL_TASK_SOURCE_V1, FORGE, TRACKER]);
+        expect(control.sourceInstances.inspect(rowId)).toEqual({ revision, deleted: false });
+
+        const reinstalled = admittedSource(TRACKER);
+        const restored = await handler({ v: 1, source: TRACKER }, createContext({
+            collections, surface: 'cli', admitted: [{ ...reinstalled,
+                contributor: { ...reinstalled.contributor, immutableGenerationId: 'generation-2' },
+            }],
+        }));
+        expect(restored).toEqual({ kind: 'read', status: 'complete', instances: [{
+            v: 1, lifecycle: 'active', configured: tracked.configured,
+        }] });
+        expect(control.sourceInstances.inspect(rowId)).toEqual({ revision, deleted: false });
     });
     it.each(['background', 'plugin'] as const)('does not treat an absent-caller %s surface as host Action authority', async (surface) => {
         const { collections } = createTestkitCorpusCollections();
