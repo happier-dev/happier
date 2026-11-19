@@ -81,15 +81,17 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
                 if (!choice) return [option];
                 const id = choice.reviewEngineId ?? choice.backendId;
                 const positions = enginePositions.get(id) ?? [];
-                const selectable = !choice.disabled && option.onSelect !== undefined;
+                if (choice.disabled || option.onSelect === undefined) return positions.length > 1
+                    ? positions.map(position => ({ ...option, id: reviewReviewerIdForSelectionV1(position),
+                        testID: `review-start-reviewer:${reviewReviewerIdForSelectionV1(position)}` })) : [option];
                 const remove = (position: number) => changeReviewers(step.reviewers.filter((_reviewer, index) => index !== position));
                 if (positions.length > 1) return positions.map(position => ({ ...option,
                     id: reviewReviewerIdForSelectionV1(position),
                     testID: `review-start-reviewer:${reviewReviewerIdForSelectionV1(position)}`,
-                    onSelect: selectable ? () => remove(position) : option.onSelect,
+                    onSelect: () => remove(position),
                 }));
-                return [{ ...option, onSelect: selectable ? () => positions.length === 1 ? remove(positions[0]!)
-                    : changeReviewers([...step.reviewers, { kind: 'engine', engineId: id }]) : option.onSelect }];
+                return [{ ...option, onSelect: () => positions.length === 1 ? remove(positions[0]!)
+                    : changeReviewers([...step.reviewers, { kind: 'engine', engineId: id }]) }];
             }),
         } })),
     };
