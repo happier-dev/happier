@@ -1400,6 +1400,9 @@ export async function bootstrapMachineSyncRuntime(
         ...(params.resolveManagedPurposeBindingIntent
           ? { resolveManagedPurposeBindingIntent: params.resolveManagedPurposeBindingIntent }
           : {}),
+        ...(params.resolveManagedPurposeBindingIntentSelection
+          ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
+          : {}),
         ...(params.resolveExecutionRunLiveBrokerAuthority
           ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }
           : {}),

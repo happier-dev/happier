@@ -78,7 +78,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
         await mkdir(join(root, '.happier-plugin'), { recursive: true });
         const manifestPath = join(root, '.happier-plugin', 'plugin.json');
         await writeFile(manifestPath, JSON.stringify({
-            schemaVersion: 2, id, version, displayName: id, engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            schemaVersion: 2, id, version, displayName: id, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: gateway ? {
                 connectedAccountDescriptors: [{ id: 'accounts', title: 'Fixture account',

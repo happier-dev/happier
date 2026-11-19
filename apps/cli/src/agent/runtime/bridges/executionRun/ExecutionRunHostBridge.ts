@@ -1409,7 +1409,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
   private createExecutionRunRuntime(opts: ExecutionRunRuntimeCreateOptions): ExecutionRunHostRuntime {
     let toolNormalizationSource: ExecutionRunHostRuntime['toolNormalizationSource'];
-    const runScope = opts.runId ? this.runs.get(opts.runId)?.sessionId : undefined;
+    const run = opts.runId ? this.runs.get(opts.runId) : undefined;
+    const runScope = run?.sessionId;
     const scope = (
       (typeof runScope === 'string' && runScope.trim().length > 0)
       || (runScope === undefined && opts.start?.intent === 'voice_agent')
@@ -1440,6 +1441,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const accountSnapshotResolver = Object.hasOwn(opts, 'resolveAccountSettingsSnapshot')
       ? opts.resolveAccountSettingsSnapshot
       : this.bindInvocationAccountSettingsSnapshot(opts.projectLaunchContext?.ingress);
+    // The Machine's purpose resolver selects from its installed Account. The
+    // admitted requester must own that Account before a detached Run can use it.
+    const resolveManagedPurposeBindingIntentSelection = scope === 'session_owned'
+      || (run && this.runtimeAccountId && resolveExecutionRunRequesterAccountId(run) === this.runtimeAccountId)
+      ? this.resolveManagedPurposeBindingIntentSelection
+      : undefined;
     const runtime = createExecutionRunBridgeRuntime({
       nativeSandbox: opts.nativeSandbox,
       ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
@@ -1594,7 +1601,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         ? { resolveAccountSettingsSnapshot: accountSnapshotResolver }
         : {}),
       ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
-      ...(this.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: this.resolveManagedPurposeBindingIntentSelection } : {}),
+      ...(resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection } : {}),
       managedProviderAccountAuthority: this.managedProviderAccountAuthority,
       ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
       ...(this.prepareManagedEndpoint ? { prepareManagedEndpoint: async (input) => {

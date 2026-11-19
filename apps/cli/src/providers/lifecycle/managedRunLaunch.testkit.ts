@@ -15,6 +15,7 @@ import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSharedGatewayRegistryTestkit } from '@/plugins/runtime/sharedGatewayRegistry.testkit';
+import { retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/compatibility/v1';
 
 /** Real committed plugin/Agent/Provider source. Only endpoint transport is
@@ -74,7 +75,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
   await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
     schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Managed Run fixture',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+    runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
     hostAccess: { required: [{ id: 'agent-process', capability: 'process',
       reason: 'Admit the external Agent Provider environment through the real host boundary',
       scope: { envKeys: ['RUN_PROVIDER_TOKEN', 'RUN_PROVIDER_URL'], executables: [{ kind: 'systemTool', id: 'fixture-runtime' }] } }], optional: [] },
@@ -210,8 +211,16 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   const generationAuthority = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }), {});
   if (!generationAuthority) throw new Error('Missing committed plugin generation');
   const controller = gateway?.controller ?? input.controller ?? createPluginReloadController();
-  const lease = await controller.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () =>
-    gateway ? await gateway.createRegistry(new Set()) : await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, generationAuthority }) });
+  const changedPluginIds = gateway ? [pluginId, gateway.pluginId] : [pluginId];
+  const resolveRuntimeRegistry = () => gateway
+    ? gateway.createRegistry(new Set(changedPluginIds))
+    : resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, generationAuthority });
+  if (input.controller && controller.getState().activeRegistry) {
+    const adopted = await controller.adoptPreparedRuntimeRegistry({ registry: await resolveRuntimeRegistry(),
+      changedPluginIds, runningSessionDisposition: 'retainRunningSessions' });
+    if (!adopted.ok) throw new Error('Managed Run fixture registry publication failed');
+  }
+  const lease = await controller.acquireRuntimeRegistry({ resolveRuntimeRegistry });
   const registry = lease.registry;
   if (input.activateAgent !== false) {
     const activated = await registry.activateContributionsOnDemand([{ pluginId, family: 'agents', localId: 'agent' }]);
@@ -240,6 +249,17 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     providerConnectionsCatalog: { status: 'ready', revision: 1, catalog }, loadedAtMs: 1, settingsSecretsReadKeys: [] };
   return { happyHomeDir, agentId, agentTargetKey, machineId, gateway, lease, snapshot, contributes, providerSettings: settings, record: resolution.record,
     connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
-    async cleanup() { await lease.release(); await controller.shutdown(); gateway?.disposeCredentialBoundary();
-      await rm(directory, { recursive: true, force: true }); } };
+    async cleanup() {
+      try {
+        await lease.release();
+        if (input.controller) {
+          await retireAdmittedPluginRuntimeRegistry({ controller, registry, happyHomeDir, generationAuthority });
+        } else {
+          await controller.shutdown();
+        }
+      } finally {
+        gateway?.disposeCredentialBoundary();
+        await rm(directory, { recursive: true, force: true });
+      }
+    } };
 }

@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApiClient } from '@/api/api';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -13,11 +14,82 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
+import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { writeDaemonState } from '@/persistence';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { registerMachineRpcHandlers } from './rpcHandlers';
+import { registerMachineRpcHandlers, type MachineRpcHandlerDeps } from './rpcHandlers';
+
+it.each([
+  { custodianAccountId: 'requester', role: 'manage', refusal: 'provider_model_not_found' },
+  { custodianAccountId: 'other-account', role: 'use', refusal: 'provider_endpoint_unavailable' },
+] as const)('checks the selected personal Connected Account catalog only for its custodian ($role)', async ({ custodianAccountId, role, refusal }) => {
+  onTestFinished(() => vi.restoreAllMocks());
+  const installed = await createInstalledProjectAgentLaunchFixture({ prepareProject: false, machineAccess: { custodianAccountId, role } });
+  const h = installed.f;
+  const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
+  const fixture = await createManagedRunLaunchFixture({ directory: join(h.directory, 'provider'), happyHomeDir: h.directory,
+    controller: pluginReloadController, physicalGateway: true,
+    connectedAccountModels: [{ id: 'example', name: 'Example' }],
+    connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'], managedProviderEndpoint: {
+      provider: { pluginId: service.pluginId, localId: 'gateway' }, purpose: 'upstream', modelIdPrefix: 'native/',
+    } }] });
+  onTestFinished(() => fixture.cleanup());
+  const daemonHttp = createServer((request, response) => {
+    if (request.url !== '/execution-run/admission') { response.writeHead(404).end(); return; }
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ admitted: true }));
+  });
+  await new Promise<void>(resolve => daemonHttp.listen(0, '127.0.0.1', resolve));
+  onTestFinished(() => new Promise<void>((resolve, reject) => daemonHttp.close(error => error ? reject(error) : resolve())));
+  const address = daemonHttp.address();
+  if (!address || typeof address === 'string') throw new Error('Missing fixture daemon endpoint');
+  writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
+    startedWithCliVersion: 'fixture', controlToken: 'fixture-control-token' });
+
+  const purposeOwner = fixture.gateway!.purposeBindingOwner;
+  const readSnapshot = () => {
+    const snapshot = h.bootstrap.savedSecretOperationContext.readSnapshot();
+    if (!snapshot) throw new Error('Requester Account lifetime retired');
+    return snapshot;
+  };
+  const actionsSettingsProvider = createActionSettingsProvider({ getAccountSettings: () => readSnapshot().settings,
+    scopeKey: readSnapshot().scopeKey, allowEnvironmentOverride: false });
+  const features = FeaturesResponseSchema.parse({ features: { providers: { enabled: true } } });
+  const deps = {
+    currentMachineId: 'machine', currentServerId: 'session-home', workingDirectory: h.directory,
+    executionRunRuntimeAccountId: custodianAccountId, actionsSettingsProvider,
+    executionRunAccountSettings: { serverUrl: 'https://session-home.test',
+      resolveAccountSettings: () => readSnapshot().settings, resolveAccountSettingsSnapshot: readSnapshot, actionsSettingsProvider },
+    getServerFeaturesSnapshot: () => ({ status: 'ready', features }),
+    actionOperations: createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => custodianAccountId,
+      custodyBinding: { serverId: 'session-home', installationId: h.installation.installationId } }),
+    createProjectFiniteRuntime: installed.finite,
+    resolveManagedPurposeBindingIntentSelection: purposeOwner.resolveBindingIntentSelection,
+  } satisfies MachineRpcHandlerDeps;
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
+  const registration = registerMachineRpcHandlers({ rpcHandlerManager: rpc, deps,
+    handlers: { spawnSession: async () => { throw new Error('No Session expected'); }, stopSession: async () => true, requestShutdown() {} } });
+  onTestFinished(() => registration.dispose());
+
+  const context = { signal: h.signal, rpcContext: { callerAuthority: 'present_user' as const, requesterSessionBootstrap: h.bootstrap,
+    machineAdmission: { actorAccountId: 'requester', custodianAccountId, machineId: 'machine',
+      installationId: h.installation.installationId, role, encryptionMode: 'plain' as const },
+    verifyMachineAdmissionCurrent: h.bootstrap.isCurrent } };
+  const started = await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+    sessionId: null, intent: 'agent', instructions: 'Use the selected model.', cwd: h.directory,
+    backendTarget: { kind: 'backend', backendId: fixture.agentId }, permissionMode: 'read_only',
+    retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+    modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/missing' },
+    connectedServices: { v: 2, bindingsByServiceId: {
+      'acme.shared-registry/accounts': { source: 'connected', selection: 'profile', profileId: 'upstream-account' },
+    } },
+  }, context);
+  expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
+  const runId = (started as { runId: string }).runId;
+  const waited = await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_WAIT, { runId, timeoutSeconds: 10 }, context);
+  expect(waited, JSON.stringify(waited)).toMatchObject({ ok: true, status: 'failed', result: { run: { error: { code: refusal } } } });
+});
 
 it('uses admitted Workflow requester credentials and purpose ports for detached native model admission', async () => {
   onTestFinished(() => vi.restoreAllMocks());

@@ -2262,6 +2262,14 @@ catalog read or treat a loading catalog as a missing connection. A failed
 refresh still refuses the launch, and optional history maintenance does not
 hold readable catalog admission.
 
+In 0.3 development, a detached `execution.run.start` on the Account's own
+Machine can use a personal Connected Account through an Agent's declared
+managed Provider purpose. Pass the Agent's catalog model as `modelSelection`
+with `providerConnectionId: null` and the source profile in the V2
+`connectedServices` binding for that purpose. Pi uses the `meta/` prefix for
+Muse model IDs, while Codex uses the unprefixed IDs. The Machine Run uses the
+same source catalog and gateway launch owner as Session spawn.
+
 In 0.3 development source, a managed-purpose Session placed in a daemonless
 target receives a target-local loopback endpoint before its Agent binding is
 materialized. The admitted target channel carries its socket bytes to that
@@ -2446,6 +2454,12 @@ end-to-end broker, direct-delivery, selection, usage, recovery, and revocation j
 The source Account keeps credential custody. A Team resource stores a typed reference to the
 current source plus audience and use policy; it does not copy a Provider definition or create a
 second credential store.
+
+For a brokered Team model, pass the current entitled catalog row's
+`selection` as the Run's top-level `teamCredentialModel` and omit
+`modelSelection`. The shared model selection projection maps the Session's
+`team_resource` ref to this operand. This applies to both detached and
+Session-owned Runs.
 
 Finite declared Actions in unreleased 0.3 use Home's Team operation admission
 owner for the selected delivery mode. For brokered V3 Actions, Home signs the
