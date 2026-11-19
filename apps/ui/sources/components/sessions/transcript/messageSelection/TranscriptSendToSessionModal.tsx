@@ -18,7 +18,7 @@ export type TranscriptSendToSessionModalProps = CustomModalInjectedProps & Reado
     onResolve: (destination: SendTranscriptSelectionDestination | null) => void;
 }> & (Readonly<{ selectionOnly: true; sourceSessionId?: never; previewText?: never; selectedCount?: never;
     /** A destination picker excludes its source and asks for edit access; a reference picker asks for reading. */
-    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords' | 'submitAgentInput'; title: string }> }>
+    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords' | 'submitAgentInput'; title: string; allowNewSession?: boolean }> }>
     | Readonly<{ selectionOnly?: false; sourceSessionId: string; previewText: string; selectedCount?: number; destination?: never }>);
 
 export const TranscriptSendToSessionModal = React.memo(function TranscriptSendToSessionModal(
@@ -36,7 +36,7 @@ export const TranscriptSendToSessionModal = React.memo(function TranscriptSendTo
             sourceServerId,
             sessions,
         }), [props.selectionOnly, props.sourceSessionId, props.destination?.excludedSessionId, props.destination?.capability, props.sessionCandidates, sourceServerId]);
-    const leadingOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(() => props.selectionOnly ? [] : [{
+    const leadingOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(() => props.selectionOnly && !props.destination?.allowNewSession ? [] : [{
         id: 'new-session',
         testID: 'transcript-send-to-session-option-new-session',
         label: t('transcript.selection.sendTo.newSession'),
@@ -44,7 +44,7 @@ export const TranscriptSendToSessionModal = React.memo(function TranscriptSendTo
         icon: <View style={{ width: 20, alignItems: 'center', justifyContent: 'center' }}>
             <Icon name="plus-circle" size={20} color={theme.colors.text.secondary} />
         </View>,
-    }], [props.selectionOnly, theme.colors.text.secondary]);
+    }], [props.selectionOnly, props.destination?.allowNewSession, theme.colors.text.secondary]);
     // Select (owner 2026-11-17 decision 3): only transcript "Send to session" can address several Sessions.
     const { onResolve } = props;
     const multipleSelect = React.useMemo(() => props.selectionOnly ? undefined : {

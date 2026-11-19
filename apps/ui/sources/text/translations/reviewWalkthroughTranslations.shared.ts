@@ -164,6 +164,7 @@ export type ReviewWalkthroughTranslations = {
         comment: string;
         summaryPlaceholder: string;
         newRound: string;
+        copyFixPrompt: string;
         newRoundDescription: string;
         newRoundNote: (params: Readonly<{ round: number }>) => string;
         startRound: string;
@@ -370,6 +371,7 @@ export const en: ReviewWalkthroughTranslations = {
         comment: 'Comment',
         summaryPlaceholder: 'Add a summary (optional)',
         newRound: 'New round',
+        copyFixPrompt: 'Copy fix prompt',
         newRoundDescription: 'The same reviewers read the updated code in this review.',
         newRoundNote: ({ round }) => `Round ${round} verdicts stay visible, marked round ${round}, and no longer count. Findings are matched exactly against round ${round}: new, still there or not found. You decide what is fixed.`,
         startRound: 'Start round',

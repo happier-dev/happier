@@ -12954,6 +12954,7 @@ const fr: ReviewWalkthroughTranslations = {
         comment: 'Commenter',
         summaryPlaceholder: 'Ajouter un résumé (facultatif)',
         newRound: 'Nouveau tour',
+        copyFixPrompt: 'Copier les instructions de correction',
         newRoundDescription: 'Les mêmes relecteurs lisent le code mis à jour dans cette revue.',
         newRoundNote: ({ round }) => `Les verdicts du tour ${round} restent visibles, marqués tour ${round}, et ne comptent plus. Les constats sont comparés exactement au tour ${round} : nouveaux, toujours là ou introuvables. C’est vous qui décidez de ce qui est corrigé.`,
         startRound: 'Lancer le tour',

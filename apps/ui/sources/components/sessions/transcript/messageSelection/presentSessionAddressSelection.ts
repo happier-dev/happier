@@ -5,7 +5,7 @@ import type { PopoverAnchor } from '@/components/ui/popover';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import { t } from '@/text';
 
-import { TranscriptSendToSessionModal } from './TranscriptSendToSessionModal';
+import { TranscriptSendToSessionModal, type TranscriptSendToSessionModalProps } from './TranscriptSendToSessionModal';
 import type { SendTranscriptSelectionDestination } from './sendTranscriptSelectionToSession';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 
@@ -14,7 +14,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessi
  * or a destination for Session records (excluding its source, editable Sessions only).
  */
 export function presentSessionAddressSelection(serverId: string, anchor?: PopoverAnchor,
-    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords' | 'submitAgentInput'; title: string }>,
+    destination?: Extract<TranscriptSendToSessionModalProps, { selectionOnly: true }>['destination'],
     sessionCandidates?: readonly ActionSessionAddressV1[]) {
     const deferred = createDeferredOnce<SendTranscriptSelectionDestination | null>();
     let modalId = '';

@@ -12939,6 +12939,7 @@ const de: ReviewWalkthroughTranslations = {
         comment: 'Kommentieren',
         summaryPlaceholder: 'Zusammenfassung hinzufügen (optional)',
         newRound: 'Neue Runde',
+        copyFixPrompt: 'Anweisung zur Behebung kopieren',
         newRoundDescription: 'Dieselben Prüfer lesen den aktualisierten Code in dieser Überprüfung.',
         newRoundNote: ({ round }) => `Die Urteile aus Runde ${round} bleiben sichtbar, als Runde ${round} markiert, und zählen nicht mehr. Befunde werden exakt mit Runde ${round} abgeglichen: neu, noch vorhanden oder nicht gefunden. Du entscheidest, was behoben ist.`,
         startRound: 'Runde starten',

@@ -31,6 +31,7 @@ import { createMachineFixture, createPlainMachineRowFixture, createPlainMachineR
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { loadPendingOutboxForSession } from '@/sync/domains/state/pendingOutboxPersistence';
+import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { openStoredReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/content';
 import { deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema,
@@ -60,9 +61,10 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 
+const reviewDestinationNavigation = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock().module;
+    return createExpoRouterMock({ router: reviewDestinationNavigation }).module;
 });
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -989,6 +991,19 @@ describe('Artifact composed view reads', () => {
                     expect.objectContaining({ text: expect.stringContaining('native-first'), operation: 'enqueue' }),
                 ]));
             expect(await loadPendingOutboxForSession('run-native', scope)).toEqual([]);
+            reviewDestinationNavigation.push.mockClear();
+            await screen.pressByTestIdAsync('review-detail:implement');
+            const newChooserProps = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props;
+            if (!newChooserProps || !('onResolve' in newChooserProps) || typeof newChooserProps.onResolve !== 'function') throw new Error('Missing New Session chooser');
+            const resolveNewDestination = newChooserProps.onResolve;
+            await act(async () => resolveNewDestination({ kind: 'newSession' }));
+            await waitForHomeGovernance(() => expect(reviewDestinationNavigation.push).toHaveBeenCalledWith(
+                expect.objectContaining({ pathname: '/new', params: expect.objectContaining({ draftId: expect.any(String) }) })));
+            // Navigation is the OS boundary; the draft and the accepted-findings prompt stay real.
+            const opened = reviewDestinationNavigation.push.mock.calls.at(-1)![0];
+            expect(createNewSessionComposerDocumentOwner({ scope,
+                ref: { kind: 'newSession', instanceId: opened.params.draftId } }).read().document.text).toContain('Sealed explanation native-first');
+            expect(await loadPendingOutboxForSession('native-fix-session', scope)).toHaveLength(1);
         } finally { await screen.unmount(); }
     });
     it.each([false, true])('reads native Review questions only for presented findings from their retained Machine and Home (Session: %s)', async withSession => {

@@ -12826,6 +12826,7 @@ const zhHant: ReviewWalkthroughTranslations = {
         comment: '留言',
         summaryPlaceholder: '新增摘要（選用）',
         newRound: '新一輪',
+        copyFixPrompt: '複製修復提示詞',
         newRoundDescription: '同樣的審查者會在此審查中閱讀更新後的程式碼。',
         newRoundNote: ({ round }) => `第 ${round} 輪的結論仍可見，標示為第 ${round} 輪，且不再計入。發現會與第 ${round} 輪精確比對：新增、仍存在或未找到。由你決定哪些已修正。`,
         startRound: '開始這一輪',

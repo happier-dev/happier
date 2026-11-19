@@ -277,10 +277,11 @@ export function ReviewDetailHost(props: Readonly<{
   const implementFindings = React.useCallback(async () => {
     if (!scope) return;
     const picker = presentSessionAddressSelection(scope.serverId, undefined, {
-      excludedSessionId: '', capability: 'submitAgentInput', title: t('runPage.review.implementFixes', { count: findings.implement.count }),
+      excludedSessionId: '', capability: 'submitAgentInput', allowNewSession: true, title: t('runPage.review.implementFixes', { count: findings.implement.count }),
     });
     const destination = await picker.result;
     if (destination?.kind === 'existingSession') findings.implement.runInSession(destination.sessionId);
+    else if (destination?.kind === 'newSession') await findings.implement.runInNewSession();
   }, [findings.implement, scope]);
   const toggleFinding = React.useCallback((commentId: string) => setOpenFinding(current => current === commentId ? null : commentId), []);
   React.useEffect(() => { setOpenFinding(props.focusThreadId ?? null); }, [artifact.id, props.focusThreadId]);
@@ -315,7 +316,9 @@ export function ReviewDetailHost(props: Readonly<{
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
       menu={[...(canSubmit && newRound.available ? [{ id: 'new-round', testID: 'review-detail:new-round',
-        title: t('reviewWalkthrough.detail.newRound'), onSelect: newRound.open }] : []), ...menu]}
+        title: t('reviewWalkthrough.detail.newRound'), onSelect: newRound.open }] : []),
+        { id: 'copy-fix-prompt', testID: 'review-detail:copy-fix-prompt', title: t('reviewWalkthrough.detail.copyFixPrompt'),
+        disabled: findings.implement.destinationDisabled, onSelect: async () => { await findings.implement.copyPrompt(); } }, ...menu]}
       glance={projectReviewGlance(round, review)}
       rounds={rounds}
       selectedRound={selectedRound}

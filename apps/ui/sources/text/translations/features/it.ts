@@ -12942,6 +12942,7 @@ const it: ReviewWalkthroughTranslations = {
         comment: 'Commenta',
         summaryPlaceholder: 'Aggiungi un riepilogo (facoltativo)',
         newRound: 'Nuovo round',
+        copyFixPrompt: 'Copia le istruzioni di correzione',
         newRoundDescription: 'Gli stessi revisori leggono il codice aggiornato in questa revisione.',
         newRoundNote: ({ round }) => `I verdetti del round ${round} restano visibili, contrassegnati come round ${round}, e non contano più. I rilievi vengono confrontati esattamente con il round ${round}: nuovi, ancora presenti o non trovati. Sei tu a decidere cosa è corretto.`,
         startRound: 'Avvia round',

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
@@ -6,6 +7,7 @@ import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured
 import type { ReviewQuestion } from '@happier-dev/protocol/reviews/ReviewQuestion';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewFindingsApplyResultV1Schema } from '@happier-dev/protocol/reviews/reviewApplyV1';
 import { projectReviewFindingRoundStatusV1, reviewCommentFindingScopeV1,
     type ReviewFindingRoundContextV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 
@@ -23,6 +25,8 @@ import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/doma
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
+import { beginClipboardWriteFromUi } from '@/utils/ui/clipboard';
 
 export type ReviewFindingsMember = ReviewMember & Readonly<{
     /** The producing Session, when admitted for reviewer follow-up. */
@@ -327,6 +331,43 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         })(), { tag: 'useReviewFindingsModel.implementFixes' });
     }, [acceptedCount, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, reviewId, scope]);
 
+    /** The Review Action prepares one fresh prompt; each destination keeps its own admission and approval. */
+    const applyPreparedPrompt = React.useCallback(async (destination: 'newSession' | 'clipboard'): Promise<boolean> => {
+        const capturedLifetime = accountLifetime;
+        if ((destination === 'newSession' && !canActRef.current) || !reviewId || !scope || !capturedLifetime?.isCurrent()
+            || hasPendingDecisions || acceptedCount === 0) return false;
+        // Like remote-viewer copy, WebKit takes the pending Blob in this gesture;
+        // the admitted Review Action supplies its content after its read settles.
+        const webWrite = destination === 'clipboard' && Platform.OS === 'web' ? beginClipboardWriteFromUi('text/plain') : null;
+        setError(null);
+        setIsApplying(true);
+        try {
+            const result = ReviewFindingsApplyResultV1Schema.parse(await followUpExecution.executeValue('review.apply',
+                { reviewId, destination: 'prompt' }));
+            if (result.status !== 'prepared') return false;
+            if (destination === 'newSession') {
+                const opened = await openSessionAuthoringAction({ seed: { prompt: result.prompt } }, capturedLifetime,
+                    { executeAction: followUpExecution.execute, isCurrent: followUpExecution.isCurrent });
+                return opened.kind === 'opened';
+            }
+            if (webWrite) {
+                const copied = await webWrite.write(new Blob([result.prompt], { type: 'text/plain' }));
+                if (!copied) setError(t('errors.operationFailed'));
+                return copied;
+            }
+            await followUpExecution.executeValue('clipboard.write', { text: result.prompt });
+            return true;
+        } catch (error) {
+            if (followUpExecution.isCurrent()) setError(resolveActionExecutionErrorMessage(error,
+                t('session.reviewFindings.errors.applyAcceptedFailed')));
+            return false;
+        } finally {
+            await webWrite?.refuse();
+            setIsApplying(false);
+        }
+    }, [acceptedCount, accountLifetime, followUpExecution.execute, followUpExecution.executeValue,
+        followUpExecution.isCurrent, hasPendingDecisions, reviewId, scope]);
+
     const questions = React.useMemo(() => members.flatMap(member => member.questions
         .filter(question => question.status !== 'superseded').map(question => ({ member, question }))), [members]);
     const assumptions = React.useMemo(() => members.flatMap(member => member.assumptions
@@ -425,6 +466,8 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             count: acceptedCount,
             run: () => implementFixes(sessionId),
             runInSession: (sessionId: string) => implementFixes(sessionId),
+            runInNewSession: () => applyPreparedPrompt('newSession'),
+            copyPrompt: () => applyPreparedPrompt('clipboard'),
             busy: isApplying,
             disabled: !sessionId || acceptedCount === 0 || hasPendingDecisions || isApplying,
             destinationDisabled: acceptedCount === 0 || hasPendingDecisions || isApplying,

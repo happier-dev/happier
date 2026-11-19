@@ -12929,6 +12929,7 @@ const pt: ReviewWalkthroughTranslations = {
         comment: 'Comentar',
         summaryPlaceholder: 'Adicione um resumo (opcional)',
         newRound: 'Nova rodada',
+        copyFixPrompt: 'Copiar instruções de correção',
         newRoundDescription: 'Os mesmos revisores leem o código atualizado nesta revisão.',
         newRoundNote: ({ round }) => `Os vereditos da rodada ${round} continuam visíveis, marcados como rodada ${round}, e não contam mais. As constatações são comparadas exatamente com a rodada ${round}: novas, ainda presentes ou não encontradas. Você decide o que está corrigido.`,
         startRound: 'Iniciar rodada',

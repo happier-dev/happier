@@ -12886,6 +12886,7 @@ const ja: ReviewWalkthroughTranslations = {
         comment: 'コメント',
         summaryPlaceholder: 'まとめを追加（任意）',
         newRound: '新しいラウンド',
+        copyFixPrompt: '修正用プロンプトをコピー',
         newRoundDescription: '同じレビュアーが、このレビュー内で更新されたコードを読みます。',
         newRoundNote: ({ round }) => `ラウンド${round}の判定は「ラウンド${round}」として表示されたまま残り、数には入りません。指摘はラウンド${round}と完全一致で照合されます（新規・残っている・見つからない）。何が修正済みかはあなたが決めます。`,
         startRound: 'ラウンドを開始',

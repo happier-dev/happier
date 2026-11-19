@@ -12963,6 +12963,7 @@ const pl: ReviewWalkthroughTranslations = {
         comment: 'Skomentuj',
         summaryPlaceholder: 'Dodaj podsumowanie (opcjonalnie)',
         newRound: 'Nowa runda',
+        copyFixPrompt: 'Kopiuj instrukcje naprawy',
         newRoundDescription: 'Ci sami recenzenci czytają zaktualizowany kod w tym przeglądzie.',
         newRoundNote: ({ round }) => `Werdykty z rundy ${round} pozostają widoczne, oznaczone jako runda ${round}, i już się nie liczą. Ustalenia są dokładnie porównywane z rundą ${round}: nowe, nadal obecne lub nieznalezione. To ty decydujesz, co jest naprawione.`,
         startRound: 'Rozpocznij rundę',

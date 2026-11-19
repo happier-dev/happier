@@ -12935,6 +12935,7 @@ const ca: ReviewWalkthroughTranslations = {
         comment: 'Comenta',
         summaryPlaceholder: 'Afegeix un resum (opcional)',
         newRound: 'Ronda nova',
+        copyFixPrompt: 'Copia les instruccions per corregir',
         newRoundDescription: 'Els mateixos revisors llegeixen el codi actualitzat en aquesta revisió.',
         newRoundNote: ({ round }) => `Els veredictes de la ronda ${round} continuen visibles, marcats com a ronda ${round}, i ja no compten. Les troballes es comparen exactament amb la ronda ${round}: noves, encara presents o no trobades. Tu decideixes què està corregit.`,
         startRound: 'Inicia la ronda',
