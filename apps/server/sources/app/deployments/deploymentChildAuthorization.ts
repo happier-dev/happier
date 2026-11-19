@@ -1,3 +1,4 @@
+import { warn } from '@/utils/logging/log';
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -304,8 +305,8 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
                 contentBodyVersion: routing.input.contentBodyVersion,
             }, select: { id: true } })) return false;
             const link = await tx.deploymentTargetLink.findFirst({ where: { id: routing.input.targetLinkId,
-                environmentId: loaded.row.id, deletedAt: null, detachedAt: null, role: 'runtime', sourceKind: 'host', targetKind: 'ownServer',
-                revision: routing.input.expectedTargetLinkRevision }, select: { machines: { where: { machineId: routing.machineId,
+                environmentId: loaded.row.id, deletedAt: null, detachedAt: null, role: 'runtime', sourceKind: 'host', targetKind: 'ownServer' },
+                select: { revision: true, machines: { where: { machineId: routing.machineId,
                     installationId: routing.installationId }, select: { machineId: true } } } });
             const selectedCollector = routing.kind === 'domainDiscover' && routing.input.telemetryMachineId;
             if (selectedCollector && selectedCollector !== loaded.row.telemetryMachineId) return false;
@@ -315,9 +316,16 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
                 && collectorPlacement.installationId === routing.installationId;
             if (selectedCollector && !collectorDestination && loaded.row.edgeMachineId !== routing.machineId) return false;
             if (!link || !link.machines.length && loaded.row.edgeMachineId !== routing.machineId && !collectorDestination
-                || routing.kind === 'domainDns' && loaded.row.edgeMachineId !== null && loaded.row.edgeMachineId !== routing.machineId
-                || routing.kind !== 'domainDns' && await admitDeploymentStoredContentInTx(tx, binding.accountId, loaded.admission.owner, routing.input,
-                    DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, 'read')) return false;
+                || routing.kind === 'domainDns' && loaded.row.edgeMachineId !== null && loaded.row.edgeMachineId !== routing.machineId) return false;
+            if (link.revision !== routing.input.expectedTargetLinkRevision) {
+                const reason = 'target_link_revision_mismatch';
+                warn({ module: 'deployment-domain-child-admission', reason });
+                return { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict',
+                    details: { reason, requiredFact: 'expectedTargetLinkRevision',
+                        remedy: 'Refresh the Environment and review the Domain action again' } };
+            }
+            if (routing.kind !== 'domainDns' && await admitDeploymentStoredContentInTx(tx, binding.accountId, loaded.admission.owner,
+                routing.input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, 'read')) return false;
         }
         return !await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
             { machineId: binding.machineId, installationId: binding.installationId, role: 'controller' },
