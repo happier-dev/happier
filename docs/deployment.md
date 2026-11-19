@@ -1399,7 +1399,13 @@ declared observe Action through the existing reviewed-child owner. Receipt conte
 and terminal state use the same installation-signed transition and CAS as Deploy;
 no second work queue or observation scheduler is introduced. A provider receipt
 may settle directly from queued when its build finishes between observations;
-the observer does not manufacture an intermediate running state. In current development
+the observer does not manufacture an intermediate running state. In current
+development source, explicit observation also recovers retained `outcome_unknown` provider
+receipts without reacquiring their released effect slot. Provider queued/running
+progress updates protected receipt content while retaining `outcome_unknown`.
+Observed terminal success uses the captured installation, receipt CAS and current
+TargetLink revision, and is refused when a newer receipt exists for that target
+or cancellation was requested. In current development
 source, own-server calls to `deployments.receipts.observe` and
 `deployments.observation.get` return `unsupported_action` with
 `reason: target_not_supported`, the target kind and a `deployments.receipts.get`

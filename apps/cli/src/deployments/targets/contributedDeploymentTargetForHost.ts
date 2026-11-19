@@ -4,7 +4,7 @@ import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, Deployme
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
+import { deploymentInProgressStates, DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
     type DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
@@ -325,8 +325,11 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             return absenceFailure;
         }
         const observed = observedReceiptContent(content, observation);
+        // Observation records provider progress without reclaiming an unknown receipt's released effect slot.
+        const state = receipt.deployment.state === 'outcome_unknown' && deploymentInProgressStates().includes(observation.state)
+            ? receipt.deployment.state : observation.state;
         // A provider's read timestamp is liveness, not new receipt content.
-        if (receipt.deployment.state === observation.state && sameStrictJsonValue(
+        if (receipt.deployment.state === state && sameStrictJsonValue(
             { ...content.platform.observation, observedAtMs: 0 }, { ...observed.platform.observation, observedAtMs: 0 })
             && (!observation.failureCause || sameStrictJsonValue(content.failure, observed.failure))) {
             return { ok: true as const, environmentId: receipt.deployment.environmentId, revision: environmentRevision,
@@ -334,7 +337,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         }
         const written = await host.writeTransition({ environmentId: receipt.deployment.environmentId,
             deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment,
-            expectedRevision: receipt.deployment.revision, state: observation.state,
+            expectedRevision: receipt.deployment.revision, state,
             ...(receipt.deployment.operation === 'teardown' && observation.state === 'succeeded' ? { teardownProof: {
                 targetLinkRevision: content.platform.targetLinkRevision,
                 machines: [controller], workloadAbsent: true, retainedProviderResource: false,

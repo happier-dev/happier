@@ -8,7 +8,7 @@ import { deploymentFailure } from './deploymentAdmission';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { readTemplateDeploymentEnvironmentIdInTx } from './deploymentPreparationAuthorization';
 import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 type AcceptedIdentity = Omit<DeploymentAcceptedExecutionV1, 'v'>;
@@ -113,7 +113,7 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
         || continuation && (continuation.installationId !== binding.installationId
             || binding.environmentId !== undefined && binding.environmentId !== continuation.environmentId)) return null;
     const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
-    const observing = binding.actionId === 'deployments.receipts.observe';
+    const observing = binding.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
     if (!operation && !observing || observing && !continuation) return null;
     const originalRequest = operation ? { operation, acceptedRequestEnvelopeDigest: binding.requestEnvelopeDigest } : {};
     if (binding.workflowActionOrigin && binding.workflowActionOrigin.requestId !== binding.requestId) return null;
@@ -131,7 +131,7 @@ export async function readAcceptedDeploymentReceiptInTx(tx: Tx, binding: Accepte
         // A fresh signed root can release its requester's interrupted slot on
         // the captured controller, without borrowing the old execution root.
         // Overlapping observers: the slower one reaches the transition owner's same-state replay, never another outcome.
-        ...(observing ? { state: { in: [...deploymentInProgressStates(),
+        ...(observing ? { state: { in: [...deploymentInProgressStates(), 'outcome_unknown',
             ...(continuation?.observedSettlementState ? [continuation.observedSettlementState] : [])] } }
             : continuation?.interruptedSettlement ? { OR: [
             originalRequest,

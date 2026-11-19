@@ -27,7 +27,7 @@ import { admitDeploymentTeardownEnvironmentRemovalInTx, removeAdmittedDeployment
 import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { prepareDeploymentAppMachineRevocationInTx } from './deploymentAppRevocation';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
@@ -338,13 +338,23 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     let nextContent = transitionContentReference(row, input);
     if (!nextContent) return deploymentFailure('deployment_conflict');
     if (!input.contentUpdate && row.state === input.state) return receiptResult(row, loaded.row.revision);
-    const resumedTeardown = row.operation === 'teardown' && (row.state === 'failed' || row.state === 'outcome_unknown')
+    const observing = executionBinding?.actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1;
+    // A read-only observer may recover captured provider history, but never
+    // reacquires its released effect slot or supersedes a newer target receipt.
+    const observedSettlement = observing && link.sourceKind === 'plugin' && row.state === 'outcome_unknown'
+        && input.kind === 'settle' && (input.state === 'succeeded' || input.state === 'running_unverified');
+    const resumedTeardown = !observing && row.operation === 'teardown' && (row.state === 'failed' || row.state === 'outcome_unknown')
         && input.state === 'running' && !row.cancelRequestedAt;
     if (row.cancelRequestedAt && (input.state === 'queued' || input.state === 'running' || input.state === 'succeeded' || input.state === 'running_unverified')) {
         return deploymentFailure('deployment_conflict');
     }
-    if (row.revision !== input.expectedRevision || (!resumedTeardown && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
+    if (row.revision !== input.expectedRevision || (!resumedTeardown && !observedSettlement && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
         || isDeploymentSettledV1(DeploymentStateV1Schema.parse(row.state))))) return deploymentFailure('deployment_conflict');
+    if (observedSettlement || row.operation === 'teardown' && (input.state === 'running' || input.teardownProof)) {
+        const newer = await tx.deployment.findFirst({ where: { targetLinkId: link.id, id: { not: row.id },
+            OR: [{ requestedAt: { gt: row.requestedAt } }, { requestedAt: row.requestedAt, id: { gt: row.id } }] }, select: { id: true } });
+        if (newer) return deploymentFailure('deployment_conflict');
+    }
     const admittedTeardownSelection = deploymentTeardownMembershipAdmissionSchema.safeParse(row.teardownProof);
     const teardownSubjects = input.teardownProof
         ? await readDeploymentTeardownSubjectsInTx(tx, link, acceptedExecution, loaded.row.runtimeTargetLinkId) : null;
@@ -352,9 +362,6 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (row.operation === 'teardown') {
         if (input.expectedTargetLinkRevision !== undefined || input.state === 'running_unverified' || (input.state === 'succeeded' && !input.teardownProof)) return deploymentFailure('deployment_conflict');
         if (input.state === 'running' || input.teardownProof) {
-            const newer = await tx.deployment.findFirst({ where: { targetLinkId: link.id, id: { not: row.id },
-                OR: [{ requestedAt: { gt: row.requestedAt } }, { requestedAt: row.requestedAt, id: { gt: row.id } }] }, select: { id: true } });
-            if (newer) return deploymentFailure('deployment_conflict');
             const inventory = admittedTeardownSelection.success && !completeTeardown ? null : await readDeploymentDomainInventoryInTx(tx, actorAccountId, {
                 serverId: input.serverId, environmentId: loaded.row.id, expectedRevision: loaded.row.revision,
             }, authentication, loaded, selectDeploymentTeardownDomainScopeV1({ targetLinkId: link.id, removeEnvironment }));

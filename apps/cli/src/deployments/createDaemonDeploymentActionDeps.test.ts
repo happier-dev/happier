@@ -1384,6 +1384,14 @@ describe('installed deployment storage and target composition', () => {
     it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
+        const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
+        const actionAutomations = createActionAutomationPortV1({
+            accountId: 'owner',
+            // This Home has no automation triggers. Each executor still runs real admission.
+            seed: async () => ({ v: 1, rows: [] }),
+            settle: async () => {},
+        });
+        onTestFinished(() => actionAutomations.dispose());
         const providerTeardown = scenario.startsWith('provider teardown');
         const retainedTraffic = scenario === 'promote retained platform' || scenario === 'rollback retained platform';
         const variableScenario = scenario.startsWith('variable ');
@@ -1590,7 +1598,7 @@ describe('installed deployment storage and target composition', () => {
                     try {
                         const results = [];
                         for (let i = 0; i < 3; i++) results.push(await context.services.actions.execute('deployments.receipts.observe', {
-                            serverId: 'home', environmentId: 'environment-staging', deploymentId: 'platform-receipt' }, { signal: context.signal }));
+                            serverId: 'home', environmentId: 'environment-staging', deploymentId: '${receiptId}' }, { signal: context.signal }));
                         backgroundProbe = { results };
                     }
                     catch (error) { backgroundProbe = { errorCode: error.code, error: error.message }; }
@@ -1913,6 +1921,7 @@ describe('installed deployment storage and target composition', () => {
                 const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
                     generateOperationId: () => receipt.actionOperationId });
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    actionAutomations,
                     runActionOperation: operations.runActionOperation,
                     listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
                     invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
@@ -2056,6 +2065,7 @@ describe('installed deployment storage and target composition', () => {
                 const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
                     generateOperationId: () => 'domain-operation' });
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    actionAutomations,
                     runActionOperation: operations.runActionOperation,
                     listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(runtime.registry, selection),
                     invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquireLease }) });
@@ -2307,10 +2317,8 @@ describe('installed deployment storage and target composition', () => {
                 providerSends++;
                 throw new Error('Refused deployment must not reach the provider');
             });
-            // Controller build cases create exclusive stage-log directories.
-            const buildReceiptId = controllerBuildOutput ? `platform-receipt-${scenario.replaceAll(' ', '-')}` : undefined;
-            const receipt = createDeploymentReceiptHeaderV1({ id: buildReceiptId ?? (settlementObservationRefused
-                ? 'platform-receipt-settlement-observation-refused' : 'platform-receipt'), environmentId: environment.environment.id,
+            // Each independent receipt owns its real exclusive stage-log directory.
+            const receipt = createDeploymentReceiptHeaderV1({ id: receiptId, environmentId: environment.environment.id,
                 targetLinkId: row.targetLink.id, state: scenario === 'uncertain receipt observe' ? 'outcome_unknown' : scenario === 'build logs' ? 'succeeded' : scenario === 'retained receipt observe' ? 'running' : 'queued', requestKey: candidate.input.requestKey,
                 actionOperationId: 'platform-operation', requestedByAccountId: 'owner',
                 startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: 'reserved-platform-content',
@@ -2411,7 +2419,10 @@ describe('installed deployment storage and target composition', () => {
                     }
                     settling = false;
                     const transition = DeploymentTransitionInputV1Schema.parse(request.data);
-                    if (settlementObservationRefused) return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
+                    // The Home transition owner refuses the captured Link revision after another activation.
+                    if (settlementObservationRefused || settlementPointerChanged
+                        && transition.expectedTargetLinkRevision !== row.targetLink.revision)
+                        return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
                     // The server transaction applies this prepared mutation to the SAME receipt Artifact.
                     if (!transition.contentArtifactId || !transition.contentUpdate
                         || transition.contentUpdate.expectedHeaderVersion === undefined
@@ -2450,15 +2461,8 @@ describe('installed deployment storage and target composition', () => {
                 generateOperationId: () => operationSequence++ === 0 ? 'platform-operation' : `platform-operation-${operationSequence}` });
             let replayPreparer: ReturnType<typeof createDaemonApprovalExecutionAuthorizationPreparer> | undefined;
             const resolveTarget = createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: 'https://platform.test' });
-            const actionAutomations = controllerBuildOutput ? createActionAutomationPortV1({
-                accountId: 'owner',
-                // This Home has no automation triggers. The Action still runs real admission.
-                seed: async () => ({ v: 1, rows: [] }),
-                settle: async () => {},
-            }) : undefined;
-            if (actionAutomations) onTestFinished(() => actionAutomations.dispose());
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
-                ...(actionAutomations ? { actionAutomations } : {}),
+                actionAutomations,
                 ...(rootApproval ? { ...rootApprovalStore, runActionOperation: operations.runActionOperation,
                     prepareApprovalExecutionAuthorization: request => replayPreparer!(request),
                     isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId: 'machine-a', serverId: 'home',
@@ -2821,11 +2825,14 @@ describe('installed deployment storage and target composition', () => {
                 }
                 if (scenario === 'uncertain receipt observe') {
                     const first = await executor.execute('deployments.receipts.observe', input, context);
-                    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, result: { state: 'queued' } });
+                    expect(first, JSON.stringify(first)).toMatchObject({ ok: true, result: { state: 'outcome_unknown' } });
+                    expect(receipt.state).toBe('outcome_unknown');
+                    // Only the provider's read timestamp changed; do not reclaim the effect slot or rewrite content.
+                    expect(transitionWrites).toBe(0);
                     const observed = await executor.execute('deployments.receipts.observe', input, context);
                     expect(observed, JSON.stringify(observed)).toMatchObject({ ok: true, result: { state: 'succeeded' } });
                     expect(receipt.state).toBe('succeeded');
-                    expect(transitionWrites).toBe(2);
+                    expect(transitionWrites).toBe(1);
                     const stored = decodePlainArtifactStoredContent(String(documents.get(receipt.contentArtifactId)!.body));
                     const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(stored).body));
                     expect(content).not.toHaveProperty('failure');

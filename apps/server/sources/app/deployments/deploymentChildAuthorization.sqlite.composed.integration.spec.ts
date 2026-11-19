@@ -49,7 +49,7 @@ import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResp
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ProjectSourcesReadOutputV1Schema, ProjectSourcesUpdateInputV1Schema,
     ProjectSourceRepositorySelectorV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
+import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
     computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
     EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema,
     EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
@@ -8416,6 +8416,100 @@ describe('deployment children retain their controller Action authority', () => {
             expect(DeploymentReceiptResultV1Schema.parse(replay.json())).toMatchObject({ ok: true, state: 'failed' });
             // Any other transition after settlement is still not admitted.
             expect((await settle(f.controller, f.receipt.id, 'running')).statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it.each([['deploy', 'succeeded'], ['rollback', 'succeeded'], ['promote', 'running_unverified'], ['teardown', 'succeeded']] as const)(
+        'observes an unknown %s receipt as %s without superseding a newer target receipt', async (operation, observedState) => {
+        const f = await fixture('account', 'account', { platformTarget: 'workers' });
+        // Retained history has already released the effect slot; its captured installation is unchanged.
+        const settledAt = new Date();
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { operation, state: 'outcome_unknown', settledAt } });
+        const actionId = 'deployments.receipts.observe' as const;
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id };
+        const requestId = crypto.randomUUID();
+        const envelope = { v: 1 as const, requestId, target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const path = `/v1/deployments/environments/${f.environment.id}/deployments/${f.receipt.id}/transitions`;
+        let revision = f.receipt.revision;
+        const progressBody = encodePlainArtifactStoredContent({ body: JSON.stringify({ platform: {
+            observation: { v: 1, state: 'running', observedAtMs: 1 },
+        } }) });
+        const publish = async (app: Parameters<Parameters<typeof withAuthenticatedTestApp>[1]>[0], state: 'succeeded' | 'running_unverified' | 'running' | 'failed' | 'outcome_unknown' = observedState) => {
+            const body = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
+                expectedRevision: revision, actionOperationId: f.receipt.actionOperationId,
+                machineId: f.controller.id, installationId: f.controller.installationId,
+                kind: state === 'running' ? 'stage' as const : 'settle' as const, state,
+                ...(state === 'outcome_unknown' ? { contentUpdate: {
+                    expectedBodyVersion: f.receipt.contentBodyVersion, body: progressBody,
+                } } : state === 'running' || state === 'failed' ? {} : operation === 'teardown' ? { teardownProof: {
+                    targetLinkRevision: f.link.revision,
+                    machines: [{ machineId: f.controller.id, installationId: f.controller.installationId }],
+                    workloadAbsent: true as const, retainedProviderResource: false,
+                    steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1],
+                } } : { expectedTargetLinkRevision: f.link.revision }) };
+            const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1,
+                accountId: f.account.id, machineId: f.controller.id, installationId: f.controller.installationId,
+                deploymentTransition: { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
+                    actionOperationId: f.receipt.actionOperationId, expectedRevision: revision,
+                    requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } }, privateKey: f.controller.keys.secretKey }) };
+            return app.inject({ method: 'POST', url: path, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId,
+                    method: 'POST', path, body: payload, privateKey: f.controller.keys.secretKey }),
+            } });
+        };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            expect.soft((await publish(app, 'running')).statusCode).toBe(409);
+            // The existing target-head policy must refuse even an unactivated newer effect.
+            const newer = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+                requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                requestedAt: new Date(f.receipt.requestedAt.getTime() + 1) } });
+            const environmentBefore = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+            const linkBefore = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
+            const superseded = await publish(app);
+            expect.soft(superseded.statusCode, superseded.body).toBe(409);
+            expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).toEqual(environmentBefore);
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).toEqual(linkBefore);
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } })).toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
+            // Remove only this test's synthetic newer history to exercise the unsuperseded recovery.
+            await db.deployment.delete({ where: { id: newer.id } });
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: new Date() } });
+            expect.soft((await publish(app)).statusCode).toBe(409);
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                .toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: null } });
+            const progress = await publish(app, 'outcome_unknown');
+            expect(progress.statusCode, progress.body).toBe(200);
+            expect.soft(progress.json()).toMatchObject({ ok: true, state: 'outcome_unknown', deploymentRevision: revision + 1 });
+            const progressArtifact = await inTx(tx => readArtifactForCallerInTx(tx, {
+                actorAccountId: f.account.id, artifactId: f.receipt.contentArtifactId }));
+            if (!progressArtifact.ok) throw new Error(progressArtifact.error);
+            expect.soft(privacyKit.encodeBase64(progressArtifact.artifact.body)).toBe(progressBody);
+            expect.soft(progressArtifact.artifact.bodyVersion).toBe(f.receipt.contentBodyVersion + 1);
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } }))
+                .toMatchObject({ state: 'outcome_unknown', settledAt });
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).toEqual(linkBefore);
+            revision++;
+            const recovered = await publish(app);
+            expect(recovered.statusCode, recovered.body).toBe(200);
+            expect(recovered.json()).toMatchObject({ ok: true, deploymentId: f.receipt.id,
+                state: observedState, deploymentRevision: revision + 1 });
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).toMatchObject({
+                revision: f.link.revision + 1, activeDeploymentId: operation === 'teardown' ? null : f.receipt.id,
+                state: operation === 'teardown' ? 'configured' : 'deployed',
+            });
+            const replay = await publish(app);
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toMatchObject({ ok: true, state: observedState, deploymentRevision: revision + 1 });
+            expect((await publish(app, 'failed')).statusCode).toBe(401);
         }, { authentication: 'real' });
     });
 
