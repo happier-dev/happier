@@ -55,6 +55,30 @@ function readVoiceManifest(source: string, name: string): unknown {
 }
 
 describe('scoped bundled publication', () => {
+  it('admits every embedded schema in the Triage and Channels contribution points', async () => {
+    await importPluginAuthorRuntimeModules(async sourceImport => {
+      const { rehydratePluginContributionPointSemanticsV1 } = await sourceImport(
+        new URL('../../../../packages/protocol/src/plugins/contributions/targetedContributions.ts', import.meta.url).href,
+        import.meta.url,
+      ) as typeof import('@happier-dev/protocol/plugins/contributions/targeted');
+      const { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS: triage } = await sourceImport(
+        new URL('../../../../packages/plugins/triage/src/targetedContributions.ts', import.meta.url).href,
+        import.meta.url,
+      ) as typeof import('../../../../packages/plugins/triage/src/targetedContributions.ts');
+      const { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS: channels } = await sourceImport(
+        new URL('../../../../packages/plugins/channels/src/targetedContributions.ts', import.meta.url).href,
+        import.meta.url,
+      ) as typeof import('../../../../packages/plugins/channels/src/targetedContributions.ts');
+      for (const points of [triage, channels]) {
+        for (const [pointId, point] of Object.entries(points)) {
+          for (const protocol of point.protocols) {
+            expect(rehydratePluginContributionPointSemanticsV1(protocol), `${pointId} ${protocol.id}@${protocol.version}`).not.toBeNull();
+          }
+        }
+      }
+    });
+  });
+
   it('reference admission scopes both incoming and outgoing edges to the changed plugin', () => {
     const parse = (id: string, contributes: unknown) => {
       const result = ingestPluginManifestV2({ schemaVersion: 2, id, version: '0.0.0', displayName: id, runtime: { apiVersion: 1 }, contributes });
