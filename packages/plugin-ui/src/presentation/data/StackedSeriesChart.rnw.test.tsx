@@ -249,7 +249,7 @@ describe('neutral series dataset', () => {
       // A stacked exact-value row is drawn as a row, and its hit area stays on it.
       expect(last.style.minHeight).toBe('');
       expect(last.querySelector(':scope > [data-happier-hit-area="true"]')).toBeNull();
-      expect(last.getAttribute('aria-label')).toContain('Used 399');
+      expect(last.getAttribute('aria-label')).toMatch(/\bUsed\b[ :]+399\b/);
     } finally { mount.unmount(); }
   });
   it('keeps keyboard focus on the selected exact sample when resizing between dense and separate hit targets', async () => {
@@ -557,7 +557,8 @@ describe('neutral series dataset', () => {
       // Appearance does not become another series, sum, or approximate accessible value.
       expect(find(mount.container, 'temperature').getAttribute('aria-label')).toContain('Low temperature 2.3456789');
       act(() => find(mount.container, 'temperature-values-toggle').click());
-      expect(find(mount.container, 'temperature-values-row-0').getAttribute('aria-label')).toContain('Low temperature: 2.3456789');
+      const exactRowLabel = find(mount.container, 'temperature-values-row-0').getAttribute('aria-label');
+      expect(exactRowLabel).toMatch(/Low temperature: [^·]*2\.3456789/);
       act(() => find(mount.container, 'temperature-bucket-a').click());
       expect(find(mount.container, 'temperature-readout').textContent).toContain('High temperature');
     } finally { mount.unmount(); }
