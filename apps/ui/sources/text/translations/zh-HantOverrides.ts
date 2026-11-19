@@ -6858,6 +6858,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         embedded: sessionEmbeddedTranslations['zh-Hant'],
         actionMenu: { openA11y: '開啟工作階段操作', backgroundFollow: '背景同步', handoffUnavailable: { disabled: '交接已在設定中關閉', noSource: '此工作階段沒有可移出的機器', noRoute: '目前沒有通往其他機器的路徑', peerUnavailable: '它的機器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暫時無法壓縮工作階段`, compactChecking: ({ agent }: { agent: string }) => `正在檢查 ${agent} 能否壓縮`,  groups: { session: "此工作階段", behavior: "行為", work: "工作", finish: "收尾" }, },
         providerBinding: providerSessionTranslations.zhHant,
+          transcriptTurnEnd: {
+            newDivider: "新訊息",
+            newDividerA11y: "新訊息",
+            workedFor: ({ duration }: { duration: string }) => `用時 ${duration}`,
+            stoppedAfter: ({ duration }: { duration: string }) => `停止前用時 ${duration}`,
+          },
           transcriptNavigation: {
               title: '導覽',
               modeAll: '全部',
@@ -11190,6 +11196,8 @@ settingsSession: {
             layoutFooter: '在簡單線性逐字稿與回合分組之間選擇。',
             layoutPickerTitle: '逐字稿版面',
             messageTimestampsTitle: '在訊息下方顯示時間與日期',
+            showTurnDurationTitle: "顯示輪次用時",
+            showTurnDurationSubtitle: "在每個已完成輪次末尾顯示「用時 1m 12s」",
             messageTimestampsSubtitle: '在每則使用者與助理訊息下方顯示時間戳。',
             messageTimestamps: {
                 hoverWebHiddenMobileTitle: '網頁懸停時顯示，行動裝置隱藏',

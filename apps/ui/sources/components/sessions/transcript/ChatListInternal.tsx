@@ -1032,6 +1032,7 @@ export const ChatListInternal = React.memo(function ChatListInternal(props: Chat
         tailContiguousBoundary,
         targetWindowActiveRef,
         transcriptToolCallsCollapsedPreviewCountSetting,
+        transcriptMarkers: props.transcriptMarkers,
     });
     const {
         buildRowShellSignature,

@@ -8279,6 +8279,12 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             restartAction: 'Session neu starten',
             chooseModelAction: 'Modell wählen',
         },
+        transcriptTurnEnd: {
+          newDivider: "Neu",
+          newDividerA11y: "Neue Nachrichten",
+          workedFor: ({ duration }: { duration: string }) => `Gearbeitet: ${duration}`,
+          stoppedAfter: ({ duration }: { duration: string }) => `Gestoppt nach ${duration}`,
+        },
         transcriptNavigation: {
             title: 'Navigieren',
             modeAll: 'Alle',
@@ -13378,6 +13384,8 @@ settingsSession: {
             layoutFooter: 'Wähl zwischen einem einfachen linearen Transkript und einer Gruppierung nach Turns.',
             layoutPickerTitle: 'Transkript-Layout',
             messageTimestampsTitle: 'Uhrzeit und Datum unter Nachrichten zeigen',
+            showTurnDurationTitle: "Dauer des Durchgangs zeigen",
+            showTurnDurationSubtitle: "„Gearbeitet: 1m 12s“ am Ende jedes beendeten Durchgangs",
             messageTimestampsSubtitle: 'Den Zeitstempel jeder Nutzer- und Assistenznachricht unter der Nachricht anzeigen.',
             messageTimestamps: {
                 hoverWebHiddenMobileTitle: 'Beim Überfahren im Web, mobil ausgeblendet',

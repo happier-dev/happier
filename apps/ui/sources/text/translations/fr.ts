@@ -8098,6 +8098,12 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         homeFreshness: sessionHomeFreshnessTranslations['fr'],
         embedded: sessionEmbeddedTranslations['fr'],
     providerBinding: providerSessionTranslations.fr,
+    transcriptTurnEnd: {
+      newDivider: "Nouveau",
+      newDividerA11y: "Nouveaux messages",
+      workedFor: ({ duration }: { duration: string }) => `A travaillé ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `Arrêté après ${duration}`,
+    },
     transcriptNavigation: {
       title: "Naviguer",
       modeAll: "Tout",
@@ -13314,6 +13320,8 @@ settingsSession: {
           "Choisis entre un transcript linéaire simple et un groupement par tours.",
         layoutPickerTitle: "Mise en page du transcript",
         messageTimestampsTitle: "Afficher l’heure et la date sous les messages",
+        showTurnDurationTitle: "Afficher la durée du tour",
+        showTurnDurationSubtitle: "« A travaillé 1m 12s » à la fin de chaque tour terminé",
         messageTimestampsSubtitle:
           "Affiche l’horodatage de chaque message utilisateur et assistant sous le message.",
         messageTimestamps: {

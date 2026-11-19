@@ -8483,6 +8483,12 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         homeFreshness: sessionHomeFreshnessTranslations['it'],
         embedded: sessionEmbeddedTranslations['it'],
     providerBinding: providerSessionTranslations.it,
+    transcriptTurnEnd: {
+      newDivider: "Nuovi",
+      newDividerA11y: "Nuovi messaggi",
+      workedFor: ({ duration }: { duration: string }) => `Ha lavorato per ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `Interrotto dopo ${duration}`,
+    },
     transcriptNavigation: {
       title: "Naviga",
       modeAll: "Tutti",
@@ -13699,6 +13705,8 @@ settingsSession: {
           "Scegli tra una trascrizione lineare e il raggruppamento per turni.",
         layoutPickerTitle: "Layout trascrizione",
         messageTimestampsTitle: "Mostra ora e data sotto i messaggi",
+        showTurnDurationTitle: "Mostra durata del turno",
+        showTurnDurationSubtitle: "“Ha lavorato per 1m 12s” alla fine di ogni turno concluso",
         messageTimestampsSubtitle:
           "Mostra il timestamp di ogni messaggio utente e assistente sotto il messaggio.",
         messageTimestamps: {

@@ -11,6 +11,7 @@ export const TRANSCRIPT_SETTINGS = defineSettingsPage({
             settings: {
                 layoutPicker: {},
                 messageTimestamps: {},
+                showTurnDuration: {},
                 chatLinkOpenLocation: {},
             },
         },

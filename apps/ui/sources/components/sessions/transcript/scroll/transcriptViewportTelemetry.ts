@@ -62,6 +62,7 @@ export type TranscriptViewportTelemetryRowKind =
     | 'tool-group-footer'
     | 'pending-action'
     | 'fork-divider'
+    | 'transcript-marker'
     | 'turn:tool'
     | 'turn:thinking'
     | 'turn:text';
@@ -478,6 +479,7 @@ const ROW_KINDS = new Set<TranscriptViewportTelemetryRowKind>([
     'tool-group-footer',
     'pending-action',
     'fork-divider',
+    'transcript-marker',
     'turn:tool',
     'turn:thinking',
     'turn:text',

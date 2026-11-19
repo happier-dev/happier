@@ -8715,6 +8715,12 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         homeFreshness: sessionHomeFreshnessTranslations['ru'],
         embedded: sessionEmbeddedTranslations['ru'],
     providerBinding: providerSessionTranslations.ru,
+    transcriptTurnEnd: {
+      newDivider: "Новое",
+      newDividerA11y: "Новые сообщения",
+      workedFor: ({ duration }: { duration: string }) => `Работал ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `Остановлено через ${duration}`,
+    },
     transcriptNavigation: {
       title: "Навигация",
       modeAll: "Все",
@@ -13328,6 +13334,8 @@ settingsSession: {
           "Выберите между простой линейной стенограммой и группировкой по ходам.",
         layoutPickerTitle: "Макет стенограммы",
         messageTimestampsTitle: "Показывать время и дату под сообщениями",
+        showTurnDurationTitle: "Показывать длительность хода",
+        showTurnDurationSubtitle: "«Работал 1m 12s» в конце каждого завершённого хода",
         messageTimestampsSubtitle:
           "Показывать отметку времени каждого сообщения пользователя и ассистента под сообщением.",
         messageTimestamps: {

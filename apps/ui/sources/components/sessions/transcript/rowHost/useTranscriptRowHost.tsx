@@ -17,6 +17,7 @@ import {
 } from '@/components/sessions/transcript/ChatListFrameSlots';
 import { deriveReadOnlyTranscriptInteraction } from '@/components/sessions/transcript/forkContext/deriveReadOnlyTranscriptInteraction';
 import { ForkDividerRow } from '@/components/sessions/transcript/forkContext/ForkDividerRow';
+import { TranscriptMarkerRow } from '@/components/sessions/transcript/markers/TranscriptMarkerRow';
 import { PendingMessagesTranscriptBlock } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
 import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import { ToolCallsGroupRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
@@ -413,6 +414,9 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                     />
                 </TranscriptEnterWrapper>
             ));
+        }
+        if (item.kind === 'transcript-marker') {
+            return wrapTranscriptItemForAnchor(item, <TranscriptMarkerRow marker={item.marker} />);
         }
         if (item.kind === 'pending-queue') {
             const createdAt = item.pendingMessages[0]?.createdAt ?? item.discardedMessages[0]?.createdAt ?? 0;

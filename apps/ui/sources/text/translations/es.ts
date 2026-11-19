@@ -8258,6 +8258,12 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         homeFreshness: sessionHomeFreshnessTranslations['es'],
         embedded: sessionEmbeddedTranslations['es'],
     providerBinding: providerSessionTranslations.es,
+    transcriptTurnEnd: {
+      newDivider: "Nuevo",
+      newDividerA11y: "Mensajes nuevos",
+      workedFor: ({ duration }: { duration: string }) => `Trabajó ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `Se detuvo tras ${duration}`,
+    },
     transcriptNavigation: {
       title: "Navegar",
       modeAll: "Todo",
@@ -13476,6 +13482,8 @@ settingsSession: {
           "Elige entre una transcripción lineal y el agrupamiento por turnos.",
         layoutPickerTitle: "Diseño de transcripción",
         messageTimestampsTitle: "Mostrar hora y fecha debajo de los mensajes",
+        showTurnDurationTitle: "Mostrar duración del turno",
+        showTurnDurationSubtitle: "«Trabajó 1m 12s» al final de cada turno terminado",
         messageTimestampsSubtitle:
           "Muestra la marca de tiempo de cada mensaje de usuario y asistente debajo del mensaje.",
         messageTimestamps: {

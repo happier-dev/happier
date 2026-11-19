@@ -55,6 +55,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_ANALYTICS = defineAccountSettingAna
     },
     transcriptToolCallsGroupShowBackground: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageTimestampDisplayMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    transcriptShowTurnDuration: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageSelectionEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageCopyActionEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptMessageForkActionEnabled: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },

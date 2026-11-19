@@ -9,6 +9,7 @@ import type { PendingMessageEditHandler } from '@/components/sessions/pending/Pe
 import type { TranscriptNavigationEntry } from '@/components/sessions/transcript/navigation/transcriptNavigationTypes';
 import type { TranscriptJumpResult } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
 import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
+import type { TranscriptMarkerInputs } from '@/components/sessions/transcript/markers/transcriptMarkers';
 import type { TranscriptSessionCommonProps } from '@/components/sessions/transcript/transcriptSessionCommon';
 import type { TranscriptRollbackAction, SessionRollbackRangeV1 } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import type {
@@ -91,6 +92,8 @@ export type ChatListInternalProps = Readonly<{
     groupingMode: string;
     forkedTranscriptEnabled: boolean;
     items: ChatTranscriptListItem[];
+    /** Placed between rows after turn decomposition: the "New" divider and settled turns' duration lines. */
+    transcriptMarkers: TranscriptMarkerInputs;
     maxTurnEntriesPerListItem: number;
     transcriptNavigationEntries: readonly TranscriptNavigationEntry[];
     messagePins: readonly PersistedSessionMessagePinV1[];

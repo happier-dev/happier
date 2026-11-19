@@ -62,6 +62,7 @@ import {
 } from '@/components/sessions/transcript/viewport/entryRestore/entryPresentation';
 import { useCommittedTranscriptProjectionSnapshot } from '@/components/sessions/transcript/items/useCommittedTranscriptProjectionSnapshot';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+import { insertTranscriptMarkers, type TranscriptMarkerInputs } from '@/components/sessions/transcript/markers/transcriptMarkers';
 
 type Ref<T> = { current: T };
 
@@ -96,6 +97,8 @@ export type TranscriptItemsPipelineDeps = Readonly<{
     targetWindowState?: TranscriptTargetWindowState;
     transcriptToolCallsCollapsedPreviewCountSetting: unknown;
     showToolCalls?: boolean;
+    /** The "New" divider's captured read cursor and the settled turns' ends, placed between rows. */
+    transcriptMarkers: TranscriptMarkerInputs;
 }>;
 
 export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
@@ -130,6 +133,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         targetWindowState,
         transcriptToolCallsCollapsedPreviewCountSetting,
         showToolCalls,
+        transcriptMarkers,
     } = deps;
 
     const getTurnMessageById = React.useCallback((messageId: string): Message | null => {
@@ -173,7 +177,14 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             collapsedPreviewCount: showToolCalls === false ? 0 : resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCountSetting),
             quietWorkflowTurnIds,
         });
-        const retained = retainKeyedRows(previousDecomposedItemsRef.current, rebuilt, (item) => item.id, { freeze: false });
+        const marked = insertTranscriptMarkers({
+            items: rebuilt,
+            sessionId,
+            getMessageById: getTurnMessageById,
+            newDividerAfterSeq: transcriptMarkers.newDividerAfterSeq,
+            turnEnds: transcriptMarkers.turnEnds,
+        });
+        const retained = retainKeyedRows(previousDecomposedItemsRef.current, marked, (item) => item.id, { freeze: false });
         previousDecomposedItemsRef.current = retained;
         return retained as ChatTranscriptListItem[];
     }, [
@@ -182,8 +193,11 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         getTurnMessageById,
         items,
         quietWorkflowTurnIds,
+        sessionId,
         transcriptToolCallsCollapsedPreviewCountSetting,
         showToolCalls,
+        transcriptMarkers.newDividerAfterSeq,
+        transcriptMarkers.turnEnds,
     ]);
 
     const jumpWindowFacts = useTranscriptJumpWindowFacts({

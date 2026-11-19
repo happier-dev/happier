@@ -81,6 +81,7 @@ export function resolveTranscriptRowItemType(params: Readonly<{
     if (item.kind === 'external-session-operation') return 'pending-action';
     if (item.kind === 'plugin-transcript-activity') return 'pending-action';
     if (item.kind === 'fork-divider') return 'fork-divider';
+    if (item.kind === 'transcript-marker') return 'transcript-marker';
     if (item.kind === 'transcript-window-gap') return 'transcript-window-gap';
     if (item.kind === 'turn') {
         if (item.turn.content.some((content) => content.kind === 'tool_calls')) return 'turn:tool';
@@ -355,6 +356,16 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
         return {
             ...base,
             structuralKey: `${item.parentSessionId}:${item.childSessionId}:${item.parentCutoffSeqInclusive}`,
+            expansionKey: 'tools:none|thinking:none',
+            rowState: 'stable',
+        };
+    }
+
+    if (item.kind === 'transcript-marker') {
+        // One line of meta text either way; the duration changes words inside it, never its height.
+        return {
+            ...base,
+            structuralKey: item.marker.type,
             expansionKey: 'tools:none|thinking:none',
             rowState: 'stable',
         };

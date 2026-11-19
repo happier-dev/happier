@@ -8364,6 +8364,12 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         homeFreshness: sessionHomeFreshnessTranslations['pt'],
         embedded: sessionEmbeddedTranslations['pt'],
     providerBinding: providerSessionTranslations.pt,
+    transcriptTurnEnd: {
+      newDivider: "Novo",
+      newDividerA11y: "Novas mensagens",
+      workedFor: ({ duration }: { duration: string }) => `Trabalhou por ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `Parou após ${duration}`,
+    },
     transcriptNavigation: {
       title: "Navegar",
       modeAll: "Tudo",
@@ -13594,6 +13600,8 @@ settingsSession: {
           "Escolha entre uma transcrição linear e o agrupamento por turnos.",
         layoutPickerTitle: "Layout da transcrição",
         messageTimestampsTitle: "Mostrar hora e data abaixo das mensagens",
+        showTurnDurationTitle: "Mostrar duração do turno",
+        showTurnDurationSubtitle: "“Trabalhou por 1m 12s” no fim de cada turno concluído",
         messageTimestampsSubtitle:
           "Exibir o horário de cada mensagem do usuário e do assistente abaixo da mensagem.",
         messageTimestamps: {

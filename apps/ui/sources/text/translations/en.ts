@@ -9600,6 +9600,12 @@ const enSession = {
     restartAction: 'Restart session',
     chooseModelAction: 'Choose model',
   },
+  transcriptTurnEnd: {
+    newDivider: "New",
+    newDividerA11y: "New messages",
+    workedFor: ({ duration }: { duration: string }) => `Worked for ${duration}`,
+    stoppedAfter: ({ duration }: { duration: string }) => `Stopped after ${duration}`,
+  },
   transcriptNavigation: {
     title: 'Navigate',
     modeAll: 'All',
@@ -15689,6 +15695,8 @@ const enSettingsSession = {
       'Choose between a simple linear transcript and turn grouping.',
     layoutPickerTitle: 'Transcript layout',
     messageTimestampsTitle: 'Show time and date below messages',
+    showTurnDurationTitle: "Show turn duration",
+    showTurnDurationSubtitle: "“Worked for 1m 12s” at the end of each finished turn",
     messageTimestampsSubtitle:
       'Display each user and assistant message timestamp under the message.',
     messageTimestamps: {

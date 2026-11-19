@@ -66,6 +66,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptToolCallsCollapsedPreviewCount, setTranscriptToolCallsCollapsedPreviewCount] = useSettingMutable('transcriptToolCallsCollapsedPreviewCount');
     const [transcriptToolCallsGroupShowBackground, setTranscriptToolCallsGroupShowBackground] = useSettingMutable('transcriptToolCallsGroupShowBackground');
     const [transcriptMessageTimestampDisplayMode, setTranscriptMessageTimestampDisplayMode] = useSettingMutable('transcriptMessageTimestampDisplayMode');
+    const [transcriptShowTurnDuration, setTranscriptShowTurnDuration] = useSettingMutable('transcriptShowTurnDuration');
     const [transcriptMessageSelectionEnabled, setTranscriptMessageSelectionEnabled] = useSettingMutable('transcriptMessageSelectionEnabled');
     const [transcriptMessageCopyActionEnabled, setTranscriptMessageCopyActionEnabled] = useSettingMutable('transcriptMessageCopyActionEnabled');
     const [transcriptMessageForkActionEnabled, setTranscriptMessageForkActionEnabled] = useSettingMutable('transcriptMessageForkActionEnabled');
@@ -263,6 +264,19 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                         }}
                     />
                 </SettingAnchor>
+
+                <SettingRow
+                    setting={TRANSCRIPT_SETTINGS.settings.showTurnDuration}
+                    testID="settings-session-transcript-show-turn-duration"
+                    rightElement={
+                        <Switch
+                            value={transcriptShowTurnDuration !== false}
+                            onValueChange={(v) => setTranscriptShowTurnDuration(Boolean(v))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setTranscriptShowTurnDuration(transcriptShowTurnDuration === false)}
+                />
             </ItemGroup>
 
             <SettingSection section={TRANSCRIPT_SETTINGS.sectionRefs.thinking}>

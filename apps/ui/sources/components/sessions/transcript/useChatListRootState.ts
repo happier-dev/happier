@@ -23,6 +23,7 @@ import { useStableValueBySignature } from '@/components/sessions/transcript/item
 import { preloadEnrichedMarkdownRuntime } from '@/components/markdown/enriched/preloadEnrichedMarkdownRuntime';
 import { useSessionManagedWorkflowRuns } from '@/components/workflows/run/useContextManagedWorkflowRuns';
 import { useTranscriptRootDerivedItems } from '@/components/sessions/transcript/items/useTranscriptRootDerivedItems';
+import { useTranscriptMarkerInputs } from '@/components/sessions/transcript/markers/useTranscriptMarkerInputs';
 import { useTranscriptRootNavigationState } from '@/components/sessions/transcript/navigation/useTranscriptRootNavigationState';
 import { useTranscriptRootPendingRequests } from '@/components/sessions/transcript/items/useTranscriptRootPendingRequests';
 import { useTranscriptRootRollbackActions } from '@/components/sessions/transcript/items/useTranscriptRootRollbackActions';
@@ -488,6 +489,7 @@ export function useChatListRootState(props: ChatListProps) {
         props.session.id,
     ]);
     const internalMessagesById = forkedTranscriptEnabled ? messagesById : EMPTY_MESSAGES_BY_ID;
+    const transcriptMarkers = useTranscriptMarkerInputs(props.session);
 
     return {
         boundary: {
@@ -508,6 +510,7 @@ export function useChatListRootState(props: ChatListProps) {
             groupingMode,
             forkedTranscriptEnabled,
             items: groupedItems,
+            transcriptMarkers,
             maxTurnEntriesPerListItem: transcriptMaxTurnEntriesPerListItem,
             transcriptNavigationEntries,
             messagePins: sessionMessagePins,

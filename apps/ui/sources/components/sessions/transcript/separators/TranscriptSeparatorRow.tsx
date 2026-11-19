@@ -8,10 +8,12 @@ import { Text } from '@/components/ui/text/Text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 
 export function TranscriptSeparatorRow(props: Readonly<{
   testID?: string;
-  iconName: IconName;
+  /** Optional: the "New" divider is a word between two hairlines, with no mark. */
+  iconName?: IconName;
   title: string;
   /**
    * A caller-composed title run, rendered in the title's place.
@@ -32,17 +34,27 @@ export function TranscriptSeparatorRow(props: Readonly<{
   accessibilityLabel?: string;
   padding?: 'default' | 'none';
   chipChrome?: 'default' | 'minimal';
+  /**
+   * `unread`: the read cursor's divider. Colour means state, so the word and its hairlines take the unread
+   * mark's ink (the Session list's unread dot) instead of the neutral separator ink.
+   */
+  tone?: 'default' | 'unread';
   containerStyle?: ViewStyle | null;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const padding = props.padding === 'none' ? 'none' : 'default';
   const chipChrome = props.chipChrome === 'minimal' ? 'minimal' : 'default';
+  const unread = props.tone === 'unread';
+  // The rule spans the reply column every message row uses, so its ends meet the text edges.
+  const layoutMaxWidth = useLayoutMaxWidth();
+  const rowWidthStyle = { maxWidth: padding === 'none' ? layoutMaxWidth : layoutMaxWidth - 2 * SEPARATOR_INSET };
+  const lineStyle = [styles.line, unread ? styles.lineUnread : null, { backgroundColor: unread ? theme.colors.text.link : theme.colors.border.default }];
   const chipContent = (
     <>
-      <Icon name={props.iconName} size={14} color={theme.colors.text.secondary} />
+      {props.iconName ? <Icon name={props.iconName} size={14} color={theme.colors.text.secondary} /> : null}
       <View style={styles.textStack}>
         {props.titleContent ?? (
-          <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
+          <Text testID={props.titleTestID} style={[styles.title, { color: unread ? theme.colors.text.link : theme.colors.text.primary }]} numberOfLines={1}>
             {props.title}
           </Text>
         )}
@@ -65,8 +77,8 @@ export function TranscriptSeparatorRow(props: Readonly<{
         props.containerStyle ?? null,
       ]}
     >
-      <View style={styles.row}>
-        <View style={[styles.line, { backgroundColor: theme.colors.border.default }]} />
+      <View style={[styles.row, rowWidthStyle]}>
+        <View style={lineStyle} />
         {props.onPress ? (
           <HappierPressable
             testID={props.chipTestID}
@@ -99,7 +111,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
             {chipContent}
           </View>
         )}
-        <View style={[styles.line, { backgroundColor: theme.colors.border.default }]} />
+        <View style={lineStyle} />
       </View>
     </View>
   );
@@ -114,9 +126,12 @@ export const TRANSCRIPT_SEPARATOR_TITLE_TEXT_STYLE = {
   ...Typography.variant('meta', 'semiBold'),
 } as const;
 
+/** The row's own side inset, the same as a message's column inset. */
+const SEPARATOR_INSET = 16;
+
 const styles = StyleSheet.create((_theme) => ({
   container: {
-    paddingHorizontal: 16,
+    paddingHorizontal: SEPARATOR_INSET,
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -126,7 +141,6 @@ const styles = StyleSheet.create((_theme) => ({
     paddingVertical: 0,
   },
   row: {
-    maxWidth: 720,
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
@@ -137,6 +151,10 @@ const styles = StyleSheet.create((_theme) => ({
     flex: 1,
     height: 1,
     opacity: 0.8,
+  },
+  // The unread ink is a full-strength link colour; at hairline weight it reads as a rule, not a link.
+  lineUnread: {
+    opacity: 0.55,
   },
   chip: {
     flexDirection: 'row',

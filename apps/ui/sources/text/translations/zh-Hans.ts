@@ -7949,6 +7949,12 @@ export const zhHans: TranslationStructure = {
         homeFreshness: sessionHomeFreshnessTranslations['zh-Hans'],
         embedded: sessionEmbeddedTranslations['zh-Hans'],
     providerBinding: providerSessionTranslations.zhHans,
+    transcriptTurnEnd: {
+      newDivider: "新消息",
+      newDividerA11y: "新消息",
+      workedFor: ({ duration }: { duration: string }) => `用时 ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `停止前用时 ${duration}`,
+    },
     transcriptNavigation: {
       title: "导航",
       modeAll: "全部",
@@ -13103,6 +13109,8 @@ settingsSession: {
       layoutFooter: "在简单线性记录与按回合分组之间选择。",
       layoutPickerTitle: "会话记录布局",
       messageTimestampsTitle: "在消息下方显示时间和日期",
+      showTurnDurationTitle: "显示轮次用时",
+      showTurnDurationSubtitle: "在每个已完成轮次末尾显示“用时 1m 12s”",
       messageTimestampsSubtitle: "在每条用户和助手消息下方显示时间戳。",
       messageTimestamps: {
         hoverWebHiddenMobileTitle: "网页悬停时显示，移动端隐藏",

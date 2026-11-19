@@ -8094,6 +8094,12 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         homeFreshness: sessionHomeFreshnessTranslations['pl'],
         embedded: sessionEmbeddedTranslations['pl'],
     providerBinding: providerSessionTranslations.pl,
+    transcriptTurnEnd: {
+      newDivider: "Nowe",
+      newDividerA11y: "Nowe wiadomości",
+      workedFor: ({ duration }: { duration: string }) => `Praca: ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `Zatrzymano po ${duration}`,
+    },
     transcriptNavigation: {
       title: "Nawiguj",
       modeAll: "Wszystkie",
@@ -13306,6 +13312,8 @@ settingsSession: {
           "Wybierz między prostym transkryptem liniowym a grupowaniem na tury.",
         layoutPickerTitle: "Układ transkryptu",
         messageTimestampsTitle: "Pokaż godzinę i datę pod wiadomościami",
+        showTurnDurationTitle: "Pokaż czas trwania tury",
+        showTurnDurationSubtitle: "„Praca: 1m 12s” na końcu każdej zakończonej tury",
         messageTimestampsSubtitle:
           "Wyświetlaj znacznik czasu każdej wiadomości użytkownika i asystenta pod wiadomością.",
         messageTimestamps: {

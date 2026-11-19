@@ -20,6 +20,10 @@ export function resolveChatListMessageRowType(message: Message | null): ChatList
     return `message:${message.kind}`;
 }
 
+export type TranscriptMarker =
+    | Readonly<{ type: 'new' }>
+    | Readonly<{ type: 'turn-end'; outcome: 'worked' | 'stopped'; durationMs: number }>;
+
 export type ChatListItem =
     | {
         kind: 'message';
@@ -48,6 +52,16 @@ export type ChatListItem =
         parentSessionId: string;
         childSessionId: string;
         parentCutoffSeqInclusive: number;
+    }
+    | {
+        /**
+         * Quiet transcript furniture between rows, placed by `insertTranscriptMarkers`: the "New" divider at
+         * the read cursor captured when the Session was opened, or a settled turn's duration line. It has no
+         * seq of its own and is never a navigation or jump target.
+         */
+        kind: 'transcript-marker';
+        id: string;
+        marker: TranscriptMarker;
     }
     | {
         kind: 'pending-queue';

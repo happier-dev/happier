@@ -7642,6 +7642,12 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         homeFreshness: sessionHomeFreshnessTranslations['ca'],
         embedded: sessionEmbeddedTranslations['ca'],
         providerBinding: providerSessionTranslations.ca,
+        transcriptTurnEnd: {
+          newDivider: "Nou",
+          newDividerA11y: "Missatges nous",
+          workedFor: ({ duration }: { duration: string }) => `Ha treballat ${duration}`,
+          stoppedAfter: ({ duration }: { duration: string }) => `Aturat després de ${duration}`,
+        },
         transcriptNavigation: {
             title: 'Navega',
             modeAll: 'Tot',
@@ -12691,6 +12697,8 @@ settingsSession: {
               layoutFooter: 'Tria entre una transcripció lineal i l’agrupació per torns.',
               layoutPickerTitle: 'Disseny de transcripció',
               messageTimestampsTitle: 'Mostra hora i data sota els missatges',
+              showTurnDurationTitle: "Mostra la durada del torn",
+              showTurnDurationSubtitle: "«Ha treballat 1m 12s» al final de cada torn acabat",
               messageTimestampsSubtitle: 'Mostra la marca de temps de cada missatge d’usuari i assistent sota el missatge.',
               messageTimestamps: {
                   hoverWebHiddenMobileTitle: 'En passar-hi el cursor al web, ocult al mobil',

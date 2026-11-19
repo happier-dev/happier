@@ -92,6 +92,11 @@ export function useSessionSurfacePresenceSignal(): SessionSurfacePresenceSignal 
     return signal;
 }
 
+/** The signal for a reader that also renders outside a Session view (a transcript preview); null there. */
+export function useOptionalSessionSurfacePresenceSignal(): SessionSurfacePresenceSignal | null {
+    return React.useContext(SessionSurfacePresenceSignalContext);
+}
+
 function useResolvedSessionSurfacePresence(host: SessionSurfaceHostPresence): SessionSurfacePresence {
     const destinationFocused = useDestinationFocus();
     const destinationVisible = useDestinationVisibility();

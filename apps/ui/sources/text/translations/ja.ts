@@ -8564,6 +8564,12 @@ localTailscale: {
         homeFreshness: sessionHomeFreshnessTranslations['ja'],
         embedded: sessionEmbeddedTranslations['ja'],
     providerBinding: providerSessionTranslations.ja,
+    transcriptTurnEnd: {
+      newDivider: "新着",
+      newDividerA11y: "新着メッセージ",
+      workedFor: ({ duration }: { duration: string }) => `作業時間 ${duration}`,
+      stoppedAfter: ({ duration }: { duration: string }) => `停止までの時間 ${duration}`,
+    },
     transcriptNavigation: {
       title: "ナビゲート",
       modeAll: "すべて",
@@ -13772,6 +13778,8 @@ settingsSession: {
           "シンプルな線形トランスクリプトとターン表示を選べます。",
         layoutPickerTitle: "トランスクリプトレイアウト",
         messageTimestampsTitle: "メッセージ下に日時を表示",
+        showTurnDurationTitle: "ターンの所要時間を表示",
+        showTurnDurationSubtitle: "終了した各ターンの最後に「作業時間 1m 12s」",
         messageTimestampsSubtitle:
           "各ユーザーおよびアシスタントメッセージのタイムスタンプをメッセージ下に表示します。",
         messageTimestamps: {

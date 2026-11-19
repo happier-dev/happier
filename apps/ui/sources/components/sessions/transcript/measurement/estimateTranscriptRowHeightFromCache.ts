@@ -591,6 +591,7 @@ export function estimateTranscriptRowHeightFromContent(params: Readonly<{
         || item.kind === 'external-session-operation'
         || item.kind === 'plugin-transcript-activity'
         || item.kind === 'fork-divider'
+        || item.kind === 'transcript-marker'
     ) {
         return ESTIMATE_COMPACT_ROW_PX;
     }
