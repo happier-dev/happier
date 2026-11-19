@@ -5,13 +5,14 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding, resolveManifestTargetedContributions } from '@happier-dev/cli-common/plugins/registration';
 import { PLUGIN_MANIFEST as TRIAGE_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
+import { REVIEW_TRIAGE_SOURCE_V1, reviewTriageLocalRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
 
 describe('current Machine source declarations for an Account target', () => {
-    it('reads the actual source without a Machine target and re-admits it through the Account target owner', async () => {
+    it('admits the Machine GitHub source and older Review results through the current Account Triage target', async () => {
         const sourceId = 'happier.scm.forge.github';
         const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [sourceId] } });
         try {
@@ -121,6 +122,23 @@ describe('current Machine source declarations for an Account target', () => {
                 kind: 'account_release' as const, pluginId: 'happier.triage', version: parsedTarget.manifest.version,
                 archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
             } }, ...response.sourceDeclarations];
+            const point = TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1;
+            const admitted = resolveManifestTargetedContributions(declarations).read({
+                targetPluginId: point.targetPluginId, pointId: point.id, protocol: point.protocol,
+            });
+            const reviewAttention = admitted?.contributions.find(({ contributor }) =>
+                contributor.pluginId === REVIEW_TRIAGE_SOURCE_V1.pluginId
+                && contributor.contributionId === REVIEW_TRIAGE_SOURCE_V1.localId,
+            )?.operations.find(({ role }) => role === 'readAttention');
+            // READY242 predates the optional Review presentation fact. Test a
+            // nonempty previous reply through the point's rehydrated parser.
+            const olderAttentionPage = { kind: 'page', nextPage: false, items: [{
+                localRef: reviewTriageLocalRefV1('review-1'),
+                reason: 'review_needs_you', type: 'decision', title: 'Review', resolved: false,
+            }] };
+            expect(reviewAttention?.targetProtocol.resultSchema.safeParse(olderAttentionPage)).toMatchObject({
+                success: true, data: olderAttentionPage,
+            });
             const withoutResultFacts = declarations.map(declaration => declaration.manifest.id === sourceId
                 ? { ...declaration, actionResultContractIds: [] } : declaration);
             expect(resolveManifestTargetedContributions(withoutResultFacts).diagnosticsByPluginId[sourceId])
