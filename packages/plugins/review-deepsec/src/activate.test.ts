@@ -473,6 +473,7 @@ describe('activate', () => {
     const snapshot = buildGitSnapshot({ projectKey: 'machine:/repo', fetchedAt: 123, rootPath: '/repo',
       statusOutput: '# branch.head feature\0# branch.upstream origin/main\0'
         + '1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb src/auth.ts\0'
+        + '1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb src/auth café.ts\0'
         + '1 M. N... 100644 100644 100644 aaaaaaa bbbbbbb src/other-area.ts\0'
         + '? src/brand-new.ts\0? src/brand-new.test.ts\0',
       includedNumStatOutput: '', pendingNumStatOutput: '',
@@ -482,6 +483,7 @@ describe('activate', () => {
       'src/brand-new.test.ts', 'src/brand-new.ts',
     ]);
     const selectedPaths = pendingEntries.map(entry => entry.path);
+    expect(selectedPaths).toContain('src/auth café.ts');
     let filesFromContents = '';
     const commentOutMarkdown = [
       '## 🔎 deepsec found 1 finding',
@@ -820,6 +822,19 @@ describe('activate', () => {
       diagnostics: [{ code: 'scope_path_unavailable', path: '../outside.ts' }],
     });
     expect(fixture.stat).toHaveBeenCalledWith({ root: 'workspace', relativePath: '../outside.ts' },
+      { signal: expect.any(AbortSignal) });
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it.each(['src/auth.ts ', ' src/auth.ts'])('refuses native-unrepresentable selected path %j after host admission', async selectedPath => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ mode: 'selected_files', paths: [selectedPath] }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_execution_failed' } });
+    expect(fixture.stat).toHaveBeenCalledWith({ root: 'workspace', relativePath: selectedPath },
       { signal: expect.any(AbortSignal) });
     expect(fixture.run).not.toHaveBeenCalled();
   });

@@ -84,6 +84,7 @@ export type DeepSecRuntimeDiagnostic = Readonly<{
 export type RunDeepSecReviewParams = Readonly<{
   cwd: string;
   mode: DeepSecReviewMode;
+  /** Workspace-relative paths already admitted by the host filesystem. */
   selectedFiles?: readonly string[];
   confirmedCostWarning: boolean;
   cost?: Omit<DeepSecCostWarningInput, 'mode'>;
@@ -105,39 +106,17 @@ export type RunDeepSecReviewParams = Readonly<{
   signal?: AbortSignal;
 }>;
 
-function normalizeSelectedFiles(selectedFiles: readonly string[] | undefined): readonly string[] {
+/** Containment and path identity are already admitted by the host filesystem.
+ * Native 2.3.12 splits --files-from on newlines and trims entries, so only
+ * representability in that format belongs here. */
+function selectedFilesForNativeList(selectedFiles: readonly string[] | undefined): readonly string[] {
   if (!selectedFiles || selectedFiles.length === 0) {
     throw new Error('selectedFiles must include at least one file path');
   }
-
-  const normalizedFiles: string[] = [];
-  const seen = new Set<string>();
-  for (const filePath of selectedFiles) {
-    const normalized = filePath.trim();
-    if (!normalized || /[\r\n]/.test(normalized)) {
-      throw new Error('selectedFiles must be non-empty single-line paths');
-    }
-    const slashNormalized = normalized.replace(/\\/g, '/');
-    if (
-      slashNormalized.includes('\0')
-      || slashNormalized.startsWith('/')
-      || slashNormalized.startsWith('~')
-      || /^[A-Za-z]:/.test(slashNormalized)
-    ) {
-      throw new Error('selectedFiles must be safe workspace-relative paths');
-    }
-    const segments = slashNormalized.split('/').filter((segment) => segment && segment !== '.');
-    if (segments.length === 0 || segments.includes('..')) {
-      throw new Error('selectedFiles must be safe workspace-relative paths');
-    }
-    const safePath = segments.join('/');
-    if (!seen.has(safePath)) {
-      seen.add(safePath);
-      normalizedFiles.push(safePath);
-    }
+  if (selectedFiles.some(filePath => !filePath || filePath !== filePath.trim() || /[\r\n]/.test(filePath))) {
+    throw new Error('selectedFiles must be non-empty single-line paths without leading or trailing whitespace');
   }
-
-  return Object.freeze(normalizedFiles);
+  return selectedFiles;
 }
 
 function commandFailed(result: PluginProcessResult, directFindingReport = false): boolean {
@@ -220,7 +199,7 @@ function missingScopedPathListDiagnostic(): DeepSecScopedPathListDiagnostic {
 export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<DeepSecReviewRunResult> {
   try {
     const selectedFiles = params.mode === 'selected_files' || params.mode === 'current_diff'
-      ? normalizeSelectedFiles(params.selectedFiles)
+      ? selectedFilesForNativeList(params.selectedFiles)
       : undefined;
     const warning = buildDeepSecCostWarning({ mode: params.mode, ...(params.cost ?? {}) });
     if (warning.status === 'requires_confirmation' && !params.confirmedCostWarning) {

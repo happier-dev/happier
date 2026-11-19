@@ -344,50 +344,6 @@ describe('runDeepSecReview', () => {
     expect(createTextFile).not.toHaveBeenCalled();
   });
 
-  it('rejects unsafe selected-file paths before resolution', async () => {
-    const resolve = vi.fn(async () => resolvedTool);
-    const base = {
-      cwd: '/repo',
-      mode: 'selected_files' as const,
-      confirmedCostWarning: true,
-      exec: { systemTools: { resolve }, run: async () => processResult() },
-      tempFiles: createTempFiles(),
-    };
-
-    for (const selectedFile of [
-      '/etc/passwd',
-      '../secret.ts',
-      'src/../secret.ts',
-      'C:\\Users\\alice\\secret.ts',
-      '\\\\server\\share\\secret.ts',
-      '~/.ssh/config',
-      'src/\0secret.ts',
-    ]) {
-      await expect(runDeepSecReview({ ...base, selectedFiles: [selectedFile] }))
-        .rejects.toThrow('selectedFiles must be safe workspace-relative paths');
-    }
-    expect(resolve).not.toHaveBeenCalled();
-  });
-
-  it('deduplicates selected-file paths before writing the list', async () => {
-    let filesListContents = '';
-    const createScopedPathListFile = vi.fn(async ({ paths }: { paths: readonly string[] }) => {
-      filesListContents = `${paths.join('\n')}\n`;
-      return { status: 'created' as const, path: '/tmp/deepsec-files.txt', paths };
-    });
-
-    await runDeepSecReview({
-      cwd: '/repo',
-      mode: 'selected_files',
-      selectedFiles: [' src/auth.ts ', 'src\\auth.ts', './src/api.ts'],
-      confirmedCostWarning: true,
-      exec: { systemTools: { resolve: async () => resolvedTool }, run: async () => processResult() },
-      tempFiles: createTempFiles({ createScopedPathListFile }),
-    });
-
-    expect(filesListContents).toBe('src/auth.ts\nsrc/api.ts\n');
-  });
-
   it('fails closed when selected-file materialization blocks a path', async () => {
     const run = vi.fn(async () => processResult());
     const createTextFile = vi.fn(async () => '/tmp/deepsec-comments.md');
