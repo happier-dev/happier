@@ -12,6 +12,7 @@ import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectW
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import type { createDeploymentActions } from './deploymentActions';
+import { deploymentPreviewAvailability } from './deploymentPresentation';
 import { DeploymentPreviewBranchChoice } from './DeploymentPreviewBranchChoice';
 import { DeploymentPreviewNativeChoice } from './DeploymentPreviewNativeChoice';
 import { showDeploymentSheet } from './deploymentSheet';
@@ -38,6 +39,7 @@ function previewDataKind(template: PreviewTemplate): PreviewData {
 
 type PreviewTemplateRowsProps = Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
+  previewAvailability?: ReturnType<typeof deploymentPreviewAvailability>;
   controller: DeploymentReadControllerV1;
   demand: DeploymentReadDemandV1;
   machineName: (machineId: string) => string;
@@ -69,8 +71,21 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
     const kind = template ? previewDataKind(template) : 'none';
     if (template && kind !== 'none') setSeenData((seen) => seen[kind] === template.data ? seen : { ...seen, [kind]: template.data });
   }, [template]);
+  const previewAvailability = props.previewAvailability ?? deploymentPreviewAvailability(props.detail);
+  if (previewAvailability === 'preview') return null;
+  if (previewAvailability === 'needsRepository') {
+    return (
+      <Item
+        testID={`${props.testID}.needsRepository`}
+        title={t('projects.deployments.settingsSections.previewsNeedRepository')}
+        subtitle={t('projects.deployments.settingsSections.previewsNeedRepositoryBody')}
+        mode="info"
+      />
+    );
+  }
   if (!template) {
-    return <PreviewSetupRow {...props} onSave={onSaveTemplate} />;
+    const { previewAvailability: _resolvedFromSavedContent, ...setup } = props;
+    return <PreviewSetupRow {...setup} onSave={onSaveTemplate} />;
   }
   const { onSave } = props;
   const runtimeLinks = props.detail.targetLinks.map((row) => row.targetLink).filter((link) => link.role === 'runtime');
@@ -119,7 +134,7 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
       <Item
         testID={`${props.testID}.enabled`}
         title={t('common.enabled')}
-        subtitle={template.enabled
+        subtitle={previewAvailability === 'on'
           ? t('projects.deployments.settingsSections.previewsOn')
           : t('projects.deployments.settingsSections.previewsOff')}
         mode={onSave ? undefined : 'info'}
@@ -267,20 +282,10 @@ function PreviewForkChoice(props: Readonly<{
 
 /**
  * No template yet (J6 entry): a repository-backed Environment turns previews on from its Project repository and its
- * own runtime link, saved once through `environments.update` (patch.previewTemplate). A stored definition says why
- * previews need a repository instead. The rest of the template is edited in the rows above once it exists.
+ * own runtime link, saved once through `environments.update` (patch.previewTemplate). The rest of the template
+ * is edited in the rows above once it exists.
  */
 function PreviewSetupRow(props: PreviewTemplateRowsProps) {
-  if (props.detail.content.definition.kind === 'stored') {
-    return (
-      <Item
-        testID={`${props.testID}.needsRepository`}
-        title={t('projects.deployments.settingsSections.previewsNeedRepository')}
-        subtitle={t('projects.deployments.settingsSections.previewsNeedRepositoryBody')}
-        mode="info"
-      />
-    );
-  }
   const runtimeTargetLinkId = props.detail.environment.runtimeTargetLinkId;
   // Without a manager's save path or a runtime link there is nothing to turn on; the preview list says there are none.
   if (!props.onSave || !props.lifetime || !runtimeTargetLinkId) return null;

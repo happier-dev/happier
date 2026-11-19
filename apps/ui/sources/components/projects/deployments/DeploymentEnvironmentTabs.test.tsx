@@ -1961,8 +1961,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  // Overview keeps no configuration at rest (PAGE-ACCEPT-176 D6): Previews is a Settings section, reached here from Permissions.
-  it.each(['permissions'])('opens Configure Previews from %s at the canonical Settings section', async tab => {
+  it('opens Configure Previews from Overview at the canonical Settings section for a repository', async () => {
+    const tab = 'overview';
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Preview navigation', serverUrl: 'https://preview-navigation.test',
       accountId: 'account-owner', currentAccount: true });

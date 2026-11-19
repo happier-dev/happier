@@ -342,6 +342,15 @@ export function deploymentDefinitionLabel(
     : null;
 }
 
+/** Whether this Environment can configure PR previews, and whether its template is enabled. */
+export function deploymentPreviewAvailability(
+  detail: Pick<DeploymentEnvironmentReadDetailV1, 'environment' | 'content'>,
+): 'preview' | 'needsRepository' | 'on' | 'off' {
+  if (detail.environment.purpose === 'preview') return 'preview';
+  if (detail.content.definition.kind === 'stored') return 'needsRepository';
+  return detail.content.previewTemplate?.enabled === true ? 'on' : 'off';
+}
+
 /**
  * Whether this Environment can be deployed from here, from its own facts: who may, and whether it has a runtime
  * target. What that target supports its producer decides at the press, and its typed refusal is shown as it says.

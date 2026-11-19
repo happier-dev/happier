@@ -66,6 +66,7 @@ import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { PreviewTemplateRows } from './DeploymentPreviewTemplateRows';
+import { deploymentPreviewAvailability } from './deploymentPresentation';
 import { DeploymentPreviewVariables } from './DeploymentPreviewVariables';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
 import {
@@ -120,6 +121,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       lifetime?: ServerAccountScopeLifetime | null;
       /** The Action owner's manager edits; absent where this viewer cannot change settings. */
       editing?: DeploymentEnvironmentEditing | null;
+      previewAvailability?: ReturnType<typeof deploymentPreviewAvailability>;
       previewBindings?: React.ComponentProps<typeof DeploymentPreviewVariables>['draft'];
       definitionDocument: StoredDefinitionDocument;
       review?: DeploymentReviewHandle;
@@ -140,7 +142,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     const sectionReveal = useSettingReveal(props.focusSection ?? null, REVEAL_DELAY_MS);
     const revealHost = (id: DeploymentEnvironmentSettingsSectionV1) => props.focusSection === id ? sectionReveal.hostRef : undefined;
     const { detail, machineName } = props;
-    const previewEnrollmentEnabled = detail.environment.purpose !== 'preview' && detail.content.previewTemplate?.enabled === true;
+    const previewAvailability = props.previewAvailability ?? deploymentPreviewAvailability(detail);
+    const previewEnrollmentEnabled = previewAvailability === 'on';
     const previewEnrollment = useWorkflowTriggerSets(previewEnrollmentEnabled && props.lifetime
       ? { scope: 'account_inline' } : null, props.lifetime ?? null);
     const enrolledPreview = previewEnrollment.sets.find(set => {
@@ -506,7 +509,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         {platformSource === null ? <View ref={revealHost('backups')} collapsable={false}>
           <BackupRows {...props} testID={section('backups')} />
         </View> : null}
-        {detail.environment.purpose === 'preview' || props.lifetime || detail.content.previewTemplate ? (
+        {previewAvailability === 'preview' || previewAvailability === 'needsRepository' || props.lifetime || detail.content.previewTemplate ? (
           <View ref={revealHost('previews')} collapsable={false}>
           <ItemGroup
             testID={section('previews')}
@@ -523,9 +526,10 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 action={previewEnrollment.status === 'failed'
                   ? { label: t('common.retry'), onPress: previewEnrollment.retry } : undefined} />
             ) : null}
-            {detail.environment.purpose !== 'preview' ? (
+            {previewAvailability !== 'preview' ? (
               <PreviewTemplateRows
                 detail={detail}
+                previewAvailability={previewAvailability}
                 controller={props.controller}
                 demand={props.demand}
                 machineName={machineName}
@@ -541,9 +545,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 testID={`${section('previews')}.template`}
               />
             ) : null}
-            {detail.environment.purpose === 'preview' ? (
+            {previewAvailability === 'preview' ? (
               <PreviewOfRow {...props} testID={section('previews')} />
-            ) : props.lifetime && detail.content.previewTemplate ? (
+            ) : previewAvailability !== 'needsRepository' && props.lifetime && detail.content.previewTemplate ? (
               <TemplatePreviewRows
                 lifetime={props.lifetime}
                 demand={props.demand}
@@ -554,7 +558,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           </ItemGroup>
           </View>
         ) : null}
-        {detail.environment.purpose !== 'preview' && detail.content.previewTemplate && props.lifetime && props.review && props.previewBindings ? (
+        {(previewAvailability === 'on' || previewAvailability === 'off')
+          && detail.content.previewTemplate && props.lifetime && props.review && props.previewBindings ? (
           <DeploymentPreviewVariables detail={detail} lifetime={props.lifetime} draft={props.previewBindings}
             domainRead={{ controller: props.controller, demand: props.demand }}
             review={props.review}

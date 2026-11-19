@@ -1573,6 +1573,29 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('reports the same Previews availability on Overview and Settings for a stored definition', async () => {
+    const { t } = await import('@/text');
+    const base = environmentDetailForHome();
+    const detail = environmentDetailForHome({ content: { ...base.content, definition: { kind: 'stored',
+      contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, document: 'services: {app: {image: nginx:1}}',
+      profiles: [], services: ['app'] } } });
+    const { controller } = controllerFor({ detail });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+      review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />);
+    try {
+      const overview = 'project-deployments.environment.overview.previews';
+      const settings = 'project-deployments.environment.settings.previews.template.needsRepository';
+      await waitForContent(screen, overview);
+      const needsRepository = t('projects.deployments.settingsSections.previewsNeedRepository');
+      expect(screen.findByTestId(overview)?.findAll(node => node.children.includes(needsRepository)).length).toBeGreaterThan(0);
+      await selectEnvironmentTab(screen, 'settings');
+      await waitForContent(screen, settings);
+      expect(screen.findByTestId(settings)?.findAll(node => node.children.includes(needsRepository)).length).toBeGreaterThan(0);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('reads a Compose file stored as JSON as YAML in the editor, unchanged until someone edits it', async () => {
     const base = environmentDetailForHome();
     const detail = { ...base, content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1,

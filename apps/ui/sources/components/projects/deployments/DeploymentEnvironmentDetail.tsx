@@ -93,6 +93,7 @@ import {
   deploymentHealthFact,
   deploymentEnvironmentAttention,
   deploymentAttentionLeaves,
+  deploymentPreviewAvailability,
 } from './deploymentPresentation';
 import {
   useDeploymentPress,
@@ -709,6 +710,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Add a platform target: the same manage-targets capability as a machine link, through the plugin's own target.
     const platformLink = props.platformLink ?? null;
     const lifetime = props.lifetime ?? null;
+    const previewAvailability = deploymentPreviewAvailability(detail);
     const openPlatform = disposition.canLink && platformLink && lifetime ? (initialTargetKey?: string) => {
       showDeploymentPlatformTargetSheet({
         initialTargetKey: initialTargetKey ?? null,
@@ -1095,18 +1097,21 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
-              {detail.environment.purpose !== 'preview' ? (
+              {previewAvailability !== 'preview' ? (
                 // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
                 <ItemGroup testID="project-deployments.environment.overview.previewsSection"
                   title={t('projects.deployments.sectionPreviews')}
                   description={t('projects.deployments.sectionPreviewsDescription')}>
                   <Item testID="project-deployments.environment.overview.previews"
                     icon={<Icon name="git-pull-request" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                    title={t('projects.deployments.settingsSections.previewEditor.configure')}
-                    subtitle={detail.content.previewTemplate?.enabled
-                      ? t('projects.deployments.settingsSections.previewsOn')
-                      : t('projects.deployments.settingsSections.previewsOff')}
-                    onPress={() => openTab('settings', 'previews')} />
+                    title={previewAvailability === 'needsRepository'
+                      ? t('projects.deployments.settingsSections.previewsNeedRepository')
+                      : t('projects.deployments.settingsSections.previewEditor.configure')}
+                    subtitle={previewAvailability === 'needsRepository' ? undefined
+                      : t(previewAvailability === 'on'
+                        ? 'projects.deployments.settingsSections.previewsOn'
+                        : 'projects.deployments.settingsSections.previewsOff')}
+                    onPress={previewAvailability === 'needsRepository' ? undefined : () => openTab('settings', 'previews')} />
                 </ItemGroup>
               ) : null}
               {services.length > 0 ? (
@@ -1319,6 +1324,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <>
             <DeploymentEnvironmentSettingsPanel
               detail={detail}
+              previewAvailability={previewAvailability}
               previewBindings={previewBindings}
               definitionDocument={definitionDocument}
               phone={props.phone}
