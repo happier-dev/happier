@@ -30,7 +30,6 @@ export const JIRA_ACCOUNT_ACTIONS = {
     [JIRA_ACTIONS.create]: {
         execution: ACCOUNT_EXECUTION,
         title: 'Create a Jira issue', surfaces: sources.operations.create.declaration.surfaces,
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Create Jira issue',
           body: 'Create this issue on the selected Jira Cloud site?',
@@ -55,7 +54,6 @@ export const JIRA_ACCOUNT_ACTIONS = {
     [JIRA_ACTIONS.edit]: {
         execution: ACCOUNT_EXECUTION,
         title: 'Edit a Jira issue', surfaces: sources.operations.edit.declaration.surfaces,
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Edit Jira issue',
           body: 'Apply these changes to the selected Jira issue?',
@@ -79,7 +77,6 @@ export const JIRA_ACCOUNT_ACTIONS = {
     [JIRA_ACTIONS.transition]: {
         execution: ACCOUNT_EXECUTION,
         title: 'Transition a Jira issue', surfaces: sources.operations.transition.declaration.surfaces,
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Transition Jira issue',
           body: 'Apply this native workflow transition to the selected Jira issue?',
@@ -98,7 +95,6 @@ export const JIRA_ACCOUNT_ACTIONS = {
     [JIRA_ACTIONS.comment]: {
         execution: ACCOUNT_EXECUTION,
         title: 'Comment on a Jira issue', surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
-        secretInputPaths: ['entry.instance.configuration.token'],
         confirmation: {
           title: 'Comment on Jira issue',
           body: 'Publish this comment on the selected Jira issue?',

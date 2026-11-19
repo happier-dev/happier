@@ -233,7 +233,6 @@ export const BITBUCKET_PLUGIN = definePlugin({
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
       operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: 'Prepare Bitbucket review workspace',
         confirmLabel: 'Prepare workspace',

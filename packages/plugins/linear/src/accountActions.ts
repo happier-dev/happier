@@ -59,7 +59,6 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         execution: ACCOUNT_EXECUTION,
         title: 'Create a Linear issue', description: 'Create one issue in an included Linear team.', placementBindings: [],
         surfaces: sources.operations.create.declaration.surfaces, dangerLevel: 'writesRemote',
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Create this Linear issue?',
           confirmLabel: 'Create issue',
@@ -88,7 +87,6 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         execution: ACCOUNT_EXECUTION,
         title: 'Edit a Linear issue', description: 'Change supported fields on the live Linear issue.', placementBindings: [],
         surfaces: sources.operations.edit.declaration.surfaces, dangerLevel: 'writesRemote',
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Edit this Linear issue?',
           confirmLabel: 'Save changes',
@@ -115,7 +113,6 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         execution: ACCOUNT_EXECUTION,
         title: 'Change a Linear issue state', description: 'Move an issue to an available state in its native team workflow.', placementBindings: [],
         surfaces: sources.operations.transition.declaration.surfaces, dangerLevel: 'writesRemote',
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Change this Linear issue’s state?',
           confirmLabel: 'Change state',
@@ -135,7 +132,6 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         execution: ACCOUNT_EXECUTION,
         title: 'Comment on a Linear issue', description: 'Publish one comment on this issue in Linear.', placementBindings: [],
         surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'writesRemote',
-        secretInputPaths: ['instance.configuration.token'],
         confirmation: {
           title: 'Publish this comment in Linear?',
           confirmLabel: 'Publish comment',

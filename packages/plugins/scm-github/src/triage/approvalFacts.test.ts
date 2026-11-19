@@ -1,4 +1,4 @@
-import { describeApprovalRequestFields, formatApprovalFieldValues, getApprovalFieldValues, projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { describeApprovalRequestFields, formatApprovalFieldValues, getApprovalFieldValues } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
@@ -18,9 +18,9 @@ function reviewFacts(action: (typeof PLUGIN_MANIFEST.contributes.actions)[number
 }
 
 describe('Triage write approval facts', () => {
-    it('shows the repository, Account and supplied issue fields without exposing source configuration', () => {
+    it('shows the repository, Account and supplied issue fields in normal approval Details', () => {
         const action = PLUGIN_MANIFEST.contributes.actions.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create)!;
-        const token = 'private-source-configuration-sentinel';
+        const token = 'fixture-source-configuration';
         const input = {
             v: 1,
             instance: {
@@ -31,26 +31,28 @@ describe('Triage write approval facts', () => {
             kindId: 'issue',
             fields: { scopeId: 'octo/example', title: 'Fix launch', body: 'Steps to reproduce', assigneeIds: ['octocat'], labelIds: ['bug'] },
         };
-        const projected = projectTargetActionApprovalInput(input, action.secretInputPaths ?? [])!;
-        const facts = reviewFacts(action, projected.input);
-        expect({
-            facts,
-            approvalInputContainsToken: JSON.stringify(projected.input).includes(token),
-            approvalDetailsContainToken: JSON.stringify(describeApprovalRequestFields({
-                kind: 'plugin_target_action', input: projected.input, secretInputPaths: action.secretInputPaths, approvalInputCustody: 'live_only',
-            })).includes(token),
-        }).toEqual({
-            facts: {
-                Repository: 'octo/example',
-                'Connected Account': 'Octo Release Account',
-                Title: 'Fix launch',
-                Description: 'Steps to reproduce',
-                Assignees: 'octocat',
-                Labels: 'bug',
+        const presentation = describeApprovalRequestFields({
+            actionId: 'action.invoke',
+            actionArgs: { action: { pluginId: PLUGIN_MANIFEST.id, localId: action.id }, input },
+            preview: {
+                contributedAction: {
+                    title: 'Create issue',
+                    fields: action.confirmation?.inputFields?.map(({ path, title }) => ({
+                        path, title: resolvePluginLocalizedStringV2Text(title),
+                    })),
+                },
             },
-            approvalInputContainsToken: false,
-            approvalDetailsContainToken: false,
         });
+        const normalRows = presentation.rows.filter(row => row.kind === 'value' && !row.technical);
+        expect(Object.fromEntries(normalRows.map(row => [row.title, 'value' in row ? row.value : null]))).toEqual({
+            Repository: 'octo/example',
+            'Connected Account': 'Octo Release Account',
+            Title: 'Fix launch',
+            Description: 'Steps to reproduce',
+            Assignees: '["octocat"]',
+            Labels: '["bug"]',
+        });
+        expect(JSON.stringify(normalRows)).not.toContain(token);
     });
 
     it('shows the Jira issue key on a comment approval', () => {

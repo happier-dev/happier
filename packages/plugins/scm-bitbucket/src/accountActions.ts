@@ -133,7 +133,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.merge.button',
@@ -170,7 +169,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.decline.button',
@@ -202,7 +200,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.comment.resolve',
@@ -235,7 +232,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.comment.reopen',
@@ -267,7 +263,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.review.confirmation.title',
@@ -302,7 +297,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.title', fallback: 'Publish this review comment?' },
         body: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.body', fallback: 'This posts the selected comment on Bitbucket at the exact pull request comparison you reviewed.' },
@@ -326,7 +320,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.title', fallback: 'Post this reply?' },
         body: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.body', fallback: 'This reply becomes visible beneath the selected Bitbucket pull-request comment.' },

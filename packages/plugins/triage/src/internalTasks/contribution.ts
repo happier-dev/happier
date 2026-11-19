@@ -64,7 +64,6 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
     description: 'Read one exact Happier task, including editable fields and task relationships, using its source-local reference.',
     resultSchema: protocol.operations.get.declaration.resultSchema, run: getInternalTask },
   [INTERNAL_TASK_CREATE_ACTION_ID_V1]: { ...taskWrite, dangerLevel: protocol.operations.create.declaration.dangerLevel, title: 'Create a Happier task',
-    secretInputPaths: ['instance.configuration.token'],
     confirmation: {
       title: 'Create this task?',
       body: 'This adds a task to this Happier Account.',
@@ -85,7 +84,6 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
     description: 'Create a task in the built-in Happier source with its supported task fields and optional initial status.',
     inputSchema: protocol.operations.create.declaration.input.schema, resultSchema: protocol.operations.create.declaration.resultSchema, run: createInternalTask },
   [INTERNAL_TASK_EDIT_ACTION_ID_V1]: { ...taskWrite, dangerLevel: protocol.operations.edit.declaration.dangerLevel, title: 'Edit a Happier task',
-    secretInputPaths: ['instance.configuration.token'],
     confirmation: {
       title: 'Save these task changes?',
       body: 'This updates the task in this Happier Account.',
@@ -105,7 +103,6 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
     description: 'Apply the supplied supported fields to an exact Happier task; omitted fields remain unchanged.',
     inputSchema: protocol.operations.edit.declaration.input.schema, resultSchema: protocol.operations.edit.declaration.resultSchema, run: editInternalTask },
   [INTERNAL_TASK_TRANSITION_ACTION_ID_V1]: { ...taskWrite, dangerLevel: protocol.operations.transition.declaration.dangerLevel, title: 'Change a Happier task’s status',
-    secretInputPaths: ['instance.configuration.token'],
     confirmation: {
       title: 'Change this task’s status?',
       body: 'This updates the task status in this Happier Account.',

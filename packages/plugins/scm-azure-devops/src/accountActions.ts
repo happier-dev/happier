@@ -138,7 +138,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.complete.confirm.title', fallback: 'Complete this pull request?' },
         body: {
@@ -169,7 +168,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.abandon.confirm.title', fallback: 'Abandon this pull request?' },
         body: {
@@ -196,7 +194,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.reactivate.confirm.title', fallback: 'Reactivate this pull request?' },
         body: {
@@ -223,7 +220,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.requestReview.confirm.title', fallback: 'Request review from these people?' },
         body: {
@@ -252,7 +248,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadStatus.confirm.title', fallback: 'Change this thread’s status?' },
         body: {
@@ -281,7 +276,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.submitReview.confirm.title', fallback: 'Submit this review?' },
         body: { key: 'plugins.azureDevops.actions.submitReview.confirm.body', fallback: 'Selected comments are published in order, then the verdict is submitted. If the pull request comparison moved, nothing is written.' },
@@ -308,7 +302,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.title', fallback: 'Publish this review comment?' },
         body: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.body', fallback: 'This comment becomes visible as a new Azure DevOps review thread at the comparison you reviewed.' },
@@ -333,7 +326,6 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadReply.confirm.title', fallback: 'Post this thread reply?' },
         body: { key: 'plugins.azureDevops.actions.threadReply.confirm.body', fallback: 'This reply becomes visible in the selected Azure DevOps review conversation.' },
