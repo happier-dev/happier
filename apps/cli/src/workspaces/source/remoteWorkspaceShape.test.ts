@@ -1,9 +1,12 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Duplex } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
+import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler } from '@/api/rpc/types';
@@ -12,6 +15,9 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { createDirectoryRpcActionExecutor } from '@/rpc/handlers/fileSystem/directoryHandlers';
 import { registerPathMutationHandlers } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
 import { createReadFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/readFileHandler';
+
+import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
+import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 
 import { readWorkspaceSourcePlacement, runWithWorkspaceSourceDemand } from './workspaceSource';
 
@@ -34,6 +40,72 @@ describe('remote workspace shape contracts', () => {
 
     expect(placement).toEqual({ rootPath: managedWorkspace.rootPath, workspace: managedWorkspace });
   });
+
+  const holderPath = resolveSessionHolderExecutablePath();
+  const helperPath = resolveProcessCustodySupportExecutable('linux');
+  it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
+    'F1: each folder chooser page opens one channel and one holder that exits on EOF', async () => {
+      const fixture = await mkdtemp(join(tmpdir(), 'guest-folder-chooser-'));
+      const controllerRoot = join(fixture, 'controller');
+      const rootPath = join(fixture, 'guest');
+      const workspace = { ...managedWorkspace, workspaceId: 'chooser-test', rootPath };
+      const lifetime = new AbortController();
+      const channels: Duplex[] = [];
+      const exits: Promise<{ code: number | null; signal: NodeJS.Signals | null }>[] = [];
+      const liveHolders = new Set<number>();
+      try {
+        await mkdir(controllerRoot);
+        await writeFile(join(controllerRoot, 'controller-only.txt'), 'controller');
+        await mkdir(join(rootPath, 'repo', 'nested', 'leaf'), { recursive: true });
+        const registration = { workspace, requesterAccountId: 'owner', target: {
+          lifetime: lifetime.signal, holderPath: holderPath!, helperPath: helperPath!,
+          openChannel: ([executable, ...args]: readonly string[]) => {
+            const child = spawn(executable, args, { stdio: ['pipe', 'pipe', 'ignore'] });
+            const holderIndex = exits.length;
+            liveHolders.add(holderIndex);
+            exits.push(new Promise((resolve, reject) => {
+              child.once('error', reject);
+              child.once('close', (code, signal) => {
+                liveHolders.delete(holderIndex);
+                resolve({ code, signal });
+              });
+            }));
+            const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+            channels.push(channel);
+            return channel;
+          },
+        } };
+        expect(registerManagedWorkspaceTarget(registration)).toBe(true);
+        const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => workspace.serverId,
+          resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+        const handlers = new Map<string, RpcHandler>();
+        registerMachineFileBrowserHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+          workingDirectory: controllerRoot, effectAdmission: admission,
+          deps: { resolveRoots: async () => [{ id: rootPath, path: rootPath, label: 'Controller' }] } });
+        const list = handlers.get(RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY)!;
+        const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+          machineAdmission: { ...workspace.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
+            role: 'manage' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true };
+        for (const [page, [directory, next]] of [['', 'repo'], ['repo', 'nested'], ['repo/nested', 'leaf']].entries()) {
+          await expect(list({ path: join(rootPath, directory), workspace, includeFiles: false }, context)).resolves.toMatchObject({
+            ok: true, entries: [{ name: next, type: 'directory' }],
+          });
+          expect(channels).toHaveLength(page + 1);
+          expect(exits).toHaveLength(page + 1);
+          expect(channels[page].writableEnded).toBe(true);
+          await expect(exits[page]).resolves.toEqual({ code: 0, signal: null });
+          expect(liveHolders.size).toBe(0);
+        }
+        await expect(list({ path: rootPath, workspace: { ...workspace, controller: { ...workspace.controller,
+          installationId: 'replacement' } } }, context)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+        expect(channels).toHaveLength(3);
+      } finally {
+        lifetime.abort();
+        await Promise.allSettled(exits);
+        await rm(fixture, { recursive: true, force: true });
+      }
+    }, 30_000,
+  );
 
   it.each(['daemon.filesystem.listDirectory', 'daemon.filesystem.getDirectoryTree', 'daemon.filesystem.readFile', RPC_METHODS.STAT_FILE] as const)(
     'F7: a stopped provider refusal reaches %s after one channel attempt', async actionId => {
