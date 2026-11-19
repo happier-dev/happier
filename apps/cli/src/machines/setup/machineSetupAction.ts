@@ -87,7 +87,7 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
   hydrator: ManagedPresetHydrator;
   retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ sources: MachineSetupSourceV1; resolvedSources?: MachineSetupResolvedSourceV1;
+}>): Promise<Readonly<{ sources: MachineSetupSourceV1; resolvedSources: MachineSetupResolvedSourceV1;
   creation?: Readonly<{ managedId: string; preset: Readonly<{ id: string; revision: number }> }> }> | null> {
   const resolved = params.resolved;
   if (!resolved || !('sources' in resolved)) return null;
@@ -102,8 +102,7 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
   const finish = (sources: MachineSetupSourceV1) => {
     let index = 0;
     return { sources: params.sources.map(source => params.retained?.get(machineSetupSourceApplyOriginKeyV1(source)) ?? sources[index++]!),
-      // Retained copies need no new presentation carrier from Home.
-      ...(params.retained?.size ? {} : { resolvedSources: resolvedSources.data }),
+      resolvedSources: resolvedSources.data,
       ...(resolved.creation === undefined ? {} : { creation: resolved.creation }) };
   };
   const hasOpaque = requested.some(source => source.kind === 'accountPresetOpaque');
@@ -125,8 +124,11 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
 
 function projectMachineSetupPlanResult(result: MachineSetupLocalPlanResultV1,
   resolvedSources?: MachineSetupResolvedSourceV1, wireSources?: MachineSetupSourceApplyV1): MachineSetupPlanResultV1 {
-  return { ...result, sources: wireSources ?? projectManagedOpaqueSetupSourcesV1(result.sources),
-    ...(resolvedSources === undefined ? {} : { resolvedSources }) };
+  const sources = wireSources ?? projectManagedOpaqueSetupSourcesV1(result.sources);
+  if (resolvedSources === undefined) return { ...result, sources };
+  const projections = new Map(resolvedSources.map(source => [machineSetupSourceApplyOriginKeyV1(source), source]));
+  return { ...result, sources, resolvedSources: sources.map(source => source.kind === 'accountPresetOpaque'
+    ? projections.get(machineSetupSourceApplyOriginKeyV1(source)) ?? null : source) };
 }
 
 /** Saved copies use the captured content port; new selections demand exact native checks. */
@@ -181,17 +183,24 @@ export function createMachineSetupPlanAction(params: Readonly<{
       const result = MachineSetupResolveResultV1Schema.safeParse(await request(body));
       return { runtime, admitted: result.success ? result.data : null };
     };
-    const resolveHomeSources = async (sources: MachineSetupSourceApplyV1,
+    const resolveHomeSources = async (body: HomeSetupCopyRequest, sources?: MachineSetupSourceApplyV1,
       retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>) => {
-      const request = await requestHomeSources({ sources: actionSourcesForHome(sources, retained) });
+      const request = await requestHomeSources(body);
       if ('failure' in request) return request;
       const { runtime, admitted } = request;
-      const resolved = await resolveLocalMachineSetupSources({ sources, resolved: admitted,
+      if (!admitted || !('sources' in admitted)) return { failure: fail('machine_setup_response_invalid') };
+      const references = sources ?? admitted.sources.map(source => {
+        if (source.kind !== 'accountPresetOpaque') return source;
+        const { presetContent: _content, ...reference } = source;
+        return reference;
+      });
+      const resolved = await resolveLocalMachineSetupSources({ sources: references, resolved: admitted,
         hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
         signal: signal ?? context.signal, ...(retained ? { retained } : {}) });
       if (!resolved) return { failure: fail('machine_setup_response_invalid') };
       if (!await runtime.isCurrent()) return { failure: machineSetupTargetUnavailable('installed_runtime', 'runtime_closed') };
-      return { resolved };
+      resolvedSources = resolved.resolvedSources;
+      return { sources: resolved.sources };
     };
     if (candidatePreset !== undefined) {
       if (current.status !== 'ready') return fail(`machine_setup_content_${current.status}`);
@@ -200,17 +209,11 @@ export function createMachineSetupPlanAction(params: Readonly<{
         && source.presetId === candidatePreset.presetId);
       if (sourceIndex < 0) return fail('plan_changed');
       try {
-        const requested = await requestHomeSources({ candidatePreset });
-        if ('failure' in requested) return requested.failure;
-        if (!requested.admitted || !('sources' in requested.admitted)) return fail('machine_setup_response_invalid');
-        const wire = requested.admitted.sources.map(source => source.kind === 'accountPresetOpaque'
-          ? (({ presetContent: _content, ...reference }) => reference)(source) : source);
-        const opened = await resolveLocalMachineSetupSources({ sources: wire, resolved: requested.admitted,
-          hydrator: createManagedPresetHydrator({ credentials: requested.runtime.credentials,
-            serverUrl: requested.runtime.serverHttpBaseUrl }), signal: signal ?? context.signal });
-        const candidate = opened?.sources.find(source => source.kind === 'accountPreset'
+        const opened = await resolveHomeSources({ candidatePreset });
+        if ('failure' in opened) return opened.failure;
+        const candidate = opened.sources.find(source => source.kind === 'accountPreset'
           && source.presetId === candidatePreset.presetId && source.presetRevision === candidatePreset.presetRevision);
-        if (!candidate || opened?.sources.length !== 2) return fail('machine_setup_response_invalid');
+        if (!candidate || opened.sources.length !== 2) return fail('machine_setup_response_invalid');
         localInput = { ...inputWithoutSources, sources: current.policy.sources.map((source, index) => index === sourceIndex ? candidate : source) };
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
@@ -230,10 +233,9 @@ export function createMachineSetupPlanAction(params: Readonly<{
         } else {
           const retained = !managedContinuation && current.status === 'ready'
             ? readRetainedManagedOpaqueSetupSourcesV1(wireSources, current.policy.sources) : undefined;
-          const opened = await resolveHomeSources(wireSources, retained);
+          const opened = await resolveHomeSources({ sources: actionSourcesForHome(wireSources, retained) }, wireSources, retained);
           if ('failure' in opened) return opened.failure;
-          localSources = opened.resolved.sources;
-          resolvedSources = opened.resolved.resolvedSources;
+          localSources = opened.sources;
         }
         if (!localSources) return fail('machine_setup_response_invalid');
         localInput = { ...inputWithoutSources, sources: localSources };

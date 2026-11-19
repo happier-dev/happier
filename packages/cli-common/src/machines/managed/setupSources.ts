@@ -1,5 +1,5 @@
 import { MachineSetupSourceApplyV1Schema, machineSetupSourceApplyOriginKeyV1, type MachineSetupResolvedOpaquePresetSourceV1,
-  type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+  type MachineSetupResolvedSourceEntryV1, type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetContentV1Schema, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { readManagedMachinePresetContentOverrideForModeV1,
   resolveManagedMachinePresetSetupOverrideV1,
@@ -22,7 +22,7 @@ export type ManagedOpaqueSetupSourcePresentationV1 =
 
 type ManagedOpaqueSetupSourceHydrationParamsV1 = Readonly<{
   sources: MachineSetupSourceApplyV1;
-  resolvedSources: MachineSetupResolvedSourceV1;
+  resolvedSources: readonly (MachineSetupResolvedSourceEntryV1 | null)[];
   open: ManagedOpaqueSetupSourceOpenerV1;
 }>;
 
@@ -39,11 +39,11 @@ function parseLocalSource(value: unknown): MachineSetupSourceEntryV1 | null {
 }
 
 async function hydrateManagedOpaqueSetupSourceV1(params: ManagedOpaqueSetupSourceHydrationParamsV1,
-  source: MachineSetupSourceApplyV1[number], resolved: MachineSetupResolvedSourceV1[number] | undefined): Promise<Readonly<{
+  source: MachineSetupSourceApplyV1[number], resolved: MachineSetupResolvedSourceEntryV1 | null | undefined): Promise<Readonly<{
     source: MachineSetupSourceEntryV1;
     presetName?: string;
   }> | null> {
-  if (resolved === undefined) return null;
+  if (resolved == null) return null;
   if (source.kind !== 'accountPresetOpaque') {
     const local = sameStrictJsonValue(source, resolved) ? parseLocalSource(source) : null;
     return local === null ? null : { source: local };

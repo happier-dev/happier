@@ -12,6 +12,8 @@ import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { createMachineSetupPlanAction } from './machineSetupAction';
 import { readFile } from 'node:fs/promises';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
+import { hydrateManagedOpaqueSetupSourcePresentationsV1 } from '@happier-dev/cli-common/machines/managed';
+import { openManagedMachinePresetRecipientProjectionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { installPackage } from '../../../../../packages/plugins/machine-recipes/src/installPackage';
 
 describe('admitted Machine setup snapshot lifetime', () => {
@@ -442,6 +444,15 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(fixture.rootLaunches).toEqual([]);
     expect(post).toHaveBeenCalledTimes(1);
     const plan = MachineSetupPlanResultV1Schema.parse(result.ok ? result.result : null);
+    const review = await hydrateManagedOpaqueSetupSourcePresentationsV1({
+      sources: plan.sources, resolvedSources: plan.resolvedSources ?? [],
+      open: ({ presetId, projection }) => openManagedMachinePresetRecipientProjectionV1({ presetId, mode: 'plain', projection }),
+    });
+    expect(review).toMatchObject([
+      { kind: 'opened', source: { presetRevision: 4, setup: { scripts: [{ body: 'echo candidate' }] } } },
+      { kind: 'unavailable', source: { presetId: retained.presetId } },
+      { kind: 'opened', source: direct },
+    ]);
     expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, plan),
       context: fixture.context('machines.setup.apply', 'reviewed-candidate') })).toMatchObject({ operationId: expect.any(String) });
     expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: {

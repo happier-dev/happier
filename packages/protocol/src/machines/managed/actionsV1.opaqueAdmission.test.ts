@@ -265,6 +265,12 @@ describe('managed acquire opaque admission', () => {
     expect(parsed).toMatchObject(result);
     expect(machineSetupApplyTargetFromPlanV1({ homeId: 'home', machineId: 'managed' }, parsed))
       .not.toHaveProperty('resolvedSources');
+    expect(MachineSetupPlanResultV1Schema.parse({ ...result,
+      resolvedSources: [result.resolvedSources[0], null],
+    }).resolvedSources).toEqual([sources[0], null]);
+    expect(MachineSetupPlanResultV1Schema.safeParse({ ...result,
+      resolvedSources: [null, result.resolvedSources[1]],
+    }).success).toBe(false);
     expect(MachineSetupPlanResultV1Schema.safeParse({ ...result,
       resolvedSources: [result.resolvedSources[0]],
     }).success).toBe(false);

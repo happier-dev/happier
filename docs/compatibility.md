@@ -2142,6 +2142,15 @@ or managed-preset reader or writer for `environmentSetup` or preset
 `daemonState`; SSH setup and provider environment profiles are separate flows.
 This rename therefore needs no predecessor alias or second persisted format.
 
+Machine Setup Plan `resolvedSources` is a presentation-only array aligned to
+`sources`. Both explicit and changed-preset proposals return the exact Home
+projection for each newly opened opaque preset. A retained opaque source can
+have a `null` slot because the daemon uses its admitted local copy. Apply uses
+the source references and exact reviewed operands. Home's resolve contract still
+requires full entries. Matching 0.3 development readers and daemons load together
+for nullable slots. The inspected `../0.2` frontier at `73c533b470` has no managed
+Machine Setup Plan contract.
+
 ## Credential-free native Actions (unreleased 0.3)
 
 The host-private Action declaration may set

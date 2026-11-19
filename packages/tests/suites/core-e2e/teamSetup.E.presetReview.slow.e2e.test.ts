@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
-import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { openManagedMachinePresetRecipientProjectionV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { hydrateManagedOpaqueSetupSourcePresentationsV1 } from '@happier-dev/cli-common/machines/managed';
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
@@ -150,7 +152,18 @@ it('TS.E.presetReview publishes setup-only counters and bodyless notices through
     if (!planned.ok) throw new Error('Preset candidate review failed');
     return MachineSetupPlanResultV1Schema.parse(planned.result);
   };
-  await planCandidate(); // Decline by not applying this candidate.
+  const candidate = await planCandidate();
+  if (!account.credentials.encryption) throw new Error('Review fixture requires E2EE custody');
+  const accountKey = resolveAccountContentSecretKey(account.credentials.encryption);
+  const review = await hydrateManagedOpaqueSetupSourcePresentationsV1({ sources: candidate.sources,
+    resolvedSources: candidate.resolvedSources ?? [], open: ({ presetId, projection }) =>
+      openManagedMachinePresetRecipientProjectionV1({ presetId, mode: 'e2ee', accountId, accountKey, projection }) });
+  expect(review).toMatchObject([
+    { kind: 'opened', source: { presetId: id, presetRevision: candidateRevision, setup: { scripts: [{ body: changedScript }] } } },
+    { kind: 'unavailable', source: { presetId: retainedId } },
+    { kind: 'opened', source: { kind: 'direct' } },
+  ]);
+  // Decline without running either command again.
   expect(await readFile(marker, 'utf8')).toBe('INITIAL');
   await apply(await planCandidate());
   expect(await readFile(marker, 'utf8')).toBe('INITIALCHANGED');

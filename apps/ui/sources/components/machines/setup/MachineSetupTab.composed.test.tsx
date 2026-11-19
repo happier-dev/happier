@@ -1191,7 +1191,7 @@ describe('Machine → Setup tab (P-M1)', () => {
         return planInput.mode === 'effects'
           ? { ...currentPlan, sources: planSources, resolvedSources: planSources.map(source => source.kind === 'accountPresetOpaque'
             ? { ...source, presetContent: source.presetId === 'build' ? projectManagedMachinePresetForRecipientV1({ ...presetWire(preset('build', 'Build box', creation)), recipientAccountId: 'owner' })
-              : currentPlan.resolvedSources!.find((resolved): resolved is Extract<typeof resolved, { kind: 'accountPresetOpaque' }> => resolved.kind === 'accountPresetOpaque' && resolved.presetId === source.presetId)!.presetContent } : source), recipePlans: [] } : currentPlan;
+              : currentPlan.resolvedSources!.find((resolved): resolved is Extract<typeof resolved, { kind: 'accountPresetOpaque' }> => resolved?.kind === 'accountPresetOpaque' && resolved.presetId === source.presetId)!.presetContent } : source), recipePlans: [] } : currentPlan;
       },
       machineSetupApply: async ({ input, context }) => {
         if (!context.operationAcceptance) throw new Error('The receiving operation must own native effect acceptance');

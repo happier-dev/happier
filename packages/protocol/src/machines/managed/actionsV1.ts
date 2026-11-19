@@ -241,8 +241,8 @@ function sameMachineSetupPlanResolvedSourceV1(
 
 export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject({
   desiredRevision: revision(), sources: MachineSetupSourceApplyV1Schema, exclusions: z.array(MachineSetupExclusionV1Schema),
-  /** Presentation-only caller-relative ciphertext from the exact controller resolve. */
-  resolvedSources: z.optional(MachineSetupResolvedSourceV1Schema),
+  /** Presentation-only caller-relative content. Null marks an opaque source kept from the admitted copy. */
+  resolvedSources: z.optional(z.array(z.nullable(MachineSetupResolvedSourceEntryV1Schema))),
   sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
   appOrigins: z.optional(z.array(MachineSetupAppOriginV1Schema)),
   removeItemKeys: z.optional(removalKeys()), removalOffers: z.optional(z.array(MachineSetupRemovalOfferV1Schema)),
@@ -259,15 +259,16 @@ export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject
   review: z.optional(MachineSetupPlanReviewV1Schema),
   updates: z.optional(z.strictObject({ observation: MachineSetupUpdatesObservationV1Schema, plan: z.optional(MachineSetupEffectPlanV1Schema) })),
 }).check(z.superRefine((value, context) => {
-  if (value.resolvedSources === undefined) return;
-  if (value.resolvedSources.length !== value.sources.length) {
+  const { resolvedSources } = value;
+  if (resolvedSources === undefined) return;
+  if (resolvedSources.length !== value.sources.length) {
     context.addIssue({ code: 'custom', path: ['resolvedSources'],
       message: 'Resolved setup source projections must align with the Plan sources' });
     return;
   }
   value.sources.forEach((source, index) => {
-    const resolved = value.resolvedSources![index]!;
-    if (!sameMachineSetupPlanResolvedSourceV1(source, resolved)) {
+    const resolved = resolvedSources[index] ?? null;
+    if (resolved === null ? source.kind !== 'accountPresetOpaque' : !sameMachineSetupPlanResolvedSourceV1(source, resolved)) {
       context.addIssue({ code: 'custom', path: ['resolvedSources', index],
         message: 'Resolved setup source projection must match the Plan source' });
     }
