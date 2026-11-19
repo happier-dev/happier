@@ -399,9 +399,9 @@ describe('AE.P02.F8-shared-consent', () => {
       return WorkflowRunListResultV1Schema.parse(result.result).runs;
     };
     const waitExecuted = async (artifactId: string) => {
-      await waitFor(async () => (await readApproval(artifactId)).status === 'executed',
+      await waitFor(async () => (await readApproval(artifactId)).execution !== undefined,
         { context: 'Shared check and original command settlement', failFast: true });
-      expect(await readApproval(artifactId)).toMatchObject({ execution: { ok: true } });
+      expect(await readApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true } });
     };
     const settleWithoutConsent = async (result: Awaited<ReturnType<typeof invoke>>) => {
       expect(result.ok, JSON.stringify(result)).toBe(true);

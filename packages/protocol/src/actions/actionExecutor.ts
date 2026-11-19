@@ -7102,7 +7102,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
       if (actionId === 'approval.request.list' || actionId === 'approval.request.get') {
-        return executeApprovalObservationAction({ actionId, input: data, context: ctx, deps });
+        return await executeApprovalObservationAction({ actionId, input: data, context: ctx, deps });
       }
 
       if (actionId === 'approval.request.create') {
