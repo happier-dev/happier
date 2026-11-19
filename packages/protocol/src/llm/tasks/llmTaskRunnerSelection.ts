@@ -7,6 +7,7 @@ import type { SessionModelRef } from '../../providers/selection/v2.js';
 import type { ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 import type { CapabilitySupport } from '../../providers/capabilities/v1.js';
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
+import type { PluginAgentToolsCapabilityV2 } from '../../plugins/contributions/v2.js';
 import {
   isLlmTaskRunnerAutoV1,
   type LlmTaskPermissionMode,
@@ -54,6 +55,7 @@ export type LlmTaskRunnerCandidateV1 = Readonly<{
   title: string;
   costTier?: ProviderModelDescriptorV1['costTier'];
   structuredOutput?: CapabilitySupport;
+  noTools?: PluginAgentToolsCapabilityV2['noTools'];
   /** The model's own effort values, in the order its catalog declares them (lowest first). */
   effortValues?: readonly string[];
 }>;
@@ -83,6 +85,14 @@ export function readLlmTaskPermissionModeV1(task: LlmTaskIdV1, requested?: LlmTa
   return readPermissionMode(LLM_TASK_DECLARATIONS_V1[task], requested);
 }
 
+/** Whether the Agent can enforce the task's effective permission mode. */
+export function supportsLlmTaskRunnerPermissionV1(
+  permissionMode: LlmTaskPermissionMode,
+  noTools: PluginAgentToolsCapabilityV2['noTools'],
+): boolean {
+  return permissionMode !== 'no_tools' || noTools === true;
+}
+
 /**
  * The one owner of "which Agent + model + connected service + effort + permission
  * level runs this background task". The person's explicit choice always wins
@@ -103,13 +113,15 @@ export function resolveLlmTaskRunnerV1<C extends LlmTaskRunnerCandidateV1>(param
 }>): LlmTaskRunnerResolutionV1<C> {
   const task = LLM_TASK_DECLARATIONS_V1[params.task];
   const choice = params.choice;
+  const permissionMode = readPermissionMode(task, choice?.permissionMode);
   if (!isLlmTaskRunnerAutoV1(choice)) {
-    return { ok: true, source: 'explicit', runner: { ...choice, permissionMode: readPermissionMode(task, choice.permissionMode) } };
+    return { ok: true, source: 'explicit', runner: { ...choice, permissionMode } };
   }
   const unavailableAgents = params.unavailableAgents ?? [];
   const unavailableKeys = new Set(unavailableAgents.map(agent => agent.agentTargetKey));
   const ready = params.candidates.filter(candidate => !unavailableKeys.has(candidate.modelSelection.agentTargetKey));
-  const eligible = ready.filter(candidate => (task.structuredOutput === 'optional' || candidate.structuredOutput === 'supported')
+  const eligible = ready.filter(candidate => supportsLlmTaskRunnerPermissionV1(permissionMode, candidate.noTools)
+    && (task.structuredOutput === 'optional' || candidate.structuredOutput === 'supported')
     && (task.costTiers !== 'low_only' || candidate.costTier === 'low'));
   const picked = pickPreferredCost(eligible, params.sessionAgentTargetKey ?? null, task.costTiers);
   if (!picked) {
@@ -121,7 +133,7 @@ export function resolveLlmTaskRunnerV1<C extends LlmTaskRunnerCandidateV1>(param
     modelSelection: picked.modelSelection,
     ...(picked.connectedServices !== undefined ? { connectedServices: picked.connectedServices } : {}),
     ...(effort ? { sessionConfigOptionOverrides: effort } : {}),
-    permissionMode: readPermissionMode(task, choice?.permissionMode),
+    permissionMode,
   } };
 }
 

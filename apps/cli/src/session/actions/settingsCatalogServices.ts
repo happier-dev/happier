@@ -309,6 +309,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                 const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
                 const agents = [...registry.agentDefinitionsById.values()];
                 const discoveryTargetKeys = new Set<string>();
+                const noToolsByTarget = new Map<string, boolean>();
                 const unavailableTargets: ScmDiffSummaryCatalogUnavailableTargetV1[] = [];
                 const probeFailures: Array<{ backendTargetKey: string; spawnFailure: SpawnFailureV1 }> = [];
                 const routingIds = indexAgentRoutingIdsByContributionIdentity(agents);
@@ -323,7 +324,11 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                     const staticModels = getAgentStaticModels(entry.id, { catalogOnly: true });
                     if (targets.length === 0) return [];
                     const targetKeys = targets.map(buildBackendTargetKeyV2);
-                    for (const key of targetKeys) discoveryTargetKeys.add(key);
+                    const noTools = entry.richDefinition?.definition.capabilities.tools?.noTools;
+                    for (const key of targetKeys) {
+                        discoveryTargetKeys.add(key);
+                        if (noTools !== undefined) noToolsByTarget.set(key, noTools);
+                    }
                     const defaultAuth = dispositions.get(entry.id) ?? null;
                     const connected = defaultAuth?.kind === 'connected';
                     // Run admission consumes this same default-auth owner. A
@@ -355,7 +360,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                             agentFormats: readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats });
                     }))).flat();
                 }))).flat();
-                return { profiles, discoveryTargetKeys: [...discoveryTargetKeys], ...(probeFailures.length ? { probeFailures } : {}),
+                return { profiles, discoveryTargetKeys: [...discoveryTargetKeys], noToolsByTarget, ...(probeFailures.length ? { probeFailures } : {}),
                     ...(unavailableTargets.length ? { unavailableTargets } : {}),
                     ...(purposeCatalog && purposeCatalog.status !== 'ready' ? { unavailableReason: 'account_metadata_unavailable' as const } : {}),
                     isCurrent: current => !params.signal?.aborted

@@ -94,7 +94,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       inFlightSteerSupported: true,
       terminalPromptInjectionSupported: true,
     },
-    tools: { delivery: 'native_mcp', support: 'supported', mcpToolControl: { off: 'hidden', approval: 'host' }, mcpToolCallIdMetaKey: 'claudecode/toolUseId' },
+    tools: { delivery: 'native_mcp', support: 'supported', noTools: true, mcpToolControl: { off: 'hidden', approval: 'host' }, mcpToolCallIdMetaKey: 'claudecode/toolUseId' },
   },
   sessionModeDescriptor: {
     source: 'provider-native',

@@ -193,6 +193,8 @@ export type SessionAuthoringAgentTargetOption = Readonly<{
      * modes, session modes and configuration options — is answered for this id.
      */
     agentId: string;
+    /** Native no-tools enforcement declared by the Agent on this Machine. */
+    noTools?: boolean;
     /**
      * This Agent's readiness on the exact Machine (installed, signed in or a
      * connected default), from the Machine Agent inventory. Absent while that

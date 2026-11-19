@@ -48,6 +48,7 @@ export type ScmDiffSummaryCatalogMutationServicesV1<T extends ScmDiffSummarySett
         discoveryTargetKeys?: readonly string[];
         unavailableReason?: 'account_metadata_unavailable';
         unavailableTargets?: readonly ScmDiffSummaryCatalogUnavailableTargetV1[];
+        noToolsByTarget?: ReadonlyMap<string, NonNullable<LlmTaskRunnerCandidateV1['noTools']>>;
         probeFailures?: readonly Readonly<{ backendTargetKey: string; spawnFailure: SpawnFailureV1 }>[];
         isCurrent: (settings: T) => boolean;
     }> | null>;
@@ -157,12 +158,15 @@ export function decodeScmDiffSummaryModelOverride(value: string): ScmDiffSummary
 export function projectLlmTaskRunnerCandidatesFromCatalog(catalog: Readonly<{
     profiles: readonly ScmDiffSummaryCatalogProfile[];
     unavailableTargets?: readonly ScmDiffSummaryCatalogUnavailableTargetV1[];
+    noToolsByTarget?: ReadonlyMap<string, NonNullable<LlmTaskRunnerCandidateV1['noTools']>>;
 }>): Readonly<{ candidates: readonly (LlmTaskRunnerCandidateV1 & Readonly<{ profile: ScmDiffSummaryCatalogProfile }>)[];
     unavailableAgents: readonly LlmTaskRunnerUnavailableAgentV1[] }> {
     const candidates = catalog.profiles.flatMap(profile => {
         const selector = profile.modelSelector;
         if (!selector?.backendTargetKey || !selector.modelId) return [];
+        const noTools = catalog.noToolsByTarget?.get(selector.backendTargetKey);
         return [{ profile, title: profile.title, costTier: profile.costTier, structuredOutput: profile.structuredOutput,
+            ...(noTools === undefined ? {} : { noTools }),
             ...(profile.effortValues?.length ? { effortValues: profile.effortValues } : {}),
             modelSelection: selector.modelSelection ?? { agentTargetKey: selector.backendTargetKey, providerConnectionId: null, modelId: selector.modelId },
             ...(selector.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}) }];

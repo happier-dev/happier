@@ -548,6 +548,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "approval": "host",
         "off": "hidden"
       },
+      "noTools": true,
       "support": "supported"
     }
   },
@@ -1708,6 +1709,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "approval": "host",
         "off": "hidden"
       },
+      "noTools": true,
       "support": "supported"
     }
   },
@@ -2833,6 +2835,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "approval": "host",
         "off": "blocked"
       },
+      "noTools": true,
       "support": "supported"
     }
   },
@@ -3642,6 +3645,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "tools": {
       "delivery": "native_mcp",
+      "noTools": false,
       "support": "supported"
     }
   },
@@ -3988,6 +3992,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "tools": {
       "delivery": "native_mcp",
+      "noTools": true,
       "support": "supported"
     }
   },

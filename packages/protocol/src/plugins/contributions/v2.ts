@@ -488,6 +488,8 @@ export function agentReceivesUserMcpServersV1(
 
 export const PluginAgentToolsCapabilityV2Schema = lazyZodSchema(() => z.strictObject({
   delivery: PluginAgentToolsDeliveryV2Schema,
+  /** The native Run launch can enforce an empty tool allowlist, including built-in tools. */
+  noTools: z.optional(z.boolean()),
   mcpToolControl: z.optional(z.strictObject({ off: z.enum(['hidden', 'blocked']), approval: z.enum(['native', 'host']) })),
   mcpToolLoading: z.optional(z.enum(['every_turn', 'on_demand'])),
   /** Native transcript call id in MCP request _meta; absent means no native correlation. */

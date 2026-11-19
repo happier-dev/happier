@@ -43,6 +43,7 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
   localControl?: AgentLocalControlDeclaration | null;
   tools?: Readonly<{
     delivery?: string;
+    noTools?: PluginAgentToolsCapabilityV2['noTools'];
     mcpToolControl?: Readonly<{ off: string; approval: string }>;
     mcpToolLoading?: string;
     mcpToolCallIdMetaKey?: string;
@@ -159,7 +160,9 @@ function projectToolsCapability(
     ? { off: control.off, approval: control.approval } as const : undefined;
   const mcpToolLoading = facts.tools?.mcpToolLoading;
   const mcpToolCallIdMetaKey = facts.tools?.mcpToolCallIdMetaKey;
+  const noTools = facts.tools?.noTools;
   return { delivery, ...(mcpToolControl ? { mcpToolControl } : {}),
+    ...(noTools === undefined ? {} : { noTools }),
     ...(mcpToolCallIdMetaKey ? { mcpToolCallIdMetaKey } : {}),
     ...(mcpToolLoading === 'every_turn' || mcpToolLoading === 'on_demand' ? { mcpToolLoading } : {}) };
 }

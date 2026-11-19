@@ -59,7 +59,7 @@ export const AGENT_DEFINITION = Object.freeze({
       usageLimitRecovery: { checkNow: 'unsupported' },
     },
     handoff: { vendorStateTransfer: 'unsupported' },
-    tools: { delivery: 'native_mcp', support: 'supported',
+    tools: { delivery: 'native_mcp', support: 'supported', noTools: true,
       mcpToolControl: { off: 'blocked' as const, approval: 'host' as const } },
   },
   sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' } as const,

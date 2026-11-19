@@ -9746,6 +9746,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Agent manifests and daemon Agent catalog projections can carry
+the optional boolean `capabilities.tools.noTools`. Its absence leaves older
+declarations readable and makes the Agent ineligible for no-tools task
+selection. The tools object stays closed. Earlier strict development readers
+require matching daemon and UI source under the unpublished direct cut. This
+adds no stored format or ABI change.
+
 Unreleased 0.3 Agent-session realtime RPC failures and terminal diagnostics
 can carry the existing closed Action `failureCause`. The daemon projects the
 provider's typed cause and the UI preserves it in the SDK diagnostic. Older

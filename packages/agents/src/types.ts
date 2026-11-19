@@ -4,6 +4,7 @@ import { AGENT_PERMISSION_INTENTS_V1 } from '@happier-dev/protocol/runtime/permi
 import type { SessionNativeVendorResumeIdFieldV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import {
     type PluginAgentSkillsCapabilityV2,
+    type PluginAgentToolsCapabilityV2,
     type AgentSessionCompactionCapability,
     type AgentToolsDelivery,
     type ConnectedServicesProviderConfigSharingModeV1,
@@ -147,6 +148,7 @@ export type AgentRuntimeInputConfig = Readonly<{
 export type AgentToolsConfig = Readonly<{
     delivery: AgentToolsDelivery;
     support: AgentToolsSupportLevel;
+    noTools?: PluginAgentToolsCapabilityV2['noTools'];
     mcpToolControl?: Readonly<{ off: 'hidden' | 'blocked'; approval: 'native' | 'host' }>;
     mcpToolLoading?: 'every_turn' | 'on_demand';
     mcpToolCallIdMetaKey?: string;

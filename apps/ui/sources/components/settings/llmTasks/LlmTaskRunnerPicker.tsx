@@ -10,6 +10,8 @@ import {
 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import {
     LLM_TASK_DECLARATIONS_V1,
+    readLlmTaskPermissionModeV1,
+    supportsLlmTaskRunnerPermissionV1,
     type LlmTaskIdV1,
     type LlmTaskRunnerResolutionWireV1,
 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
@@ -17,7 +19,7 @@ import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/wo
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
-import type { SessionAuthoringControlFacts, SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { findSessionAuthoringAgentTargetOption, type SessionAuthoringControlFacts, type SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -89,9 +91,11 @@ export function LlmTaskRunnerControls(props: LlmTaskRunnerPickerProps & Readonly
     const declaration = LLM_TASK_DECLARATIONS_V1[task];
     const unset = props.unsetMeansAuto === false && props.value == null;
     const auto = !unset && isLlmTaskRunnerAutoV1(props.value);
-    const requestedPermission = props.value?.permissionMode;
-    const permissionMode: LlmTaskPermissionMode = requestedPermission && declaration.permissionModes.includes(requestedPermission)
-        ? requestedPermission : declaration.permissionModes[0];
+    const permissionMode = readLlmTaskPermissionModeV1(task, props.value?.permissionMode);
+    const eligibleFacts = React.useMemo(() => ({
+        ...facts,
+        agentTargets: facts.agentTargets?.filter(option => supportsLlmTaskRunnerPermissionV1(permissionMode, option.noTools)),
+    }), [facts, permissionMode]);
     const values = React.useMemo(() => projectLlmTaskRunnerAuthoringSelection(props.value, facts), [props.value, facts]);
     const sessionAgentTargetKey = props.sessionAgentTargetKey ?? null;
     const resolutionState = useLlmTaskRunnerAutoResolution({ task, machineId: props.machineId, serverId: props.serverId,
@@ -107,8 +111,8 @@ export function LlmTaskRunnerControls(props: LlmTaskRunnerPickerProps & Readonly
         : settled?.ok === false || (resolutionState.status === 'idle' && props.machineId === null) ? false : null;
     React.useEffect(() => { if (available !== null) onAvailabilityChange?.(available); }, [onAvailabilityChange, available]);
 
-    const latest = React.useRef({ onChange, permissionMode, values, auto });
-    latest.current = { onChange, permissionMode, values, auto };
+    const latest = React.useRef({ onChange, permissionMode, values, auto, facts });
+    latest.current = { onChange, permissionMode, values, auto, facts };
     const chooseAuto = React.useCallback(() => {
         latest.current.onChange({ v: 1, mode: 'auto', permissionMode: latest.current.permissionMode });
     }, []);
@@ -147,7 +151,7 @@ export function LlmTaskRunnerControls(props: LlmTaskRunnerPickerProps & Readonly
                 presentation={props.presentation ?? 'fields'}
                 fields={auto || unset ? AUTO_FIELDS : EXPLICIT_FIELDS}
                 values={values}
-                facts={facts}
+                facts={eligibleFacts}
                 {...(props.engineFieldTitle !== undefined ? { engineFieldTitle: props.engineFieldTitle } : {})}
                 engineLeadingOption={engineLeadingOption}
                 onChangeFields={writeExplicit}
@@ -163,7 +167,11 @@ export function LlmTaskRunnerControls(props: LlmTaskRunnerPickerProps & Readonly
                     disabled={props.disabled}
                     onChange={(mode) => {
                         const current = latest.current;
-                        if (current.auto) { current.onChange({ v: 1, mode: 'auto', permissionMode: mode }); return; }
+                        const selected = findSessionAuthoringAgentTargetOption(current.facts.agentTargets, current.values.agentTarget);
+                        if (current.auto || !supportsLlmTaskRunnerPermissionV1(mode, selected?.noTools)) {
+                            current.onChange({ v: 1, mode: 'auto', permissionMode: mode });
+                            return;
+                        }
                         const runner = readLlmTaskRunnerFromAuthoringSelection(current.values, mode);
                         if (runner) current.onChange(runner);
                     }}

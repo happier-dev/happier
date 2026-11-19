@@ -144,7 +144,7 @@ export const AGENT_DEFINITION = Object.freeze({
       attachStrategy: 'provider_attach',
       remoteWritable: true,
     },
-    tools: { delivery: 'native_mcp', support: 'supported',
+    tools: { delivery: 'native_mcp', support: 'supported', noTools: true,
       mcpToolControl: { off: 'hidden' as const, approval: 'host' as const }, mcpToolCallIdMetaKey: 'callId' },
   },
   sessionModeDescriptor: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' } as const,

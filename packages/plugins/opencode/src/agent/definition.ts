@@ -51,7 +51,7 @@ const OPENCODE_AGENT_CORE = Object.freeze({
     attachStrategy: 'provider_attach',
     remoteWritable: true,
   },
-  tools: { delivery: 'native_mcp', support: 'supported' },
+  tools: { delivery: 'native_mcp', support: 'supported', noTools: true },
 });
 
 const OPENCODE_AGENT_SESSION_MODE_DESCRIPTOR = Object.freeze({

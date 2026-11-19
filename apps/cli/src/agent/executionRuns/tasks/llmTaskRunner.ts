@@ -42,7 +42,7 @@ export async function readLlmTaskRunnerCandidatesOnThisMachine(
   const settings = getActiveAccountSettingsSnapshot()?.settings ?? accountSettingsParse({});
   const { createCliSettingsCatalogServices } = await import('@/session/actions/settingsCatalogServices');
   const catalog = await createCliSettingsCatalogServices(services).readScmDiffSummaryCatalog?.(settings, '');
-  return projectLlmTaskRunnerCandidatesFromCatalog({ profiles: catalog?.profiles ?? [], unavailableTargets: catalog?.unavailableTargets });
+  return projectLlmTaskRunnerCandidatesFromCatalog(catalog ?? { profiles: [] });
 }
 
 /** Resolves a task's runner on this machine. Explicit choices need no machine read. */
