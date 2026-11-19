@@ -4,14 +4,47 @@ import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1, ProjectSourcesUpdateOutput
 import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ProjectOrganizationUpdateOutputV1Schema } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
-import type { ProjectSessionDefaultsGetInputV1, ProjectSessionDefaultsGetOutputV1, ProjectSessionDefaultsRowV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
+import type { ProjectSessionDefaultsContextSelectionV1, ProjectSessionDefaultsGetInputV1, ProjectSessionDefaultsGetOutputV1, ProjectSessionDefaultsRowV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
+import type { PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { getProjectSessionDefaults, executeProjectDefaultsAction, isProjectSessionDefaultsEditUnchanged } from '@/sync/ops/actions/projectSessionDefaultsActions';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
+import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 
 type Snapshot = Readonly<{ data: ProjectSessionDefaultsGetOutputV1 | null; status: 'idle' | 'loading' | 'ready' | 'refreshing' | 'error' | 'unavailable'; error: unknown }>;
 const EMPTY: Snapshot = Object.freeze({ data: null, status: 'idle', error: null });
+
+/** The editor and authoring use the same Project anchor and linked Source. */
+export function useProjectSessionDefaultsSelection(workspace: WorkspaceRefV1 | null) {
+    const project = workspace ? projectWorkspaceRefV1(workspace) : null;
+    const serverId = project?.serverId;
+    const projectKey = project?.projectKey;
+    const sourceId = workspace?.source?.sourceId;
+    return React.useMemo(() => serverId && projectKey ? {
+        projectRef: { serverId, projectKey },
+        ...(sourceId ? { sourceRef: { serverId, sourceId } } : {}),
+    } satisfies ProjectSessionDefaultsContextSelectionV1 : undefined, [serverId, projectKey, sourceId]);
+}
+
+/** A Project draft identifies its checkout independently of its editable launch placement. */
+export function useProjectSessionDefaultsSelectionForOrigin(origin: PluginUiNewSessionSeedOriginV1 | undefined,
+    scope: ServerAccountScope | null) {
+    const address = origin && scope && origin.accountId === scope.accountId
+        && areServerProfileIdentifiersEquivalent(origin.workspace.serverId, scope.serverId)
+        ? origin.workspace : null;
+    const workspace = useProjectAccountRows(rows => {
+        if (!address || !rows || !areServerAccountScopesEqual(rows.scope, scope)) return null;
+        const checkout = resolveWorkspaceRefByAddress(rows.workspaceRefs, address);
+        return checkout.kind === 'resolved' ? checkout.ref : null;
+    }, address !== null);
+    return useProjectSessionDefaultsSelection(workspace);
+}
 
 /** Selected record demand only; the incumbent scoped lifecycle owns push and cancellation. */
 export function useProjectSessionDefaults(input: ProjectSessionDefaultsGetInputV1 & Readonly<{ demanded: boolean }>) {

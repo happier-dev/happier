@@ -162,7 +162,6 @@ function emptyNewSessionDraft(updatedAt: number): NewSessionDraft {
         // The display fallback is not an authored or remembered Agent choice.
         agentTarget: null,
         permissionMode: 'default',
-        modelSelection: null,
         acpSessionModeId: null,
         updatedAt,
     };

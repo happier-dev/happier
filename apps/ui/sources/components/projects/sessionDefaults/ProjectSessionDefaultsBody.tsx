@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { ProjectSessionDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -14,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import {
   useProjectSessionDefaults,
   useProjectSessionDefaultsEditor,
+  useProjectSessionDefaultsSelection,
 } from '@/hooks/projects/useProjectSessionDefaults';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
@@ -40,22 +40,10 @@ export const ProjectSessionDefaultsBody = React.memo(
   ) {
     const testID = props.testID ?? 'project-session-defaults';
     const projectName = resolveWorkspaceRefDisplayName(props.workspaceRef);
-    const projectRef = React.useMemo(() => {
-      const { serverId, projectKey } = projectWorkspaceRefV1(
-        props.workspaceRef,
-      );
-      return { serverId, projectKey };
-    }, [props.workspaceRef]);
-    const sourceId = props.workspaceRef.source?.sourceId ?? null;
-    const sourceRef = React.useMemo(
-      () =>
-        sourceId ? { serverId: projectRef.serverId, sourceId } : undefined,
-      [projectRef.serverId, sourceId],
-    );
+    const selection = useProjectSessionDefaultsSelection(props.workspaceRef);
     const [scope, setScope] = React.useState<DefaultsScope>('me');
     const read = useProjectSessionDefaults({
-      projectRef,
-      ...(sourceRef ? { sourceRef } : {}),
+      ...selection,
       demanded: true,
     });
     const editor = useProjectSessionDefaultsEditor({
@@ -66,8 +54,8 @@ export const ProjectSessionDefaultsBody = React.memo(
       <ProjectSessionDefaultsView
         testID={testID}
         projectName={projectName}
-        serverId={projectRef.serverId}
-        hasSource={sourceRef !== undefined}
+        serverId={props.workspaceRef.serverId}
+        hasSource={selection?.sourceRef !== undefined}
         scope={scope}
         onScopeChange={setScope}
         status={read.status}

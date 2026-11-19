@@ -70,6 +70,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     selectedModelSelection?: SessionModelSelection | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
+    /** New Session reconciles Machine discovery in its authoring owner. */
+    reconcileSelection?: boolean;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
     onUpdateFavoriteModelReasoningEffort?: SessionModelPickerProps['onUpdateFavoriteModelReasoningEffort'];
@@ -277,10 +279,10 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     const canonicalSelectedModelId = React.useMemo(() => (
         // Discovery supplies selectable rows; it must not replace inherited intent.
         // The shared picker presents a missing selection as typed unavailable.
-        sourceModelSelected || managedModelSelected
+        props.reconcileSelection === false || sourceModelSelected || managedModelSelected
             ? selectedModelId
             : resolveCanonicalModelOptionId(modelOptions, selectedModelId, modelProbe.failed || modelProbe.phase !== 'idle' ? null : preflightModels)
-    ), [managedModelSelected, modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, selectedModelId, sourceModelSelected]);
+    ), [props.reconcileSelection, managedModelSelected, modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, selectedModelId, sourceModelSelected]);
     // The caller's one line leads, then anything the probe has to report. One
     // section label, one subtitle, then the models — never a paragraph.
     const modelNotes = React.useMemo(
@@ -342,6 +344,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     }), [configOptions, modelOptions, providerId]);
 
     React.useEffect(() => {
+        if (props.reconcileSelection === false) return;
         const acceptedSnapshot = preflightModels && preflightModels.unavailable !== true
             && modelProbe.phase === 'idle' && !modelProbe.failed && !configProbe.failed && !configOptionsUnavailable
             && !sourceModelSelected;
@@ -354,7 +357,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         if (Object.keys(current).length === Object.keys(reconciled).length
             && Object.entries(current).every(([id, value]) => reconciled[id] === value)) return;
         publishSelection({ ...selectionRef.current, configOverrides: reconciled });
-    }, [configOptions, configOptionsUnavailable, configProbe.failed, configProbe.phase, configProbe.rejectedConfigOptionOverrides,
+    }, [props.reconcileSelection, configOptions, configOptionsUnavailable, configProbe.failed, configProbe.phase, configProbe.rejectedConfigOptionOverrides,
         modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, providerId, publishSelection, sourceModelSelected]);
 
     const favoriteBackendIdentity = React.useMemo(() => buildFavoriteBackendIdentity({

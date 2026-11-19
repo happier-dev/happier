@@ -41,6 +41,84 @@ afterEach(async () => { standardCleanup(); resetTeamsDirectoryEngineForTests(); 
 afterAll(() => network.dispose());
 
 describe('shared Team defaults through New Session', () => {
+    it('inherits Codex defaults on the New Session route from a saved Project origin', async () => {
+        const home = await network.addHome('https://project-team-defaults.test', 'member');
+        const scope = { serverId: home.id, accountId: 'member' };
+        const settings = { ...settingsDefaults, useEnhancedSessionWizard: false };
+        const accountSettings = createAccountSettingsHttpBoundary({ serverUrl: home.serverUrl,
+            initialAccounts: [{ accountId: scope.accountId, snapshot: { content: { t: 'plain', v: settings }, version: 1 } }] });
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const modelId = 'gpt-5.1-codex';
+        const team = teamSummaryFixture({ viewerRole: 'member', policy: teamPolicyFixture({ managedDefaultsStatus: 'available',
+            managedDefaults: { groups: {}, team: {
+                permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' },
+                modelByAgentTargetKey: { [agentTargetKey]: SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 1,
+                    ref: { agentTargetKey, providerConnectionId: null, modelId } }) },
+            } },
+        }) });
+        const source = { id: 'shared-source', name: 'Shared project', revision: 1,
+            owner: { kind: 'team', teamId: team.id }, audience: [], createdByAccountId: 'owner' };
+        const sourceArrival = createDeferred<void>();
+        network.setHttpResponder(async (input, init) => {
+            const response = accountSettings.handle(input, init);
+            if (response) return response;
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { teams: { enabled: true } } }));
+            if (path === '/v1/teams/list') return Response.json({ items: [team], nextCursor: null });
+            if (path === '/v1/teams/get') return Response.json(team);
+            if (path === `/v1/projects/sources/${source.id}`) {
+                await sourceArrival.promise;
+                return Response.json({ ok: true, source, canManage: false });
+            }
+            if (path === '/v1/account/project-rows/read') return Response.json({ status: 'absent' });
+            return null;
+        });
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer({ token: home.token });
+        await vi.waitFor(() => expect(storage.getState().profileScope).toEqual(scope));
+        storage.getState().applySettingsLocal(settings);
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', active: true, storageMode: 'plain' })], false,
+            { sourceServerId: home.id });
+        const checkout = { id: 'project-checkout', projectKey: 'project-anchor', serverId: home.id, machineId: 'machine-1',
+            rootPath: '/repo', createdAtMs: 1, source: { sourceId: source.id, revision: source.revision } };
+        const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+        const { buildProjectNewSessionOrigin, admitProjectAuthoringOrigin } = await import('@/components/projects/detail/projectRouteState');
+        const { workspaceAddressFromRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+        const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
+        const origin = buildProjectNewSessionOrigin({ scope, workspace: workspaceAddressFromRefV1(checkout), page: 'defaults', routeParams: {} });
+        if (!origin) throw new Error('Expected a Project origin');
+        const opened = seedAndOpenNewSession({ scope, isCurrent: () => true,
+            admitOrigin: candidate => admitProjectAuthoringOrigin(candidate, scope),
+            seed: { origin, placement: { kind: 'exactTarget', serverId: checkout.serverId, machineId: checkout.machineId, directory: checkout.rootPath } },
+            navigateToNewSession: ({ draftId }) => router.setParams({ draftId }),
+        });
+        if (opened.kind !== 'opened') throw new Error(`Expected a seeded Project draft, got ${opened.kind}`);
+        const draft = readNewSessionDraftFromRepository({ scope, draftId: opened.draftId });
+        expect(draft).toMatchObject({ authoringOrigin: origin });
+        expect(draft).not.toHaveProperty('modelSelection');
+        const model = await renderHook(() => useNewSessionScreenModel({ draftId: opened.draftId }));
+        const simple = () => {
+            const current = model.getCurrent();
+            if (current.variant !== 'simple') throw new Error('Expected simple composer');
+            return current.simpleProps;
+        };
+        try {
+            await act(async () => {
+                const codex = simple().agentPickerOptions?.find(option => option.id.includes('codex'));
+                if (!codex || !simple().onAgentPickerSelect) throw new Error('Expected Codex in the Agent picker');
+                simple().onAgentPickerSelect?.(codex.id);
+            });
+            expect(simple().permissionMode).toBe('default');
+            await act(async () => sourceArrival.resolve());
+            await vi.waitFor(() => expect({ permissionMode: simple().permissionMode, modelMode: simple().modelMode })
+                .toEqual({ permissionMode: 'read-only', modelMode: modelId }));
+        } finally {
+            sourceArrival.resolve();
+            await model.unmount();
+        }
+    });
+
     it.each([false, true])('captures effective Machine approval defaults with inherited placement=%s without rereading settings', async inherited => {
         const home = await network.addHome('https://machine-approval-capture.test', 'member');
         const targetMachineId = inherited ? 'machine-2' : 'machine-1';

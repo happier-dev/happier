@@ -54,6 +54,7 @@ type SessionAgentPickerDetailContentParams = Readonly<{
     /** Several Sessions that run different models: no model reads as chosen, and the running line says Mixed. */
     mixedSelection?: NewSessionEngineOptionDetailProps['mixedSelection'];
     selection: SessionAgentPickerSelection;
+    reconcileSelection?: NewSessionEngineOptionDetailProps['reconcileSelection'];
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
     onUpdateFavoriteModelReasoningEffort?: NewSessionEngineOptionDetailProps['onUpdateFavoriteModelReasoningEffort'];
@@ -118,6 +119,7 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
             selectedModelSelection={params.selection.modelSelection ?? null}
             selectedSessionModeId={params.selection.sessionModeId}
             selectedConfigOverrides={params.selection.configOverrides}
+            reconcileSelection={params.reconcileSelection}
             favoriteModelSelections={params.favoriteModelSelections ?? []}
             onToggleFavoriteModel={params.onToggleFavoriteModel}
             onUpdateFavoriteModelReasoningEffort={params.onUpdateFavoriteModelReasoningEffort}

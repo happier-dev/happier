@@ -268,14 +268,17 @@ async function withPlatformOS(os: 'web' | 'ios', run: () => Promise<void>) {
 }
 
 describe('NewSessionEngineOptionDetail', () => {
-    it('retains an inherited model absent from the Machine catalog as unavailable without replacing Team intent', async () => {
+    it.each([false, true])('retains an unlisted selected model without replacing Team intent (selection owned by composer: %s)', async (composerOwnsSelection) => {
         modelOptionsState.value = [{ value: 'gpt-6.1-sol', label: 'GPT 6.1', description: '' }];
         preflightModelsState.value = { availableModels: [{ id: 'gpt-6.1-sol', name: 'GPT 6.1' }], supportsFreeform: false };
         const onSelectionChange = vi.fn();
+        const ownerProps = composerOwnsSelection ? { reconcileSelection: false } : {
+            teamModels: { onSelectOtherModel: () => {}, modelAttribution: { agentTargetKey: formatBackendTargetKeyV2(backendTarget), label: 'Team' } },
+        };
         await renderScreen(<NewSessionEngineOptionDetail
             backendTarget={backendTarget} selectedMachineId="machine-1" capabilityServerId="server-1"
             selectedModelId="gpt-5.1-codex" onSelectionChange={onSelectionChange}
-            teamModels={{ onSelectOtherModel: () => {}, modelAttribution: { agentTargetKey: formatBackendTargetKeyV2(backendTarget), label: 'Team' } }}
+            {...ownerProps}
         />);
         const missing = renderedNativeModelOption('gpt-5.1-codex');
         expect(missing).toMatchObject({ disabled: true, availability: 'unavailable' });

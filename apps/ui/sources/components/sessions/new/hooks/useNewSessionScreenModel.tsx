@@ -156,6 +156,7 @@ import type {
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { useManagedSessionDefaults } from '@/hooks/teams/useManagedSessionDefaults';
 import type { ProjectSessionDefaultsContextSelectionV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
+import { useProjectSessionDefaultsSelectionForOrigin } from '@/hooks/projects/useProjectSessionDefaults';
 import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import { useNewSessionCapabilitiesChip } from '@/components/sessions/capabilities/useSessionCapabilitiesChip';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
@@ -930,9 +931,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
             : null;
     }, [scopedPersistedDraft]);
     const approvalProfileDraftKey = JSON.stringify([draftScope?.serverId, draftScope?.accountId, draftId, dataId]);
-    const projectContext = input?.projectContext !== undefined ? input.projectContext
-        : hydratedTempAuthoringDraft?.projectContext !== undefined ? hydratedTempAuthoringDraft.projectContext
-        : hydratedPersistedAuthoringDraft?.projectContext;
+    const suppliedProjectContext = input?.projectContext !== undefined ? input.projectContext : hydratedTempAuthoringDraft?.projectContext;
+    const originProjectContext = useProjectSessionDefaultsSelectionForOrigin(
+        suppliedProjectContext === undefined ? persistedDraft?.authoringOrigin : undefined, draftScope,
+    );
+    const projectContext = suppliedProjectContext !== undefined ? suppliedProjectContext
+        : originProjectContext ?? hydratedPersistedAuthoringDraft?.projectContext;
     const [approvalProfileEdit, setApprovalProfileEdit] = React.useState<Readonly<{
         key: string; value: string | null | undefined;
     }> | null>(null);
