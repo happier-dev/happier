@@ -16,7 +16,7 @@ import { eventRouter } from '@/app/events/connectionEventRouter';
 import { publicShareRoutes } from "@/app/api/routes/share/publicShareRoutes";
 import { auth } from "@/app/auth/auth";
 import { artifactUpdateHandler } from "@/app/api/socket/artifactUpdateHandler";
-import { createFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
+import { createAuthenticatedFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
 import { deleteArtifact, migrateArtifactAccountEncryptionInTx, updateArtifactTx } from "./artifactWriteService";
 import { applyArtifactRecipientKeyEnvelopesInTx, readArtifactHeaderForCallerInTx,
     isArtifactAudienceContainedInTx, setArtifactAccessGrantInTx, removeArtifactAccessGrantInTx } from './artifactAccessService';
@@ -597,7 +597,7 @@ describe("Artifact document grants (real SQLite)", () => {
         const after = await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } });
         expect(after).toMatchObject({ kind: 'v1:other:workflow-definition.v1', headerVersion: 1, bodyVersion: 1,
             header: artifact.header, body: new Uint8Array([0xff]), seq: artifact.seq });
-        expect(await classify(owner.id, 1)).toEqual({ ok: true, recipientUpdates: [] });
+        expect(await classify(owner.id, 1)).toMatchObject({ ok: true, didWrite: false, recipientUpdates: [] });
         expect(await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).toEqual(after);
         await db.artifact.update({ where: { id: artifact.id }, data: {
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'x'.repeat(183) })), headerVersion: 2, kind: null } });
@@ -1430,8 +1430,8 @@ describe("Artifact document grants (real SQLite)", () => {
         await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: editor.id,
             accessLevel: "edit", createdByAccountId: owner.id } });
         const token = await auth.createToken(editor.id, undefined, { kind: "account", authority: "present_user" });
-        const socket = Object.assign(createFakeSocket({ data: {
-            clientType: "user-scoped", accountStoredContentCompatibility: {
+        const socket = Object.assign(createAuthenticatedFakeSocket({ data: {
+            userId: editor.id, authTokenKind: "account", clientType: "user-scoped", accountStoredContentCompatibility: {
                 supportsCurrentProtocol: true, outcome: "accepted", declaration: null, upgradeRequired: null,
             },
         } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
