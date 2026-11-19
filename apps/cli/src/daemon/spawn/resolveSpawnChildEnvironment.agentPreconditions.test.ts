@@ -199,6 +199,34 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
       });
       expect(requester).toMatchObject({ ok: true, extraEnvForChild: { CODEX_HOME: connectedHome } });
       if (requester.ok) expect(requester.unsetEnvKeys).toContain('OPENAI_API_KEY');
+      const requesterParams = { ...params, allowNativeAccountCredentials: false,
+        connectedServiceAuth: { ...params.connectedServiceAuth, targetMaterializedRoot: connectedHome } };
+      const requesterWithInheritedAlias = await resolveSpawnChildEnvironment({ ...requesterParams,
+        daemonSpawnHooks: { augmentEnv: () => ({ openai_api_key: 'custodian-key' }) },
+      });
+      expect(requesterWithInheritedAlias).toMatchObject({ ok: true });
+      if (!requesterWithInheritedAlias.ok) throw new Error(requesterWithInheritedAlias.errorMessage);
+      expect(requesterWithInheritedAlias.extraEnvForChild).not.toHaveProperty('openai_api_key');
+      expect(requesterWithInheritedAlias.unsetEnvKeys).toContain('OPENAI_API_KEY');
+      const mutations = [
+        { name: 'daemon hook replaces requester home', daemonSpawnHooks: {
+          augmentEnv: () => ({ CODEX_HOME: join(home, 'custodian-home') }),
+        } },
+        { name: 'provider replaces requester home', providerEnvironmentOverlay: [
+          { name: 'CODEX_HOME', value: join(home, 'custodian-home'), source: 'provider' as const },
+        ] },
+        { name: 'provider unsets requester home', providerEnvironmentOverlay: [
+          { name: 'CODEX_HOME', value: null, source: 'provider' as const },
+        ] },
+      ] satisfies readonly (Partial<Parameters<typeof resolveSpawnChildEnvironment>[0]> & { name: string })[];
+      for (const { name, ...mutation } of mutations) {
+        await expect(resolveSpawnChildEnvironment({ ...requesterParams, ...mutation }), name)
+          .resolves.toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED });
+      }
+      await expect(resolveSpawnChildEnvironment({ ...requesterParams,
+        daemonSpawnHooks: { augmentEnv: () => ({ CODEX_HOME: join(home, 'custodian-home') }) },
+        providerEnvironmentOverlay: [{ name: 'CODEX_HOME', value: connectedHome, source: 'provider' }],
+      })).resolves.toMatchObject({ ok: true, extraEnvForChild: { CODEX_HOME: connectedHome } });
       const sessionId = 'session-requester-committed';
       const requesterCredentials = { token: 'fixture-requester-token', encryption: null } as const;
       let createdSession: ReturnType<typeof createPlainSessionFixture> | null = null;

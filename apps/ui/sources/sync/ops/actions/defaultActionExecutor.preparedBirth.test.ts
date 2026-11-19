@@ -67,7 +67,8 @@ it.each(['binding', 'selection'] as const)('commits the browser Bot model and it
     const model = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-bot-model' };
     const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
     const binding = { v: 1, slot: { kind: 'provider_model' }, ...team, providerModelSelection: model };
-    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'browser-bot-copy',
+    const creationKey = 'browser-bot-copy';
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
         executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         ...(source === 'binding' ? { teamCredentialBindings: [binding] } : { modelSelection: selection }),
@@ -89,7 +90,7 @@ it.each(['binding', 'selection'] as const)('commits the browser Bot model and it
     try {
         const { createUiPreparedSessionBirthV1 } = await import('./preparedSessionBirth');
         const result = await createUiPreparedSessionBirthV1(account, {
-            ...input, admittedInput: input, actionCaller: { kind: 'host' },
+            ...input, creationKey, admittedInput: input, actionCaller: { kind: 'host' },
             sessionCreationTag: SessionCreationTagV1Schema.parse(`create:v1:${'a'.repeat(43)}`),
         }, { beforeLaunch: async () => {}, hostOnboarding: { templateName: 'Helper', templateVersion: '1.0.0' } });
         expect(result).toMatchObject({ type: 'success', sessionId: 'browser-bot', initialInput: { status: 'accepted' } });
@@ -118,7 +119,8 @@ it.each([
         body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials),
     });
     let sessionDataEncryptionKey: string | null = null;
-    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'browser-bot-copy',
+    const creationKey = 'browser-bot-copy';
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
         executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         identity: { bot: { kind: 'bot' }, createdAsBot: true }, memoryEnabled: false,
@@ -223,7 +225,7 @@ it.each([
         try {
             const { createUiPreparedSessionBirthV1 } = await import('./preparedSessionBirth');
             return await createUiPreparedSessionBirthV1(account, {
-                ...input, admittedInput: input, actionCaller: { kind: 'host' },
+                ...input, creationKey, admittedInput: input, actionCaller: { kind: 'host' },
                 sessionCreationTag: SessionCreationTagV1Schema.parse(`create:v1:${'a'.repeat(43)}`),
             }, { hostOnboarding: { templateName: 'Helper', templateVersion: '1.0.0' },
                 ...(ordinarySetupBirth ? { machineSetupPlanInput: { homeId: 'srv_birth', machineId: 'asleep-machine' } } : {}),

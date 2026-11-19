@@ -719,19 +719,20 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     }
   }
   const providerUnsetIdentities = new Set(providerUnsetEnvKeys.map((name) => name.toLowerCase()));
+  let requesterNativeHome: Readonly<{
+    agentId: string;
+    homeKey: string | undefined;
+    root: string | null | undefined;
+  }> | undefined;
   if (params.allowNativeAccountCredentials === false && resolvedAgentId) {
     const entry = params.pluginRuntimeRegistry?.acquireAgentCatalogEntry
       ? await params.pluginRuntimeRegistry.acquireAgentCatalogEntry(resolvedAgentId)
       : params.pluginRuntimeRegistry?.contributes.catalogEntriesById[resolvedAgentId];
     const descriptor = await entry?.getConnectedServiceStateSharingDescriptor?.();
-    const homeKey = descriptor?.nativeHome?.environmentKey;
-    const root = params.connectedServiceAuth?.targetMaterializedRoot;
-    // Only the actual materializer's isolated requester home can replace the
-    // custodian's native login/configuration. An API key alone proves neither.
-    if (!homeKey || !root || sanitizedAuthEnv[homeKey] !== root) return {
-      ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      errorMessage: 'Requester Agent credential isolation unavailable', agentId: resolvedAgentId,
-      cleanupOnFailure, cleanupOnExit, ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+    requesterNativeHome = {
+      agentId: resolvedAgentId,
+      homeKey: descriptor?.nativeHome?.environmentKey,
+      root: params.connectedServiceAuth?.targetMaterializedRoot,
     };
     const rawRequirements = params.pluginRuntimeRegistry?.contributes.agentDefinitionsById.get(resolvedAgentId)?.definition.providerRequirements;
     const requirements = AgentProviderRequirementsV1Schema.safeParse(rawRequirements);
@@ -757,6 +758,14 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     ...providerUnsetEnvKeys,
   ]);
   extraEnvForChild = stripUnsetEnvironmentVariables(extraEnvForChild, unsetEnvKeys);
+  // Only the actual materializer's isolated requester home can replace the
+  // custodian's native login/configuration after all launch overlays and unsets.
+  if (requesterNativeHome && (!requesterNativeHome.homeKey || !requesterNativeHome.root
+    || extraEnvForChild[requesterNativeHome.homeKey] !== requesterNativeHome.root)) return {
+    ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+    errorMessage: 'Requester Agent credential isolation unavailable', agentId: requesterNativeHome.agentId,
+    cleanupOnFailure, cleanupOnExit, ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+  };
   const survivingProfileCredentialEnvironmentVariables =
     selectedAgentCredentialEnvironmentVariables.filter((name) => (
       Object.prototype.hasOwnProperty.call(expandedProfileEnv, name)

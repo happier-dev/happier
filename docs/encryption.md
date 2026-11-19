@@ -5767,7 +5767,7 @@ Browser-created Sessions in unreleased 0.3 retain the same installation-sealed
 requester bootstrap on their admitted onboarding Pending record. The server
 stores only the sealed box, excludes it from ordinary Session and Pending
 projections, and exposes it only to the receipt's authenticated Machine
-installation while that Pending activation is active. Reconnect discovery uses
+installation while that Pending row is queued and undelivered. Reconnect discovery uses
 that existing Session–Machine binding, so the browser can close before the
 daemon starts. The existing requester custody owner opens the box, verifies the
 bound Session and requester admission, and persists its ordinary protected local
