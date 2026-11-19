@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { confirmOwnUiRefusal, isUiMachineOwnedAdmissionAction } from './executeMachineActionAtDaemon';
 
 const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } };
@@ -18,19 +18,55 @@ it('keeps approval creation on the originating account executor', () => {
     expect(isUiMachineOwnedAdmissionAction('session.spawn_new', {})).toBe(true);
 });
 
-it('retries the prepared candidate carried by the receiving Machine after one native decision', async () => {
+it('confirms a saved Environment deploy against its original compact intent', async () => {
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { DeploymentDeployInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { bindPresentUserActionConfirmation } = await import('./presentUserConfirmation');
+    const actionId = 'deployments.deploy';
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target' };
-    const prepared = getActionSpec('deployments.deploy').inputSchema.parse({ ...input, expectedRevision: 1,
-        expectedTargetLinkRevision: 1, requestKey: 'prepared-request', contentArtifactId: 'prepared-candidate',
-        contentHeaderVersion: 1, contentBodyVersion: 1 });
-    // Network and the native confirmation host are the substituted boundaries.
-    const execute = vi.fn(async (candidate: unknown, digest: string): Promise<ActionExecuteResult> =>
-        digest === reviewDigest && sameStrictJsonValue(candidate, prepared)
-            ? { ok: true, result: { state: 'succeeded' } } : refused({ ...prepared, requestKey: 'another-candidate' }));
+    const candidate = DeploymentDeployInputV1Schema.parse({ ...input, expectedRevision: 1, expectedTargetLinkRevision: 1,
+        requestKey: 'prepared-request', contentArtifactId: 'prepared-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 });
+    const receivingContext: ActionExecutorContext = { ...context, serverId: 'home', runtimeAccountId: 'owner',
+        actionRequestId: 'original-press', interactivePresentation: 'unavailable' };
+    const deploymentBoundary = { ok: false, errorCode: 'deployment_boundary_observed', error: 'deployment_boundary_observed' } as const;
+    const executor = createActionExecutor({
+        // Stub the host's stable candidate/target inspection and the deployment effect. Review admission stays real.
+        prepareDeploymentAction: async () => ({ input: candidate, preview: { kind: 'fixture' } }),
+        resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: input.environmentId } }),
+        deploymentAction: async () => deploymentBoundary,
+    } satisfies Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const initial = await executor.execute(actionId, input, receivingContext);
+    expect(initial).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: {
+        review: { actionArgs: candidate, preview: { deploymentRolloutSemanticInput: input } },
+        reviewDigest: expect.any(String),
+    } });
+    if (initial.ok) throw new Error('Expected a carried review');
+    const initialDigest = (initial.details as { reviewDigest: string }).reviewDigest;
+    const replay = (operands: unknown, digest: string) => executor.execute(actionId, operands,
+        bindPresentUserActionConfirmation(actionId, operands, { ...receivingContext, actionRequestId: 'confirmed-press' }, digest));
     const confirm = vi.fn(async () => true);
-    const result = await confirmOwnUiRefusal('deployments.deploy', input, context, refused(prepared), confirm, execute);
-    expect(result).toMatchObject({ ok: true, result: { state: 'succeeded' } });
-    expect(confirm).toHaveBeenCalledExactlyOnceWith({ actionId: 'deployments.deploy', input: prepared, context,
+    const result = await confirmOwnUiRefusal(actionId, input, context, initial, confirm, replay);
+    expect(confirm).toHaveBeenCalledExactlyOnceWith({ actionId, input, context, preview: expect.objectContaining({
+        actionArgs: candidate, deploymentRolloutSemanticInput: input,
+    }) });
+    expect(result).toMatchObject(deploymentBoundary);
+});
+
+it('replays the receiving Machine’s prepared Open destination after confirmation', async () => {
+    const actionId = 'projects.open';
+    const materialization = { kind: 'clone', destinationParentPath: '/requested', destinationDirectoryName: 'repo',
+        authentication: 'connected_account' };
+    const input = getActionSpec(actionId).inputSchema.parse({ serverId: 'home', machineId: 'machine',
+        source: { kind: 'folder', path: '/source' }, materialization });
+    const prepared = getActionSpec(actionId).inputSchema.parse({ ...input,
+        materialization: { ...materialization, destinationParentPath: '/member/private' } });
+    const execute = vi.fn(async (operands: unknown, digest: string): Promise<ActionExecuteResult> =>
+        digest === reviewDigest && sameStrictJsonValue(operands, prepared)
+            ? { ok: true, result: { kind: 'opened' } } : refused(prepared));
+    const confirm = vi.fn(async () => true);
+    const result = await confirmOwnUiRefusal(actionId, input, context, refused(prepared), confirm, execute);
+    expect(result).toMatchObject({ ok: true, result: { kind: 'opened' } });
+    expect(confirm).toHaveBeenCalledExactlyOnceWith({ actionId, input: prepared, context,
         preview: { summary: 'Review the prepared effect' } });
     expect(execute).toHaveBeenCalledExactlyOnceWith(prepared, reviewDigest);
 });

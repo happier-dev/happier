@@ -47,9 +47,9 @@ function readCarriedReview(result: Extract<ActionExecuteResult, { ok: false }>):
 /**
  * A receiving executor without a presenter (the daemon, an Environment's controller) refuses a present person's own
  * UI press before any effect and carries back the exact review its approval builder produced. The person's
- * executor owns the confirmation host (docs/actions.md): it presents that review and re-executes the reviewed input
- * (including Open's host-prepared private destination) with a confirmation bound to its digest; the receiving executor admits it only while those
- * consequences still hold. It never creates a self-approval request. A press that already carried a confirmation,
+ * executor owns the confirmation host (docs/actions.md): it presents that review and binds replay of the caller's
+ * intent to its digest. Open replays the host-prepared destination. The receiving executor admits the confirmation
+ * only while the reviewed consequences still hold. It never creates a self-approval request. A press that already carried a confirmation,
  * a refusal without a carried review, or any request that is not the person's own (Agent, Session, plugin, another
  * person) keeps the refusal and its own approval path.
  */
@@ -60,11 +60,14 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
         || context.interactivePresentation === 'unavailable' || !isPresentUserHostInvocation(context)
         || context.presentUserConfirmation) return result;
     const review = readCarriedReview(result);
-    // Open's native owner can offer the prepared private destination after refusing
-    // the caller's path. The new invocation still receives ordinary host admission.
-    const parsed = getActionSpec(actionId).inputSchema.safeParse(actionId === 'projects.open' ? review?.actionArgs : input);
-    if (!review || !parsed.success) return result;
-    const confirmed = await confirm({ actionId, input: parsed.data, context, preview: review.preview });
+    if (!review) return result;
+    const spec = getActionSpec(actionId);
+    // Live-only custody keeps execution inputs on this invocation and gives the presenter the carried projection.
+    // Ordinary replay preserves intent so the receiver can rebuild its review. Open's native owner requires the prepared destination.
+    const liveOnly = spec.approvalInputCustody === 'live_only';
+    const parsed = spec.inputSchema.safeParse(!liveOnly && actionId === 'projects.open' ? review.actionArgs : input);
+    if (!parsed.success) return result;
+    const confirmed = await confirm({ actionId, input: liveOnly ? review.actionArgs : parsed.data, context, preview: review.preview });
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
     if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false };
     const executed = await executeConfirmed(parsed.data, review.reviewDigest);
