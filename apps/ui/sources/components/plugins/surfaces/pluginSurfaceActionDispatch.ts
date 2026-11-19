@@ -1544,6 +1544,7 @@ async function executeClientContributedAction(
                 automationContext.actionAutomationPort = port;
             }
             const projectedSubjects = projectPluginActionApprovalScopeV1({
+                actionId: invocation.qualifiedId,
                 declaration: projectedAction.approvalScope, pluginId: identity.pluginId,
                 subjectKinds: Object.values(input.pluginUiProjection?.subjectKindsById ?? {}),
                 input: preparedInput.input,

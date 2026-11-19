@@ -1158,6 +1158,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             const context = { ...invocation.approvalContext,
                 actionRequestId: invocation.approvalContext?.actionRequestId || invocation.requestId || correlationId };
             const projected = projectPluginActionApprovalScopeV1({
+                actionId: qualifiedActionId,
                 declaration: indexed.registration.definition.approvalScope, input: preparedInput.input,
                 pluginId: invocation.pluginId, subjectKinds: params.subjectKinds,
                 serverId: context.serverIdentityId ?? context.serverId,

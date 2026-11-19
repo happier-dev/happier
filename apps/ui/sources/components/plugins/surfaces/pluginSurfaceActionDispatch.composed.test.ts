@@ -9,6 +9,11 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import { projectAutomationSubjectStructuralV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, databaseActionLocalIdV1,
+    DatabaseTargetsForgetInputV1ProtocolSchema } from '@happier-dev/database-protocol';
+import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
+import { DatabaseManualTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 
 import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
 import { PluginError, isPluginError, definePlugin } from '@happier-dev/plugin-sdk';
@@ -1930,6 +1935,51 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             await activation.composition.unload();
             lifetime.retire();
         }
+    });
+
+    it('matches the selected Database operand through the client dispatcher', async () => {
+        const home = rpcHomes.get('server-client-action')!;
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
+        const target = DatabaseManualTargetV1Schema.parse({ kind: 'manual', accountId: lifetime.scope.accountId,
+            workspace: { serverId: home.serverIdentityId, machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                workspaceId: 'database-workspace', rootPath: '/example/repository' },
+            installationId: 'database-installation', projectKey: 'database-project', savedSecretId: 'selected-secret' });
+        const selected = readAutomationDatabaseSubjectV1(home.serverIdentityId, target);
+        const neighbor = readAutomationDatabaseSubjectV1(home.serverIdentityId, { ...target, savedSecretId: 'neighbor-secret' });
+        if (!selected.ok || !neighbor.ok) throw new Error('Canonical Database subject unavailable');
+        let effects = 0;
+        const settled: string[][] = [];
+        const activation = createClientActionActivation({ pluginId: DATABASE_PLUGIN_ID_V1,
+            localId: databaseActionLocalIdV1(DATABASE_TARGETS_FORGET_ACTION_ID_V1), accountLifetime: lifetime,
+            dangerLevel: 'writesLocal', confirmationWhen: { presentUserUi: false }, surfaces: ['ui'],
+            inputSchema: DatabaseTargetsForgetInputV1ProtocolSchema.jsonSchema,
+            handler: async () => { effects++; return { ok: true }; } });
+        const port = createActionAutomationPortV1({ accountId: lifetime.scope.accountId,
+            seed: async () => ({ v: 1, rows: [selected.subject, neighbor.subject].map((subject, index) => ({
+                automationId: index === 0 ? 'selected-database' : 'neighbor-database', triggerId: 'after', triggerRevision: 1,
+                workflowId: 'workflow', workflowRevision: 1, ownerAccountId: lifetime.scope.accountId,
+                actionIds: [DATABASE_TARGETS_FORGET_ACTION_ID_V1], phase: 'after' as const,
+                ...projectAutomationSubjectStructuralV1(subject),
+            })) }),
+            settle: async ({ selection }) => { settled.push(selection.after.map(row => row.automationId)); } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+        try {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            const outcome = await dispatchPluginSurfaceAction({
+                action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: activation.action.id }, input: { target },
+                clientAction: {}, pluginUiProjection: activation.projection,
+                resolveContributedAction: resolveExactClientAction(activation.action), actionAccountLifetime: lifetime,
+                hostAction: { execute: executor.execute, context: {
+                    surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+                    serverIdentityId: home.serverIdentityId, runtimeAccountId: lifetime.scope.accountId,
+                    defaultSessionMachineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+                    actionRequestId: 'database-forget', actionAutomationPort: port,
+                } },
+            });
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { ok: true } });
+            expect(effects).toBe(1);
+            expect(settled).toEqual([['selected-database']]);
+        } finally { port.dispose(); await activation.composition.unload(); lifetime.retire(); }
     });
 
     it.each([

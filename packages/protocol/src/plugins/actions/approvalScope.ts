@@ -3,6 +3,10 @@ import { createHealthCheckSourceInstanceIdV1, HealthCheckSubjectV1Schema } from 
 import { readPluginAutomationSubjectKindV1, projectPluginAutomationSubjectsV1, type PluginAutomationSubjectKindDeclarationV1, type PluginAutomationSubjectProjectionReadV1 } from '../../automations/automationPluginSubjectV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { PluginActionApprovalScopeV2 } from './v2.js';
+import { readDatabaseActionAutomationMetadataV1 } from '../../actions/databaseActionMetadata.js';
+import type { DatabaseTargetV1 } from '../../databases/databaseTargetIdentityV1.js';
+import { readAutomationDatabaseSubjectV1 } from '../../automations/automationSubjectV1.js';
+import { readInputPath } from '../../inputs/inputPredicates.js';
 
 /** Static picker metadata comes from the same approval scope used at invocation. */
 export function readPluginActionApprovalScopeSubjectKindV1(args: Readonly<{
@@ -23,14 +27,23 @@ export function readPluginActionApprovalScopeSubjectKindV1(args: Readonly<{
     subjectKindId: definition.id, definition } };
 }
 
-/** Core resource operands declared by a contributed Action's existing approval scope. */
+/** Core resource operands for an admitted contributed Action. */
 export function projectPluginActionApprovalScopeV1(args: Readonly<{
+  actionId?: string;
   declaration: PluginActionApprovalScopeV2 | undefined;
   pluginId?: string;
   subjectKinds?: readonly PluginAutomationSubjectKindDeclarationV1[];
   input: unknown;
   serverId: string | null | undefined;
 }>): PluginAutomationSubjectProjectionReadV1 {
+  const database = args.actionId ? readDatabaseActionAutomationMetadataV1(args.actionId) : undefined;
+  if (database) {
+    if (!args.serverId) return { ok: false, code: 'subject_kind_unavailable' };
+    // The contributed host already admitted this Action's canonical input schema.
+    const target = readInputPath(args.input, database.primarySubject.field) as DatabaseTargetV1;
+    const projected = readAutomationDatabaseSubjectV1(args.serverId, target);
+    return projected.ok ? { ok: true, subjects: [{ role: 'operand', subject: projected.subject }] } : projected;
+  }
   if (typeof args.declaration === 'object') {
     if (!args.serverId || !args.pluginId) return { ok: false, code: 'subject_kind_unavailable' };
     return projectPluginAutomationSubjectsV1({ serverId: args.serverId, pluginId: args.pluginId,
