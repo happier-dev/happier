@@ -1644,6 +1644,7 @@ export {
 export {
   HappierReviewGlanceLine,
   HappierReviewSummary,
+  projectHappierReviewGlance,
   type HappierReviewGlance,
   type HappierReviewSummaryProps,
   type HappierReviewSummaryRow,

@@ -27,6 +27,28 @@ export type HappierReviewGlance = Readonly<{
   facts: readonly string[];
 }>;
 
+/** Localized words supplied by each host; the Review owner's state and counts decide the verdict once. */
+export function projectHappierReviewGlance(
+  round: Readonly<{ state: string; summary?: string }> | undefined,
+  review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }> }> | null,
+  words: Readonly<{
+    running: string; failed: string; noFindings: string; allDecided: string;
+    toDecide: (count: number) => string; findingsCount: (count: number) => string;
+  }>,
+): HappierReviewGlance | null {
+  const state = round?.state ?? review?.state;
+  if (!state) return null;
+  if (state === 'running') return { sentence: words.running, tone: 'quiet', facts: [] };
+  if (state === 'failed') return { sentence: words.failed, tone: 'failed', facts: [] };
+  if (!review) return round?.summary ? { sentence: round.summary, tone: 'quiet', facts: [] } : null;
+  const { total, needsDecision } = review.counts;
+  const facts = round?.summary ? [round.summary] : [];
+  if (total === 0) return { sentence: words.noFindings, tone: 'quiet', facts };
+  if (needsDecision > 0) return { sentence: words.toDecide(needsDecision), tone: 'attention',
+    facts: [words.findingsCount(total), ...facts] };
+  return { sentence: words.allDecided, tone: 'quiet', facts: [words.findingsCount(total), ...facts] };
+}
+
 export type HappierReviewSummaryRow = Readonly<{
   rowId: string;
   severity: HappierReviewSeverity;
