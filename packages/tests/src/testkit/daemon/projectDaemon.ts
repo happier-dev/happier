@@ -15,6 +15,7 @@ import { completeTerminalConnectForTest } from '@happier-tests/ui-terminal-enrol
 import { readAccountIdFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { decodeStoredCredentials, type Settings } from '../../../../../apps/cli/src/persistence';
 import { createCliActionExecutorFromCredentials } from '../../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { observeSessionSocketEvents } from '../../../../../apps/cli/src/session/transport/socket/sessionSocketAgentState';
 import { consumeDeferredCliApprovalResult } from '../../../../../apps/cli/src/session/actions/approvals/deferredResult';
 import { createTestAuth, createTestTerminalAuth } from '../auth';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
@@ -83,6 +84,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
       throw error;
     });
   const daemons: StartedDaemon[] = [];
+  const accountObservers: ReturnType<typeof observeSessionSocketEvents>[] = [];
   let requestProxy: HttpRequestRecordingProxy | undefined;
   try {
     if (params.observeActionRequests || params.beforeHttpRequest || params.requestObservation) {
@@ -99,6 +101,12 @@ export async function startProjectDaemonFixture(params: Readonly<{
       const terminal = await createTestTerminalAuth(server.baseUrl, auth);
       const credentials = decodeStoredCredentials(buildTestAccountCliAuthCredentials({ auth: terminal, mode: 'dataKey' }));
       if (!credentials) throw new Error('Project Account terminal credentials unavailable');
+      // This process retains CLI executors across Actions. Like a live CLI host,
+      // it must consume pushed Automation rows authored by the person client.
+      await new Promise<void>((resolve, reject) => {
+        accountObservers.push(observeSessionSocketEvents({ token: credentials.token,
+          serverUrl: actionServerApiUrl, scope: 'user' }, { onConnected: resolve, onError: reject }));
+      });
       const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl });
       const execute = (actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) =>
@@ -255,7 +263,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
 
   async function stop() {
     const errors: unknown[] = [];
-    for (const close of [...daemons].reverse().map(daemon => () => daemon.stop())
+    for (const close of [...accountObservers].reverse().map(observer => () => observer.dispose())
+      .concat([...daemons].reverse().map(daemon => () => daemon.stop()))
       .concat(async () => { await requestProxy?.stop(); }, () => server.stop(),
         async () => { await ingress?.stop(); }, async () => {
           if (previousCertificates) setDefaultCACertificates(previousCertificates);
