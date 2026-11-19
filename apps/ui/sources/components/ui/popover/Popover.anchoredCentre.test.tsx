@@ -96,7 +96,7 @@ describe('Popover: content-sized and centred on its anchor (tooltips)', () => {
         const { style, visualLeft } = await renderCentredPopover(anchor, { width: 64, height: 28 });
 
         expect(Math.abs(visualLeft + 64 / 2 - (anchor.left + anchor.width / 2))).toBeLessThanOrEqual(2);
-        expect(style.opacity).toBe(1);
+        expect(style.opacity ?? 1).toBe(1);
     });
 
     it('clamps a centred popover inside the boundary instead of letting it cross the edge', async () => {

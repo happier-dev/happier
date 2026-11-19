@@ -433,6 +433,8 @@ type PopoverBodyArgs = Readonly<{ renderProps: PopoverRenderProps; isolation: Po
 type PopoverShellProps = (PopoverProps extends infer Variant ? Variant extends unknown ? Omit<Variant, 'children'> : never : never) & Readonly<{
     /** The one mounted body, presented in this shell. */
     renderBody: (args: PopoverBodyArgs) => React.ReactElement;
+    /** Private notification from the existing shell presence owner. */
+    onPresentationAbsent: () => void;
 }>;
 
 const stopWebPropagation = (event: { stopPropagation?: () => void }) => { event.stopPropagation?.(); };
@@ -445,6 +447,16 @@ const NO_ISOLATION = {} as const;
 const BODY_HOST_STYLE = { display: 'contents' } as const;
 
 export function Popover(requested: PopoverProps) {
+    const [retained, setRetained] = React.useState(requested.open);
+    // Acquire on the opening render, then retain only until the existing presentation owner reports absence.
+    if (requested.open && !retained) setRetained(true);
+    const onPresentationAbsent = useEventCallback(() => {
+        if (!requested.open) setRetained(false);
+    });
+    return requested.open || retained ? <PopoverPresentation {...requested} onPresentationAbsent={onPresentationAbsent} /> : null;
+}
+
+function PopoverPresentation(requested: PopoverProps & Readonly<{ onPresentationAbsent: () => void }>) {
     const deviceType = useDeviceType();
     // One mounted body across the anchored popover, the phone sheet and a view pushed into another surface: crossing
     // the phone breakpoint changes the shell, never the content (typed text, a picked source, an open step).
@@ -456,6 +468,14 @@ export function Popover(requested: PopoverProps) {
         : children(args.renderProps), [children]);
     // A closed popover's body retires with its last shell, so it opens fresh next time.
     const retained = useRetainedPlacement(renderRetainedBody, requested.open ? RETAIN_WITHOUT_SHELL : RETIRE_WITHOUT_SHELL);
+    // On web the outgoing shell can remain in a transition after its opener closes. Its actual slot,
+    // not the open flag or a second animation clock, owns the retained portal body's lifetime.
+    React.useEffect(() => {
+        if (Platform.OS === 'web' && !requested.open && !retained.hasPlacement) requested.onPresentationAbsent();
+    }, [requested.open, requested.onPresentationAbsent, retained.hasPlacement]);
+    const onNativePresentationAbsent = useEventCallback(() => {
+        if (Platform.OS !== 'web') requested.onPresentationAbsent();
+    });
     useCloseWhenPageWithdrawn(requested.open, requested.onRequestClose);
     // A withdrawn page presents nothing, whether or not its opener has committed the close yet: a retained
     // page is frozen behind the content that replaced it, so its close may only land when it is shown again
@@ -466,8 +486,8 @@ export function Popover(requested: PopoverProps) {
     // opening a second surface over it.
     const pushStack = React.useContext(PhoneSheetPushContext);
     const phone = deviceType === 'phone';
-    const { children: _body, ...shell } = props;
-    const shellProps: PopoverShellProps = { ...shell, renderBody: retained.mount };
+    const { children: _body, onPresentationAbsent: _absent, ...shell } = props;
+    const shellProps: PopoverShellProps = { ...shell, renderBody: retained.mount, onPresentationAbsent: onNativePresentationAbsent };
     // Placement measurements belong to the anchored presentation's mounted tree. A sheet
     // replaces that tree, so returning to desktop measures its new anchor and content afresh.
     // A menu's or picker's own scroll never drives the shade under the pane header it opens from.
@@ -495,10 +515,16 @@ function PushedPhonePopover(props: PopoverShellProps & Readonly<{ stack: PhoneSh
         onRequestClose: props.onRequestClose,
         render,
     });
+    React.useEffect(() => {
+        if (!props.open) props.onPresentationAbsent();
+    }, [props.open, props.onPresentationAbsent]);
     return null;
 }
 
 function PhonePopoverSheet(props: PopoverShellProps) {
+    const onPresenceChange = useEventCallback((present: boolean) => {
+        if (!present) props.onPresentationAbsent();
+    });
     // A sheet is a screen surface: hosted above its layer's chrome, never inside a page's popover scope.
     const layerOverlayPortal = useLayerOverlayPortal();
     const nearestOverlayPortal = useOverlayPortal();
@@ -515,6 +541,7 @@ function PhonePopoverSheet(props: PopoverShellProps) {
     const content = <BaseModal
         visible={props.open}
         onExited={props.onExited}
+        onPresenceChange={onPresenceChange}
         onClose={closeSheet}
         onBack={pushed ? pushStack.back : undefined}
         placement="bottom"
@@ -584,6 +611,9 @@ function AnchoredPopoverPresence(props: PopoverShellProps) {
         [],
     );
     const overlayPresence = useOverlayPresence(props.open, reducedMotion ? 0 : popoverMotionPreset.exitMs, props.onExited);
+    React.useEffect(() => {
+        if (!overlayPresence.present) props.onPresentationAbsent();
+    }, [overlayPresence.present, props.onPresentationAbsent]);
     // Keep the existing exit lifetime, but acquire placement, portals and focus only while present.
     return overlayPresence.present ? <AnchoredPopover {...props} overlayPresence={overlayPresence} /> : null;
 }

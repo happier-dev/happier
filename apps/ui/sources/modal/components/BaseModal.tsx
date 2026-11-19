@@ -98,6 +98,8 @@ interface BaseModalProps {
     focusReturnFallback?: 'activation-time';
     /** Hears the modal leave the screen once its exit has played (see `useOverlayPresence`). */
     onExited?: () => void;
+    /** The existing motion owner's presence, including a shell mounted already absent. */
+    onPresenceChange?: (present: boolean) => void;
 }
 
 function ModalContentFrame({ motion, ...props }: React.ComponentProps<typeof OverlayMotionFrame> & Readonly<{ motion?: 'none' }>) {
@@ -123,6 +125,7 @@ export function BaseModal({
     focusReturnRef,
     focusReturnFallback,
     onExited,
+    onPresenceChange,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
     // A bottom sheet that closes on its scrim also closes by dragging it down (its frame draws the grabber).
@@ -169,6 +172,7 @@ export function BaseModal({
         modalMotion.exitMs,
         onExited,
     );
+    useEffect(() => { onPresenceChange?.(modalPresence.present); }, [modalPresence.present, onPresenceChange]);
     const scrimOpacity = modalMotion.progress.interpolate({
         inputRange: [0, 1],
         outputRange: [0, 1],

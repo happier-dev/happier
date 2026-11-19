@@ -45,6 +45,8 @@ type ShellFacts = Readonly<{
 type Placement<TArgs> = ShellFacts & Readonly<{ args: TArgs }>;
 
 export type RetainedPlacement<TArgs> = Readonly<{
+    /** A web shell still presents this body, including an outgoing transition's slot. */
+    hasPlacement: boolean;
     /** The element a presentation shell renders where the body appears. */
     mount: (args: TArgs) => React.ReactElement;
     /** The one mounted body; render it at a position that outlives every shell. `null` off the web DOM. */
@@ -97,7 +99,7 @@ export function useRetainedPlacement<TArgs>(
     const mount = React.useCallback((args: TArgs) => host
         ? <RetainedPlacementSlot host={host} owner={owner} args={args} publish={publish} retire={retire} />
         : <>{render(args)}</>, [host, publish, retire, host ? null : render]);
-    if (!host) return { mount, body: null };
+    if (!host) return { mount, body: null, hasPlacement: false };
     // The portal's React parent and target never change. Only its DOM host moves between shells.
     // Portaling into the shell itself would remount the body whenever that target changes.
     // Every provider renders in every placement, so a shell change never changes the body's tree shape.
@@ -132,7 +134,7 @@ export function useRetainedPlacement<TArgs>(
         </ModalContentIdProvider>
     </EscapeLayerProvider> : null;
     const reactDOM: Pick<typeof import('react-dom'), 'createPortal'> = requireReactDOM();
-    return { mount, body: reactDOM.createPortal(presented, host) };
+    return { mount, body: reactDOM.createPortal(presented, host), hasPlacement: placement !== null };
 }
 
 /**

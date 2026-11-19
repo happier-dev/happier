@@ -7,13 +7,20 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 import type { PopoverRenderProps } from './_types';
 
 const viewport = vi.hoisted(() => ({ width: 390, height: 844 }));
+const dimensionSubscriptions = vi.hoisted(() => new Set<() => void>());
 
 installPopoverCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeNativeMock({ platformOS: 'ios' }, {
             useWindowDimensions: () => viewport,
-            Dimensions: { get: () => ({ ...viewport, scale: 1, fontScale: 1 }) },
+            Dimensions: {
+                get: () => ({ ...viewport, scale: 1, fontScale: 1 }),
+                addEventListener: (_event: string, listener: () => void) => {
+                    dimensionSubscriptions.add(listener);
+                    return { remove: () => { dimensionSubscriptions.delete(listener); } };
+                },
+            },
         });
     },
 });
@@ -27,13 +34,13 @@ vi.mock('react-native-safe-area-context', () => ({
 // Collect the real UI graph before the behavior deadline, as in the adjacent DOM suites.
 const { Popover } = await import('./Popover');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
 const { View } = await import('react-native');
 const { Text } = await import('@/components/ui/text/Text');
-const { t } = await import('@/text');
 const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
 
-afterEach(() => { viewport.width = 390; viewport.height = 844; });
+afterEach(() => { vi.useRealTimers(); viewport.width = 390; viewport.height = 844; });
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -42,6 +49,31 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('Popover phone presentation', () => {
+    it('acquires a native sheet on opening and releases its presentation subscriptions after closing', async () => {
+        vi.useFakeTimers();
+        const presentation = (open: boolean) => <Popover open={open} phonePresentation="sheet"
+            accessibilityLabel="Demand sheet" onRequestClose={() => {}}>
+            {() => <View testID="demand-sheet-body" />}
+        </Popover>;
+        const baseline = dimensionSubscriptions.size;
+        const screen = await renderScreen(presentation(false));
+        try {
+            expect(screen.findByTestId('demand-sheet-body')).toBeNull();
+            expect(dimensionSubscriptions.size).toBe(baseline);
+            await screen.update(presentation(true));
+            await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+            expect(screen.findByTestId('demand-sheet-body')).not.toBeNull();
+            expect(dimensionSubscriptions.size).toBeGreaterThan(baseline);
+            await screen.update(presentation(false));
+            await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+            expect(screen.findByTestId('demand-sheet-body')).toBeNull();
+            expect(dimensionSubscriptions.size).toBe(baseline);
+        } finally {
+            await screen.unmount();
+            vi.useRealTimers();
+        }
+    });
+
     it('hosts a composer sheet at the screen boundary so its choices and outside dismissal remain reachable', async () => {
         const selected = vi.fn();
         function Composer() {
@@ -71,9 +103,7 @@ describe('Popover phone presentation', () => {
         expect(host.findAll(node => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true)).toHaveLength(0);
 
         await screen.pressByTestIdAsync('open-sheet');
-        const backdrop = host.findAllByType('TouchableWithoutFeedback')[0];
-        expect(backdrop).toBeTruthy();
-        await act(async () => { backdrop!.props.onPress(); });
+        await screen.pressByTestIdAsync('modal-scrim-target');
         expect(host.findAll(node => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true)).toHaveLength(0);
     });
 
@@ -162,25 +192,23 @@ describe('Popover phone presentation', () => {
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it('lets content that carries its own header own the sheet top, closing by the grabber', async () => {
+    it('lets content that carries its own header own the sheet top and close action', async () => {
         const onClose = vi.fn();
         const screen = await renderScreen(
             <Popover open phonePresentation="sheet" sheetHeader="none" sheetMaterial="solid"
                 accessibilityLabel="Voice" onRequestClose={onClose}>
-                {(bounds) => React.createElement('GlanceContent', { presentation: bounds.presentation })}
+                {(bounds) => React.createElement('GlanceContent', { presentation: bounds.presentation },
+                    <RoundButton testID="content-close" title="Close" onPress={onClose} />)}
             </Popover>,
         );
 
         const dialog = screen.findAll((node) => node.props.role === 'dialog')[0];
         expect(dialog?.props.accessibilityLabel).toBe('Voice');
-        // One title and one close affordance: the content's own header, the sheet's grabber.
+        // The content supplies its own header and accessible close control; the grabber is drag-only.
         expect(screen.findByTestId('popover-sheet.close')).toBeNull();
         expect(screen.getTextContent()).not.toContain('Voice');
         expect(screen.findByType('GlanceContent')?.props.presentation).toBe('sheet');
-        const grabber = screen.findAll((node) => node.props.accessibilityRole === 'button'
-            && node.props.accessibilityLabel === t('common.close') && typeof node.props.onAccessibilityAction === 'function')[0];
-        expect(grabber).toBeTruthy();
-        grabber!.props.onAccessibilityAction({ nativeEvent: { actionName: 'activate' } });
+        await screen.pressByTestIdAsync('content-close');
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
@@ -437,7 +465,6 @@ describe('Popover phone presentation', () => {
     // NATIVE-SWEEP-1110 L10: a plain menu (cockpit More, a draft's ⋯) kept its desktop width, or opened left of a
     // trigger near the bottom and landed at the top of the screen. Every phone menu is the anchored panel.
     it('opens a plain menu on a phone as the anchored panel, never at its desktop width or beside its trigger', async () => {
-        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const screen = await renderScreen(
             <DropdownMenu open onOpenChange={() => {}} placement="left" matchTriggerWidth={false} maxWidthCap={220}
                 items={[{ id: 'delete', title: 'Delete draft' }]} onSelect={() => {}}
