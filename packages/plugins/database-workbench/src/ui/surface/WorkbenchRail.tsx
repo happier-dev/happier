@@ -168,13 +168,14 @@ function SchemaRelations(
     translate: PluginTranslate;
     selected: DatabaseRelationV1 | undefined;
     onOpen: (intent: RailIntent) => void;
-    structure: boolean;
+    mode: RailIntent['mode'] | undefined;
   }>,
 ) {
   const { relations, status, error, refresh, nextPage, previousPage } = useDatabaseSchemaRelations(
     props.targetKey,
     props.schema,
   );
+  const relationIsCurrent = props.mode === 'data' || props.mode === 'structure';
   const needle = props.query.trim().toLowerCase();
   const shown = needle
     ? relations.filter((relation) =>
@@ -215,7 +216,7 @@ function SchemaRelations(
             title={relation.name}
             // A table or view says what it is by its mark; the estimate is the row's one quiet fact.
             icon={relation.kind === 'table' ? 'table' : 'view'}
-            selected={sameRelation(props.selected, value)}
+            selected={relationIsCurrent && sameRelation(props.selected, value)}
             {...(rows ? { detail: rows } : {})}
             accessibilityLabel={relation.kind === 'table' ? relation.name : `${relation.name}, ${
               relation.kind === 'view'
@@ -224,7 +225,7 @@ function SchemaRelations(
             onPress={() =>
               props.onOpen({
                 relation: value,
-                mode: props.structure ? 'structure' : 'data',
+                mode: props.mode === 'structure' ? 'structure' : 'data',
               })
             }
           />
@@ -352,7 +353,7 @@ export function WorkbenchRailList(
               translate={translate}
               selected={props.selected?.relation}
               onOpen={props.onOpen}
-              structure={mode === 'structure'}
+              mode={mode}
             />
           </OpenSchemaGroup>
         ) : (

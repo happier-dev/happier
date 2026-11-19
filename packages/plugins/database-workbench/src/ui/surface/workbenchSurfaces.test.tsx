@@ -243,6 +243,24 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('selects only Console when the location carries the last table', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'console-rail', mountNonce: 'console-rail' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage, subPath: `${savedDatabasePath}/console/public/invoices`,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]) },
+    });
+    try {
+      await settle(20);
+      // The test host lays out narrow but keeps the desktop rail mounted.
+      expect(document.querySelector('[role="button"][aria-label="invoices"]')).toBeTruthy();
+      const current = [...document.querySelectorAll('[role="button"][aria-current="page"]')];
+      expect(current.map(row => row.getAttribute('aria-label') ?? row.textContent)).toEqual(['Console']);
+    } finally { await fixture.dispose(); }
+  });
+
   it('reopens a saved database when the person retries its failed connection read', async () => {
     const connection = connectionResourceHandlers();
     const watchResource = vi.fn(connection.watchResource)
