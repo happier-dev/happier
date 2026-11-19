@@ -204,7 +204,7 @@ export { TRIAGE_DISPLAY_NAME };
 type TriageActionSchemas = TriageAccountActionSchemas & {
   readonly [TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: readonly [typeof TriagePreparePullRequestReviewInputV1Schema, typeof TriagePreparePullRequestReviewResultV1Schema];
   readonly [TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageNativeFailureInputV1Schema, typeof TriageNativeFailureResultV1Schema];
-  readonly 'attention/publish-v1': readonly [typeof TriagePublishAttentionInputV1Schema.jsonSchema, typeof TriagePublishAttentionResultV1Schema.jsonSchema];
+  readonly [TRIAGE_PUBLISH_ATTENTION_ACTION_REF_V1.localId]: readonly [typeof TriagePublishAttentionInputV1Schema.jsonSchema, typeof TriagePublishAttentionResultV1Schema.jsonSchema];
   readonly [TRIAGE_COMPLETE_PULL_REQUEST_LINK_ACTION_LOCAL_ID_V1]: readonly [typeof SessionPullRequestLinkCompletionInputV1Schema, typeof SessionPullRequestLinkCompletionResultV1Schema];
   readonly [TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageTaskDraftV1Schema, typeof TriageMountedUiResultV1Schema];
   readonly [TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageCheckTaskWriteInputV1Schema, typeof TriageMountedUiResultV1Schema];
@@ -331,7 +331,7 @@ function createTriagePlugin(): TriagePlugin {
     actions: {
       ...TRIAGE_ACCOUNT_ACTIONS,
 
-      'attention/publish-v1': {
+      [TRIAGE_PUBLISH_ATTENTION_ACTION_REF_V1.localId]: {
         title: 'Publish source attention', description: 'Updates one source-owned attention item with its exact Triage detail destination.',
         surfaces: ['plugin'], dangerLevel: 'safe', hostAccess: ['account-storage'],
         inputSchema: TriagePublishAttentionInputV1Schema.jsonSchema, resultSchema: TriagePublishAttentionResultV1Schema.jsonSchema,
@@ -768,4 +768,4 @@ export const TRIAGE_PLUGIN: TriagePlugin = createTriagePlugin();
 export { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 } from './targetedContributions.js';
 import { runTriageAttention } from './attention/runtime.js';
 import { publishSourceAttention } from './attention/publish.js';
-import { TriagePublishAttentionInputV1Schema, TriagePublishAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_PUBLISH_ATTENTION_ACTION_REF_V1, TriagePublishAttentionInputV1Schema, TriagePublishAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';

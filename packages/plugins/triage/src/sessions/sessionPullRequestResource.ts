@@ -3,7 +3,7 @@ import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginDynamicResourceInvocationOptionsV1, PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
-import { SessionPullRequestWatchReadResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, SessionPullRequestWatchReadResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import {
     reconcileTriagePullRequestStatusV1,
     TriagePullRequestStatusResultV1Schema,
@@ -13,13 +13,14 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { TriageReadSourceSessionLinksResultV1Schema, type TriageReadSourceSessionLinksResultV1 } from '../actions/sessionLinksProtocol.js';
+import { TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import type { TriageReobserveEntryActionInputV1 } from '../actions/reobserveEntryProtocol.js';
 import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1 } from './sessionLinksResource.js';
 
 export { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1 } from './sessionPullRequestResourceId.js';
 const relationResource = TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1;
-const watchAction = { pluginId: 'happier.channels', localId: 'session-pull-request-watch-v1' } as const;
-const nativeAction = { pluginId: 'happier.triage', localId: 'entries/read-pull-request-status-v1' } as const;
+const watchAction = { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } as const;
+const nativeAction = { pluginId: 'happier.triage', localId: TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1 } as const;
 
 type WatchResult = ReturnType<typeof SessionPullRequestWatchReadResultV1Schema.parse>;
 type Metadata = Extract<WatchResult, { kind: 'ready' }>;

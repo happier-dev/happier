@@ -11,7 +11,7 @@ import { TriageSourcePanelSelectionV1Schema, TriageSourcePanelRevealV1Schema, Tr
 import { TriageSurfaceFilterSelectionV1Schema, TriageListSettledQueryV1Schema, TriageSmartPolicyV1Schema, TriageListOrderV1Schema } from './listEntriesProtocol.js';
 import { TriageSavedViewPresentationV1Schema } from './savedViewsProtocol.js';
 
-export const TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 = 'ui/mounted-v1';
+export { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
 const identifier = defineProtocolString({ minLength: 1 });
 const closed = { policy: 'closed' } as const;
 export const TriageMountedUiOperationV1Schema = defineProtocolUnion([

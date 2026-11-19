@@ -9,6 +9,7 @@ import {
   triageFailureSubjectActionSubjectV1, triageFailureSubjectEntryV1,
   TriageReadSourceSessionLinksResultV1Schema, TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
   buildTriageActionEditorLaunchInputV1, TRIAGE_APP_PAGE_DESTINATION_V1,
+  TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1,
   type TriageSessionHandoffInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageConfiguredStartRecoveryV1Schema,
@@ -72,7 +73,7 @@ export function createTriageNativeFailureOwner() {
   }
   async function readChoices(subject: Context, context: PluginClientActionContext) {
     const actionSubject = subject.kind === 'failure' ? triageFailureSubjectActionSubjectV1(subject.subject) : undefined;
-    const result = await execute(context, 'actions/read-v1', { v: 1, projection: 'sessionHandoff', task: 'investigate',
+    const result = await execute(context, TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1.localId, { v: 1, projection: 'sessionHandoff', task: 'investigate',
       ...(actionSubject === undefined ? {} : { subject: actionSubject }) });
     if (!result.ok) return unavailable(result.errorCode ?? 'unknown_error');
     const parsed = TriageSessionHandoffChoicesV1Schema.safeParse(result.result);

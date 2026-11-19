@@ -42,9 +42,10 @@ export function triageSourcePanelIntentKeyV1(intent: TriageSourcePanelIntentV1 |
   return typeof intent === 'string' ? intent : 'list' in intent ? JSON.stringify([intent.kind, intent.list]) : intent.kind;
 }
 export type TriageSourcePanelResultV1 = Readonly<{ status: 'applied' | 'unavailable' | 'rejected' }>;
+export const TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 = 'ui/mounted-v1';
 export const TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1 = 'ui/reveal-source-user-v1';
 export const TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1 = 'ui/insert-selected-evidence-v1';
 export function triageSourcePanelActionIdV1(operation: TriageSourcePanelOperationV1): string {
   return operation.kind === 'revealSourceUser' && operation.revealed ? TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1
-    : operation.kind === 'insertSelectedEvidence' ? TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1 : 'ui/mounted-v1';
+    : operation.kind === 'insertSelectedEvidence' ? TRIAGE_SOURCE_PANEL_INSERT_ACTION_V1 : TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1;
 }

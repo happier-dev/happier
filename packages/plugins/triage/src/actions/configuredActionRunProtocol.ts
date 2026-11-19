@@ -5,13 +5,14 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import { TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema, TriageSessionHandoffInputV1Schema, TriageSessionHandoffResultV1Schema, TriageConfiguredEntryExecutionStatusV1Schema } from '@happier-dev/triage-protocol/v1';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
+import { TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from '@happier-dev/triage-sources/runtime';
 import { TriageActionIdV1Schema, TriageActionRecordV1Schema } from '../settings/actions.js';
 import { TriageStartEntrySessionInputV1Schema, TriageStartEntrySessionResultV1Schema, TriageStartEntrySessionSettledDraftV1Schema, TriagePullRequestReviewChoiceV1Schema, TriageStartPullRequestReviewResultV1Schema, TriagePullRequestReviewInstructionsV1Schema, TriageStartEntrySessionDestinationV1Schema, TriageStartEntrySessionDeliveryV1Schema, TriageStartEntrySessionResumeV1Schema } from './entrySessionProtocol.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
 import { TriageNewSessionFailureV1Schema } from '../ui/header/newSessionSeedCommand.js';
 import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
 
-export const TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 = 'sessions/run-configured-v1';
+export const TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 = TRIAGE_SESSION_HANDOFF_ACTION_REF_V1.localId;
 
 const text = defineProtocolString({ minLength: 1 });
 const selectedEntry = defineProtocolObject({
