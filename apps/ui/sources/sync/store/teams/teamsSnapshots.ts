@@ -4,6 +4,8 @@ import {
     type TeamMembershipV1,
     type TeamCredentialResourceCatalogEntryV1,
     type TeamCredentialExternalApiKeySummaryV1,
+    type TeamCredentialSourceResourceAdministrationV1,
+    type TeamCredentialSourceCandidateListOutputV1,
     type TeamCredentialResourceActivityEventV1,
     type TeamCredentialUsageQueryResultV1,
     type TeamCredentialResourceSummaryV1,
@@ -263,6 +265,8 @@ export const teamCredentialUsageObservations = createTeamObservations<TeamCreden
 export const teamGroupMemberPages = createTeamObservations<TeamPage<TeamGroupMemberV1>>();
 export const teamMemberGroupPages = createTeamObservations<TeamPage<TeamGroupV1>>();
 export const teamCredentialActivityPages = createTeamObservations<TeamPage<TeamCredentialResourceActivityEventV1>>();
+export const teamCredentialSourceResourcePages = createTeamObservations<TeamPage<TeamCredentialSourceResourceAdministrationV1>>();
+export const teamCredentialSourceCandidateObservations = createTeamObservations<TeamCredentialSourceCandidateListOutputV1>();
 export const teamDirectoryPeoplePages = createTeamObservations<TeamPage<TeamDirectoryPeoplePageV1['items'][number]>>();
 export const teamDirectoryGroupPages = createTeamObservations<TeamPage<TeamDirectoryGroupPageV1['items'][number]>>();
 export const teamExternalGroupBindingPages = createTeamObservations<TeamPage<TeamExternalGroupBindingV1>>();
@@ -279,6 +283,8 @@ const retainedTeamObservations = [
     teamGroupMemberPages,
     teamMemberGroupPages,
     teamCredentialActivityPages,
+    teamCredentialSourceResourcePages,
+    teamCredentialSourceCandidateObservations,
     teamDirectoryPeoplePages,
     teamDirectoryGroupPages,
     teamExternalGroupBindingPages,

@@ -6,7 +6,7 @@ import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 import { PrivateLabelRecipientCensusResponseV1Schema } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createProviderConnectionViewFixture, createProviderConnectionsDescribeFixture, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -211,6 +211,29 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('TeamCredentialCreateScreen', () => {
+    it('keeps the observed source chooser on return and waits for fresh choices before enabling it', async () => {
+        const serverId = await addHome();
+        answerViewer(serverId, true);
+        const candidate = teamCredentialSourceCandidateFixture();
+        const body = { candidates: [candidate], supportedKinds: ['connected_pool'], brokerPresentation: emptyBrokerPresentation() };
+        const picker = 'team-credential-create-source';
+        harness.answer(serverId, SOURCES_PATH, { body });
+        const first = await renderCreate(serverId);
+        await vi.waitFor(() => expect(first.findByTestId(picker)?.props.accessibilityLabel).toContain('teams.credentials.create.sourceChoose'));
+        await first.unmount();
+
+        const observedRequests = harness.requestsFor(SOURCES_PATH).length;
+        const fresh = createDeferred<void>();
+        harness.answer(serverId, SOURCES_PATH, { body, respondAfter: fresh.promise });
+        const returned = await renderCreate(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(SOURCES_PATH).length).toBeGreaterThan(observedRequests));
+        expect(returned.findByTestId(picker)?.props.accessibilityLabel).toContain('teams.credentials.create.sourceChoose');
+        expect(returned.findByTestId(picker)?.props.disabled).toBe(true);
+        await act(async () => fresh.resolve());
+        await vi.waitFor(() => expect(returned.findByTestId(picker)?.props.disabled).not.toBe(true));
+        await returned.unmount();
+    });
+
     it('offers only brokered sharing when the source does not support direct export', async () => {
         const serverId = await addHome();
         answerViewer(serverId, true);

@@ -25,7 +25,8 @@ import {
     type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { serverAccountScopedTeamResourceKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import {
     loadMoreTeamCredentialResources,
     observeTeamCredentialResource,
@@ -50,6 +51,7 @@ import {
     readTeamCredentialResource,
     subscribeTeamsSnapshots,
     teamCredentialActivityPages,
+    teamCredentialSourceCandidateObservations,
     teamCredentialUsageObservations,
 } from '@/sync/store/teams/teamsSnapshots';
 
@@ -308,6 +310,7 @@ export type TeamCredentialSourceCandidatesProjection = Readonly<{
     supportedKinds: readonly TeamCredentialSourceCandidateV1['source']['kind'][];
     brokerPresentation: TeamCredentialSourceCandidateListOutputV1['brokerPresentation'];
     status: 'loading' | 'ready' | 'error';
+    hasObservation: boolean;
     error: HomeDomainFailure | null;
     reload: () => Promise<void>;
 }>;
@@ -318,14 +321,7 @@ const NO_BROKER_PRESENTATION: TeamCredentialSourceCandidateListOutputV1['brokerP
     selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [],
 });
 
-/**
- * The sources this viewer may offer, read when the create surface opens.
- *
- * It is deliberately not part of the retained Team projection: only the offer
- * surface needs it, and a retained copy would age against Pools and Accounts the
- * owner changes in Connected Services, so a stale pin could be offered as
- * current.
- */
+/** Source choices retain the Home answer for display while the picker revalidates it. */
 export function useTeamCredentialSourceCandidates(params: Readonly<{
     scope: ServerAccountScope | null;
     address: TeamAddress | null;
@@ -335,41 +331,47 @@ export function useTeamCredentialSourceCandidates(params: Readonly<{
     const requestEpoch = React.useRef(0);
     const request = React.useRef<AbortController | null>(null);
     const [state, setState] = React.useState<Readonly<{
-        candidates: readonly TeamCredentialSourceCandidateV1[];
-        supportedKinds: readonly TeamCredentialSourceCandidateV1['source']['kind'][];
-        brokerPresentation: TeamCredentialSourceCandidateListOutputV1['brokerPresentation'];
+        key: string;
+        lifetime: ServerAccountScopeLifetime;
+        result: TeamCredentialSourceCandidateListOutputV1 | null;
         status: TeamCredentialSourceCandidatesProjection['status'];
         error: HomeDomainFailure | null;
-    }>>({ candidates: NO_CANDIDATES, supportedKinds: NO_KINDS, brokerPresentation: NO_BROKER_PRESENTATION, status: 'loading', error: null });
+    }> | null>(null);
     const { scope, address } = params;
-    const active = params.enabled && scope !== null && address !== null;
+    const active = params.enabled && scope !== null && address !== null && scope.serverId === address.serverId;
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(active ? scope.serverId : null);
+    const currentBinding = binding?.isCurrent() && areServerAccountScopesEqual(binding.scope, scope) ? binding : null;
+    const key = active ? serverAccountScopedTeamResourceKey(scope, address, 'credential-source-candidates') : '';
+    const mounted = active && state?.key === key && state.lifetime.isCurrent() ? state : null;
+    const retained = active && (currentBinding || resolution.kind === 'resolving')
+        ? teamCredentialSourceCandidateObservations.get(key) : undefined;
+    const result = currentBinding && mounted ? mounted.result : retained;
+    const status = currentBinding && mounted ? mounted.status : 'loading';
+    const error = currentBinding && mounted ? mounted.error : null;
 
     const load = React.useCallback(async () => {
-        if (!active || !scope || !address) return;
+        if (!active || !currentBinding?.isCurrent() || !address) return;
         const epoch = ++requestEpoch.current;
         request.current?.abort();
         const controller = new AbortController();
         request.current = controller;
-        setState((previous) => ({ ...previous, status: 'loading', error: null }));
-        const outcome = await listTeamCredentialSourceCandidates({ scope, address, signal: controller.signal }).catch(error => {
+        const lifetime = readServerAccountScopeOwnerLifetime(currentBinding);
+        const previous = teamCredentialSourceCandidateObservations.get(key) ?? null;
+        setState({ key, lifetime, result: previous, status: 'loading', error: null });
+        const outcome = await listTeamCredentialSourceCandidates({ scope: currentBinding.scope, address, signal: controller.signal }).catch(error => {
             if (controller.signal.aborted) return null;
             throw error;
         });
-        if (!outcome || epoch !== requestEpoch.current) return;
+        if (!outcome || epoch !== requestEpoch.current || !currentBinding.isCurrent()) return;
         if (outcome.kind === 'succeeded') {
-            setState({
-                candidates: outcome.value.candidates,
-                supportedKinds: outcome.value.supportedKinds,
-                brokerPresentation: outcome.value.brokerPresentation,
-                status: 'ready',
-                error: null,
-            });
+            teamCredentialSourceCandidateObservations.apply(key, currentBinding, outcome.value);
+            setState({ key, lifetime, result: outcome.value, status: 'ready', error: null });
             return;
         }
-        // Sources already read stay selectable through a failed refresh; the
-        // Home's refusal is reported beside them rather than replacing them.
-        setState((previous) => ({ ...previous, status: 'error', error: outcome.failure }));
-    }, [active, address, scope]);
+        const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind);
+        if (withdrawn) teamCredentialSourceCandidateObservations.apply(key, currentBinding, null);
+        setState({ key, lifetime, result: withdrawn ? null : previous, status: 'error', error: outcome.failure });
+    }, [active, address, currentBinding, key]);
 
     React.useEffect(() => {
         void load();
@@ -377,15 +379,19 @@ export function useTeamCredentialSourceCandidates(params: Readonly<{
     }, [load]);
 
     return React.useMemo(() => Object.freeze({
-        ...state,
         candidates: composeTeamCredentialProviderSourceOffer(
-            state.candidates,
-            state.supportedKinds.includes('provider_connection')
+            result?.candidates ?? NO_CANDIDATES,
+            result?.supportedKinds.includes('provider_connection')
                 ? params.providerSourceOffers ?? []
                 : [],
         ),
+        supportedKinds: result?.supportedKinds ?? NO_KINDS,
+        brokerPresentation: result?.brokerPresentation ?? NO_BROKER_PRESENTATION,
+        hasObservation: result != null,
+        status,
+        error,
         reload: load,
-    }), [load, params.providerSourceOffers, state]);
+    }), [error, load, params.providerSourceOffers, result, status]);
 }
 
 export type TeamCredentialLimitsProjection = Readonly<{

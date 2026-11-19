@@ -16,8 +16,20 @@ import { StyleSheet } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import {
+    readServerAccountScopeOwnerLifetime,
+    serverAccountScopedResourceKey,
+    type ServerAccountScope,
+    type ServerAccountScopeLifetime,
+} from '@/sync/domains/scope/serverAccountScope';
+import { readCurrentServerCredentialAccountScopeLifetime } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
+import {
+    useServerCredentialAccountScopeBinding,
+    type ServerCredentialAccountScopeBinding,
+} from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { loadTeamPageRange, type TeamPage } from '@/sync/engine/teams/loadTeamPageRange';
+import { teamCredentialSourceResourcePages } from '@/sync/store/teams/teamsSnapshots';
 import {
     deleteTeamCredentialResource,
     listTeamCredentialSourceResources,
@@ -105,30 +117,35 @@ function SourceBrokerPlacementEditor(props: Readonly<{
     );
 }
 
-function readSourceResourceNextCursor(page: object): string | null {
-    if (!('nextCursor' in page)) return null;
-    return typeof page.nextCursor === 'string' ? page.nextCursor : null;
-}
-
-export const SharedWithTeamsSourceAdministration = React.memo(function SharedWithTeamsSourceAdministration(
-    props: Readonly<{ scope: ServerAccountScope; source: TeamCredentialSourceLocatorV1 }>,
+const SharedWithTeamsSourceAdministration = React.memo(function SharedWithTeamsSourceAdministration(
+    props: Readonly<{
+        owner: ServerAccountScopeLifetime;
+        binding: ServerCredentialAccountScopeBinding | null;
+        observationKey: string;
+        source: TeamCredentialSourceLocatorV1;
+    }>,
 ) {
     const router = useRouter();
-    const scope = React.useMemo(() => ({
-        serverId: props.scope.serverId,
-        accountId: props.scope.accountId,
-    }), [props.scope.serverId, props.scope.accountId]);
+    const { owner, binding, observationKey } = props;
+    const scope = owner.scope;
     const sourceKey = teamCredentialSourceLocatorKeyV1(props.source);
     const source = React.useMemo(() => props.source, [sourceKey]);
-    const [rows, setRows] = React.useState<readonly TeamCredentialSourceResourceAdministrationV1[] | null>(null);
+    const [observed, setObserved] = React.useState<Readonly<{
+        owner: ServerAccountScopeLifetime;
+        page: TeamPage<TeamCredentialSourceResourceAdministrationV1> | null;
+    }> | null>(null);
+    const page = observed?.owner === owner && owner.isCurrent()
+        ? observed.page : teamCredentialSourceResourcePages.get(observationKey) ?? null;
+    const rows = page?.items ?? null;
+    const nextCursor = page?.nextCursor ?? null;
     const [error, setError] = React.useState<string | null>(null);
     const [pendingId, setPendingId] = React.useState<string | null>(null);
     const [openId, setOpenId] = React.useState<string | null>(null);
-    const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loadingMore, setLoadingMore] = React.useState(false);
-    const [rowsCurrent, setRowsCurrent] = React.useState(false);
+    const [currentOwner, setCurrentOwner] = React.useState<ServerCredentialAccountScopeBinding | null>(null);
+    const rowsCurrent = binding !== null && binding === currentOwner && binding.isCurrent();
     const openedDisplayNames = useOpenedTeamCredentialDisplayNames({
-        scope: props.scope,
+        scope,
         resources: rows ?? [],
         enabled: rows !== null,
     });
@@ -139,59 +156,80 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
     const readRequest = React.useRef<AbortController | null>(null);
     const actionLifetime = React.useRef<AbortController | null>(null);
 
+    const observe = React.useCallback((next: TeamPage<TeamCredentialSourceResourceAdministrationV1> | null) => {
+        if (!binding?.isCurrent()) return;
+        teamCredentialSourceResourcePages.apply(observationKey, binding, next);
+        setObserved({ owner, page: next });
+    }, [binding, observationKey, owner]);
+    const loadPage = React.useCallback(async (cursor: string | null, signal: AbortSignal) => {
+        const outcome = await listTeamCredentialSourceResources({ scope, source, cursor: cursor ?? undefined, signal });
+        return outcome.kind === 'failed' ? outcome : {
+            kind: 'succeeded' as const,
+            value: { items: outcome.value.resources, nextCursor: outcome.value.nextCursor },
+        };
+    }, [scope, source]);
+
     const reload = React.useCallback(async () => {
+        if (!binding?.isCurrent()) return;
         const requestGeneration = ++generation.current;
         readRequest.current?.abort();
         const controller = new AbortController();
         readRequest.current = controller;
         rowsCurrentRef.current = false;
-        setRowsCurrent(false);
-        const outcome = await listTeamCredentialSourceResources({ scope, source, signal: controller.signal }).catch(error => {
+        setCurrentOwner(null);
+        const outcome = await loadTeamPageRange({
+            loadedRowCount: teamCredentialSourceResourcePages.get(observationKey)?.items.length ?? 0,
+            loadPage: cursor => loadPage(cursor, controller.signal),
+            isCancelled: () => controller.signal.aborted,
+        }).catch(error => {
             if (controller.signal.aborted) return null;
             throw error;
         });
-        if (!outcome || generation.current !== requestGeneration) return;
+        if (!outcome || generation.current !== requestGeneration || !binding.isCurrent()) return;
         if (outcome.kind === 'succeeded') {
-            setRows(outcome.value.resources);
-            setNextCursor(readSourceResourceNextCursor(outcome.value));
+            observe(outcome.value);
             setError(null);
             rowsCurrentRef.current = true;
-            setRowsCurrent(true);
+            setCurrentOwner(binding);
         } else {
+            if (isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)) observe(null);
             setError(credentialFailureMessage(outcome.failure));
         }
-    }, [scope, source]);
+    }, [binding, loadPage, observationKey, observe]);
     const loadMore = React.useCallback(async () => {
-        if (!nextCursor || !rowsCurrentRef.current) return;
-        const requestGeneration = generation.current;
         const signal = readRequest.current?.signal;
+        if (!page?.nextCursor || !signal || !binding?.isCurrent() || !rowsCurrentRef.current) return;
+        const requestGeneration = generation.current;
         setLoadingMore(true);
         try {
-            const outcome = await listTeamCredentialSourceResources({ scope, source, cursor: nextCursor,
-                signal });
-            if (generation.current !== requestGeneration) return;
+            const outcome = await loadPage(page.nextCursor, signal);
+            if (generation.current !== requestGeneration || !binding.isCurrent()) return;
             if (outcome.kind === 'succeeded') {
-                setRows((current) => [...(current ?? []), ...outcome.value.resources.filter(
-                    (row) => !(current ?? []).some((existing) => existing.id === row.id),
-                )]);
-                setNextCursor(readSourceResourceNextCursor(outcome.value));
-            } else setError(credentialFailureMessage(outcome.failure));
+                const seen = new Set(page.items.map(row => row.id));
+                observe({ items: [...page.items, ...outcome.value.items.filter(row => !seen.has(row.id))],
+                    nextCursor: outcome.value.nextCursor });
+            } else {
+                if (isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)) {
+                    rowsCurrentRef.current = false;
+                    setCurrentOwner(null);
+                    observe(null);
+                }
+                setError(credentialFailureMessage(outcome.failure));
+            }
         } catch (error) {
-            if (!signal?.aborted) throw error;
+            if (!signal.aborted) throw error;
         } finally { setLoadingMore(false); }
-    }, [nextCursor, scope, source]);
+    }, [binding, loadPage, observe, page]);
     const approval = useActionApprovalContinuation({
-        scopeKey: `${props.scope.serverId}:${props.scope.accountId}:credential-source:${teamCredentialSourceLocatorKeyV1(props.source)}`,
-        serverId: props.scope.serverId,
+        scopeKey: observationKey,
+        serverId: scope.serverId,
         onExecuted: () => { void reload(); },
     });
 
     React.useEffect(() => {
         const controller = new AbortController();
         actionLifetime.current = controller;
-        setRows(null);
         setError(null);
-        setNextCursor(null);
         void reload();
         return () => {
             controller.abort();
@@ -206,13 +244,13 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
         patch: Readonly<{ enabled?: boolean; deliveryPolicy?: { preferredAllowedModes: ['brokered'] }; brokerPlacement?: TeamCredentialBrokerPlacementV1 | null }>,
         expectedRevision = row.revision,
     ): Promise<boolean> => {
-        if (!rowsCurrentRef.current) return false;
+        if (!binding?.isCurrent() || !rowsCurrentRef.current) return false;
         const signal = actionLifetime.current?.signal;
         if (!signal || signal.aborted) return false;
         setPendingId(row.id);
         try {
             const outcome = await updateTeamCredentialResource({
-                scope: props.scope,
+                scope,
                 resourceId: row.id,
                 expectedRevision,
                 ...patch,
@@ -235,14 +273,14 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
         } finally {
             setPendingId(null);
         }
-    }, [approval, props.scope, reload]);
+    }, [approval, binding, scope, reload]);
     const remove = React.useCallback(async (row: TeamCredentialSourceResourceAdministrationV1) => {
-        if (!rowsCurrentRef.current) return;
+        if (!binding?.isCurrent() || !rowsCurrentRef.current) return;
         const signal = actionLifetime.current?.signal;
         if (!signal || signal.aborted) return;
         setPendingId(row.id);
         try {
-            const outcome = await deleteTeamCredentialResource({ scope: props.scope, resourceId: row.id, expectedRevision: row.revision, signal });
+            const outcome = await deleteTeamCredentialResource({ scope, resourceId: row.id, expectedRevision: row.revision, signal });
             if (signal.aborted) return;
             if (outcome.kind === 'failed') {
                 await reload();
@@ -258,7 +296,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
         } finally {
             setPendingId(null);
         }
-    }, [approval, props.scope, reload]);
+    }, [approval, binding, scope, reload]);
     const openRow = rows?.find((row) => row.id === openId) ?? null;
     // Nothing shared is the quiet, healthy state: the page's own share action is the way in, so a
     // section that only says "none" (or a loading row for it) is not shown. A share, a failure or a
@@ -328,7 +366,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                 title={t('approvals.title')}
                 subtitle={approval.error ? t('approvals.loadError') : t('approvals.status.open')}
                 accessibilityLiveRegion={approval.error ? 'assertive' : 'polite'}
-                onPress={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.scope.serverId)}`)}
+                onPress={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)}
                 showChevron={false}
             /> : null}
             {leadingRows?.map(renderRow)}
@@ -337,7 +375,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
         {editing ? (
             <SourceBrokerPlacementEditor
                 key={editing.id}
-                scope={props.scope}
+                scope={scope}
                 row={editing}
                 displayName={openedDisplayNames[editing.id] ?? t('teams.credentials.title')}
                 pending={pendingId === editing.id || approval.approvalPending}
@@ -371,10 +409,14 @@ export const SharedWithTeamsForSource = React.memo(function SharedWithTeamsForSo
     serverId: string;
     source: TeamCredentialSourceLocatorV1;
 }>) {
-    const resolution = useServerCredentialAccountScopeResolution(props.serverId);
-    return resolution.kind === 'bound'
-        ? <SharedWithTeamsSourceAdministration scope={resolution.scope} source={props.source} />
-        : null;
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(props.serverId);
+    const owner = binding?.isCurrent() ? readServerAccountScopeOwnerLifetime(binding)
+        : resolution.kind === 'resolving' ? readCurrentServerCredentialAccountScopeLifetime(props.serverId) : null;
+    if (!owner) return null;
+    const observationKey = serverAccountScopedResourceKey(owner.scope, 'team-credential-source-resources',
+        teamCredentialSourceLocatorKeyV1(props.source));
+    return <SharedWithTeamsSourceAdministration key={observationKey} owner={owner}
+        binding={binding} observationKey={observationKey} source={props.source} />;
 });
 
 const styles = StyleSheet.create((theme) => ({

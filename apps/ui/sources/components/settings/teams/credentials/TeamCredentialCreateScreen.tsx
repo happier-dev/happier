@@ -320,7 +320,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     const providerCatalogLoading = providerConnections.loading
         && providerSourceOffers.length === 0
         && sources.supportedKinds.includes('provider_connection');
-    const sourcePickerLoading = sources.status === 'loading'
+    const sourcePickerLoading = (sources.status === 'loading' && !sources.hasObservation)
         || (sources.candidates.length === 0 && providerCatalogLoading);
     const missingRequirements = [
         selected === null ? t('teams.credentials.detail.sourceLabel') : null,
@@ -338,7 +338,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     return <>
         {/* The page header already says "Share a credential"; the source group opens with what sharing does. */}
         <ItemGroup description={sources.supportedKinds.length < 3 ? t('teams.credentials.create.sourceUnsupported') : t('teams.credentials.subtitle')}>
-            <TeamCredentialSourcePicker candidates={sources.candidates} selected={selected} disabled={busy} unavailableReason={sourcePickerLoading ? t('common.loading') : sources.candidates.length === 0 ? t('teams.credentials.create.sourceEmpty') : null} onSelect={chooseSource} />
+            <TeamCredentialSourcePicker candidates={sources.candidates} selected={selected} disabled={busy || sources.status === 'loading'} unavailableReason={sourcePickerLoading ? t('common.loading') : sources.candidates.length === 0 ? t('teams.credentials.create.sourceEmpty') : null} onSelect={chooseSource} />
         </ItemGroup>
         {sources.error ? <ItemGroup description={credentialFailureMessage(sources.error)}><Item testID="team-credential-create-source-retry" title={t('teams.unavailable.retry')} onPress={() => void sources.reload()} showChevron={false} /></ItemGroup> : null}
         {providerConnections.error && sources.supportedKinds.includes('provider_connection') ? <ItemGroup description={t('teams.credentials.requestPolicy.catalogUnavailable')}><Item testID="team-credential-create-provider-source-retry" title={t('teams.unavailable.retry')} onPress={() => void providerConnections.refresh()} showChevron={false} /></ItemGroup> : null}

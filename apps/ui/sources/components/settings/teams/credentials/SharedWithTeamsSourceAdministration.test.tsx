@@ -29,6 +29,11 @@ const { MachineAdministrationTargetSelector } = await import('@/components/setti
 const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 
 async function publishBrokerMachine(serverId: string): Promise<void> {
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    // Publish the selected Home after its portable identity is available. The
+    // Home harness provides scoped HTTP without starting the active Sync socket.
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), false);
     const machine = createMachineFixture({
         id: 'machine-exact', active: true, activeAt: Date.now(), storageMode: 'plain',
         metadata: { ...createMachineFixture().metadata!, displayName: 'Exact broker' },
@@ -100,14 +105,40 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('SharedWithTeamsSourceAdministration', () => {
+    it('shows the observed source shares on return and withdraws them after refusal', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        await harness.selectHomes([serverId]);
+        const row = teamCredentialSourceResourceFixture();
+        const rowId = `shared-with-teams:resource:${row.id}`;
+        harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const page = () => <SharedWithTeamsForSource
+            serverId={serverId}
+            source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
+        />;
+        const first = await renderScreen(page());
+        await vi.waitFor(() => expect(first.findByTestId(rowId)).not.toBeNull());
+        await first.unmount();
+
+        const observedRequests = harness.requestsFor(LIST_PATH).length;
+        const fresh = createDeferred<void>();
+        harness.answer(serverId, LIST_PATH, { status: 403, respondAfter: fresh.promise });
+        const returned = await renderScreen(page());
+        await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH).length).toBeGreaterThan(observedRequests));
+        expect(returned.findByTestId(rowId)).not.toBeNull();
+        await act(async () => fresh.resolve());
+        await vi.waitFor(() => expect(returned.findByTestId(rowId)).toBeNull());
+        await returned.unmount();
+    });
+
     it('shows a source-owned direct refusal on an existing shared resource', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
         const message = "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.";
         const row = teamCredentialSourceResourceFixture({ directExportFailure: { code: 'access_only_expiry_unavailable', message } });
         harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource serverId={serverId}
             source={{ v: 1, kind: 'connected_account', target: { kind: 'account', account: {
                 service: { pluginId: 'test.connected-account', localId: 'subscription' }, accountId: 'imported' } } }} />);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
@@ -118,9 +149,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         await harness.selectHomes([serverId]);
         const row = teamCredentialSourceResourceFixture();
         harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const render = (connectionId = CONNECTION_ID) => <SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const render = (connectionId = CONNECTION_ID) => <SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId }}
         />;
         const screen = await renderScreen(render());
@@ -154,10 +185,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
         harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
         harness.answer(serverId, UPDATE_PATH, { body: { resourceId: row.id, revision: row.revision + 1 } });
         harness.answer(serverId, '/v1/teams/credential-resources/delete', { body: { resourceId: row.id, revision: row.revision + 1 } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
         if (operation === 'delete') confirm.mockResolvedValue(true);
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         // Broker location opens its editor below the list; the operation then comes from the row's ⋯ menu.
@@ -200,9 +231,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
             resources: [teamCredentialSourceResourceFixture({ id: 'resource-1', displayName: 'Same' })],
             nextCursor: 'cursor-1',
         } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:load-more')).not.toBeNull());
@@ -229,9 +260,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
             },
         });
         harness.answer(serverId, LIST_PATH, { body: { resources: [readable, unreadable] } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
 
@@ -257,9 +288,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
             },
         })] } });
 
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await openRowMenu(screen, 'resource-1');
@@ -289,9 +320,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
             },
         })] } });
 
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await openRowMenu(screen, 'resource-1');
@@ -316,9 +347,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         confirm.mockImplementationOnce(() => decision.promise);
         harness.answer(serverId, UPDATE_PATH, { body: { resourceId: row.id, revision: row.revision + 1 } });
 
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'narrow');
@@ -368,9 +399,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         });
         harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
         harness.answer(serverId, UPDATE_PATH, { body: { resourceId: 'resource-1', revision: 4 } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'broker-location');
@@ -415,9 +446,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         harness.answer(serverId, LIST_PATH, { body: { resources: [initial] } });
         harness.answer(serverId, UPDATE_PATH, { body: { resourceId: 'resource-1', revision: 4 } });
 
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'broker-location');
@@ -471,9 +502,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
         harness.answer(serverId, UPDATE_PATH, { body: { resourceId: 'resource-1', revision: 4 } });
 
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await pressRowAction(screen, 'resource-1', 'broker-location');
@@ -497,10 +528,10 @@ describe('SharedWithTeamsSourceAdministration', () => {
         const readiness = { kind: 'source_unavailable' } as const;
         harness.answer(serverId, LIST_PATH, { body: { resources: ['resource-1', 'resource-2', 'resource-3'].map((id) =>
             teamCredentialSourceResourceFixture({ id, displayName: `Team ${id}`, readiness })), nextCursor: null } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
         const { resourceStateLabel } = await import('./teamCredentialPresentation');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('shared-with-teams:resource:resource-3'));
@@ -516,9 +547,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
             ...['resource-1', 'resource-2', 'resource-3'].map((id) => teamCredentialSourceResourceFixture({ id, displayName: `Team ${id}`, readiness })),
             teamCredentialSourceResourceFixture({ id: 'resource-4', displayName: 'Team resource-4', readiness: other }),
         ], nextCursor: null } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('shared-with-teams:resource:resource-4'));
@@ -531,9 +562,9 @@ describe('SharedWithTeamsSourceAdministration', () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
         harness.answer(serverId, LIST_PATH, { body: { resources: [] } });
-        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
-        const screen = await renderScreen(<SharedWithTeamsSourceAdministration
-            scope={{ serverId, accountId: 'owner' }}
+        const { SharedWithTeamsForSource } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsForSource
+            serverId={serverId}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
         await expect.poll(() => harness.requestsFor(LIST_PATH).length).toBeGreaterThan(0);

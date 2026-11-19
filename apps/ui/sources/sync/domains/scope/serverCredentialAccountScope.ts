@@ -28,6 +28,13 @@ const accountLifetimes = new Map<string, Readonly<{
     retire(): void;
 }>>();
 
+/** The last resolved credential still owns its display projections while a reader binds. */
+export function readCurrentServerCredentialAccountScopeLifetime(serverId: string): ServerAccountScopeLifetime | null {
+    if (isEmbedWindowContext()) return null;
+    const lifetime = accountLifetimes.get(resolveServerProfileScopeIdForIdentifier(serverId))?.lifetime;
+    return lifetime?.isCurrent() ? lifetime : null;
+}
+
 /** A resolved credential owns retained projections until its material or Home target changes. */
 export function captureServerCredentialAccountScopeLifetime(
     resolution: Extract<ServerCredentialAccountScopeResolution, { kind: 'bound' }>,
