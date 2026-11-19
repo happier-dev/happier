@@ -264,10 +264,12 @@ export function MachineWidgetState(
     );
   }
   if (props.kind === 'offline') {
-    // Under a group header that already says "Offline · Last seen …", the body says only what comes back.
+    // Under a group header that already says "Offline · Last seen …", the body says only what comes back, as one
+    // quiet line: a card-sized illustration would restate the header (LABPARITY-ACCEPT-F fix 3). Guard's detail
+    // is that line.
     if (offlineSaidAbove) {
       return (
-        <SurfaceStateCard testID={`${props.testID}.offline`} kind="unavailable" replacesContent iconName="wifi-slash"
+        <SurfaceStateCard testID={`${props.testID}.offline`} kind="unavailable" replacesContent size="line"
           title={props.detail || t('machines.widgets.body.common.readingsReturn')} />
       );
     }

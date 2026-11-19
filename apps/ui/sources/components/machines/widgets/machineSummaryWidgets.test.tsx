@@ -441,12 +441,16 @@ describe('Vitals widget (lab rw V, VS)', () => {
     expect(groupedText.split(/\s+/)).not.toContain('machines.widgets.body.common.offline');
     expect(groupedText).not.toContain('machines.widgets.body.common.lastSeen');
     expect(groupedText).toContain('machines.widgets.body.common.readingsReturn');
+    // LABPARITY-ACCEPT-F fix 3: under a header that already says Offline, the body is one quiet line, not a
+    // card-sized empty illustration restating it.
+    expect(grouped.findAllByTestId('vitals.offline').some(node => node.props.size === 'line')).toBe(true);
     await grouped.unmount();
     // Anywhere else nothing says it above: the widget keeps its own Offline badge and last-seen line.
     const alone = await renderVitals('medium');
     await settle();
     expect(alone.getTextContent().split(/\s+/)).toContain('machines.widgets.body.common.offline');
     expect(alone.getTextContent()).toContain('machines.widgets.body.common.lastSeen');
+    expect(alone.findAllByTestId('vitals.offline').some(node => node.props.size === 'line')).toBe(false);
     await alone.unmount();
   });
 
