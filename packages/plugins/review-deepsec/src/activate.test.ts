@@ -945,9 +945,9 @@ describe('activate', () => {
     }
   });
 
-  it('does not infer Machine login from an older host null binding read', async () => {
-    const fixture = createRuntimeContext({ connectedAccounts: { getBinding: async () => null,
-      materialize: async () => { throw new Error('No selected account'); } } });
+  it('does not borrow a legacy binding when canonical credential selection is unavailable', async () => {
+    const { resolveSelection: _resolveSelection, ...legacyAccounts } = createClaudeAccountFixture('oauth').connectedAccounts;
+    const fixture = createRuntimeContext({ connectedAccounts: legacyAccounts });
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open({ ...createOpenRequest(), launchEnvironment: { values: {}, unset: [] } }, fixture.context);
     if (!opened) throw new Error('Expected DeepSec execution');
@@ -955,6 +955,7 @@ describe('activate', () => {
     await opened.dispose();
     expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_model_access_unavailable' } });
     expect(fixture.run).not.toHaveBeenCalled();
+    expect(legacyAccounts.materialize).not.toHaveBeenCalled();
   });
 
   it('does not use Machine login or an unrelated Gateway when the host cannot resolve a selected account', async () => {

@@ -403,10 +403,7 @@ async function prepareDeepSecModelAccess(
   }
   const accounts = context.services.connectedAccounts;
   const selection = await accounts.resolveSelection?.(DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, { signal: context.signal });
-  // Older hosts can supply an explicit binding, but a null legacy read does
-  // not authorize borrowing the Machine's login.
-  const binding = selection?.credentialSource === 'connectedAccount' ? selection.binding
-    : selection ? null : await accounts.getBinding(DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, { signal: context.signal });
+  const binding = selection?.credentialSource === 'connectedAccount' ? selection.binding : null;
   if (binding) return { environment: await prepareDeepSecClaudeAccount(context, agentCli, binding),
     agentCli: 'claude', claudeSubscription: true };
   const gatewayKey = readGatewayKey(request);
