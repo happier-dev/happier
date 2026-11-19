@@ -8,8 +8,7 @@ import {
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { readActiveConfiguredSourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
-import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';

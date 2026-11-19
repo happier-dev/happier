@@ -1,4 +1,4 @@
-import { readAccountDataSourceRecordsV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions, JsonValue } from '@happier-dev/plugin-sdk';
@@ -27,7 +27,6 @@ import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributio
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
 import {
-  indexTriageAdmittedSourcesV1,
   indexTriageSourceAvailabilityFailuresV1,
   type TriageSourceSnapshotV1,
 } from './listEntries.js';

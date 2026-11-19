@@ -1,4 +1,4 @@
-import { readAccountDataSourceRecordsV1, projectAccountDataSourceCatalogV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1, projectAccountDataSourceCatalogV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
@@ -26,7 +26,6 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
-import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 
 /**
  * The caller-scoped configured-instance read.

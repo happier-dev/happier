@@ -1,9 +1,9 @@
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { createCoalescedScheduler, sleepWithSignal } from '@happier-dev/plugin-sdk/async';
 import { buildTriageEntryRouteSegmentV1, TriageReadAttentionResultV1Schema, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { publishTriageAttentionV1 } from '@happier-dev/triage-sources/runtime';
-import { indexTriageAdmittedSourcesV1, type TriageAdmittedSourceV1 } from '../actions/listEntries.js';
+import { type TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../corpus/collections/definitions.js';
 import { CORPUS_SOURCE_INSTANCES_INDEX_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';

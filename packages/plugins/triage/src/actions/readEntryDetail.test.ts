@@ -40,8 +40,7 @@ import type { TriageAdmittedSourceV1 } from './listEntries.js';
 import { readTriageEntryDetailState } from '../ui/detail/useTriageEntryDetail.js';
 import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../telemetry/src/exceptions/source.js';
 import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
-import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 
 /**
  * The durable half of one mounted detail input.

@@ -1,6 +1,6 @@
 import { admitTaskReviewSelection } from './taskReview.js';
 import { setTaskOriginReview } from '../corpus/marks/setPinned.js';
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
@@ -14,7 +14,6 @@ import { qualifySourceObservation } from '../corpus/fold/qualify.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { isTriageHostActionCaller } from './callerSource.js';
-import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import type {
     TriageCreateTaskActionInputV1,
     TriageCreateTaskActionResultV1,

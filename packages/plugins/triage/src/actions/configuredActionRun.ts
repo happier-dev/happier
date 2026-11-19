@@ -7,7 +7,7 @@ import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageC
 import { readTriageEntrySessionFactsV1, readTriageRetainedEntrySessionFactsV1,
     type TriageEntrySessionSourceFactsV1 } from '../sessions/readEntrySessionFacts.js';
 import { createTriageConfiguredActionHost } from './configuredActionHost.js';
-import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
+import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDataSources.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import {
     TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1,

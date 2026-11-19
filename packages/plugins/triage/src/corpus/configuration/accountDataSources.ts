@@ -1,9 +1,36 @@
-import type { TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
+import { admitTriageSourceDescriptorV1, type TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import { renderSourceQualifiedId } from '../identity/components.js';
 import type { CorpusRowV1 } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
+
+/**
+ * The admitted view, keyed the one way this plugin addresses a source.
+ *
+ * Three readers ask the same question — the aggregate list binds each configured
+ * connection to its contribution, the Composer resolves an attached entry
+ * through its own source's `get`, and the detail read names that source in the
+ * source's own words — and each spelled the join itself. One of them indexing
+ * on `contributor.pluginId` alone would mount one source's contribution under
+ * another's contribution id, so the key is the same qualified id the configured
+ * row is stored under and there is one owner of it.
+ */
+export function indexTriageAdmittedSourcesV1<T extends {
+    contributor: { pluginId: string; contributionId: string }; descriptor: unknown;
+}>(admitted: readonly T[]): ReadonlyMap<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }> {
+    const byQualifiedId = new Map<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }>();
+    for (const contribution of admitted) {
+        const admission = admitTriageSourceDescriptorV1(contribution.descriptor);
+        if (!admission.ok) continue;
+        byQualifiedId.set(renderSourceQualifiedId({
+            pluginId: contribution.contributor.pluginId,
+            localId: contribution.contributor.contributionId,
+        }), { ...contribution, descriptor: admission.descriptor });
+    }
+    return byQualifiedId;
+}
 
 export type AccountDataSourceRecordV1 = CorpusRowV1<CorpusSourceInstanceRowV1>;
 export type AccountDataSourceReadOptionsV1 = PluginCancellationOptions & Readonly<{

@@ -9,8 +9,7 @@ import { INTERNAL_TASK_DRAFT_V1, INTERNAL_TASK_SOURCE_V1 } from '../../internalT
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
 import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../../telemetry/src/exceptions/source.js';
-import { readAccountDataSourceRecordsV1 } from './accountDataSources.js';
-import { indexTriageAdmittedSourcesV1 } from '../../actions/listEntries.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from './accountDataSources.js';
 import { findConfiguredSourceInstanceRow } from './administerConfiguredSourceInstance.js';
 import {
     readActiveConfiguredSourceRow,

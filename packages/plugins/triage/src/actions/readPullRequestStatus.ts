@@ -11,12 +11,12 @@ import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { configuredSourceInstanceIsOwnedBy } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { readActiveConfiguredSourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { sameConfiguredSourceAuthority } from '../corpus/configuration/configuredSourceAuthority.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { indexTriageAdmittedSourcesV1, indexTriageSourceAvailabilityFailuresV1, type TriageAdmittedSourceV1 } from './listEntries.js';
+import { indexTriageSourceAvailabilityFailuresV1, type TriageAdmittedSourceV1 } from './listEntries.js';
 import type { TriageReobserveEntryActionInputV1 } from './reobserveEntryProtocol.js';
 
 async function resolveConfiguredStatusSource(input: TriageReobserveEntryActionInputV1, context: TriageDataActionContext,

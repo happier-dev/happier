@@ -1,4 +1,4 @@
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
@@ -6,7 +6,6 @@ import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import type { TriageDataActionHandler } from './dataContext.js';
-import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import type { TriageResolveResourceActionInputV1, TriageResolveResourceActionResultV1 } from './resolveResourceProtocol.js';
 
 /** One finite walk of configured connections; only the source can mint entry identity. */

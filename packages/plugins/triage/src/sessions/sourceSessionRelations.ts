@@ -1,4 +1,4 @@
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { isPluginError, PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
@@ -9,7 +9,7 @@ import {
     type TriageEntryRefV1,
     type TriageEntryLocatorV1,
 } from '@happier-dev/triage-protocol/v1';
-import { indexTriageAdmittedSourcesV1, type TriageAdmittedSourceV1 } from '../actions/listEntries.js';
+import { type TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import { TriageListInvocationErrorV1Schema } from '../actions/listEntriesProtocol.js';
 import type { TriageReadSourceSessionLinksResultV1, TriageSourceSessionLinksLaneV1 } from '../actions/sessionLinksProtocol.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';

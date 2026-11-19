@@ -1,10 +1,9 @@
-import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { isPluginError, readPluginErrorRequestIdV1, type LoggerService, type PluginCancellationOptions, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
 import type { AdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/actions';
 import {
-    admitTriageSourceDescriptorV1,
     TriageListScopeUnitsResultV1Schema,
     TriageSourceFailureV1Schema,
     projectTriageDisplayTextV1,
@@ -13,7 +12,6 @@ import {
     type TriageScanInputV1,
     type TriageScanResultV1,
     type TriageSourceFailureV1,
-    type TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
@@ -29,7 +27,6 @@ import {
     readActiveConfiguredSourceRow,
 } from '../corpus/configuration/readConfiguredSourceRows.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
-import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import {
     CORPUS_DEFAULT_SMART_POLICY_V1,
     parseCorpusSmartPolicy,
@@ -88,32 +85,6 @@ export function indexTriageSourceAvailabilityFailuresV1(snapshot: TriageSourceSn
  * The host-owned execution of one admitted operation handle. Only the original
  * host-created handle carries authority, so it is passed through untouched.
  */
-/**
- * The admitted view, keyed the one way this plugin addresses a source.
- *
- * Three readers ask the same question — the aggregate list binds each configured
- * connection to its contribution, the Composer resolves an attached entry
- * through its own source's `get`, and the detail read names that source in the
- * source's own words — and each spelled the join itself. One of them indexing
- * on `contributor.pluginId` alone would mount one source's contribution under
- * another's contribution id, so the key is the same qualified id the configured
- * row is stored under and there is one owner of it.
- */
-export function indexTriageAdmittedSourcesV1<T extends {
-    contributor: { pluginId: string; contributionId: string }; descriptor: unknown;
-}>(admitted: readonly T[]): ReadonlyMap<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }> {
-    const byQualifiedId = new Map<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }>();
-    for (const contribution of admitted) {
-        const admission = admitTriageSourceDescriptorV1(contribution.descriptor);
-        if (!admission.ok) continue;
-        byQualifiedId.set(renderSourceQualifiedId({
-            pluginId: contribution.contributor.pluginId,
-            localId: contribution.contributor.contributionId,
-        }), { ...contribution, descriptor: admission.descriptor });
-    }
-    return byQualifiedId;
-}
-
 export type TriageAdmittedOperationExecutorV1 = (
     operation: AdmittedTargetedOperationExecutionHandle<TriageScanInputV1, TriageScanResultV1, 'scan'>,
     input: TriageScanInputV1,

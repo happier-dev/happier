@@ -13,7 +13,8 @@ import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { setFixPullRequest } from '../corpus/marks/setPinned.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
-import { indexTriageAdmittedSourcesV1, type TriageAdmittedSourceV1 } from './listEntries.js';
+import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDataSources.js';
+import { type TriageAdmittedSourceV1 } from './listEntries.js';
 import { reobserveTriageEntry } from './reobserveEntry.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 import type {
