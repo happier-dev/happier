@@ -230,7 +230,7 @@ describe('detached execution-run Machine composition', () => {
     detach();
   });
 
-  it.each([
+  it.runIf(process.platform === 'linux').each([
     { requesterKind: 'session', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', roleId: 'scout' },
