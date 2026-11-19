@@ -3609,7 +3609,10 @@ to their IDs; private host metadata and credentials are excluded.
 The private prepared binding retains the original Prepare host for Machine-native
 image cleanup. UI and CLI Archive share the Common preparation owner's target
 selection and place the whole root on that host before admission, so its reviewed native
-children keep their in-process custody. Deferred approval replay retains that admitted
+children keep their in-process custody. The Archive Action declares requester Account
+content demand only for that explicitly admitted Machine target; its existing private
+carrier supplies the Account's material without fabricating E2EE keys for plain Accounts.
+Deferred approval replay retains that admitted
 Machine target through the canonical approval executor, including public reads
 that omit private replay authorization. Metadata-only Archive and Account-target
 cloud image cleanup remain Account-placed. Missing legacy placement or a different executing host returns

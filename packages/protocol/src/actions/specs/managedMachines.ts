@@ -7,6 +7,7 @@ import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSet
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '../../machines/managed/machinePresetActionIdsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, EphemeralRunnerActionInputSchemasV1, EphemeralRunnerActionOutputSchemasV1, type EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionsV1.js';
 import {
   MANAGED_MACHINE_ACTION_IDS_V1,
@@ -230,6 +231,9 @@ export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
       inputHints: { title, fields: MACHINE_PRESET_INPUT_FIELDS[id] },
       inputSchema: MachinePresetActionInputSchemasV1[id], outputSchema: MachinePresetActionOutputSchemasV1[id],
       serverTransport: { method: 'POST', path: machinePresetActionEndpointPathV1(id) },
+      ...(id === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 ? {
+        requesterAccountContentDemandForInput: (_input, context) => context.externalActionTarget?.kind === 'machine',
+      } : {}),
     };
   }) satisfies readonly PreNormalizedActionSpec[]),
 ] as const));

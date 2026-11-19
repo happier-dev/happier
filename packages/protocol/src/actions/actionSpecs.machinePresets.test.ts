@@ -5,9 +5,17 @@ import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
-import { getActionSpec, listActionCliCommandDeclarations, listVoiceToolActionSpecs, PLUGIN_INVOCABLE_ACTION_IDS, PUBLIC_ACTION_IDS } from './actionSpecs.js';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, listActionCliCommandDeclarations, listVoiceToolActionSpecs, PLUGIN_INVOCABLE_ACTION_IDS, PUBLIC_ACTION_IDS } from './actionSpecs.js';
 
 describe('personal and Team Machine preset Actions', () => {
+  it('delegates private preset content only to the admitted native Archive host', () => {
+    const request = { actionId: 'machines.presets.archive', input: { homeId: 'home', id: 'preset', expectedRevision: 1 } };
+    expect(doesExternalActionConsumeRequesterAccountContentV1(request)).toBe(false);
+    expect(doesExternalActionConsumeRequesterAccountContentV1({ ...request, target: { kind: 'machine', machineId: 'original-host' } })).toBe(true);
+    expect(doesExternalActionConsumeRequesterAccountContentV1({ ...request, actionId: 'machines.presets.restore',
+      target: { kind: 'machine', machineId: 'ambient-host' } })).toBe(false);
+  });
+
   it('runs Archive through its admitted cleanup owner while Restore uses the ordinary preset transport', async () => {
     const effects: string[] = [];
     const input = { homeId: 'home', id: 'preset', expectedRevision: 1 };

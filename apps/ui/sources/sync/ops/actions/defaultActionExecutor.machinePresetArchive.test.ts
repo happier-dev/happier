@@ -1,4 +1,8 @@
 import { afterEach, expect, it, onTestFinished } from 'vitest';
+import nacl from 'tweetnacl';
+import { encodeBase64 } from '@/encryption/base64';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { projectManagedMachinePresetForRecipientV1, transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
@@ -11,7 +15,7 @@ import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MachinePresetActionInputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -27,7 +31,7 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 afterEach(() => standardCleanup());
 
-async function archiveFixture(originalMachineId?: string, accountNative = false, cold = false, retainedCancelled = false) {
+async function archiveFixture(originalMachineId?: string, accountNative = false, cold = false, retainedCancelled = false, mode: 'plain' | 'e2ee' = 'plain') {
     await homes.reset();
     const lifetime = new AbortController();
     onTestFinished(() => lifetime.abort());
@@ -41,8 +45,14 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
             normalizedManifest, hasMachineProvisioners: true, entriesById: projectPluginPortableUiDeclarationsV1(normalizedManifest, []) };
     })));
     const homeId = 'srv_original_image_home';
+    const machineKey = mode === 'e2ee' ? new Uint8Array(32).fill(23) : undefined;
+    const contentPublicKey = machineKey ? nacl.box.keyPair.fromSecretKey(machineKey).publicKey : undefined;
+    const credentials = machineKey && contentPublicKey ? { token: createAccountTokenForTests('owner', { currentAccount: true }),
+        encryption: { publicKey: encodeBase64(contentPublicKey, 'base64'), machineKey: encodeBase64(machineKey, 'base64') } } : undefined;
+    onTestFinished(() => machineKey?.fill(0));
     const serverId = await homes.addHome({ name: 'Original image', serverUrl: 'https://archive-original-image.test',
-        serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        serverIdentityId: homeId, accountId: 'owner', currentAccount: true, accountEncryptionMode: mode, ...(credentials ? { credentials } : {}) });
+    if (credentials) homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     const account = await captureLazyActionAccountContext(serverId);
     onTestFinished(() => account.dispose());
     // Account bootstrap publishes this verified network projection before the UI offers native Actions.
@@ -61,6 +71,13 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
     let preset = ManagedMachinePresetV1Schema.parse({ id: 'preset', homeId, revision: 1,
         owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: 'plain', recipients: [],
         content: { t: 'plain', v: { v: 1, name: 'Preset', launch: { ...launch, name: 'Guest' }, prepared } } });
+    if (mode === 'e2ee' && contentPublicKey) {
+        const sealed = transitionManagedMachinePresetContentEncryptionModeV1({ presetId: preset.id, fromMode: 'plain', toMode: 'e2ee',
+            source: projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: 'owner' }), accountId: 'owner',
+            targetContentPublicKey: contentPublicKey, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) });
+        if (!sealed) throw new Error('Expected encrypted preset fixture');
+        preset = ManagedMachinePresetV1Schema.parse({ ...preset, ...sealed, contentEncryptionMode: 'e2ee' });
+    }
     homes.answer(serverId, machinePresetActionEndpointPathV1('machines.presets.get'), { select: () => ({ body: { kind: 'found', preset } }) });
     homes.answer(serverId, '/v1/machines/read-batch', { select: async body => ({ body: await createMachineReadBatchResponseFixture(body, () => null).json() }) });
     homes.answer(serverId, machinePresetActionEndpointPathV1('machines.presets.update'), { select: value => {
@@ -81,13 +98,14 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
     return { serverId, homeId, account, row: () => preset, signal: lifetime.signal };
 }
 
-it.each(['executeConfirmed', 'prepare'] as const)('sends retained-image Archive as a whole root to its original host (%s)', async entry => {
-    const fixture = await archiveFixture('original-host', false, false, true);
+it.each([['executeConfirmed', 'plain'], ['prepare', 'plain'], ['executeConfirmed', 'e2ee'], ['prepare', 'e2ee']] as const)('sends retained-image Archive as a whole root to its original host (%s, %s)', async (entry, mode) => {
+    const fixture = await archiveFixture('original-host', false, false, true, mode);
     const roots: unknown[] = [];
     await answerExternalActionAccountForHome(homes, fixture.serverId, { actionId: 'machines.presets.archive',
         machineId: 'original-host', installationId: 'original-installation', tokenEpoch: 0,
         execute: (input, context) => {
-            roots.push({ input, target: context.target, invocation: context.invocation });
+            roots.push({ input, target: context.target, invocation: context.invocation,
+                credentialMaterial: { secret: Boolean(context.requesterAccountContext.secret), encryption: Boolean(context.requesterAccountContext.encryption) } });
             return { kind: 'conflict', currentRevision: 9 };
         } });
     const input = { homeId: fixture.homeId, id: fixture.row().id, expectedRevision: fixture.row().revision };
@@ -101,8 +119,9 @@ it.each(['executeConfirmed', 'prepare'] as const)('sends retained-image Archive 
             expect(roots).toEqual([]);
             return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
         })();
-    expect({ result, roots }).toMatchObject({ result: { ok: true, result: { kind: 'conflict', currentRevision: 9 } },
-        roots: [{ input, target: { kind: 'machine', machineId: 'original-host' } }] });
+    expect({ result, roots }, JSON.stringify(result)).toMatchObject({ result: { ok: true, result: { kind: 'conflict', currentRevision: 9 } },
+        roots: [{ input, target: { kind: 'machine', machineId: 'original-host' },
+            credentialMaterial: { secret: false, encryption: mode === 'e2ee' } }] });
     expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toEqual([]);
     expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.archive'))).toEqual([]);
     expect(fixture.row().revision).toBe(input.expectedRevision);
