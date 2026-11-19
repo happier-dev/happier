@@ -54,13 +54,14 @@ export function TriageFirstRun(props: Readonly<{
           />
         </Stack>
         <TriageConnectTiles offers={props.offers} onConnect={props.onConnect} />
-        {/* Where the reader's work is read, said before they connect anything (lab Desk first run). */}
+        {/* Where the reader's work is read, said before they connect anything (lab Desk first run). Only the true
+            half: pins and fix links keep a title in the Account (core/SURFACE.md), so "never copied" is not said. */}
         <Text
           variant="micro"
           tone="secondary"
           value={text(
-            'plugins.triage.surface.firstRun.trust',
-            'Sources are read live on the machine you choose. Their pull requests, issues and errors are never copied into your account.',
+            'plugins.triage.surface.firstRun.trustLive',
+            'Sources are read live on the machine you choose.',
           )}
         />
       </Stack>
@@ -144,8 +145,8 @@ export function TriageTasksFirstRun(props: Readonly<{
             variant="micro"
             tone="secondary"
             value={text(
-              'plugins.triage.tasks.firstRun.trust',
-              'Trackers are read live on the machine you choose. Their tasks are never copied into your account.',
+              'plugins.triage.tasks.firstRun.trustLive',
+              'Trackers are read live on the machine you choose.',
             )}
           />
         </Stack>
