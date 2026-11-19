@@ -103,7 +103,7 @@ export function createHostWorkbenchClient(
     machineDisplayName: (request, options) => hostApi.readMachineDisplayName(request, options),
     async targets(input, signal) {
       const result = await hostApi.executeAction(
-        DATABASE_TARGETS_LIST_ACTION_ID_V1,
+        databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1),
         projectNativeJsonValueForTransport(input),
         { signal },
       );
@@ -115,7 +115,7 @@ export function createHostWorkbenchClient(
       await held.ready;
       signal.throwIfAborted();
       const result = await hostApi.executeAction(
-        DATABASE_OPERATION_ACTION_ID_V1[input.operation],
+        databaseActionLocalIdV1(DATABASE_OPERATION_ACTION_ID_V1[input.operation]),
         projectNativeJsonValueForTransport({ ...input, subscriptionId: held.subscriptionId() }),
         { signal },
       );

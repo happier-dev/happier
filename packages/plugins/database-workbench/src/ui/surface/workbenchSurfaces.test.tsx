@@ -10,6 +10,7 @@ import {
     DATABASE_STRUCTURE_READ_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
@@ -86,16 +87,16 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextRef
       projectNativeJsonValueForTransport(
         (() => {
           switch (action) {
-            case DATABASE_TARGETS_LIST_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1):
               return { targets, completeness: { complete: true } };
-            case DATABASE_SCHEMAS_LIST_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_SCHEMAS_LIST_ACTION_ID_V1):
               return {
                 ok: true,
                 operation: 'schemas.list',
                 schemas: [{ name: 'public' }],
                 completeness: { complete: true },
               };
-            case DATABASE_RELATIONS_LIST_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_RELATIONS_LIST_ACTION_ID_V1):
               return {
                 ok: true,
                 operation: 'relations.list',
@@ -111,7 +112,7 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextRef
                   },
                 ],
               };
-            case DATABASE_STRUCTURE_READ_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_STRUCTURE_READ_ACTION_ID_V1):
               return {
                 ok: true,
                 operation: 'relation.structure',
@@ -149,7 +150,7 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextRef
                   capabilities: editableTextReference ? [{ operation: 'edits.apply', available: true }] : [],
                 },
               };
-            case DATABASE_ROWS_READ_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1):
               return {
                 ok: true,
                 operation: 'rows.read',
@@ -207,7 +208,7 @@ describe('Database workbench surfaces', () => {
     const base = daemonAnswers([descriptor]);
     const reads: (string | undefined)[] = [];
     const executeAction = async (request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
-      if (request.action !== DATABASE_RELATIONS_LIST_ACTION_ID_V1) return base(request);
+      if (request.action !== databaseActionLocalIdV1(DATABASE_RELATIONS_LIST_ACTION_ID_V1)) return base(request);
       // This fixture is the daemon Action boundary; the real host has already admitted its input.
       const input = request.input as { page: { after?: string } };
       reads.push(input.page.after);
@@ -271,7 +272,7 @@ describe('Database workbench surfaces', () => {
     const basis = { bindingKey: 'binding', databaseIdentity: 'billing_dev', selectionKey: 'overview' };
     const answers = daemonAnswers([descriptor]);
     const executeAction = vi.fn(async (input: PluginUiTestkitExecuteActionInput) => {
-      if (input.action !== DATABASE_STATS_READ_ACTION_ID_V1) return answers(input);
+      if (input.action !== databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1)) return answers(input);
       const group = (input.input as { request?: { group?: string } }).request?.group;
       return projectNativeJsonValueForTransport({
         ok: true,
@@ -480,14 +481,14 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      expect(executeAction.mock.calls.some(([call]) => call.action === DATABASE_ROWS_READ_ACTION_ID_V1)).toBe(true);
+      expect(executeAction.mock.calls.some(([call]) => call.action === databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1))).toBe(true);
       // The row leads with its key; on a narrow host the columns that drop still speak in a line under it.
       expect(await fixture.getByText('48212')).toBeTruthy();
       expect(await fixture.getByText('INV-2026-04812 · open')).toBeTruthy();
       // One structure read serves the page; nothing re-reads it per row or per cell.
       expect(
         executeAction.mock.calls.filter(
-          ([call]) => call.action === DATABASE_STRUCTURE_READ_ACTION_ID_V1,
+          ([call]) => call.action === databaseActionLocalIdV1(DATABASE_STRUCTURE_READ_ACTION_ID_V1),
         ),
       ).toHaveLength(1);
     } finally {
@@ -526,7 +527,7 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.getByText('invoices')).toBeTruthy();
       expect(await fixture.getByText('~48K rows · 31 MB')).toBeTruthy();
       expect(await fixture.getByText('~12K rows · 4.2 MB')).toBeTruthy();
-      expect(executeAction.mock.calls.some(([call]) => call.action === DATABASE_ROWS_READ_ACTION_ID_V1)).toBe(false);
+      expect(executeAction.mock.calls.some(([call]) => call.action === databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1))).toBe(false);
     } finally {
       await fixture.dispose();
     }

@@ -7,6 +7,7 @@ import {
     DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import { type DatabaseDescriptorV1, type DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -127,19 +128,19 @@ function daemon(observation: () => DatabaseStatsObservationV1) {
       projectNativeJsonValueForTransport(
         (() => {
           switch (action) {
-            case DATABASE_TARGETS_LIST_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1):
               return {
                 targets: [descriptor],
                 completeness: { complete: true },
               };
-            case DATABASE_SCHEMAS_LIST_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_SCHEMAS_LIST_ACTION_ID_V1):
               return {
                 ok: true,
                 operation: 'schemas.list',
                 schemas: [{ name: 'public' }],
                 completeness: { complete: true },
               };
-            case DATABASE_STATS_READ_ACTION_ID_V1:
+            case databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1):
               return {
                 ok: true,
                 operation: 'stats.read',
@@ -197,7 +198,7 @@ describe('Database Insights surfaces', () => {
       expect(await page.queryByText(LINES)).toBeTruthy();
       expect(
         executeAction.mock.calls.filter(
-          ([call]) => call.action === DATABASE_STATS_READ_ACTION_ID_V1,
+          ([call]) => call.action === databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1),
         ),
       ).toHaveLength(1);
     } finally {
@@ -307,7 +308,7 @@ describe('Database Insights surfaces', () => {
     try {
       await settle();
       const read = executeAction.mock.calls.find(
-        ([call]) => call.action === DATABASE_STATS_READ_ACTION_ID_V1,
+        ([call]) => call.action === databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1),
       )?.[0];
       expect(read?.input).toMatchObject({
         request: { group: 'statements', selection: { statementKey: 'q-slow' } },
