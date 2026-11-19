@@ -331,22 +331,22 @@ resolveServerFeaturesSnapshot?: () =>
             || !isSessionActionCallerCurrent || !await isSessionActionCallerCurrent()) {
             return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
           }
-          const rpcMethod = getActionSpec(actionId).bindings?.rpcMethod;
-          const serverUrl = requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
-          // A root without a receiving RPC owner (original Action dispatcher,
-          // e.g. deployment roots) takes Home's admitted-root relay, exactly
-          // as UI and CLI roots do; Home and the receiver admit it there.
-          if (!rpcMethod) {
-            if (!context.originalActionEnvelope) {
-              return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
-            }
-            return await deliverAdmittedExternalActionRoot({ authorization: context.externalActionExecutionAuthorization,
-              envelope: context.originalActionEnvelope, credentials, serverHttpBaseUrl: serverUrl,
-              isCurrent: isSessionActionCallerCurrent, ...(context.signal ? { signal: context.signal } : {}) });
-          }
           // Cancellation's incumbent Action adapter owns the qualified Address
           // to raw operation operand, after the same source admission above.
           if (actionId !== 'action.operations.cancel') {
+            const spec = getActionSpec(actionId);
+            const rpcMethod = spec.surfaces.rpc ? spec.bindings?.rpcMethod : undefined;
+            const serverUrl = requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
+            // Only registered Action RPC handlers open a targeted Action packet.
+            // Other roots send their original signed envelope through Home's relay.
+            if (!rpcMethod) {
+              if (!context.originalActionEnvelope) {
+                return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
+              }
+              return await deliverAdmittedExternalActionRoot({ authorization: context.externalActionExecutionAuthorization,
+                envelope: context.originalActionEnvelope, credentials, serverHttpBaseUrl: serverUrl,
+                isCurrent: isSessionActionCallerCurrent, ...(context.signal ? { signal: context.signal } : {}) });
+            }
             const result = await callExactMachineRpc({ credentials, machineId: binding.machineId,
               serverUrl, authorityCeiling: 'account_automation', method: rpcMethod,
               request: { v: 1, kind: 'targeted_action_rpc', target, input }, requestId: binding.requestId,

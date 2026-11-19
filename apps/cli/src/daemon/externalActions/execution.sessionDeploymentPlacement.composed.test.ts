@@ -15,6 +15,7 @@ import {
   normalizeActionsSettingsV1,
   setActionApprovalOverride,
 } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import {
   SOCKET_RPC_EVENTS,
@@ -47,7 +48,10 @@ const domainAddActionId = 'deployments.domains.add';
 const controllerMachineId = 'remote-controller';
 
 type Scenario = Readonly<{
-  actionId?: 'deployments.domains.add' | 'deployments.rollback' | 'deployments.health.current';
+  actionId?: 'deployments.domains.add' | 'deployments.rollback' | 'deployments.health.current'
+    | 'machines.capabilities.detect' | 'machines.terminal.list';
+  relayedResult?: unknown;
+  relayExecution?: ActionExecuteResult;
   input?: Readonly<Record<string, unknown>>;
   approvalRequired?: boolean;
   mintRefusal?: Readonly<{ status: number; data: unknown }>;
@@ -246,7 +250,7 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
         headers: (args[2]?.headers ?? {}) as Record<string, string>,
       });
       const requestId = body.envelope.requestId;
-      const execution = scenario.approvalRequired
+      const execution = scenario.relayExecution ?? (scenario.approvalRequired
         ? {
             ok: true,
             result: {
@@ -255,7 +259,7 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
               artifactId: 'approval-on-controller',
             },
           }
-        : { ok: true, result: { ok: true, domain: { id: 'domain' } } };
+        : { ok: true, result: scenario.relayedResult ?? { ok: true, domain: { id: 'domain' } } });
       return { status: 200, data: { v: 1, actionId, requestId, execution } };
     }
     return homeWrite(...args);
@@ -411,4 +415,40 @@ it.each([
   expect(run.relayed[0]!.body.machineId).toBe(controllerMachineId);
   expect(run.relayed[0]!.body.executionAuthorization?.binding.sessionActionOrigin?.caller.sessionId).toBe(run.h.sessionId);
   expect(run.outcome).toMatchObject({ ok: true });
+}, 120_000);
+
+// These Machine-placed Actions carry a raw daemon rpcMethod but no Action RPC
+// registration (surfaces.rpc false), so the receiver has no handler that opens
+// a targeted Action envelope. A cross-Machine Session root must take the
+// admitted-root relay, never the raw method that would answer an empty request.
+it.each([
+  ['machines.capabilities.detect', { machineId: controllerMachineId }, { status: 'completed' }],
+  ['machines.terminal.list', { machineId: controllerMachineId }, { ok: true, terminals: [] }],
+] as const)('delivers the non-RPC Machine Action %s from a Session on another Machine through the admitted-root relay', async (actionId, input, relayedResult) => {
+  const run = await runSessionDomainAdd({ actionId, input, relayedResult });
+  expect(run.published.map((packet) => packet.method), 'no raw Machine RPC for an Action without an RPC registration').toEqual([]);
+  expect(run.relayed, run.diagnostic).toHaveLength(1);
+  expect(run.relayed[0]!.body.machineId).toBe(controllerMachineId);
+  const delivered = run.relayed[0]!.body;
+  expect(delivered.envelope).toMatchObject({ v: 1, input });
+  expect(run.mintMachineIds).toEqual([controllerMachineId]);
+  expect(computeExternalActionRequestEnvelopeDigestV1(delivered.envelope))
+    .toBe(run.minted()?.binding.requestEnvelopeDigest);
+  expect(run.outcome).toMatchObject({ ok: true, result: relayedResult });
+}, 120_000);
+
+it.each([
+  { errorCode: 'target_unavailable', details: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } },
+  { errorCode: 'target_not_local', details: { phase: 'target_installation' } },
+])('returns the remote Machine Action refusal $errorCode', async ({ errorCode, details }) => {
+  const relayExecution = { ok: false as const, errorCode, error: errorCode, details };
+  const run = await runSessionDomainAdd({
+    actionId: 'machines.capabilities.detect',
+    input: { machineId: controllerMachineId },
+    relayExecution,
+  });
+  expect(run.mintMachineIds).toEqual([controllerMachineId]);
+  expect(run.published).toEqual([]);
+  expect(run.relayed, run.diagnostic).toHaveLength(1);
+  expect(run.outcome).toMatchObject(relayExecution);
 }, 120_000);
