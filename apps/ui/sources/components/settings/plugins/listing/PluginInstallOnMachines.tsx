@@ -79,26 +79,6 @@ export function readSharedConsentFacts(
   );
 }
 
-/**
- * The sheet's header description and footer note. Both reassure "nothing installs until you confirm", so both
- * hold only while a confirm is pending (choosing, checking, or an open row); once settled neither claims one.
- */
-export function readCombinedReviewCopy(
-  state: Readonly<{ phase: 'choose' | 'review'; pending: boolean }>,
-): Readonly<{ subtitle: string | null; note: string | null }> {
-  if (state.phase === 'choose')
-    return {
-      subtitle: t('settingsPlugins.multiInstall.chooseDescription'),
-      note: t('settingsPlugins.multiInstall.footerNote'),
-    };
-  return state.pending
-    ? {
-        subtitle: t('settingsPlugins.multiInstall.reviewDescription'),
-        note: t('settingsPlugins.multiInstall.footerNote'),
-      }
-    : { subtitle: null, note: null };
-}
-
 const sameFact = (a: ConsentFact, b: ConsentFact) =>
   a.key === b.key && a.title === b.title && a.value === b.value;
 
@@ -110,10 +90,8 @@ const SUPERSEDED_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Install one plugin on several Machines (PL-41): choose them, let each one evaluate this release, then one
- * confirmation. Each Machine keeps its own pending approval and shows its own facts beside its name and Home;
- * "Install on N Machines" calls each shown, open review's own decision, and each row settles on its own.
- * The listing hosts it so it reads the live review set; the sheet is only ever opened by the person's tap.
+ * Choose Machines and install in one press. Each Machine shows its outcome or any
+ * separate approval the receiver requires, beside its name and Home.
  */
 export function usePluginInstallOnMachines(
   state: PluginSettingsScreenState,
@@ -283,7 +261,7 @@ export function PluginInstallOnMachinesSheet(
     onClosed();
     onClose();
   }, [onClose, onClosed]);
-  const startReview = React.useCallback(
+  const startInstall = React.useCallback(
     async (targets: readonly MachineAdministrationTargetV1[]) => {
       if (running || targets.length === 0) return;
       setPhase('review');
@@ -331,33 +309,33 @@ export function PluginInstallOnMachinesSheet(
     const targets = [...controllers.current.values()]
       .filter((controller) => controller.superseded)
       .map((controller) => controller.target);
-    void startReview(targets);
-  }, [startReview]);
+    setChosen(new Map(targets.map((target) => [targetKey(target), target])));
+    setPhase('choose');
+  }, []);
 
   const chosenTargets = React.useMemo(() => [...chosen.values()], [chosen]);
-  const copy = readCombinedReviewCopy({
-    phase,
-    pending: running || summary.open > 0,
-  });
+  const needsApproval = phase === 'review' && !running && summary.open > 0;
+  const reviewNote = needsApproval ? t('settingsPlugins.multiInstall.footerNote') : null;
+  const subtitle = needsApproval ? t('settingsPlugins.multiInstall.reviewDescription') : null;
   const footer = React.useMemo(() => {
     if (phase === 'choose') {
       return (
         <MachineSetupReviewFooter
           onCancel={close}
           cancelTestID="settings.plugins.installOnMachines.cancel"
-          note={copy.note}
+          note={null}
           primary={{
-            label: t('common.continue'),
-            testID: 'settings.plugins.installOnMachines.continue',
+            label: t('settingsPlugins.installAndTrust'),
+            testID: 'settings.plugins.installOnMachines.submit',
             disabled: chosenTargets.length === 0,
             onPress: () => {
-              void startReview(chosenTargets);
+              void startInstall(chosenTargets);
             },
           }}
         />
       );
     }
-    if (running || summary.open > 0) {
+    if (needsApproval) {
       const label =
         summary.approvable === 1
           ? t('capabilities.store.softwarePage.installOnOne', {
@@ -372,12 +350,12 @@ export function PluginInstallOnMachinesSheet(
             void withdraw();
           }}
           cancelTestID="settings.plugins.installOnMachines.cancel"
-          note={copy.note}
+          note={reviewNote}
           primary={{
             label,
             testID: 'settings.plugins.installOnMachines.install',
             loading: deciding,
-            disabled: running || deciding || summary.approvable === 0,
+            disabled: deciding || summary.approvable === 0,
             onPress: () => {
               void install();
             },
@@ -390,8 +368,8 @@ export function PluginInstallOnMachinesSheet(
         onCancel={close}
         cancelTestID="settings.plugins.installOnMachines.close"
         cancelLabel={t('common.close')}
-        note={copy.note}
-        {...(summary.superseded > 0
+        note={null}
+        {...(!running && summary.superseded > 0
           ? {
               primary: {
                 label: t('settingsPlugins.multiInstall.reviewAgain'),
@@ -405,14 +383,15 @@ export function PluginInstallOnMachinesSheet(
   }, [
     chosenTargets,
     close,
-    copy.note,
     deciding,
     install,
+    needsApproval,
     phase,
     review,
     reviewAgain,
+    reviewNote,
     running,
-    startReview,
+    startInstall,
     summary,
     withdraw,
   ]);
@@ -420,12 +399,12 @@ export function PluginInstallOnMachinesSheet(
     () => ({
       kind: 'card' as const,
       title: installTitle(props.name),
-      subtitle: copy.subtitle,
+      subtitle,
       footer,
       phonePresentation: 'sheet' as const,
       dimensions: { size: 'md' as const, maxHeightRatio: 0.9 },
     }),
-    [copy.subtitle, footer, props.name],
+    [footer, props.name, subtitle],
   );
   useModalCardChrome(setChrome, chrome);
   // Without card chrome (an embedding host), the footer ends the body.
@@ -563,7 +542,7 @@ function firstApprovableMachine(review: PluginInstallReviewSet | null): string {
   );
 }
 
-/** A Machine that answered without a pending approval: installed by a waived policy, or refused with its reason. */
+/** Show the outcome returned by the Machine. */
 function MachineSettledResult(
   props: Readonly<{
     row: Extract<PluginInstallReviewRow, { kind: 'settled' }>;

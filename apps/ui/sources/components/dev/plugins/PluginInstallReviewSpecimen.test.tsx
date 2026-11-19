@@ -20,7 +20,7 @@ installApprovalCommonModuleMocks({
 });
 const account = createProviderSettingsAccountHarness();
 const { PluginInstallReviewSpecimen } = await import('./PluginInstallReviewSpecimen');
-const { PluginInstallOnMachinesSheet, readSharedConsentFacts, readCombinedReviewCopy } = await import('@/components/settings/plugins/listing/PluginInstallOnMachines');
+const { PluginInstallOnMachinesSheet, readSharedConsentFacts } = await import('@/components/settings/plugins/listing/PluginInstallOnMachines');
 const { Modal, ModalProvider } = await import('@/modal');
 const { storage } = await import('@/sync/domains/state/storage');
 
@@ -44,7 +44,7 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode => (['review', 'settled', 'sin
                 screen.findByTestId(`settings.plugins.installOnMachines.target.${machineId}.switch`)?.props.onValueChange(true);
             });
         }
-        await screen.pressByTestIdAsync('settings.plugins.installOnMachines.continue');
+        await screen.pressByTestIdAsync('settings.plugins.installOnMachines.submit');
     }
     await act(async () => { storage.getState().applyArtifacts([], storage.getState().artifacts); });
     await vi.waitFor(() => {
@@ -94,7 +94,7 @@ it('reviews one Machine’s pending check consent and returns it to the mixed bu
     const serverId = account.serverId;
     const ownerAccountId = 'account-a';
     const now = Date.now();
-    const rows: PluginInstallReviewRow[] = ['checked', 'ordinary'].map(machineId => {
+    const rows: PluginInstallReviewRow[] = ['checked', 'ordinary', 'unevaluated'].map(machineId => {
         const id = `bulk-consent-${machineId}`;
         const input = { machineId, source: { kind: 'marketplace', sourceId: 'acme-catalog', pluginId: 'acme.storage-sync', version: '2.4.0' } };
         const checks = machineId === 'checked'
@@ -109,10 +109,13 @@ it('reviews one Machine’s pending check consent and returns it to the mixed bu
                     externalActionTarget: { kind: 'machine', machineId } } }),
             ...(checks ? { automaticChecks: { ...checks, humanApprovalRequired: true,
                 selected: checks.selected.map(selected => ({ ...selected, actionIds: ['plugins.install'] })) } } : {}),
-            preview: { actionId: 'plugins.install', actionArgs: input, summary: 'Install Storage Sync', pluginInstall: {
-                permissionsDisclosure: 'daemonEvaluated', pendingReview: { kind: 'reviewRequired', reviewKind: 'installation',
-                    pendingChangeId: `candidate-${machineId}`, reason: 'firstInstall', currentVersion: null, authorityExpansion: [],
-                    review: createPluginInstallationReviewFixture({ pluginId: 'acme.storage-sync', displayName: 'Storage Sync', version: '2.4.0' }) } } },
+            preview: { actionId: 'plugins.install', actionArgs: input, summary: 'Install Storage Sync',
+                ...(machineId === 'unevaluated' ? {} : { pluginInstall: {
+                    permissionsDisclosure: 'daemonEvaluated', pendingReview: { kind: 'reviewRequired', reviewKind: 'installation',
+                        pendingChangeId: `candidate-${machineId}`, reason: 'firstInstall', currentVersion: null, authorityExpansion: [],
+                        review: createPluginInstallationReviewFixture({ pluginId: 'acme.storage-sync', displayName: 'Storage Sync', version: '2.4.0' }) },
+                } }),
+            },
         });
         account.home.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
             id, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request), title: request.summary,
@@ -126,7 +129,7 @@ it('reviews one Machine’s pending check consent and returns it to the mixed bu
     const screen = await renderScreen(<ModalProvider><PluginInstallOnMachinesSheet name="Storage Sync" candidates={candidates}
         initialTarget={rows[0]!.target} review={{ pluginId: 'acme.storage-sync', rows }} run={async () => undefined}
         onClosed={() => undefined} onClose={() => undefined} /></ModalProvider>);
-    await screen.pressByTestIdAsync('settings.plugins.installOnMachines.continue');
+    await screen.pressByTestIdAsync('settings.plugins.installOnMachines.submit');
     // The no-check neighbor stays eligible while consent holds only the checked Machine.
     await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.outcome.ordinary')).not.toBeNull());
     expect(screen.findByTestId('settings.plugins.installOnMachines.install')?.props.disabled).toBe(false);
@@ -139,6 +142,9 @@ it('reviews one Machine’s pending check consent and returns it to the mixed bu
     expect(held.decision).toBeUndefined();
     expect(held.automaticChecks?.humanDecision).toBeUndefined();
     expect(held.automaticChecks?.consents[0]?.decision).toBe('pending');
+    await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.installOnMachines.withheld.unevaluated')).not.toBeNull());
+    expect(ApprovalRequestV2Schema.parse(JSON.parse(account.home.artifacts(serverId).readPlainBody('bulk-consent-unevaluated')!)).decision)
+        .toBeUndefined();
     expect(screen.findByTestId('settings.plugins.installOnMachines.review.checked')).not.toBeNull();
     await screen.pressByTestIdAsync('settings.plugins.installOnMachines.review.checked');
     await vi.waitFor(() => expect(screen.findByTestId('approvals.automatic-checks:consent')).not.toBeNull());
@@ -164,13 +170,4 @@ it('reviews one Machine’s pending check consent and returns it to the mixed bu
         decision: { kind: 'approve' }, automaticChecks: { humanDecision: { kind: 'approve' }, consents: [{ decision: 'skip' }] },
     }));
     await screen.unmount();
-});
-
-it('says "confirm once" in the header and footer only while a confirm is pending', () => {
-    expect(readCombinedReviewCopy({ phase: 'choose', pending: false })).toEqual({
-        subtitle: 'settingsPlugins.multiInstall.chooseDescription', note: 'settingsPlugins.multiInstall.footerNote' });
-    expect(readCombinedReviewCopy({ phase: 'review', pending: true })).toEqual({
-        subtitle: 'settingsPlugins.multiInstall.reviewDescription', note: 'settingsPlugins.multiInstall.footerNote' });
-    // Settled: nothing waits on a confirm, so neither line may claim one.
-    expect(readCombinedReviewCopy({ phase: 'review', pending: false })).toEqual({ subtitle: null, note: null });
 });

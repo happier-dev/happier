@@ -17,10 +17,10 @@ origins. See [Network access](/plugins/security/network).
 ## Trusted-code decision
 
 Happier validates and projects the cold manifest before importing executable
-code. A first install from Settings or a catalog presents one concise decision
-for the whole package, selected machine, and new authority or credential
-access. An explicit CLI install command is the code-trust action for its exact
-source:
+code. In 0.3 development, pressing **Install & Trust** on a Settings or Store
+listing authorizes the selected plugin on the chosen machines. Happier records the
+approved manifest when it installs the package. An explicit CLI install command
+names the exact source:
 
 ```bash
 hdev plugins install <archive-path> --kind archive

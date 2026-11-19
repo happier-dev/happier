@@ -13088,11 +13088,16 @@ as skills, and representable MCP declarations. The normal installation review
 reports omitted content. Discovery reads one catalog per admitted source and
 defers Git acquisition to the selected installation.
 
-Install review uses the ordinary `ApprovalRequestV2` Artifact and Inbox
-presentation. The public `approval.request.decide` Action serves UI, Agent,
-MCP and CLI decisions under the user's approval policy, using the approval
-Artifact ID rather than the daemon pending change ID. The daemon retains
-candidate custody and applies those evaluated bytes through the installation CAS.
+For a person's own first install from a Store or Settings listing, pressing
+**Install & Trust** supplies the host Action executor's existing confirmation
+bound to the selected listing, Account, and Machine. For npm listings the input
+includes the exact version. The daemon applies the evaluated
+candidate through the installation CAS and records its approved manifest and
+trust in the installation state. Scope-widening installed updates still present
+their new authority for confirmation. Other callers that require approval use
+the ordinary `ApprovalRequestV2` Artifact and Inbox presentation. The public
+`approval.request.decide` Action accepts the approval Artifact ID and the daemon
+retains candidate custody through the decision.
 Compatibility comes from the staged manifest; differing metadata enrichment is
 not a second compatibility authority. Archive containment, signature and
 integrity verification remain with their distribution owners.

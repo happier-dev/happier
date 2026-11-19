@@ -1298,9 +1298,10 @@ exact Account UI press to its Machine with the same present-user default. A raw 
 `hostApi.executeAction` call retains plugin/automation authority, including when
 a plugin click handler starts it; declaring a direct UI policy does not upgrade
 that caller or its nested Actions. Action declarations retain their local confirmation
-metadata on UI as well as their separate automation defaults. Plugin install
-still owns its first Install & Trust trusted-code disclosure. A completed in-flow
-confirmation consumes the default for that exact operation. Saving an ordinary
+metadata on UI as well as their separate automation defaults. Pressing
+**Install & Trust** on a plugin listing confirms the selected source and
+Machine for a person's first installation. A completed in-flow confirmation consumes the
+default for that exact operation. Saving an ordinary
 document through `artifact.update` is a direct UI edit: Save writes the revision
 without another approval card, while automation retains its Ask default.
 A new consequence discovered at preflight

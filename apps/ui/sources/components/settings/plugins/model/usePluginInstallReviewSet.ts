@@ -32,7 +32,7 @@ function readHomeProfileId(serverIdentityId: string): string {
     return resolution.kind === 'resolved' ? resolution.profile.id : serverIdentityId;
 }
 
-/** Collect ordinary exact-Machine Ask results without a second preview or decision path. */
+/** Install on the selected Machines and retain their outcomes and any approvals the receiver requires. */
 export function usePluginInstallReviewSet(params: Readonly<{
     resolveInstallEntry: ReturnType<typeof usePluginCatalog>['resolveInstallEntry'];
     candidates: readonly MachineAdministrationCandidateV1[];
@@ -67,9 +67,7 @@ export function usePluginInstallReviewSet(params: Readonly<{
             Promise.all(operations.map(async ({ target, targetLabel, input }): Promise<PluginInstallReviewRow> => {
                 let result: ActionExecuteResult;
                 try {
-                    // Normal dispatch preserves Ask (and deliberate policy waivers).
-                    // Never call confirmed: the pending Artifact IS the review carrier.
-                    result = await execute('plugins.install', input, { surface: 'ui', authority: 'present_user',
+                    result = await execute.confirmed('plugins.install', input, { surface: 'ui', authority: 'present_user',
                         actionCaller: { kind: 'host' }, serverId: target.serverIdentityId, signal: requestSignal,
                         executionRunTargetMachineId: target.machineId,
                         externalActionTarget: { kind: 'machine', machineId: target.machineId } });

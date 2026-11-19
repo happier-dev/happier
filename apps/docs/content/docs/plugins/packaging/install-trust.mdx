@@ -3,13 +3,12 @@ title: Install and trust
 description: Review plugin code before execution and let the daemon own installed state.
 ---
 
-`hdev plugins install` validates package and manifest facts before executing
-plugin code. In 0.3 development source, a required install review uses the
-ordinary `plugins.install` approval Artifact in the Happier Inbox, naming the
-trusted code, selected machine, executable realms, and authority or credential
-access being granted. Technical package,
-integrity, compatibility, and provenance evidence remains available in the
-details; it does not create another decision.
+In 0.3 development, press **Install & Trust** on the plugin listing in Store or
+Settings to authorize the listed plugin on the selected machines. The daemon validates the
+package and manifest before executing plugin code and records the approved
+manifest at installation. Callers that require approval use the ordinary
+`plugins.install` approval in the Happier Inbox. It names the code, machine,
+executable realms, and authority or credential access being granted.
 
 ```bash
 hdev plugins install <path-or-archive>
@@ -44,9 +43,9 @@ including after approval.
 Installation administration remains machine-specific: install, installation settings
 and Secrets operate on the named administration machine. Catalog browsing is
 Account-scoped and works without choosing a Machine. In 0.3 development source,
-**Settings → Plugins → Add** opens the shared catalog picker; Review continues
-to the exact listing and its existing Install and Trust operation. A separate
-Browse entry opens app-host discovery. Appearing in the
+**Settings → Plugins → Add** opens the shared catalog picker. **Review** opens
+the exact listing, where **Install & Trust** starts the installation. Browse opens
+app-host discovery. Appearing in the
 Account's installed list does not mean a plugin is enabled, trusted or executable.
 
 Use **Add → Git repository** to install directly from an HTTPS Git URL and an
@@ -203,9 +202,9 @@ In the exact Plugin listing's install continuation, the daemon reports a missing
 registry profile and Install asks in place. The dialog opens the
 registry profiles for that one listing: add a profile (prefilled with the
 registry's address and the package's scope), sign in to it, and bind it to the
-listing's marketplace source. **Continue** asks the daemon again, which prepares
-the Install and Trust review or names what is still missing. **Cancel** ends the
-install with nothing downloaded.
+listing's marketplace source. **Continue** resumes the install or shows which
+registry prerequisite is still missing. **Cancel** ends the install with
+nothing downloaded.
 
 In 0.3 development, npm profiles also appear in Credentials and use the same
 Connect sheet as the publisher. Select the machine and registry profile first,

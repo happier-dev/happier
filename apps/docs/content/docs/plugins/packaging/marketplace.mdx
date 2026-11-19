@@ -145,16 +145,15 @@ policy; see [Review a pending change](/plugins/packaging/authoring-cli#review-a-
 
 ## First install and update authority
 
-Community npm listings and the marketplace sources you add are unreviewed,
-and every first install — from any source, including the curated catalog —
-reaches one concise trusted-code and declared-authority decision from
-[Install and trust](/plugins/packaging/install-trust). Exact package, version,
-registry origin, integrity, manifest digest, and compatibility remain technical
-admission checks under Details rather than separate approvals. An
-authority-neutral update does not prompt; an update that widens authority shows
-only that delta. A curated listing the publisher withdraws cannot be newly
-installed, but withdrawal is a discovery fact: installed plugins keep working
-and keep updating under their own policy.
+Community npm listings and the marketplace sources you add are unreviewed.
+In 0.3 development, pressing **Install & Trust** authorizes the listing on the
+selected machines. For npm installs, Happier validates the package, version,
+registry origin, integrity, manifest digest, and compatibility before activation.
+For Git listings, Happier records the commit it installs. An update that widens
+authority shows what changed. An authority-neutral update follows the installed
+plugin's update policy. See [Install and trust](/plugins/packaging/install-trust).
+Installed plugins keep working and updating under their own policy when a
+publisher withdraws a curated listing. New installs of that listing stop.
 
 ## Private and custom registries
 

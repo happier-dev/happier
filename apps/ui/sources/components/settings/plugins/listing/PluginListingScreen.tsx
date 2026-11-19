@@ -39,8 +39,8 @@ import { usePluginInstallOnMachines } from './PluginInstallOnMachines';
 
 /**
  * A marketplace listing before install (lab PL4): identity, what it is for and what it adds; beside
- * it the one action — Install & Trust on the machine named in the header, or Manage once installed —
- * then the facts and links. The install review that follows stays the security gate.
+ * it the one action — Install & Trust for the Machine named in the header, or Manage once installed —
+ * then the facts and links.
  *
  * The listing is re-read from its exact source and pin on arrival, so a
  * reload or a deep link shows current truth, and Install acts under the same authority as a card.

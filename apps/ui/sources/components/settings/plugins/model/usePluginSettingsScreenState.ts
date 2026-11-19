@@ -579,12 +579,11 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             if (!actionInput) return { supported: true as const, response: {
                                 ok: false as const, error: { code: 'install_unavailable', message: t('common.unavailable') },
                             } };
-                            const execution = await installedExecution.execute('plugins.install', actionInput);
+                            // The listing press consents to this exact release and Machine.
+                            // Installed updates leave scope review to the receiver.
+                            const execution = await installedExecution.execute('plugins.install', actionInput,
+                                params.method === 'install' ? { confirmed: true } : undefined);
                             if (!execution.ok) return actionFailure(execution, 'plugins.install');
-                            // `plugins.install` resumes only after its ordinary
-                            // approval Artifact settles. Project that terminal
-                            // Action outcome into the existing mutation reader;
-                            // daemon review ids never become a second UI decision.
                             return { supported: true as const, response: { ok: true as const,
                                 result: projectPluginMutationResult(execution.result, params.method, params.pluginId),
                             } };
@@ -624,11 +623,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     response = await requestChange(dispositions);
                     if (!isAuthorityCurrent()) return;
                 }
-                // A registry selection the daemon names is answered by the
-                // present user through the existing profile administration,
-                // then the same change is requested again: the daemon either
-                // prepares the Install and Trust review or names what is still
-                // missing. Cancel ends the action with nothing fetched.
+                // Profile selection supplies the prerequisite named by the daemon.
+                // Continue with the original release and target after it is saved.
                 while (params.method === 'install' || params.method === 'update') {
                     const registryRequirement = 'registryRequirement' in response
                         ? response.registryRequirement
