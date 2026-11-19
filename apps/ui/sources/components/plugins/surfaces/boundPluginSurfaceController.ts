@@ -14,6 +14,7 @@ import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happie
 import { createPluginDeclaredResourceStore } from './PluginContextualResourceStoreProvider';
 import { createPluginSurfaceHostReadStore } from './pluginSurfaceHostReadStore';
 import { createPluginDiscussionHostReadStore } from './pluginDiscussionHostRead';
+import { createPluginReviewDetailHostReadStore } from './pluginReviewDetailHostRead';
 import { createPluginManagedMachineInventoryHostReadStore } from './pluginManagedMachineInventoryHostRead';
 import { createPluginDeploymentCollectionHostReadStore } from './pluginDeploymentCollectionHostRead';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -1385,6 +1386,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         } }) : null;
     const discussionHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
         ? createPluginDiscussionHostReadStore({ lifetime: accountLifetime }) : null;
+    const reviewDetailHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
+        ? createPluginReviewDetailHostReadStore({ lifetime: accountLifetime }) : null;
     const managedMachineHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
         ? createPluginManagedMachineInventoryHostReadStore({ lifetime: accountLifetime }) : null;
     const deploymentCollectionHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
@@ -1425,6 +1428,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                     }
                     return reference.hostRead === 'discussion.get'
                         ? discussionHostReadStore!.getEntry(reference)
+                        : reference.hostRead === 'review.get'
+                        ? reviewDetailHostReadStore!.getEntry(reference)
                         : reference.hostRead === 'machines.managed.list'
                         ? managedMachineHostReadStore!.getEntry(reference)
                         : reference.hostRead === 'deployments.environments.list'
@@ -1727,6 +1732,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         hostApi.dispose?.();
         resourceStore?.dispose();
         discussionHostReadStore?.dispose();
+        reviewDetailHostReadStore?.dispose();
         managedMachineHostReadStore?.dispose();
         deploymentCollectionHostReadStore?.dispose();
         operationHostReadStore?.dispose();

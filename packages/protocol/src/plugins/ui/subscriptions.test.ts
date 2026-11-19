@@ -9,6 +9,14 @@ import {
 } from './subscriptions.js';
 
 describe('plugin UI resource subscriptions', () => {
+  it('admits an exact Review detail without accepting caller-selected Account or routing facts', () => {
+    const resource = { hostRead: 'review.get', input: { reviewId: 'review-first' } };
+    expect(PluginUiResourceSubscriptionRequestV1Schema.parse({ resource, subscriptionId: 'review' }).resource).toEqual(resource);
+    for (const input of [{}, { reviewId: '' }, { reviewId: 'review-first', accountId: 'foreign' },
+      { reviewId: 'review-first', serverId: 'foreign' }]) {
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource, input }, subscriptionId: 'review' }).success).toBe(false);
+    }
+  });
   it.each([
     ['machines.services.logs', 'machines.services.logs.read'],
     ['deployments.logs', 'deployments.logs.read'],

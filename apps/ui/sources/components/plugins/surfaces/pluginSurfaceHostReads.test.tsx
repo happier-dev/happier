@@ -92,7 +92,7 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], en
     controllers.push(controller);
     const context = await captureLazyActionAccountContext(lifetime.scope.serverId);
     const hostEntry = resource.hostRead === 'discussion.get' || resource.hostRead === 'machines.managed.list'
-        || resource.hostRead === 'deployments.environments.list'
+        || resource.hostRead === 'deployments.environments.list' || resource.hostRead === 'review.get'
         ? controller.resourceStore!.getEntry(resource) : getUsageQueryResourceStore(context).getEntry(resource);
     context.dispose();
     const native = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture({
@@ -138,6 +138,20 @@ async function settleUsageDetail(entry: PluginUiResourceEntry) {
 }
 
 describe('mounted native and hosted host reads', () => {
+    it('admits Review detail through its original Action and propagates the canonical Account refusal', async () => {
+        let enabled = false;
+        const resource = { hostRead: 'review.get', input: { reviewId: 'selected-review' } } satisfies PluginUiHostReadReferenceV1;
+        const { native } = await mount(request => request.url.pathname === '/v1/reviews/get'
+            ? Response.json({ error: 'forbidden' }, { status: 403 }) : undefined, () => enabled, resource);
+        const reads = () => home!.requests.filter(request => request.path.split('?')[0] === '/v1/reviews/get');
+        try {
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'action_disabled' });
+            expect(reads()).toHaveLength(0);
+            enabled = true;
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'permission_denied' });
+            expect(reads()).toHaveLength(1);
+        } finally { native.dispose(); }
+    });
     it('admits preview collection reads through the original deployment Action before opening its shared owner', async () => {
         let enabled = false;
         const resource = { hostRead: 'deployments.environments.list', input: {

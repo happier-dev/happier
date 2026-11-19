@@ -11,6 +11,7 @@ import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connecte
 import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
 import { ManagedListInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { DeploymentEnvironmentListInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { ReviewGetRequestV1Schema } from '../../reviews/reviewListV1.js';
 import type { ActionId } from '../../actions/actionIds.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../../actions/actionIds.js';
 export { PluginUiMachineServiceLogsReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
@@ -28,6 +29,9 @@ export type PluginUiReadAuthorityReferenceV1 = z.infer<typeof PluginUiReadAuthor
 export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get', 'discussion.get', 'action.operations.get']),
   input: PluginUiJsonValueV1Schema,
+}), z.strictObject({
+  hostRead: z.literal('review.get'),
+  input: ReviewGetRequestV1Schema,
 }), z.strictObject({
   hostRead: z.literal('deployments.environments.list'),
   input: DeploymentEnvironmentListInputV1Schema,

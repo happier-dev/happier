@@ -7906,7 +7906,12 @@ fields and array entries survive composition, while later scalar values win.
 In 0.3 development source, Plugin UI `readResource` and `watchResource` also
 accept the closed host-read reference `{ hostRead: actionId, input }` for
 `usage.query`, `connectedServices.quota.get`, `connectedServices.pools.selection.get`,
-`discussion.get`, `action.operations.get` and `deployments.environments.list`. The deployment
+`discussion.get`, `review.get`, `action.operations.get` and `deployments.environments.list`.
+The Review reference accepts only `{ reviewId }` and borrows the captured Account's
+existing Review detail owner. Its JSON contains the canonical `review` and opened
+`human` projection. Live demand shares the owner's scoped AccountChange observation;
+explicit Resource refresh invokes that owner's refresh once, while invalidations
+consume its applied snapshot without another HTTP read. The deployment
 collection observes every matching page, including current receipt state, through the
 existing deployment controller and Account change subscription while presented. Its
 JSON projection includes canonical controller availability, observed through the
