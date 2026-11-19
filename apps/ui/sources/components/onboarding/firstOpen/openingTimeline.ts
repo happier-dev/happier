@@ -1,5 +1,5 @@
 import {
-    fieldDotLayer, glyphFrame, markGlyphLayer, planetGlyphLayer, travellerGlyphLayer,
+    fieldDotLayer, glyphFrame, markGlyphLayer, markGlyphTone, planetGlyphLayer, travellerGlyphLayer,
     type GlyphLayer, type GlyphPoint, type GlyphRect,
 } from '@happier-dev/brand/glyph-scene';
 import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
@@ -69,6 +69,13 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
     const mark = markGlyphLayer({ centre, size: 2 * radius / 1.05, ink: 'sunrise', retypeS: 1.2 });
     // Source cells come from the real brand sampler so the opening never traces a second mark.
     const raster = glyphFrame({ view: { w: width, h: height }, cell, dpr: 1, theme, layers: [mark] });
+    const cellTimeline = new Float32Array(raster.sprites.glyph.length * 4);
+    const occupied = new Set<number>();
+    const columns = raster.grid.cols;
+    const cellIndex = (x: number, y: number) => Math.floor(y / cell[1]) * columns + Math.floor(x / cell[0]);
+    for (let i = 0; i < raster.sprites.at.length; i += 2) {
+        occupied.add(cellIndex(raster.sprites.at[i], raster.sprites.at[i + 1]));
+    }
     const sources: Array<Readonly<{ point: GlyphPoint; tone: number; departure: number }>> = [];
     const travels: Travel[] = [];
     const launch = cursor ?? (phone ? { x: width / 2, y: height + 12 } : undefined);
@@ -77,10 +84,16 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
         const point = { x: raster.sprites.at[2 * index], y: raster.sprites.at[2 * index + 1] };
         const nx = (point.x - centre.x) / radius;
         const ny = (point.y - centre.y) / radius;
-        const tone = progress(0.08 + (ny * 1.05 + 1) * 0.42 - nx * 1.05 * 0.1, 0, 1);
-        sources.push({ point, tone, departure: turnStart + 0.7 * variation(index, 31) });
-        const arrival = 0.5 + 0.48 * variation(index, 11);
-        const stream = variation(index, 13) < 0.25;
+        const position = cellIndex(point.x, point.y);
+        const outline = [position - 1, position + 1, position - columns, position + columns]
+            .some(neighbour => !occupied.has(neighbour));
+        const tone = markGlyphTone(mark, point.x, point.y);
+        const departure = turnStart + 0.7 * variation(position, 31);
+        const lock = variation(position, 11);
+        const arrival = outline ? 0.5 + 0.25 * lock : 0.65 + 0.33 * lock ** 0.9;
+        cellTimeline.set([point.x, point.y, arrival, departure], index * 4);
+        sources.push({ point, tone, departure });
+        const stream = variation(position, 13) < 0.25;
         for (let copy = 0; copy < 2; copy++) {
             const at = arrival - copy * 0.06 * variation(index, 41);
             const fromLaunch = stream && copy === 0 ? launch : undefined;
@@ -148,8 +161,7 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
         }
         if (seconds >= 0.5 && seconds < 1.92) {
             layers.push({
-                ...mark, fill: sine(progress(seconds, 0.5, 0.98)),
-                turn: sine(progress(seconds, turnStart, turnEnd)), dissolve: progress(seconds, turnStart, 1.92),
+                ...mark, cellTimeline, turn: sine(progress(seconds, turnStart, turnEnd)),
             });
         }
         const k = cubicOut(progress(seconds, fallStart, fallEnd) ** 1.5);

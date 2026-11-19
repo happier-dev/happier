@@ -1,3 +1,4 @@
+import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
 import { describe, expect, it } from 'vitest';
 import { createOpeningTimeline } from './openingTimeline';
@@ -7,7 +8,7 @@ describe('first-open scene timing', () => {
         const sample = createOpeningTimeline({ width: 1440, height: 900, phone: false, theme: 'dark' });
         expect(sample(0)).toEqual([]);
         const mark = sample(1.1).find(layer => layer.kind === 'mark');
-        expect(mark).toMatchObject({ centre: { x: 720, y: 414 }, fill: 1, turn: 0, dissolve: 0 });
+        expect(mark).toMatchObject({ centre: { x: 720, y: 414 }, turn: 0 });
         const overlap = sample(1.6);
         expect(overlap.find(layer => layer.kind === 'mark')?.turn).toBeGreaterThan(0);
         expect(overlap.find(layer => layer.kind === 'planet')?.geometry.cy).toBeGreaterThan(414);
@@ -23,5 +24,20 @@ describe('first-open scene timing', () => {
             cy: pose.cy + windowRect.y,
             R: pose.R,
         });
+    });
+
+    it('turns the same mark cells it assembled and removes them progressively', () => {
+        const view = { w: 1440, h: 900 };
+        const sample = createOpeningTimeline({ width: view.w, height: view.h, phone: false, theme: 'dark' });
+        const markAt = (time: number) => glyphFrame({ view, dpr: 1, cell: [8, 16], theme: 'dark',
+            layers: sample(time).filter(layer => layer.kind === 'mark'),
+        }, { time }).sprites;
+        const assembled = markAt(1.1);
+        const turned = markAt(1.5);
+        expect(markAt(0.65).glyph.length).toBeLessThan(assembled.glyph.length);
+        expect(turned.glyph.length).toBeGreaterThan(0);
+        expect(turned.glyph.length).toBeLessThan(assembled.glyph.length);
+        expect(turned.at.some((position, i) => i % 2 === 0 && Math.abs(position % 8 - 4) > 0.001)).toBe(true);
+        expect(markAt(1.93).glyph.length).toBe(0);
     });
 });
