@@ -40,6 +40,7 @@ import {
   hasStoredSessionCredentialProvenance,
   readSettings,
   readStoredCredentialsForServerId,
+  sameStoredCredentials,
   type StoredCredentials,
 } from '@/persistence';
 import {
@@ -1243,6 +1244,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       accountServerActionDeps,
       token: credentials.token,
       credentials,
+      ...(params.readCredentials ? { isCredentialCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()) } : {}),
       ...(prepareApprovalExecutionOriginContext ? { prepareApprovalExecutionOriginContext } : {}),
       ...(params.onRequesterSessionCredentialDisclosure
         ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
