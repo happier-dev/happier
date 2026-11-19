@@ -36,7 +36,11 @@ export function privateServiceForwardAcquisitionError(error: unknown): Error & {
         : original === 'tcp_connect_failed' || original === 'ECONNREFUSED' || original === 'ENETUNREACH'
             || original === 'EHOSTUNREACH' || original === 'ETIMEDOUT' ? 'private_service_destination_unreachable'
         : error instanceof MachineCarrierError ? 'private_service_forward_refused' : original ?? 'private_service_destination_unreachable';
-    return Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { cause: projectDeploymentFailure(code, error, 'deployment.reference.acquire') });
+    const phase = 'deployment.reference.acquire';
+    const failureCause = error instanceof MachineCarrierError && original === 'service_export_unavailable'
+        ? { ...projectActionFailureCauseV1(error, phase), errorCode: original } : undefined;
+    return Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+        ...(failureCause ? { failureCause } : {}) }), { cause: projectDeploymentFailure(code, error, phase) });
 }
 
 /** Source acquisition translates SCM selection failures once; capability and stale-approval refusals keep their codes. */

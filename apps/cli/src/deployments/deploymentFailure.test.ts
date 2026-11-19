@@ -123,6 +123,17 @@ describe('deployment failure diagnostics', () => {
         expect(result.failureCause).toBeDefined();
         expect(JSON.stringify(result)).not.toContain('private-');
     });
+
+    it('keeps a destination refusal for an unavailable export in the public deployment failure', () => {
+        const error = new MachineCarrierError('service_export_unavailable', 'private-export');
+        const result = projectDeploymentException(privateServiceForwardAcquisitionError(error));
+        expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({
+            ok: false,
+            errorCode: 'private_service_forward_refused',
+            failureCause: { phase: 'deployment.reference.acquire', errorCode: 'service_export_unavailable' },
+        });
+        expect(JSON.stringify(result)).not.toContain('private-export');
+    });
     it.each(['deployment_content_unavailable', 'deployment_unavailable', 'unsupported', 'unclassified_provider_refusal'])(
         'supplies recovery for %s without a refusal-code classification', errorCode => {
             const result = projectDeploymentFailure(errorCode);
