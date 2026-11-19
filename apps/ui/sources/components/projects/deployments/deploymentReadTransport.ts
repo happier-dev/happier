@@ -37,6 +37,12 @@ function failure(code: string, retryable = false): Extract<DeploymentReadResultV
     return { ok: false, failure: { code, retryable } };
 }
 
+function failureFromError(error: unknown): Extract<DeploymentReadResultV1<never>, { ok: false }> {
+    if (error instanceof HappyError) return failure(error.code ?? 'deployment_read_failed', error.canTryAgain);
+    if (error instanceof Error && 'code' in error && typeof error.code === 'string') return failure(error.code);
+    return failure('deployment_read_failed', true);
+}
+
 function readEnvironmentPresentation(environment: DeploymentEnvironmentCollectionV1['items'][number]['environment'],
     artifact: Parameters<typeof readDeploymentEnvironmentArtifactV1>[1], sourceNames: ReadonlyMap<string, string>) {
     const opened = readDeploymentEnvironmentArtifactV1(environment, artifact);
@@ -94,9 +100,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         } catch (error) {
             if (!current()) return failure('action_account_scope_changed');
             if (options.signal.aborted) return failure('cancelled');
-            if (error instanceof HappyError) return failure(error.code ?? 'deployment_read_failed', error.canTryAgain);
-            if (error instanceof Error && 'code' in error && typeof error.code === 'string') return failure(error.code);
-            return failure('deployment_read_failed', true);
+            return failureFromError(error);
         } finally { account?.dispose(); }
     }
     const home = { serverId: lifetime.scope.serverId };
@@ -186,6 +190,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (!row.ok) { coverage = 'partial'; continue; }
                 const previous = previousById.get(environment.id);
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
+                let databaseSubjectFailure: ReturnType<typeof failure>['failure'] | undefined;
                 // The exact Database page reads Automation subjects. Services inventory only reads declared databases and sizes.
                 if (query.environmentId !== undefined) {
                     if (environment.controllerMachineId) {
@@ -195,9 +200,13 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                                 input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
                                     projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
                             }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
-                        } catch { coverage = 'partial'; }
+                        } catch (error) {
+                            coverage = 'partial';
+                            databaseSubjectFailure = failureFromError(error).failure;
+                        }
                     } else {
                         coverage = 'partial';
+                        databaseSubjectFailure = failure('machine_unavailable').failure;
                     }
                 }
                 const databaseSizes: DeploymentDatabaseSizeV1[] = [];
@@ -240,7 +249,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     return [];
                 }));
                 items.push({ environment, title: row.title, content: row.content,
-                    projectSourceName: sourceNames.get(environment.projectSourceId) ?? null, databaseSizes, databaseSubjects });
+                    projectSourceName: sourceNames.get(environment.projectSourceId) ?? null, databaseSizes, databaseSubjects,
+                    ...(databaseSubjectFailure ? { databaseSubjectFailure } : {}) });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),

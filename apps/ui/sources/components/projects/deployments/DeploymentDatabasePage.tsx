@@ -28,7 +28,7 @@ import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { SubjectTriggersSection, SubjectTriggersSectionReadState } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { StatusWord } from '@/components/ui/status/StatusPill';
@@ -406,7 +406,7 @@ export function DeploymentDatabasePage(
   }) : null;
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
-  // The data-service read resolves this database's Automation subject once; a binding without one (managed) has no section.
+  // The data-service owner resolves identity; a failed or pending read keeps the shared section in place.
   const dataRead = sizes.snapshot;
   const dataItem = dataRead.value?.items.find((item) => item.environment.id === detail.environment.id);
   const automationSubject = dataItem?.databaseSubjects?.[props.database];
@@ -631,6 +631,10 @@ export function DeploymentDatabasePage(
           {automationSubject?.ok ? (
             <SubjectTriggersSection subject={automationSubject.subject} subjectName={title}
               accountLifetime={lifetime} contextSubjects={backupContext} />
+          ) : database.kind === 'selfHosted' ? (
+            <SubjectTriggersSectionReadState subjectKind="database"
+              status={dataItem?.databaseSubjectFailure || dataRead.status === 'unavailable' || dataRead.status === 'ready' ? 'failed' : 'loading'}
+              onRetry={automationSubject?.ok === false ? undefined : sizes.refresh} />
           ) : null}
 
           <ItemGroup

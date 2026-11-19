@@ -148,7 +148,9 @@ type Answers = Readonly<{
 async function renderDatabase(
   input: Readonly<{
     answers?: Answers;
-    workbenchDiscoveryRefused?: boolean;
+    workbenchDiscoveryRefused?: boolean | (() => boolean);
+    /** Exercise the Database subject read through the real selected-Environment transport. */
+    readDatabaseAutomations?: boolean;
     database?: string;
     sizeReadUnavailable?: boolean;
     retainedBackup?: boolean;
@@ -258,7 +260,7 @@ async function renderDatabase(
   }
   // Each case uses its own Home and Machine.
   const detail = { ...authored, environment: { ...authored.environment,
-    serverId: input.movePickerScope ? serverIdentityId : serverId, controllerMachineId: machineId },
+    serverId: input.movePickerScope || input.readDatabaseAutomations ? serverIdentityId : serverId, controllerMachineId: machineId },
     targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
     ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.machines)
       ? { machines: [machineId, ...(input.sourceMultiMachine ? [`${machineId}-second`] : [])] } : {}),
@@ -403,6 +405,20 @@ async function renderDatabase(
 
   const effects: Array<{ actionId: string; input: Record<string, unknown> }> =
     [];
+  if (input.readDatabaseAutomations) {
+    homes.answer(serverId, 'POST /v3/automations/query', {
+      body: { automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 },
+    });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId, installationId: 'installation-a', actionId: 'deployments.data.size', tokenEpoch: 0,
+      execute: raw => {
+        const operand = DeploymentActionInputSchemasV1['deployments.data.size'].parse(raw);
+        return { ok: true, size: { service: operand.service, deploymentId: operand.deploymentId,
+          size: { status: 'available', bytes: 4096, measurement: 'database_bytes', observedAtMs: 1 },
+          growth: { status: 'unavailable', reason: 'previous_sample_required' } } };
+      },
+    });
+  }
   if (input.answers?.missedSchedule) {
     const response = AutomationDefinitionDetailsResponseSchema.parse({ automations: [{
       id: 'nightly-backups', name: 'Nightly backups', description: null, enabled: true,
@@ -478,7 +494,8 @@ async function renderDatabase(
     });
   }
   const scope = { kind: 'environment' as const,
-    environment: { serverId, projectSourceId: detail.environment.projectSourceId, environmentId } };
+    environment: { serverId: input.readDatabaseAutomations ? detail.environment.serverId : serverId,
+      projectSourceId: detail.environment.projectSourceId, environmentId } };
   const descriptor: DatabaseDescriptorV1 = { ...createDatabaseDescriptorV1Fixture(),
     target: input.managed ? { kind: 'managed_deployment', environment: scope.environment,
       targetLinkId: 'managed-database', contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
@@ -489,7 +506,8 @@ async function renderDatabase(
     placement: { serverId, accountId: account.accountId, machineId, installationId: 'installation-a' } };
   await answerExternalActionAccountForHome(homes, serverId, {
     machineId, installationId: 'installation-a', actionId: 'action.invoke', tokenEpoch: 0,
-    failure: () => input.workbenchDiscoveryRefused
+    failure: () => (typeof input.workbenchDiscoveryRefused === 'function'
+      ? input.workbenchDiscoveryRefused() : input.workbenchDiscoveryRefused)
       ? { errorCode: 'plugin_service_unavailable', error: 'Plugin service unavailable' }
       : null,
     execute: raw => {
@@ -577,7 +595,11 @@ async function renderDatabase(
     const { createDeploymentActions } = await import('./deploymentActions');
     setBindings = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId).setBindings;
   }
-  const publicReadTransport = input.movePickerScope
+  if (input.readDatabaseAutomations) {
+    await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Shop database' }, body: JSON.stringify(detail.content) });
+  }
+  const publicReadTransport = input.movePickerScope || input.readDatabaseAutomations
     ? (await import('./deploymentReadTransport')).createDeploymentReadTransport(account.accountLifetime) : null;
   const controller = createDeploymentReadControllerV1({
     scope: {
@@ -606,6 +628,7 @@ async function renderDatabase(
         ok: false as const, failure: { code: 'deployment_read_failed', retryable: true },
       }) } : {}),
       ...(publicReadTransport ? { listEnvironments: publicReadTransport.listEnvironments } : {}),
+      ...(input.readDatabaseAutomations && publicReadTransport ? { listDataServicePage: publicReadTransport.listDataServicePage } : {}),
     },
   });
   const navigate = vi.fn();
@@ -693,6 +716,29 @@ function expectOpenedDatabaseConsole(view: Awaited<ReturnType<typeof renderDatab
 }
 
 describe('Environment → Database → Workbench', () => {
+  it('keeps Automations visible when database discovery refuses and retries the same selected Environment', async () => {
+    let refused = true;
+    const view = await renderDatabase({ readDatabaseAutomations: true, workbenchDiscoveryRefused: () => refused });
+    try {
+      expect(await view.settle('subject-triggers')).not.toBeNull();
+      expect(await view.settle('subject-triggers-read-retry')).not.toBeNull();
+      expect(view.screen.findByTestId(`${page}.variables`)).not.toBeNull();
+      refused = false;
+      await view.screen.pressByTestIdAsync('subject-triggers-read-retry');
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(view.screen.findByTestId('subject-triggers-read-retry')).toBeNull();
+        expect(view.screen.findByTestId('subject-triggers')).not.toBeNull();
+        expect(view.screen.findByTestId('subject-triggers-add')).not.toBeNull();
+        const discoveries = view.effects.filter(effect => effect.actionId === 'action.invoke');
+        expect(discoveries.length).toBeGreaterThan(0);
+        for (const discovery of discoveries) expect(discovery.input).toMatchObject({
+          input: { scope: { kind: 'environment', environment: { serverId: view.serverIdentityId, environmentId: view.environmentId } } },
+        });
+      });
+    } finally { await view.dispose(); }
+  });
+
   it('opens the shared workbench for the exact deployment database through environment discovery', async () => {
     const view = await renderDatabase();
     try {

@@ -128,6 +128,33 @@ export const SubjectTriggersSection = React.memo(function SubjectTriggersSection
   return <SubjectTriggersSectionContent {...props} automations={automations} />;
 });
 
+type SubjectTriggersReadStateProps = Readonly<{ status: 'loading' | 'failed'; onRetry?: () => void | Promise<unknown> }>;
+
+function SubjectTriggersReadState(props: SubjectTriggersReadStateProps) {
+  return <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
+    state={props.status === 'failed'
+      ? { kind: 'failed', reason: t('workflows.triggers.section.automationsLoadFailed'), onRetry: props.onRetry }
+      : { kind: 'loading' }} />;
+}
+
+function SubjectTriggersSectionFrame(props: Pick<React.ComponentProps<typeof ItemGroup>, 'testID' | 'action' | 'children'>
+  & Readonly<{ description: string; widget?: boolean }>) {
+  return <ItemGroup testID={props.testID ?? 'subject-triggers'}
+    {...(props.widget ? { surface: 'none' as const }
+      : { title: t('workflows.triggers.section.title'), description: props.description, action: props.action })}>
+    {props.widget ? <WidgetGlanceRow variant="fact" title={props.description} testID="subject-triggers-description" /> : null}
+    {props.children}
+  </ItemGroup>;
+}
+
+/** A host whose subject read has not succeeded keeps the shared section without inventing an identity. */
+export function SubjectTriggersSectionReadState(props: SubjectTriggersReadStateProps
+  & Readonly<{ subjectKind: SubjectTriggersSectionProps['subject']['kind'] }>) {
+  return <SubjectTriggersSectionFrame description={describeAutomationsSection(props.subjectKind, false)}>
+    <SubjectTriggersReadState status={props.status} onRetry={props.onRetry} />
+  </SubjectTriggersSectionFrame>;
+}
+
 /** Hosts with destination children share one intake rather than acquiring a second Session watcher. */
 export const SubjectTriggersSectionContent = React.memo(
   function SubjectTriggersSectionContent(props: SubjectTriggersSectionProps & Readonly<{
@@ -262,16 +289,9 @@ export const SubjectTriggersSectionContent = React.memo(
       </View>
     );
     const section = (
-      <ItemGroup
-        testID={props.testID ?? 'subject-triggers'}
-        {...(widget ? { surface: 'none' as const } : { title: t('workflows.triggers.section.title'), description, action: sectionActions })}
-      >
-        {widget ? <WidgetGlanceRow variant="fact" title={description} testID="subject-triggers-description" /> : null}
+      <SubjectTriggersSectionFrame testID={props.testID} widget={widget} description={description} action={sectionActions}>
         {unsettled ? (
-          <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
-            // Nothing held: the whole section failed, said once with its Retry.
-            state={status === 'failed' ? { kind: 'failed', reason: t('workflows.triggers.section.automationsLoadFailed'), onRetry: read.retry }
-              : { kind: 'loading' }} />
+          <SubjectTriggersReadState status={status === 'failed' ? 'failed' : 'loading'} onRetry={read.retry} />
         ) : empty
           ? starters.filter(starterAvailable).map((starter) => (
               <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
@@ -329,7 +349,7 @@ export const SubjectTriggersSectionContent = React.memo(
             }}
           />
         ) : null}
-      </ItemGroup>
+      </SubjectTriggersSectionFrame>
     );
     // Broader triggers that also match this resource (a whole App, any Environment): read-only, opening their workflow.
     const alsoSection = also.length === 0 ? null : (

@@ -105,10 +105,11 @@ describe('deployment scoped read transport', () => {
         expect(homes.requests).toHaveLength(beforeForeign);
     });
 
-    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment'] as const)('reads %s database size and only discovers Workbench subjects for a selected Environment', async kind => {
+    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment', 'selected_environment_refused'] as const)('reads %s database size and only discovers Workbench subjects for a selected Environment', async kind => {
         const disabled = kind === 'deployment_service_disabled';
         const nativeKind = kind !== 'managed_deployment';
-        const exactEnvironment = kind === 'selected_environment';
+        const exactEnvironment = kind === 'selected_environment' || kind === 'selected_environment_refused';
+        const subjectReadRefused = kind === 'selected_environment_refused';
         // QA-B E14: the native PostgreSQL template names its service database and its database happier.
         const service = exactEnvironment ? 'database' : 'postgres';
         const databaseName = exactEnvironment ? 'happier' : 'receipt-database';
@@ -188,6 +189,7 @@ describe('deployment scoped read transport', () => {
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.invoke', tokenEpoch: 0,
             machineId: 'controller', installationId: 'controller-installation',
             additionalMachines: [{ machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }],
+            failure: () => subjectReadRefused ? { errorCode: 'target_unavailable', error: 'Target unavailable' } : null,
             execute: (value, context) => {
                 invocations.push(context.envelope);
                 expect(context.requesterAccountContext.token).toBe(writer.credentials.token);
@@ -230,7 +232,10 @@ describe('deployment scoped read transport', () => {
                 expect(sizeInputs).toMatchObject([{ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
                     service, targetLinkId: 'runtime-link', deploymentId: 'serving-receipt',
                     machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }]);
-                if (exactEnvironment) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
+                if (subjectReadRefused) expect(page).toMatchObject({ ok: true, value: { coverage: 'partial', items: [{
+                    databaseSubjects: {}, databaseSubjectFailure: { code: 'target_unavailable' },
+                }] } });
+                else if (exactEnvironment) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
                     [service]: { ok: true, subject: { kind: 'database', serverId,
                         target: { kind: 'environment', environmentId: detail.environment.id, service, database: databaseName } } },
                 } }] } });
