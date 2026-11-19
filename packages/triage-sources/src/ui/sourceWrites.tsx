@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
   PluginUiActionControlController,
   PluginUiActionControlExecution,
@@ -49,12 +50,6 @@ export type TriageSourceWriteSettlementV1 =
     }>
   | Readonly<{ kind: 'approval' }>;
 
-const OUTCOME_UNKNOWN_CODES: ReadonlySet<string> = new Set([
-  'outcome_unknown',
-  'action_outcome_unknown',
-  'approval_execution_outcome_unknown',
-]);
-
 /** A declined confirmation, a cancelled preparation or a retired mount ran nothing. */
 function ranNothing(code: string): boolean {
   return (
@@ -93,7 +88,7 @@ export function projectTriageSourceWriteSettlementV1(
     }
   }
   if (
-    OUTCOME_UNKNOWN_CODES.has(execution.errorCode) ||
+    isActionOutcomeUnknownErrorCodeV1(execution.errorCode) ||
     execution.effectAttempted === true
   )
     return { kind: 'uncertain' };
