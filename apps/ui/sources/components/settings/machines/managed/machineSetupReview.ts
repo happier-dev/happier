@@ -100,7 +100,10 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
         if (params.combined && !target) return fail('managed_response_invalid');
         const effects = MachineSetupPlanResultV1Schema.safeParse(target ? target.plan : outcome.result);
         if (!effects.success || effects.data.recipePlans === undefined) return fail('managed_response_invalid');
-        if (expected.appChildren !== undefined && effects.data.appChildren === undefined) return fail('managed_response_invalid');
+        // Older combined results can carry the operands on the target wrapper.
+        const plan = effects.data.appChildren === undefined && target?.appChildren !== undefined
+            ? { ...effects.data, appChildren: target.appChildren } : effects.data;
+        if (expected.appChildren !== undefined && plan.appChildren === undefined) return fail('managed_response_invalid');
         if (effects.data.desiredRevision !== expected.desiredRevision || !sameStrictJsonValue(effects.data.sources, expectedSources[index])) return fail('plan_changed');
         if (!sameStrictJsonValue(effects.data.removeItemKeys, expected.removeItemKeys)) return fail('plan_changed');
         if (expected.removeItemKeys !== undefined && effects.data.removalPlans === undefined) return fail('managed_response_invalid');
@@ -111,7 +114,7 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             signal: params.context.signal,
         });
         if (!current()) return fail('continuation_retired');
-        admitted.push({ ...machineSetupApplyTargetFromPlanV1(expected, effects.data),
+        admitted.push({ ...machineSetupApplyTargetFromPlanV1(expected, plan),
             ...(expected.preset ? { preset: expected.preset } : {}) });
         facts.push({ homeId: expected.homeId, machineId: expected.machineId, support: effects.data.support,
             ...(effects.data.review === undefined ? {} : { review: effects.data.review }),
