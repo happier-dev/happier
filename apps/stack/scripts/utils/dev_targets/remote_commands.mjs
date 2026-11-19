@@ -2952,13 +2952,13 @@ export function buildRemoteStackHappierCommand(target, { stackName, runtimeMode 
   return buildRemoteStackOperationCommand(target, { stackName, runtimeMode, passthrough, operation: 'happier' });
 }
 
-export function buildRemoteStackOperationCommand(target, { stackName, runtimeMode = 'source', passthrough = [], operation }) {
+export function buildRemoteStackOperationCommand(target, { stackName, runtimeMode = 'source', passthrough = [], operation, quiet = false }) {
   if (!['happier', 'daemon', 'build', 'auth', 'server-readiness'].includes(operation)) throw new Error('[dev-targets] unsupported remote Stack operation');
   const invocation = { ...resolveRemoteStackStatePaths(target, { stackName, runtimeMode }), runtimeMode };
   const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
   const command = operation === 'server-readiness'
     ? 'node ./apps/stack/scripts/utils/server/readiness_probe.mjs'
-    : `${remoteStackLauncher(invocation)} stack ${operation} ${quote(invocation.stackName)}`;
+    : `${remoteStackLauncher(invocation, quiet)} stack ${operation} ${quote(invocation.stackName)}`;
   if (target.platform === 'windows') {
     return wrapRemoteScript(target, [
       ...buildWindowsRemoteStackPrelude(target, invocation),

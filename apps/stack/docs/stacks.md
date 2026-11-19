@@ -861,6 +861,19 @@ use normal crash recovery. `hstack stack info <stack>` reports
 Commands follow the observed daemon host. Existing supervisors must load the
 updated Stack tooling before this behavior is available.
 
+A plain `stop` preserves Sessions across daemon downtime. To end the Sessions
+the daemon hosts and stop a named fixture identity, use:
+
+```bash
+hstack stack daemon <stack> stop --identity=account-a --retire --json
+```
+
+The command starts the same identity if its daemon is offline so it can recover
+its Sessions. The product daemon reports per-Session results and begins shutdown
+after a complete drain. A non-zero exit means retirement is unconfirmed. If
+Session cleanup is incomplete, the daemon stays running so the cleanup can be
+retried. The `default` identity is excluded from retirement.
+
 - For the **main** stack, use `<stack>=main` and the default `<port>=3005` (unless you changed it).
 - If you use Tailscale Serve, `HAPPIER_WEBAPP_URL` should be your HTTPS URL (what you get from `hstack tailscale url`).
 - Logs live under:

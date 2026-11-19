@@ -85,6 +85,12 @@ export async function daemonControlPost({ httpPort, path, body = {}, controlToke
   }
 }
 
+export async function requestDaemonSessionDrain({ state: { httpPort, controlToken } }) {
+  // The product owns the drain and its lifetime. A listener-observation deadline would
+  // discard a slow but valid Session Stop outcome.
+  return await daemonControlPost({ httpPort, path: '/stop', body: { stopSessions: true }, controlToken, timeoutMs: null });
+}
+
 export function resolveDaemonRestartConfirmTimeoutMs(env = process.env, explicitTimeoutMs = null) {
   const explicit = Number(explicitTimeoutMs);
   if (Number.isFinite(explicit) && explicit > 0) return Math.trunc(explicit);

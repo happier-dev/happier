@@ -7,7 +7,7 @@ import { printResult, wantsHelp } from '../utils/cli/cli.mjs';
 import { isTty, promptSelect, withRl } from '../utils/cli/wizard.mjs';
 import { checkDaemonState, daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
 import { getComponentDir, getRepoDir, resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
-import { run } from '../utils/proc/proc.mjs';
+import { redactFailureDiagnostic, run } from '../utils/proc/proc.mjs';
 import { resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
 import { recordStackRuntimeDaemonDesiredState, syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
@@ -117,6 +117,38 @@ export async function resolveStackDaemonCommandContext({
   };
 }
 
+async function startStackDaemonIdentity({ context, stackName, identity, restart = false,
+  refreshSelectedSource = false, forRetirement = false }) {
+  const { cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, cliHomeDir,
+    internalServerUrl, publicServerUrl, runtimePath, envForIdentity, runtimeProvenance,
+    sourceRuntimeLaunchUpdate } = context;
+  if (!refreshSelectedSource) {
+    await recordStackRuntimeDaemonDesiredState(runtimePath, 'running', { cliIdentity: identity });
+  }
+  return await startLocalDaemonWithAuth({
+    cliBin,
+    cliEntrypoint,
+    cliNodeEntrypoint,
+    cliCommand,
+    cliCommandArgs,
+    cliHomeDir,
+    internalServerUrl,
+    publicServerUrl,
+    runtimeStatePath: runtimePath,
+    isShuttingDown: () => false,
+    forceRestart: !forRetirement && (restart || Boolean(sourceRuntimeLaunchUpdate)),
+    includeStatus: !forRetirement,
+    env: envForIdentity,
+    stackName,
+    cliIdentity: identity,
+    ...runtimeProvenance,
+    sourceRuntimeLaunchUpdate,
+    preserveSessionsOnRestart: !forRetirement && Boolean(sourceRuntimeLaunchUpdate),
+    refreshSelectedSource,
+    ...(forRetirement ? { ensureRunningOnly: true, allowSignInRequired: true, progressToStderr: true } : {}),
+  });
+}
+
 export async function runStackDaemonCommand({ rootDir, stackName, argv, json, emitResult = true, env = {} }) {
   const { flags, kv } = parseArgs(argv);
   const wantsHelpFlag = wantsHelp(argv, { flags });
@@ -126,18 +158,20 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
   const noOpen = flags.has('--no-open') || flags.has('--no-browser') || flags.has('--no-browser-open');
   const refreshSelectedSource = flags.has('--if-source-stale');
+  const retire = flags.has('--retire');
 
   if (wantsHelpFlag || !action || action === 'help') {
     printResult({
       json,
-      data: { ok: true, stackName, commands: ['start', 'stop', 'restart', 'status'], flags: ['--identity=<name>', '--runtime=source'] },
+      data: { ok: true, stackName, commands: ['start', 'stop', 'restart', 'status'], flags: ['--identity=<name>', '--runtime=source', '--retire'] },
       text: [
         banner('stack daemon', { subtitle: `Manage the happier-cli daemon for stack ${cyan(stackName || 'main')}.` }),
         '',
         sectionTitle('usage:'),
         `  ${cyan('hstack stack daemon')} <name> status [--identity=<name>] [--json]`,
         `  ${cyan('hstack stack daemon')} <name> start [--identity=<name>] [--json]`,
-        `  ${cyan('hstack stack daemon')} <name> stop [--identity=<name>] [--json]`,
+        `  ${cyan('hstack stack daemon')} <name> stop [--identity=<name>] [--retire] [--json]`,
+        '  --retire ends hosted Sessions before shutdown and requires a named identity.',
         `  ${cyan('hstack stack daemon')} <name> restart [--runtime=source] [--identity=<name>] [--json]`,
         '  Commands follow the observed daemon host. Source start and restart build current daemon/plugin source and preserve Session runners without restarting the server or UI.',
         '',
@@ -163,7 +197,11 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
     process.exit(1);
   }
 
-  const res = await withStackEnv({
+  const retirementError = retire && (action !== 'stop' ? 'retire_requires_stop'
+    : identity === 'default' && 'retire_requires_named_identity');
+  const res = retirementError
+    ? { ok: false, retired: false, error: retirementError, action, cliIdentity: identity }
+    : await withStackEnv({
     stackName,
     includeRuntimeRelay: true,
     extraEnv: {
@@ -177,25 +215,49 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
         const { config } = await loadDevTargetsConfig({ stackName, env });
         const placed = resolveObservedDevTargetService({ config, runtimeState, service: 'daemon' });
         if (placed) {
-          await runRemoteStackOperation({ rootDir, stackName, placed, operation: 'daemon', passthrough: argv, env });
-          return { delegated: true };
+          const exitCode = await runRemoteStackOperation({ rootDir, stackName, placed, operation: 'daemon',
+            passthrough: argv, env, relayResult: retire });
+          return { delegated: true, exitCode };
         }
       }
+      const resolveContext = commandArgv => resolveStackDaemonCommandContext({
+        rootDir, stackName, env, identity, argv: commandArgv, activeRuntimeState: runtimeState,
+      });
+      const context = await resolveContext(argv);
       const {
         cliBin,
         cliEntrypoint,
         cliNodeEntrypoint,
         cliCommand,
         cliCommandArgs,
-        runtimeProvenance,
         cliHomeDir,
         runtimePath,
         internalServerUrl,
         publicServerUrl,
         envForIdentity,
         scopedEnvForIdentity,
-        sourceRuntimeLaunchUpdate,
-      } = await resolveStackDaemonCommandContext({ rootDir, stackName, env, identity, argv, activeRuntimeState: runtimeState });
+      } = context;
+
+      if (retire) {
+        const { retireDaemonIdentity } = await import('./retire_daemon_identity.mjs');
+        const outcome = await retireDaemonIdentity({
+          cliHomeDir, internalServerUrl, stackName, env: envForIdentity, identity, runtimePath,
+          startIdentity: async () => {
+            try {
+              const startContext = await resolveContext(['start', ...argv.filter(arg => arg !== 'stop' && arg !== '--retire')]);
+              const started = await startStackDaemonIdentity({ context: startContext, stackName, identity,
+                forRetirement: true });
+              return started?.ok === false
+                ? { ok: false, error: 'daemon_start_failed', reason: redactFailureDiagnostic(started.reason, env) }
+                : { ok: true };
+            } catch (error) {
+              return { ok: false, error: 'daemon_start_failed',
+                reason: error?.code ?? redactFailureDiagnostic(error?.message, env) };
+            }
+          },
+        });
+        return { action, cliIdentity: identity, cliHomeDir, ...outcome };
+      }
 
       if (action === 'start' || action === 'restart') {
         // UX: if this identity is not authenticated yet and we're in a real TTY, offer to run the
@@ -246,30 +308,8 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           }
         }
 
-        if (!refreshSelectedSource) {
-          await recordStackRuntimeDaemonDesiredState(runtimePath, 'running', { cliIdentity: identity });
-        }
-        const startResult = await startLocalDaemonWithAuth({
-          cliBin,
-          cliEntrypoint,
-          cliNodeEntrypoint,
-          cliCommand,
-          cliCommandArgs,
-          cliHomeDir,
-          internalServerUrl,
-          publicServerUrl,
-          runtimeStatePath: runtimePath,
-          isShuttingDown: () => false,
-          forceRestart: action === 'restart' || Boolean(sourceRuntimeLaunchUpdate),
-          includeStatus: true,
-          env: envForIdentity,
-          stackName,
-          cliIdentity: identity,
-          ...runtimeProvenance,
-          sourceRuntimeLaunchUpdate,
-          preserveSessionsOnRestart: Boolean(sourceRuntimeLaunchUpdate),
-          refreshSelectedSource,
-        });
+        const startResult = await startStackDaemonIdentity({ context, stackName, identity,
+          restart: action === 'restart', refreshSelectedSource });
         if (startResult?.ok === false) {
           return {
             ok: false,
@@ -349,7 +389,10 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
     },
   });
 
-  if (res?.delegated) return;
+  if (res?.delegated) {
+    if (res.exitCode) process.exitCode = res.exitCode;
+    return;
+  }
 
   if (res?.ok === false && emitResult) process.exitCode = 1;
 
@@ -357,6 +400,14 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
 
   if (json && emitResult) {
     printResult({ json, data: { stackName, ...res } });
+    return;
+  }
+
+  const sessionLines = (res?.sessionResults ?? []).map(({ sessionId, result }) =>
+    `  ${sessionId}: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+  if (res?.retired === false) {
+    const detail = res.reason ? `: ${res.reason}` : res.httpStatus ? ` (HTTP ${res.httpStatus})` : '';
+    console.error([`[stack] Retirement incomplete (${res.error})${detail}`, ...sessionLines].join('\n'));
     return;
   }
 
@@ -368,7 +419,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
   if (res?.status) {
     console.log('');
     console.log(sectionTitle('Daemon'));
-    console.log(res.status);
+    console.log([res.status, ...sessionLines].join('\n'));
     return;
   }
 

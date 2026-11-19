@@ -7,7 +7,7 @@ import { resolveDevTargetMutagenRuntime, resolveDevTargetSshConfigFile } from '.
 import { flushDevTargetSync, runDevTargetControlProcess } from '../utils/dev_targets/sync_project.mjs';
 import { buildRemoteRuntimeSnapshotProbeCommand, buildRemoteStackOperationCommand, buildSshWorkerArgs } from '../utils/dev_targets/remote_commands.mjs';
 import { recordStackRuntimeUpdate } from '../utils/stack/runtime_state.mjs';
-import { formatFailureDiagnostic } from '../utils/proc/proc.mjs';
+import { formatFailureDiagnostic, redactFailureDiagnostic } from '../utils/proc/proc.mjs';
 import { parseArgs } from '../utils/cli/args.mjs';
 import { parseCliIdentityOrThrow } from '../utils/stack/cli_identities.mjs';
 
@@ -36,7 +36,7 @@ export async function runRemoteStackCommand({ target, stackName, remoteCommand, 
 }
 
 /** Reuse the transport, freshness barrier and retained Stack scope for narrow commands. */
-export async function runRemoteStackOperation({ rootDir, stackName, placed, operation, passthrough, env },
+export async function runRemoteStackOperation({ rootDir, stackName, placed, operation, passthrough, env, relayResult = false },
   { runProcess = runDevTargetControlProcess } = {}) {
   const { target, runtimeMode } = placed;
   const { baseDir } = resolveStackEnvPath(stackName, env);
@@ -46,9 +46,15 @@ export async function runRemoteStackOperation({ rootDir, stackName, placed, oper
   const sshArgs = configFile ? ['-F', configFile] : [];
   const result = await runProcess({ command: 'ssh', env,
     args: buildSshWorkerArgs(target, {
-      remoteCommand: buildRemoteStackOperationCommand(target, { stackName, runtimeMode, operation, passthrough }),
+      remoteCommand: buildRemoteStackOperationCommand(target, { stackName, runtimeMode, operation, passthrough, quiet: relayResult }),
       sshArgs,
     }) });
+  if (relayResult) {
+    const diagnostics = redactFailureDiagnostic(result.err, env);
+    if (result.out) process.stdout.write(result.out);
+    if (diagnostics) process.stderr.write(diagnostics + '\n');
+    return result.code ?? 1;
+  }
   if (result.code !== 0) throw new Error(`[stack] remote ${operation} failed (code=${result.code})`
     + formatFailureDiagnostic({ out: result.out, err: result.err, env }));
   const updatesDefaultDaemon = operation === 'daemon'

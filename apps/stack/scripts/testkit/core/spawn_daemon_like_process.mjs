@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -37,6 +37,7 @@ export async function startDaemonLikeProcess({
   startedWithCliVersion = 'test',
   controlToken = DEFAULT_CONTROL_TOKEN,
   distClosureFingerprint = null,
+  sessionDrainFixture = null,
 } = {}) {
   const paths = normalizeStatePaths(statePaths);
   const admittedFingerprint = normalizeFingerprint(distClosureFingerprint);
@@ -62,6 +63,21 @@ export async function startDaemonLikeProcess({
       return;
     }
     if (req.method === 'POST' && req.url === '/stop' && authenticated) {
+      if (sessionDrainFixture) {
+        let raw = '';
+        req.setEncoding('utf8');
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+          const body = JSON.parse(raw || '{}');
+          appendFileSync(sessionDrainFixture.log, JSON.stringify(body) + '\n');
+          const result = body.stopSessions === true
+            ? sessionDrainFixture.result : { status: 'stopping' };
+          if (result === null || result.status === 'stopping') res.once('finish', () => server.close());
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(result === null ? '' : JSON.stringify(result));
+        });
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ status: 'stopping' }));
       res.once('finish', () => server.close());
@@ -181,6 +197,7 @@ async function runAsDaemonFixtureProcess() {
     httpPort: process.env[HTTP_PORT_ENV],
     startedWithCliVersion: process.env[CLI_VERSION_ENV],
     distClosureFingerprint: process.env[DIST_CLOSURE_FINGERPRINT_ENV],
+    sessionDrainFixture: JSON.parse(process.env.HAPPIER_TEST_SESSION_DRAIN_FIXTURE || 'null'),
   });
   const shutdown = () => {
     server.close(() => process.exit(0));

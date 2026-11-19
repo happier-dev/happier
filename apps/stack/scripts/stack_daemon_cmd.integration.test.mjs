@@ -15,6 +15,7 @@ import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { createStackHappierCliCommandFixture } from './testkit/stack_happier_cli_command_testkit.mjs';
 import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
 import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
+import { recordStackRuntimeDaemonDesiredState } from './utils/stack/runtime_daemon_state.mjs';
 import { resolveDevTargetMutagenRuntime } from './utils/dev_targets/mutagen_runtime.mjs';
 import { resolveMutagenSessionName } from './utils/dev_targets/mutagen_project.mjs';
 import { sanitizeStackTestRunnerEnv } from './utils/test/test_env.mjs';
@@ -80,6 +81,16 @@ test(`stack daemon ${action} reaches the observed remote daemon without local la
     '--runtime=source', '--identity=account-b', '--json'], { env });
   assert.notEqual(failed.code, 0, 'a remote daemon failure must fail the public command');
   assert.match(failed.stderr, /remote daemon failed \(code=7\)/);
+  if (action === 'status') {
+    const refusal = { ok: false, retired: false, error: 'session_cleanup_incomplete', sessionResults: [
+      { sessionId: 'session-b', result: { status: 'incomplete', reason: 'runner_exit_timeout' } },
+    ] };
+    await writeFile(join(bin, 'ssh'), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(refusal)}'\nexit 1\n`);
+    const retire = await runHstack(['stack', 'daemon', stackName, 'stop',
+      '--identity=account-b', '--retire', '--json'], { env });
+    assert.equal(retire.code, 1);
+    assert.deepEqual(JSON.parse(retire.stdout), refusal);
+  }
 });
 }
 
@@ -159,6 +170,14 @@ if (args[0] !== 'daemon') {
 const sub = args[1] || '';
 if (sub === 'stop') {
   append('stop');
+  if (process.env.HAPPIER_TEST_SESSION_DRAIN_FIXTURE && existsSync(state)) {
+    const { httpPort, controlToken } = JSON.parse(readFileSync(state, 'utf8'));
+    await fetch('http://127.0.0.1:' + httpPort + '/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-happier-daemon-token': controlToken },
+      body: JSON.stringify(args.includes('--kill-sessions') ? { stopSessions: true } : {}),
+    });
+  }
   if (existsSync(state)) {
     try {
       const pid = Number(JSON.parse(readFileSync(state, 'utf-8')).pid);
@@ -550,6 +569,75 @@ test('hstack stack daemon <name> start/stop with --identity uses an isolated cli
   const logTextAfter = await readLogText(logPath);
   assert.ok(logTextAfter.includes('stop'), `expected stub daemon stop to be called for identity\n${logTextAfter}`);
 });
+
+const stoppedSession = { sessionId: 'session-a', result: { status: 'stopped' } };
+for (const { name, running, retire, reply, expectedCode, expectedError } of [
+  { name: 'plain stop preserves Sessions', running: true, retire: false, expectedCode: 0 },
+  { name: 'retires a running identity', running: true, retire: true, expectedCode: 0,
+    reply: { status: 'stopping', sessionResults: [stoppedSession] } },
+  { name: 'recovers an offline identity before retiring', running: false, retire: true, expectedCode: 0,
+    reply: { status: 'stopping', sessionResults: [stoppedSession] } },
+  { name: 'preserves the daemon on incomplete retirement', running: true, retire: true, expectedCode: 1,
+    expectedError: 'session_cleanup_incomplete',
+    reply: { status: 'session_cleanup_incomplete', sessionResults: [
+      stoppedSession,
+      { sessionId: 'session-b', result: { status: 'incomplete', reason: 'runner_exit_timeout' } },
+    ] } },
+  { name: 'requires an explicit drain result', running: true, retire: true, expectedCode: 1,
+    expectedError: 'product_result_missing', reply: { status: 'stopping' } },
+  { name: 'rejects an empty successful product response', running: true, retire: true, expectedCode: 1,
+    expectedError: 'product_result_missing', reply: null },
+]) {
+  test(`stack daemon retirement: ${name}`, async (t) => {
+    const stubCli = buildStubHappyCliScript();
+    const fixture = await createStackHappierCliCommandFixture(t, {
+      prefix: 'hstack-daemon-session-drain-',
+      distIndexScript: stubCli.trimStart(),
+    });
+    const identity = 'account-b';
+    const identityHome = join(fixture.storageDir, fixture.stackName, 'cli-identities', identity);
+    const log = join(identityHome, 'daemon-stop-requests.jsonl');
+    const runtimePath = join(fixture.storageDir, fixture.stackName, 'stack.runtime.json');
+    const cliDir = fixture.path('retained-source');
+    const entrypoint = join(cliDir, 'happier.mjs');
+    await mkdir(cliDir);
+    await writeFile(entrypoint, stubCli);
+    await recordStackRuntimeStart(runtimePath, {
+      stackName: fixture.stackName, ownerPid: process.pid, sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+    });
+    await writeDummyAuth({ cliHomeDir: identityHome });
+    const env = {
+      ...fixture.baseEnv,
+      HAPPIER_TEST_SESSION_DRAIN_FIXTURE: JSON.stringify({ log, result: reply }),
+    };
+    registerDaemonCleanup(t, { env, stackName: fixture.stackName, identity });
+    const command = (action, ...options) => runHstack(
+      ['stack', 'daemon', fixture.stackName, action, '--source', `--identity=${identity}`, '--json', ...options], { env },
+    );
+    const statePath = join(identityHome, 'daemon.state.json');
+    if (running) {
+      assertExitOk(await command('start'), 'start fixture identity');
+    } else {
+      await recordStackRuntimeDaemonDesiredState(runtimePath, 'stopped', { cliIdentity: identity });
+      assert.equal(existsSync(statePath), false);
+    }
+
+    const result = await command('stop', ...(retire ? ['--retire'] : []));
+
+    assert.equal(result.code, expectedCode, result.stdout + result.stderr);
+    const requests = (await readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(requests, [retire ? { stopSessions: true } : {}]);
+    const outcome = JSON.parse(result.stdout);
+    assert.equal(outcome.ok, expectedCode === 0);
+    assert.equal(outcome.retired, retire ? expectedCode === 0 : undefined);
+    assert.equal(outcome.error, expectedError);
+    assert.deepEqual(outcome.sessionResults, reply?.sessionResults);
+    if (expectedError === 'session_cleanup_incomplete') {
+      const { pid } = JSON.parse(await readFile(statePath, 'utf8'));
+      assert.doesNotThrow(() => process.kill(pid, 0), 'incomplete cleanup must leave the daemon running');
+    }
+  });
+}
 
 test('hstack stack daemon <name> start with --identity accepts stack-stable server-scoped credentials', async (t) => {
   const fixture = await createDaemonFixture(t, {

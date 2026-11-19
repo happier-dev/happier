@@ -1993,10 +1993,12 @@ export async function startLocalDaemonWithAuth({
   preserveSessionsOnRestart = false,
   refreshSelectedSource = false,
   allowSignInRequired = false,
+  progressToStderr = false,
   // Set when this runner's server readiness already proved the live server publishes this stack's
   // own recorded Home identity; otherwise profile reconciliation proves it for this CLI identity.
   homeIdentityRecordPath = null,
 }) {
+  const logProgress = progressToStderr ? console.error : console.log;
   const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
   if (readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity }) === 'stopped') {
     return { ok: true, started: false, reason: 'daemon-stopped-by-owner' };
@@ -2510,7 +2512,7 @@ export async function startLocalDaemonWithAuth({
   const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
   const mirrored = await ensureServerScopedCredentialsFromLegacy({ cliHomeDir, internalServerUrl, env: daemonEnv });
   if (mirrored.copied) {
-    console.log(`[local] migrated daemon credentials to server profile: ${mirrored.source} -> ${mirrored.target}`);
+    logProgress(`[local] migrated daemon credentials to server profile: ${mirrored.source} -> ${mirrored.target}`);
   }
   // Repair: if the active server-scoped access key is stale/unauthorized (common when switching server scope ids),
   // copy a valid fallback credential (url-hash scoped or legacy) into the active server scope before daemon start.
@@ -2531,7 +2533,7 @@ export async function startLocalDaemonWithAuth({
       timeoutMs: credentialValidateTimeoutMs,
     });
     if (credentialRepair.kind === 'repaired') {
-      console.log(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
+      logProgress(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
     }
   } catch {
     // best-effort only; daemon start can still proceed and surface auth errors if any remain.
@@ -2570,7 +2572,7 @@ export async function startLocalDaemonWithAuth({
       throw new Error(`Failed to auto re-seed daemon credentials (${reseedResult?.reason ?? 'unknown'})`);
     }
 
-    console.log(`[local] auth re-seeded from ${reseedResult.seed} before daemon start...`);
+    logProgress(`[local] auth re-seeded from ${reseedResult.seed} before daemon start...`);
     credentialRepair = await ensureActiveAccessKeyValid({
       cliHomeDir,
       serverUrl: internalServerUrl,
@@ -2578,7 +2580,7 @@ export async function startLocalDaemonWithAuth({
       timeoutMs: credentialValidateTimeoutMs,
     });
     if (credentialRepair.kind === 'repaired') {
-      console.log(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
+      logProgress(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
     }
     if (credentialRepair.kind === 'unresolved' && credentialRepair.status === 401) {
       logInvalidDaemonCredentialsGuidance({
@@ -2600,7 +2602,7 @@ export async function startLocalDaemonWithAuth({
       credentialRepair?.kind === 'repaired'
         ? (decodeJwtPayloadUnsafe(readAuthTokenFromCredentialFile(credentialRepair.sourcePath) ?? '')?.sub ?? null)
         : null;
-    console.log(
+    logProgress(
       formatDaemonAuthScopeDiagnostic({
         activeServerId: daemonEnv.HAPPIER_ACTIVE_SERVER_ID,
         activeCredentialPath: credentialPaths.serverScopedPath,
@@ -2695,12 +2697,12 @@ export async function startLocalDaemonWithAuth({
         console.warn(`[local] daemon is running with stale runtime; restarting (pid=${pid}).\n[local] ${distRestartReason}`);
       } else {
         // eslint-disable-next-line no-console
-        console.log(`[local] daemon already running for stack home (pid=${pid})`);
+        logProgress(`[local] daemon already running for stack home (pid=${pid})`);
         if (isTui) {
         // Emit a daemon-labeled line so `hstack tui` can route it to the daemon pane.
         // (The daemon itself logs to cliHomeDir/logs/*-daemon.log.)
         // eslint-disable-next-line no-console
-          console.log(`[daemon] already running (pid=${pid})`);
+          logProgress(`[daemon] already running (pid=${pid})`);
         }
         await syncRuntimeDaemonState({ runtimeDaemonPid: pid, daemonDistFingerprint: currentDistFingerprint });
         return { started: false };
@@ -2914,13 +2916,13 @@ export async function startLocalDaemonWithAuth({
       if (excerptIndicatesInstalledServiceConflict(first.startOutput) || excerptIndicatesInstalledServiceConflict(first.excerpt)) {
         // Keep the TUI alive so the daemon pane can continue showing the ownership guidance
         // that the start command already streamed.
-        console.log('[daemon] installed background service conflict detected; keeping TUI running.');
+        logProgress('[daemon] installed background service conflict detected; keeping TUI running.');
       } else {
         const noticeLine = extractFirstDaemonStartNoticeLine(first.startOutput);
         if (noticeLine) {
-          console.log(`[daemon] ${noticeLine}`);
+          logProgress(`[daemon] ${noticeLine}`);
         }
-        console.log('[daemon] daemon start failed before the relay came up; keeping TUI running.');
+        logProgress('[daemon] daemon start failed before the relay came up; keeping TUI running.');
       }
       return first;
     }
@@ -2962,7 +2964,7 @@ export async function startLocalDaemonWithAuth({
         return { started: false };
       }
 
-      console.log('[local] credentials detected, retrying daemon start...');
+      logProgress('[local] credentials detected, retrying daemon start...');
       const second = await startOnce();
       if (!second.ok) {
         if (second.excerpt) {
@@ -3005,7 +3007,7 @@ export async function startLocalDaemonWithAuth({
         throw new Error(`Failed to auto re-seed daemon credentials (${skippedReason})`);
       }
 
-      console.log(`[local] auth re-seeded from ${reseedResult.seed}, retrying daemon start...`);
+      logProgress(`[local] auth re-seeded from ${reseedResult.seed}, retrying daemon start...`);
       const second = await startOnce();
       if (!second.ok) {
         if (excerptIndicatesInvalidAuth(second.excerpt)) {

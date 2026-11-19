@@ -39,7 +39,7 @@ import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { coercePort } from '../server/port.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
 import { STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../server/listener_ownership.mjs';
-import { daemonControlPost, pingDaemon } from './daemonControlClient.mjs';
+import { pingDaemon, requestDaemonSessionDrain } from './daemonControlClient.mjs';
 import { createStackRuntimeCleanupIncompleteError } from './stop_failure.mjs';
 export { createStackRuntimeCleanupIncompleteError } from './stop_failure.mjs';
 
@@ -336,11 +336,10 @@ async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName
     return { ok: control.reason === 'missing_state' || control.reason === 'missing_http_port',
       skipped: true, reason: control.reason, stoppedSessionIds: [] };
   }
-  const { httpPort, controlToken } = control.state;
   // The daemon quiesces spawn admission and awaits its canonical session-stop
   // owner before acknowledging shutdown. A Stack-owned /list loop would race
   // new admissions and compete with that lifecycle owner.
-  const result = await daemonControlPost({ httpPort, path: '/stop', body: { stopSessions: true }, controlToken, timeoutMs: null });
+  const result = await requestDaemonSessionDrain(control);
   return {
     ok: result?.status === 'stopping',
     skipped: false,
