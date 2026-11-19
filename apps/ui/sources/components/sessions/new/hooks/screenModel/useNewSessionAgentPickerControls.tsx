@@ -38,6 +38,7 @@ import { useSessionAgentPickerControls } from '@/components/sessions/agentPicker
 import type { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 // The picker row is the form here: pressing the install glyph also opens the row.
 const openNoForm = () => {};
@@ -114,11 +115,10 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         });
         params.onRememberAgentPickerView?.(view);
     }, [params.onRememberAgentPickerView]);
-    const {
-        getEngineSelectionForTargetKey,
-        selectEngineSelection,
-        selectBackendTarget,
-    } = params.engineSelectionState;
+    const { getEngineSelectionForTargetKey } = params.engineSelectionState;
+    // Keep the row projection keyed on presented facts. Its actions still enter the current draft.
+    const selectEngineSelection = useEventCallback(params.engineSelectionState.selectEngineSelection);
+    const selectBackendTarget = useEventCallback(params.engineSelectionState.selectBackendTarget);
 
     const selectedBackendTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
 

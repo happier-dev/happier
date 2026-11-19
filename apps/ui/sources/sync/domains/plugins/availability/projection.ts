@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { BUNDLED_PLUGIN_UI_APP_DECLARATIONS } from './generatedBundledPluginUiArtifacts';
 
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability';
@@ -221,6 +222,25 @@ function useAvailabilityScopeRetirement(accountId: string | null, serverId: stri
 export function useActivePluginAccountUiProjectionInputs(): PluginAccountUiProjectionInputs | null {
     const scope = useActiveServerAccountScope();
     return usePluginAccountUiProjectionInputs(scope);
+}
+
+/** Installation membership for index presentation, independent of Machine and cursor observations. */
+export function usePluginAccountInstallationCensus(scope: ServerAccountScope | null, enabled: boolean) {
+    const read = useShallow(React.useCallback((): readonly [boolean, ...string[]] | null => {
+        if (!scope) return null;
+        const installed = readPluginAccountAvailability(scope).readInstalledPlugins();
+        return installed.kind === 'available'
+            ? [installed.completeness === 'complete', ...installed.plugins.map(plugin => plugin.pluginId)]
+            : null;
+    }, [scope]));
+    const subscribe = enabled && scope ? subscribeToReactProjection : noAvailabilitySubscription;
+    useAvailabilityScopeRetirement(scope?.accountId ?? null, scope?.serverId ?? null);
+    const census = React.useSyncExternalStore(subscribe, read, read);
+    return React.useMemo(() => {
+        if (!census) return null;
+        const [complete, ...pluginIds] = census;
+        return { pluginIds: new Set(pluginIds), complete };
+    }, [census]);
 }
 
 /** Exact Home consumers share Availability's descriptive projection and scope admission. */

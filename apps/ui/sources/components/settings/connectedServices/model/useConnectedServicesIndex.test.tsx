@@ -276,6 +276,27 @@ describe('Connected Services index purpose source admission', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('retains the Home setup model when Machine publications only advance plugin availability observation time', async () => {
+        const scope = runtime.accountScope;
+        if (!scope) throw new Error('The fixture requires an active Account scope');
+        const publish = (availabilityCursor: number, inventoryComplete: boolean) => replacePluginAccountAvailabilityProjection({
+            scope,
+            snapshot: { availabilityCursor, intentReads: [], materializations: [], snapshots: [], inventoryComplete },
+        });
+        await act(async () => publish(1, true));
+        const hook = await mount('cached', null);
+        try {
+            const seen = new Set([hook.getCurrent().indexModel]);
+            for (let cursor = 2; cursor <= 6; cursor++) {
+                await act(async () => publish(cursor, true));
+                seen.add(hook.getCurrent().indexModel);
+            }
+            expect(seen.size - 1).toBe(0);
+            await act(async () => publish(7, false));
+            expect(hook.getCurrent().indexModel).not.toBe([...seen][0]);
+        } finally { await hook.unmount(); }
+    });
+
     it('does no Agent sign-in receipt render work on account health changes and publishes changed purpose defaults', async () => {
         const scope = runtime.accountScope;
         if (!scope) throw new Error('The fixture requires an active Account scope');

@@ -20,7 +20,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
-import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { usePluginAccountInstallationCensus } from '@/sync/domains/plugins/availability/projection';
 import { buildProviderGatewayCollection, areProviderGatewayDeclarationsKnown,
     type ProviderGatewayCollectionRow } from '../../providers/collection/providerCollectionModel';
 import { chooseProviderGatewayContributionV1 } from '@/providers/connection/gatewayConfiguration';
@@ -60,16 +60,9 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
     /** A focused setup flow reads only its service before joining accounts, pools and labels. */
     serviceKey?: string }>) {
     const presented = useLayoutPresentationActive();
-    const pluginAvailability = useActivePluginAccountAvailabilityReader(undefined, { enabled: presented });
-    const pluginInstallationCensus = React.useMemo(() => {
-        const held = pluginAvailability?.readInstalledPlugins();
-        return held?.kind === 'available' ? {
-            pluginIds: new Set(held.plugins.map(plugin => plugin.pluginId)),
-            complete: held.completeness === 'complete',
-        } : null;
-    }, [pluginAvailability]);
     const { scope, targetSelection, appShellProjection, daemonAgentProjection, agentEntries, agentsKnown, agentUses }
         = useConnectedServicesAgentUses(options);
+    const pluginInstallationCensus = usePluginAccountInstallationCensus(scope, presented);
     // The Account catalog is the saved payload authority, independent of Machine admission.
     const gatewayCatalog = useProviderCatalog(options.gateways ? scope : null, { enabled: presented });
     // The last loaded catalog stays listed while it reloads; only a current one may add another.

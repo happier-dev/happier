@@ -135,6 +135,48 @@ function createPluginBackendEntry(
 }
 
 describe('useNewSessionAgentPickerControls', () => {
+    it('keeps picker rows across Machine-driven parent renders and dispatches to the current draft', async () => {
+        const previous = storage.getState();
+        const entry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const other = createBuiltInBackendEntry('codex', 'Codex', null);
+        const select = vi.fn();
+        const params = {
+            useProfiles: false, selectedProfileId: null, profileMap: new Map(),
+            resolvedBackendEntries: [entry, other], getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true, selectedBackendEntry: entry,
+            selectedBackendTargetKey: entry.backendTargetKey, setBackendTarget: vi.fn(),
+            modelMode: 'default' as const, setModelMode: vi.fn(), acpSessionModeId: null, setAcpSessionModeId: vi.fn(),
+            sessionConfigOptionOverrides: null, setSessionConfigOptionOverrides: vi.fn(),
+            selectedMachineId: null, capabilityServerId: 'server-1', selectedPath: '/repo', projectionCurrent: true,
+        };
+        const getEngineSelectionForTargetKey = () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} });
+        const hook = await renderHook(() => {
+            const machines = storage(state => state.machines);
+            return useActualNewSessionAgentPickerControls({
+                ...params,
+                engineSelectionState: {
+                    getEngineSelectionForTargetKey,
+                    selectBackendTarget: target => select(Object.keys(machines).length, target.backendTargetKey),
+                    selectEngineSelection: () => {},
+                },
+            });
+        });
+        try {
+            const offered = new Set([hook.getCurrent().agentPickerOptions]);
+            for (let index = 0; index < 5; index++) {
+                const machine = createMachineFixture({ id: `picker-unrelated-${index}` });
+                await act(async () => storage.setState(state => ({ machines: { ...state.machines, [machine.id]: machine } })));
+                offered.add(hook.getCurrent().agentPickerOptions);
+            }
+            await act(async () => hook.getCurrent().handleAgentPickerSelect(other.backendTargetKey));
+            expect(select).toHaveBeenLastCalledWith(Object.keys(previous.machines).length + 5, other.backendTargetKey);
+            expect(offered.size - 1).toBe(0);
+        } finally {
+            await hook.unmount();
+            storage.setState({ machines: previous.machines });
+        }
+    });
+
     it.each(['use', 'manage'] as const)('offers composer installs only with Manage access, starting at %s', async (initialRole) => {
         const previous = storage.getState();
         const entry = createBuiltInBackendEntry('claude', 'Claude', null);

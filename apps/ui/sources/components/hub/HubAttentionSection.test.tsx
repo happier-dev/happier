@@ -30,7 +30,9 @@ import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHub
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { loadEffectiveHomeViewState, updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
 import * as sessionListQueryRuntime from '@/sync/domains/session/listing/sessionListQueryRuntime';
-import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForTest } from '@/sync/domains/machines/reachability/machineReachability';
+import * as targetState from '@/sync/domains/machines/administration/targetState';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -151,7 +153,7 @@ function account(accountId: string, status: 'connected' | 'needs_reauth' | 'refr
         configurationRevision: null, configurationReady: true, scopes: [] });
 }
 
-async function renderSection(Section: React.ComponentType = HubAttentionSection) {
+async function renderSection(Section: React.ComponentType = HubAttentionSection, options: { presenceAnswered?: boolean } = {}) {
     await upsertServerProfile({ serverUrl: state.homeUrl });
     const declaredHome = await setServerProfileIdentityForUrl(state.homeUrl, `srv_attention_${caseNumber}`);
     if (!declaredHome) throw new Error('The attention fixture Home must exist');
@@ -167,13 +169,16 @@ async function renderSection(Section: React.ComponentType = HubAttentionSection)
     const home = connection.home;
     state.serverId = home.id;
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(home.id), accountId: 'attention-account' };
-    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now(), daemonStateVersion: 3,
+    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now(), presenceProtocolVersion: 1, daemonStateVersion: 3,
         metadata: { ...createMachineFixture().metadata!, displayName: 'MacBook Pro' } });
+    const presenceAnswered = options.presenceAnswered !== false;
+    if (presenceAnswered) publishMachineActivity(machine, machine, []);
     const target = { serverIdentityId: home.serverIdentityId!, machineId: machine.id };
     const seedAttentionState = () => storage.setState({ isDataReady: true, profile, profileScope: scope, settingsScope: scope,
         settings: { ...initialStorageState.settings, machineAdministrationTargetsLocalV1: {
             [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents]: target, [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins]: target } },
-        machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] },
+        machineRecordsByServerId: { [home.id]: { [machine.id]: machine } }, machineListStatusByServerId: { [home.id]: 'idle' } });
     seedAttentionState();
     if (state.unavailableServerIds.length > 0) {
         storage.setState({ machineListStatusByServerId: {
@@ -211,13 +216,14 @@ async function renderSection(Section: React.ComponentType = HubAttentionSection)
         ...Object.fromEntries(state.unavailableServerIds.map(serverId => [serverId, 'error' as const])),
     } });
     expect(lifetime.scope).toEqual(scope);
-    expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope: lifetime.scope }))
-        .toMatchObject({ machine: { id: machine.id }, serverId: home.id });
+    const executionTarget = resolveFreshMachineAdministrationExecutionTarget(target, { accountScope: lifetime.scope });
+    if (presenceAnswered) expect(executionTarget).toMatchObject({ machine: { id: machine.id }, serverId: home.id });
+    else expect(executionTarget).toBeNull();
     rpc.mockClear();
     // Home reads the app shell's one Inbox summary, as the routed page does under the navigator.
     const screen = await renderScreen(<InboxSummaryProvider><Section /></InboxSummaryProvider>);
     await flushHookEffects({ cycles: 3 });
-    if (state.loginState === 'logged_out') await vi.waitFor(() =>
+    if (presenceAnswered && state.loginState === 'logged_out') await vi.waitFor(() =>
         expect(screen.findByTestId('settings-overview-attention.agent:claude.action')).not.toBeNull());
     // Reading Home's attention is cache-only: neither the catalog nor the inventory may probe.
     expect(rpc).not.toHaveBeenCalled();
@@ -228,6 +234,32 @@ async function renderSection(Section: React.ComponentType = HubAttentionSection)
 }
 
 describe('HubAttentionSection', () => {
+    it('keeps the selected Agent sign-in row without walking other Machine choices', async () => {
+        state.loginState = 'logged_out';
+        state.profile = { connectedServicesV2: [], connectedAccountsV4: [] };
+        const { screen } = await renderSection();
+        const seed = storage.getState();
+        const selected = seed.machines['machine-1']!;
+        const build = vi.spyOn(targetState, 'buildMachineAdministrationCandidateInventoryRowsFromSnapshots');
+        try {
+            for (let index = 0; index < 5; index++) {
+                const other = createMachineFixture({ id: 'unrelated-attention-machine', active: false,
+                    updatedAt: index + 1, metadataVersion: index + 1,
+                    metadata: { ...selected.metadata!, displayName: `Other ${index}` } });
+                await act(async () => storage.setState({
+                    machines: { ...seed.machines, [other.id]: other },
+                    machineListByServerId: { ...seed.machineListByServerId, [state.serverId]: [selected, other] },
+                    machineRecordsByServerId: { ...seed.machineRecordsByServerId,
+                        [state.serverId]: { [selected.id]: selected, [other.id]: other } },
+                }));
+            }
+            expect(screen.findByTestId('settings-overview-attention.agent:claude.action')).not.toBeNull();
+            const fleetDerivations = build.mock.calls.filter(([{ snapshots }]) => snapshots.some(snapshot =>
+                snapshot.kind === 'resolved' && snapshot.machines.some(machine => machine.id === 'unrelated-attention-machine')));
+            expect(fleetDerivations).toHaveLength(0);
+        } finally { build.mockRestore(); await screen.unmount(); }
+    });
+
     it('does not serialize sign-in facts on health arrivals and still shows a new sign-in need', async () => {
         state.loginState = 'logged_in';
         state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-ok', 'connected')] };
@@ -250,12 +282,7 @@ describe('HubAttentionSection', () => {
     it.each([['Home', HubAttentionSection], ['Settings', SettingsAttentionSection]] as const)('keeps %s reconnect in place when its selected Agents machine has unknown presence', async (_name, Section) => {
         state.loginState = 'logged_out';
         state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-1', 'needs_reauth')] };
-        const { screen, push } = await renderSection(Section);
-        const scope = storage.getState().settingsScope;
-        if (!scope) throw new Error('The attention fixture Account must be restored');
-
-        await act(async () => { withdrawMachinePresenceForScope(scope); });
-        await flushHookEffects({ cycles: 2 });
+        const { screen, push } = await renderSection(Section, { presenceAnswered: false });
         expect(screen.findAll(node => node.props?.testID === 'settings-overview-attention.agent:claude.action'))
             .toHaveLength(0);
         const serviceAction = screen.findByTestId('settings-overview-attention.service:happier.example/subscription/acct-1.action');
@@ -273,7 +300,9 @@ describe('HubAttentionSection', () => {
         }));
         expect(push).not.toHaveBeenCalled();
 
-        await act(async () => { captureMachinePresenceObservation(scope)(['machine-1']); });
+        await act(async () => storage.getState().applyMachineActivityUpdates(
+            [{ id: 'machine-1', active: true, activeAt: Date.now() + 1 }], { sourceServerId: state.serverId },
+        ));
         await flushHookEffects({ cycles: 2 });
         expect(screen.findByTestId('settings-overview-attention.agent:claude.action')).not.toBeNull();
         expect(rpc).not.toHaveBeenCalled();

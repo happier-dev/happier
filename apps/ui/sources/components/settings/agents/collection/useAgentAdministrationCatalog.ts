@@ -3,7 +3,7 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useMachineDisplayNamesById, useSetting } from '@/sync/domains/state/storage';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
@@ -92,11 +92,15 @@ function machineAdministrationTargetsEqualOrBothNull(
  * The machine the Agents pages manage. Agents show a machine's last known state while it is away,
  * so an offline machine stays choosable; automatic selection still takes only a sole live one.
  */
-export function useAgentsAdministrationTargetSelection(route?: MachineAdministrationTargetRouteParamsV1): MachineAdministrationTargetSelectionV1 {
+export function useAgentsAdministrationTargetSelection(
+    route?: MachineAdministrationTargetRouteParamsV1,
+    rows: 'choices' | 'selected' = 'choices',
+): MachineAdministrationTargetSelectionV1 {
     const initialTarget = React.useMemo(() => route ? readMachineAdministrationTargetRouteParams(route) : null,
         [route?.machineId, route?.serverIdentityId]);
     return useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents, {
         explicitSelection: 'lastKnown',
+        rows,
         ...(route ? { initialTarget } : {}),
     });
 }
@@ -123,7 +127,10 @@ export function resolveAgentsMachineCandidateAvailability(candidate: MachineAdmi
  * The selected machine as the Agents pages address it: live when it can run operations, otherwise
  * the last known scope whose cached projection is still worth showing.
  */
-export function useAgentsMachineScope(targetSelection: MachineAdministrationTargetSelectionV1) {
+export function useAgentsMachineScope(
+    targetSelection: MachineAdministrationTargetSelectionV1,
+    rows: 'choices' | 'selected' = 'choices',
+) {
     const executionTarget = React.useMemo(() => {
         const selectedTarget = targetSelection.selectedTarget;
         const resolvedTarget = targetSelection.resolveExecutionTarget();
@@ -145,11 +152,12 @@ export function useAgentsMachineScope(targetSelection: MachineAdministrationTarg
     // Named as the picker chip names it: same-name machines of one Home carry their disambiguator.
     // The label only appears in copy ("On {machine}", "Install on {machine}"), so a machine whose name
     // is still loading reads "this machine" rather than its placeholder title.
-    const machineLabel = machine && serverId
-        ? getMachineSentenceName(machine, resolveMachineDisplayNames(targetSelection.pickerRows
-            .filter((row) => row.serverId === serverId)
-            .map((row) => row.machine)).get(machine.id))
-        : machine ? getMachineSentenceName(machine) : null;
+    const nameIds = React.useMemo(() => rows === 'selected' && machineId ? [machineId] : [], [machineId, rows]);
+    const names = useMachineDisplayNamesById(nameIds, { serverId: serverId ?? undefined, presented: rows === 'selected' });
+    const displayName = rows === 'selected' || !serverId || !machine ? names[machineId ?? '']
+        : resolveMachineDisplayNames(targetSelection.pickerRows.filter(row => row.serverId === serverId).map(row => row.machine))
+            .get(machine.id);
+    const machineLabel = machine ? getMachineSentenceName(machine, displayName) : null;
     return {
         executionTarget,
         /** Presence comes from the canonical target state, not execution admission. */
@@ -180,12 +188,15 @@ export type AgentAdministrationCatalog = Readonly<{
 export function useAgentAdministrationCatalog(options?: Readonly<{
     /** `false`: read the machine's cached projection only, never load it (a summary elsewhere). */
     loadProjection?: boolean;
+    /** Read the selected Machine for a summary that has no chooser. */
+    targetRows?: 'selected';
 }>): AgentAdministrationCatalog {
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const retainedSelection = React.useRef<MachineAdministrationTargetSelectionV1 | undefined>(undefined);
-    const targetSelection = retainCatalogTargetSelection(retainedSelection.current, useAgentsAdministrationTargetSelection());
+    const liveSelection = useAgentsAdministrationTargetSelection(undefined, options?.targetRows);
+    const targetSelection = retainCatalogTargetSelection(retainedSelection.current, liveSelection);
     retainedSelection.current = targetSelection;
-    const scope = useAgentsMachineScope(targetSelection);
+    const scope = useAgentsMachineScope(targetSelection, options?.targetRows);
     const { snapshot: acpCatalog } = useAcpCatalogForServer(scope.projectionScope?.serverId
         ?? (targetSelection.selectedTarget === null || targetSelection.selectedTargetServerMatchesActiveAccount
             ? undefined : null));

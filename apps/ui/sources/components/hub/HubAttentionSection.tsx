@@ -83,7 +83,7 @@ function useInboxNeedingAttention(): AttentionItem[] {
 function useAgentsNeedingSignIn(): AttentionItem[] {
     const router = useRouter();
     const { theme } = useUnistyles();
-    const catalog = useAgentAdministrationCatalog({ loadProjection: false });
+    const catalog = useAgentAdministrationCatalog({ loadProjection: false, targetRows: 'selected' });
     const { collection } = useAgentCollection(catalog, '', { detect: false });
     const machine = catalog.executionTarget?.machine ?? null;
     const serverId = catalog.executionTarget?.serverId ?? null;

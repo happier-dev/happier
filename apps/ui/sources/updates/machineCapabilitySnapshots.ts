@@ -48,39 +48,45 @@ export function useMachinesCapabilitySnapshots(
     const active = useActiveServerSnapshot(!serverId);
     const effectiveServerId = serverId || active.serverId;
     const machineIdsToRead = React.useMemo(() => key ? key.split('\u0000') : [], [key]);
-    const lastRef = React.useRef<ReadonlyMap<string, MachineCapabilitiesSnapshot | null>>(new Map());
     const scopeKey = JSON.stringify([effectiveServerId, accountId ?? null]);
-    const lastScopeRef = React.useRef(scopeKey);
-    // The cache's own objects last compared, so an unchanged read never walks its facts again.
-    const comparedRef = React.useRef(new Map<string, MachineCapabilitiesSnapshot>());
-    const subscribe = React.useCallback((listener: () => void) => {
-        const unsubscribes = machineIdsToRead.map(machineId => subscribeMachineCapabilitiesCacheState(machineId, effectiveServerId,
-            MACHINE_UPDATE_FACTS_CACHE_SALT, listener, accountId));
-        return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-    }, [accountId, effectiveServerId, machineIdsToRead]);
-    const getSnapshot = React.useCallback(() => {
-        const previous = lastRef.current;
-        let changed = previous.size !== machineIdsToRead.length;
-        const next = new Map<string, MachineCapabilitiesSnapshot | null>();
-        for (const id of machineIdsToRead) {
-            const read = getMachineCapabilitiesSnapshot(id, effectiveServerId,
-                MACHINE_UPDATE_FACTS_CACHE_SALT, accountId);
-            const retained = lastScopeRef.current === scopeKey ? previous.get(id) ?? null : null;
-            // A fresh detect that answers with the same facts is not news to the Updates summary.
-            let snapshot = read === null ? retained : read;
-            if (read !== null && retained !== null && read !== retained && comparedRef.current.get(id) !== read) {
-                snapshot = ignoreCheckTimes ? (areSnapshotFactsEqual(retained, read) ? retained : read) : retainIfEqual(retained, read);
-                comparedRef.current.set(id, read);
-            } else if (read !== null && retained !== null && comparedRef.current.get(id) === read) {
-                snapshot = retained;
+    type Snapshot = ReadonlyMap<string, MachineCapabilitiesSnapshot | null>;
+    const committed = React.useRef<{ scopeKey: string; getSnapshot: () => Snapshot } | null>(null);
+    const { getSnapshot, subscribe } = React.useMemo(() => {
+        const previous = committed.current?.scopeKey === scopeKey ? committed.current.getSnapshot() : null;
+        let current: Snapshot = previous && previous.size === machineIdsToRead.length && machineIdsToRead.every(id => previous.has(id))
+            ? previous
+            : new Map(machineIdsToRead.map(id => [id, previous?.get(id) ?? null]));
+        const refreshMembers = (ids: readonly string[]) => {
+            let next: Map<string, MachineCapabilitiesSnapshot | null> | undefined;
+            for (const id of ids) {
+                const read = getMachineCapabilitiesSnapshot(id, effectiveServerId, MACHINE_UPDATE_FACTS_CACHE_SALT, accountId);
+                const retained = current.get(id) ?? null;
+                // Registry invalidation can withdraw the cached entry while we still have its last facts.
+                if (read === null || read === retained) continue;
+                const snapshot = retained && ignoreCheckTimes
+                    ? (areSnapshotFactsEqual(retained, read) ? retained : read)
+                    : retainIfEqual(retained ?? undefined, read);
+                if (snapshot !== retained) (next ??= new Map(current)).set(id, snapshot);
             }
-            next.set(id, snapshot);
-            if (previous.get(id) !== snapshot) changed = true;
-        }
-        if (!changed) return previous;
-        lastScopeRef.current = scopeKey;
-        lastRef.current = next;
-        return next;
+            if (!next) return false;
+            current = next;
+            return true;
+        };
+        refreshMembers(machineIdsToRead);
+        const getSnapshot = () => current;
+        return {
+            getSnapshot,
+            subscribe(listener: () => void) {
+                const unsubscribes = machineIdsToRead.map(id => subscribeMachineCapabilitiesCacheState(
+                    id, effectiveServerId, MACHINE_UPDATE_FACTS_CACHE_SALT,
+                    () => { if (refreshMembers([id])) listener(); }, accountId,
+                ));
+                committed.current = { scopeKey, getSnapshot };
+                // Catch cache writes between the initial read and listener installation.
+                if (refreshMembers(machineIdsToRead)) listener();
+                return () => unsubscribes.forEach(unsubscribe => unsubscribe());
+            },
+        };
     }, [accountId, effectiveServerId, ignoreCheckTimes, machineIdsToRead, scopeKey]);
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

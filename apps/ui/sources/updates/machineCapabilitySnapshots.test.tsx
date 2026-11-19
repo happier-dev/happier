@@ -8,12 +8,43 @@ import * as serverProfiles from '@/sync/domains/server/serverProfiles';
 const network = await installSessionOpsNetworkBoundary();
 const { useMachinesCapabilitySnapshots } = await import('./machineCapabilitySnapshots');
 const { MACHINE_UPDATE_FACTS_CACHE_SALT } = await import('./machineUpdateFacts');
+const capabilities = await import('@/hooks/server/useMachineCapabilitiesCache');
+const { storage } = await import('@/sync/domains/state/storageStore');
 beforeEach(() => network.resetRequests());
 
 afterEach(() => standardCleanup());
 afterAll(() => network.dispose());
 
 describe('useMachinesCapabilitySnapshots', () => {
+    it('does no cache reads for unchanged members across Machine-driven parent renders', async () => {
+        const ids = Array.from({ length: 100 }, (_, index) => `summary-machine-${index}`);
+        const previous = storage.getState();
+        const read = vi.spyOn(capabilities, 'getMachineCapabilitiesSnapshot');
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders += 1;
+            storage(state => state.machineListStatusByServerId);
+            return useMachinesCapabilitySnapshots('perf-summary-home', ids, 'perf-summary-account', { ignoreCheckTimes: true });
+        });
+        try {
+            const mounted = renders;
+            const held = hook.getCurrent();
+            read.mockClear();
+            for (let index = 0; index < 5; index++) {
+                await act(async () => storage.setState(state => ({ machineListStatusByServerId: {
+                    ...state.machineListStatusByServerId, [`unrelated-home-${index}`]: 'idle',
+                } })));
+            }
+            expect(renders - mounted).toBe(5);
+            expect(hook.getCurrent()).toBe(held);
+            expect(read).toHaveBeenCalledTimes(0);
+        } finally {
+            await hook.unmount();
+            read.mockRestore();
+            storage.setState({ machineListStatusByServerId: previous.machineListStatusByServerId });
+        }
+    });
+
     it('does not resolve a Home again per unchanged capability snapshot read', async () => {
         const ids = Array.from({ length: 100 }, (_, index) => `perf-b3-${index}`);
         const hook = await renderHook(() => useMachinesCapabilitySnapshots('perf-b3-home', ids, 'perf-b3-account'));
