@@ -5,7 +5,7 @@ import type { OpenNewSessionOptions, OpenNewSessionRequest } from '../ui/index.j
 import type { SessionInputDeliveryOutcomeV1 } from './inputDelivery.js';
 
 /** Public diagnostic identifiers only; no exception messages or private details. */
-export type SessionInputLifecycleFailureV1 = Readonly<{ codes: string[]; requestId?: string }>;
+export type SessionInputLifecycleFailureV1 = Readonly<{ codes: readonly string[]; requestId?: string }>;
 export function projectSessionInputLifecycleFailureV1(error: unknown): SessionInputLifecycleFailureV1 | undefined {
     if (!isPluginError(error)) return undefined;
     const requestId = readPluginErrorRequestIdV1(error);

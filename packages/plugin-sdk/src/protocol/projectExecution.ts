@@ -9,14 +9,18 @@ import { WorkspaceWorkerPreferenceSetInputV1ProtocolSchema } from '@happier-dev/
 export { ProjectDefinitionInspectOutputProtocolSchema as ProtocolProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ProjectComputeExecResultV1ProtocolSchema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionOperationAddressV1ProtocolSchema } from '@happier-dev/protocol/actions/specs/actionOperations';
-import { ActionOperationGetV1ResponseProtocolSchema as canonicalOperationResponse, type ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
-import { PluginUiActionOperationHostReadResultV1ProtocolSchema as canonicalOperationHostRead, type PluginUiActionOperationHostReadResultV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
-export type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseProtocolSchema as canonicalOperationResponse } from '@happier-dev/protocol/actions/operations/v1';
+import { PluginUiActionOperationHostReadResultV1ProtocolSchema as canonicalOperationHostRead,
+    type PluginUiActionOperationHostReadResultV1 as CanonicalOperationHostRead } from '@happier-dev/protocol/plugins/ui/subscriptions';
 export type { ProjectSetupConsentRequiredV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-export type { PluginUiActionOperationHostReadResultV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 
 import type { PluginActionInputById, PluginActionResultById } from '../actions/actionTypeMap.generated.js';
 import type { ProtocolComposableSchema, ProtocolJsonValue } from './protocolFacade.js';
+
+export type ActionOperationGetV1Response = PluginActionResultById['action.operations.get'];
+export type PluginUiActionOperationHostReadResultV1 = Omit<CanonicalOperationHostRead, 'operation'> & {
+    operation: Extract<ActionOperationGetV1Response, { operation: unknown }>['operation'] | null;
+};
 
 /** Accepted source checkout identity; it does not select a worker copy. */
 export const ProtocolWorkspaceAddressV1Schema: ProtocolComposableSchema<PluginActionInputById['projects.compute.exec']['workspace']> = WorkspaceAddressV1ProtocolSchema;
