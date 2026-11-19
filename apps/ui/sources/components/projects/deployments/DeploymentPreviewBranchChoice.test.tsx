@@ -4,6 +4,7 @@ import { definePlugin, PluginError, DeploymentTargetRoleInputProtocolSchemasV1 }
 import { defineProtocolObject, defineProtocolString, defineProtocolArray } from '@happier-dev/plugin-sdk/protocol';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -24,7 +25,7 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 afterEach(standardCleanup);
 
-it('reads a parent only on selection, settles a provider refusal, retries explicitly and saves intent without creating a branch', async () => {
+it('retains the provider branch refusal and distinguishes an exhausted branch list from a failure', async () => {
   const pluginId = 'com.example.preview-database';
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -34,10 +35,13 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
   let mutations = 0;
   let refuse = () => {};
   const pending = new Promise<void>(resolve => { refuse = resolve; });
+  const failureCause = { errorClass: 'Error', phase: 'deployment.domain.native_execution',
+    errorCode: 'deployment_conflict', httpStatus: 409 } as const;
   const read = { title: 'List database parents', execution, surfaces: ['ui'], dangerLevel: 'safe', readOnly: true,
     inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['branches.list'], resultSchema: output,
-    run: async () => { reads++; if (reads === 1) { await pending; throw new PluginError({ code: 'credential_unavailable' }); }
+    run: async () => { reads++; if (reads === 1) { await pending; throw new PluginError({ code: 'deployment_failed' }); }
       if (reads === 2) return { branches: [], nextCursor: 'next-parents' };
+      if (reads === 3) return { branches: [] };
       return { branches: [{ providerProjectId: 'project', branchId: 'main', name: 'Production' }] }; } } as const;
   const write = { ...read, readOnly: false, dangerLevel: 'writesRemote', confirmation: { title: 'Change database?' },
     run: async () => { mutations++; return { branches: [] }; } } as const;
@@ -76,7 +80,7 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
       catch (error) { if (error instanceof PluginError) return { errorCode: error.code, error: error.code }; throw error; }
     },
     failure: result => typeof result === 'object' && result !== null && 'errorCode' in result
-      ? { errorCode: String(result.errorCode), error: String(result.errorCode) } : null,
+      ? { errorCode: String(result.errorCode), error: String(result.errorCode), failureCause } : null,
   });
   const readsBeforeOpen = homes.requestsFor('/v1/artifacts/read').length;
   const screen = await renderScreen(<DeploymentPreviewBranchChoice detail={{ ...detail, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] }} lifetime={account.accountLifetime}
@@ -98,13 +102,23 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
     expect(saved).toEqual([]);
     await act(async () => refuse());
     const failure = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'preview.branch.failed');
-    await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe('credential_unavailable'); });
+    await waitForHomeGovernance(async () => { await act(async () => {});
+      expect(failure()?.props.diagnosticCode).toBe('deployment_failed');
+      expect(failure()?.props.reason).toBe(readDeploymentRefusalRecoveryV1('deployment_failed', { failureCause })?.remedy);
+    });
     const retry = failure()?.props.action;
     if (!retry) throw new Error('Expected the failure card to offer Retry');
     await act(async () => { await retry.onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {});
-      expect(failure()?.props.diagnosticCode).toBeUndefined();
       expect(reads).toBe(3);
+      expect(screen.findByTestId('preview.branch.empty')).not.toBeNull();
+      expect(failure()).toBeUndefined();
+      expect(saved).toEqual([]);
+    });
+    await act(async () => picker().props.onSelect(link.id));
+    await waitForHomeGovernance(async () => { await act(async () => {});
+      expect(failure()?.props.diagnosticCode).toBeUndefined();
+      expect(reads).toBe(4);
       expect(saved).toEqual([[{ kind: 'managed', dataTargetLinkId: link.id,
       ownership: 'providerNative', parentBranchRef: { providerProjectId: 'project', branchId: 'main', displayName: 'Production' } }]]); });
     expect(screen.root.findAllByType(SurfaceStateCard).some(node => node.props.testID === 'preview.branch.next')).toBe(false);
@@ -117,7 +131,7 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
       saving={false} onSave={data => saved.push(data)} testID="preview.branch" />));
     await waitForHomeGovernance(async () => { await act(async () => {});
       expect(picker().props.itemTrigger?.detailFormatter?.(null)).toBe('Customer database · Production'); });
-    expect(reads).toBe(3);
+    expect(reads).toBe(4);
     expect(mutations).toBe(0);
   } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
 });

@@ -14,15 +14,17 @@ import { buildPreviewBranchReadInput, previewBranchTargets, readPreviewBranchPar
   type PreviewBranchTarget, type PreviewBranchParent } from './previewDatabaseBranches';
 
 type Template = NonNullable<DeploymentEnvironmentReadDetailV1['content']['previewTemplate']>;
-type ReadState = Readonly<{ kind: 'loading'; targetLinkId: string }>
-  | Readonly<{ kind: 'failed'; targetLinkId: string; code: string }>
+type Inspect = ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'];
+type InspectionFailure = Omit<Extract<Awaited<ReturnType<Inspect>>, { ok: false }>, 'ok'>;
+type ReadState = Readonly<{ kind: 'loading' | 'empty'; targetLinkId: string }>
+  | Readonly<{ kind: 'failed'; targetLinkId: string; failure: InspectionFailure }>
   | Readonly<{ kind: 'ready'; targetLinkId: string; parent: PreviewBranchParent }>;
 
 /** Choosing a linked parent records intent only. PR creation owns the later branch mutation. */
 export function DeploymentPreviewBranchChoice(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   lifetime: ServerAccountScopeLifetime;
-  inspect: ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'];
+  inspect: Inspect;
   saving: boolean;
   onSave: (data: Template['data']) => void;
   testID: string;
@@ -54,7 +56,7 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
     flight.current = controller;
     const targetLinkId = target.targetLink.id;
     const input = buildPreviewBranchReadInput(props.detail, target);
-    if (!input) { setRead({ kind: 'failed', targetLinkId, code: 'credential_unavailable' }); return; }
+    if (!input) { setRead({ kind: 'failed', targetLinkId, failure: { code: 'credential_unavailable' } }); return; }
     setRead({ kind: 'loading', targetLinkId });
     let cursor: string | undefined;
     do {
@@ -67,11 +69,11 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
       } catch (error: unknown) {
         if (controller.signal.aborted) return;
         const code = isRecord(error) && typeof error.code === 'string' ? error.code : 'unknown_error';
-        setRead({ kind: 'failed', targetLinkId, code });
+        setRead({ kind: 'failed', targetLinkId, failure: { code } });
         return;
       }
       if (controller.signal.aborted) return;
-      if (!result.ok) { setRead({ kind: 'failed', targetLinkId, code: result.code }); return; }
+      if (!result.ok) { setRead({ kind: 'failed', targetLinkId, failure: result }); return; }
       const parent = readPreviewBranchParents(result.value, input.providerIdentity)[0];
       if (parent) {
         setRead({ kind: 'ready', targetLinkId, parent });
@@ -80,10 +82,14 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
       }
       cursor = isRecord(result.value) && typeof result.value.nextCursor === 'string' ? result.value.nextCursor : undefined;
     } while (cursor);
-    setRead({ kind: 'failed', targetLinkId, code: 'deployment_unavailable' });
+    setRead({ kind: 'empty', targetLinkId });
   };
   const target = targets.find(entry => entry.targetLink.id === selectedId);
-  const failureCode = state.status === 'failed' ? state.code : choices?.kind === 'failed' ? choices.code : read?.kind === 'failed' ? read.code : null;
+  const failure: InspectionFailure | null = state.status === 'failed' ? { code: state.code }
+    : choices?.kind === 'failed' ? { code: choices.code } : read?.kind === 'failed' ? read.failure : null;
+  const failureDetails = failure?.failureCause
+    ? { ...(isRecord(failure.details) ? failure.details : {}), failureCause: failure.failureCause }
+    : failure?.details;
   const loading = state.status === 'loading' || choices?.kind === 'loading' || read?.kind === 'loading';
   return <>
     <DropdownMenu testID={`${props.testID}.parent`} open={open} onOpenChange={setOpen}
@@ -98,17 +104,17 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
             : target && selected?.kind === 'managed' && selected.dataTargetLinkId === target.targetLink.id && selected.parentBranchRef.displayName
               ? `${target.title} · ${selected.parentBranchRef.displayName}` : target?.title ?? null,
         itemProps: { accessoryLayout: 'adaptive', disabled: props.saving || state.status !== 'ready' || loading } }} />
-    {failureCode ? (
+    {failure ? (
       <SurfaceStateCard testID={`${props.testID}.failed`} size="line" kind="error"
         title={t('projects.deployments.platformLink.refused')}
-        reason={readDeploymentFailureRecoveryV1(failureCode).remedy}
-        diagnosticCode={failureCode}
+        reason={readDeploymentFailureRecoveryV1(failure.code, failureDetails).remedy}
+        diagnosticCode={failure.code}
         action={{ label: t('common.retry'), onPress: () => {
           if (state.status === 'failed') retry();
           else if (choices.kind === 'failed') retryChoices();
           else if (target) void readBranches(target);
         } }} />
-    ) : state.status === 'ready' && choices?.kind === 'ready' && targets.length === 0 ? (
+    ) : read?.kind === 'empty' || (state.status === 'ready' && choices?.kind === 'ready' && targets.length === 0) ? (
       <Item testID={`${props.testID}.empty`} title={t('projects.deployments.settingsSections.previewsDataUnavailable')} mode="info" />
     ) : null}
   </>;
