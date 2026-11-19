@@ -38,8 +38,14 @@ export type UsageScoreLabels = Readonly<{
   clock: (hour: number) => string;
   key: Readonly<{ light: string; medium: string; strong: string; presence: string; presenceNote: string }>;
   unknownAgent: string;
+  /** Names the one row a large cast folds into; without it every Agent keeps its own row. */
+  other?: string;
   values: UsageChartValuesLabels & Readonly<{ agentColumn: string; dayColumn: string; hoursColumn: string; formatHours: (minutesByHour: readonly (number | null)[]) => string }>;
 }>;
+/** A Score names this many Agents; a larger cast folds the rest into one Other row (the values table keeps every Agent). */
+const SCORE_LEADERS = 6;
+type ScoreRow = Readonly<{ key: string; name: string; full: string; color: string; hours: readonly (readonly (number | null)[])[] }>;
+const busyTotal = (hours: readonly (readonly (number | null)[])[]) => hours.reduce((sum, day) => sum + day.reduce<number>((acc, minutes) => acc + (minutes ?? 0), 0), 0);
 const scoreOpacity = (encoding: UsageScoreModel['encoding'], minutes: number) => encoding === 'presence' ? (minutes ? 0.9 : 0)
   : minutes > 40 ? 1 : minutes > 15 ? 0.66 : minutes ? 0.36 : 0;
 
@@ -48,23 +54,38 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
   const phone = width !== null && width < 560;
-  const rows = props.model.rows;
   const dayCount = props.model.dayCount ?? 7;
   const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? ink.neutral;
-  const datum = (row: UsageScoreModel['rows'][number], day: number, hour: number, minutes: number) => ({ keyboard: false,
+  const own = props.model.rows.map((row): ScoreRow => ({ key: JSON.stringify(row.agentId), name: shortName(props.agents, row.agentId, props.labels.unknownAgent),
+    full: fullName(props.agents, row.agentId, props.labels.unknownAgent), color: colour(row.agentId), hours: row.hours }));
+  // A large cast keeps its busiest Agents in owner order; the rest share one Other row whose hour is their combined agent
+  // time (20 + 30 min reads as 50 min, as the key's "agent time in the hour" says), never the busiest member alone.
+  const rows = (() => {
+    if (!props.labels.other || own.length <= SCORE_LEADERS + 1) return own;
+    const lead = new Set(own.map((row, index) => ({ index, total: busyTotal(row.hours) })).sort((a, b) => b.total - a.total || a.index - b.index)
+      .slice(0, SCORE_LEADERS).map((entry) => entry.index));
+    const rest = own.filter((_, index) => !lead.has(index));
+    const days = Math.max(...rest.map((row) => row.hours.length));
+    const hours = Array.from({ length: days }, (_, day) => Array.from({ length: 24 }, (_, hour) => {
+      const read = rest.map((row) => row.hours[day]?.[hour]).filter((minutes): minutes is number => minutes !== null && minutes !== undefined);
+      return read.length ? read.reduce((sum, minutes) => sum + minutes, 0) : null;
+    }));
+    return [...own.filter((_, index) => lead.has(index)), { key: 'other', name: props.labels.other, full: props.labels.other, color: ink.neutral, hours }];
+  })();
+  const datum = (row: ScoreRow, day: number, hour: number, minutes: number) => ({ keyboard: false,
     // A minutes value already names its hour ("10:00 18 min"), so its title stops at the day.
     label: `${props.label} · ${props.model.encoding === 'presence'
-      ? `${fullName(props.agents, row.agentId, props.labels.unknownAgent)} · ${props.labels.day(day)} · ${props.labels.clock(hour)}`
-      : `${fullName(props.agents, row.agentId, props.labels.unknownAgent)} · ${props.labels.day(day)}`}`,
+      ? `${row.full} · ${props.labels.day(day)} · ${props.labels.clock(hour)}`
+      : `${row.full} · ${props.labels.day(day)}`}`,
     value: props.model.encoding === 'presence' ? props.labels.key.presence : props.labels.values.formatHours(row.hours[day]!.map((value, index) => index === hour ? value : null)) || formatHappierDataValue(minutes),
-    color: colour(row.agentId),
+    color: row.color,
   });
   const keyItems: UsageChartKeyItem[] = props.model.encoding === 'presence'
     ? [{ id: 'p', label: props.labels.key.presence, swatch: { kind: 'dot', color: ink.text } }]
     : [{ id: 'l', label: props.labels.key.light, swatch: { kind: 'dot', color: ink.neutral } },
       { id: 'm', label: props.labels.key.medium, swatch: { kind: 'dot', color: props.theme.colors.secondaryText } },
       { id: 's', label: props.labels.key.strong, swatch: { kind: 'dot', color: ink.text } }];
-  const table = rows.flatMap((row) => row.hours.map((hours, day) => [fullName(props.agents, row.agentId, props.labels.unknownAgent), props.labels.day(day),
+  const table = own.flatMap((row) => row.hours.map((hours, day) => [row.full, props.labels.day(day),
     props.labels.values.formatHours(hours)] as const)).filter((row) => row[2] !== '');
   let chart: ReactNode = <View style={{ height: rows.length * 26 + 26 }} />;
   if (width !== null && !phone) {
@@ -73,11 +94,11 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
       {Array.from({ length: dayCount + 1 }, (_, day) => <Path key={`v${day}`} d={`M${r1(label + day * 24 * step)},2V${height - 18}`} stroke={ink.grid} strokeWidth={1} />)}
       {rows.map((row, index) => {
         const y = index * rowHeight + rowHeight / 2 + 2;
-        return <G key={JSON.stringify(row.agentId)}>
+        return <G key={row.key}>
           <Path d={`M${label},${y}H${width}`} stroke={ink.grid} strokeWidth={1} />
-          {svgText.draw({ x: 0, y: y + 4, text: shortName(props.agents, row.agentId, props.labels.unknownAgent), tone: 'secondary', size: 'body' })}
+          {svgText.draw({ x: 0, y: y + 4, text: row.name, tone: 'secondary', size: 'body' })}
           {row.hours.flatMap((hours, day) => hours.map((minutes, hour) => minutes ? <Circle key={`${day}-${hour}`} cx={r1(label + (day * 24 + hour + 0.5) * step)} cy={y}
-            r={r1(radius)} fill={colour(row.agentId)} fillOpacity={scoreOpacity(props.model.encoding, minutes)} /> : null))}
+            r={r1(radius)} fill={row.color} fillOpacity={scoreOpacity(props.model.encoding, minutes)} /> : null))}
         </G>;
       })}
       {Array.from({ length: dayCount }, (_, day) => svgText.draw({ x: label + day * 24 * step + 3, y: height - 4, text: props.labels.day(day) }, `d${day}`))}
@@ -85,26 +106,25 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
       datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
       bounds={{ x: label + (day * 24 + hour) * step, y: index * rowHeight + 2, width: step, height: rowHeight }} /> : null)))}</ChartDrawing>;
   } else if (width !== null) {
-    // A phone recomposes the week into seven day strips: the day's name on its own line, then one row of 24 dots
-    // per Agent across the full width (a side gutter cannot hold "Wed 11" at body size; native N5).
-    const step = width / 24, head = svgText.styles.body.lineHeight ?? (svgText.styles.body.fontSize ?? 13) + 4;
+    // A phone draws the lab's weekday × hour grid (u3ens-P): each day is a band of one dot row per Agent across 24
+    // hours, named in a left gutter sized to the longest day name so no hour mark draws under it (native N5).
     // An explicit span keeps each in-period date. Legacy week callers omit unread days at either end.
     const read = Array.from({ length: dayCount }, (_, day) => props.model.dayCount !== undefined
       || rows.some((row) => (row.hours[day] ?? []).some((minutes) => minutes !== null)));
     const first = read.indexOf(true), last = read.lastIndexOf(true);
     const days = first < 0 ? [] : Array.from({ length: last - first + 1 }, (_, index) => first + index);
-    chart = <ChartDrawing accessibilityLabel={props.label} style={{ gap: 4 }}>
-      {days.map((day) => {
-        const height = head + 6 + rows.length * 7 + 4;
-        return <View key={day} style={{ height }}><Svg width={width} height={height}>
-          {svgText.draw({ x: 0, y: head - 4, text: props.labels.day(day), tone: 'secondary', size: 'body' })}
-          {rows.map((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null ? null : <Circle key={`${index}-${hour}`} cx={r1((hour + 0.5) * step)} cy={head + 6 + index * 7}
-            r={2.1} fill={minutes ? colour(row.agentId) : ink.track} fillOpacity={minutes ? scoreOpacity(props.model.encoding, minutes) : 1} />))}
+    const size = svgText.styles.body.fontSize ?? 13, longest = Math.max(0, ...days.map((day) => props.labels.day(day).length));
+    const gutter = Math.min(width * 0.2, Math.max(32, Math.ceil(longest * size * 0.62) + 8)), step = (width - gutter) / 24, pitch = 6;
+    const bandHeight = Math.max(size + 2, rows.length * pitch + 2);
+    chart = <ChartDrawing accessibilityLabel={props.label} style={{ gap: 8 }}>
+      {days.map((day) => <View key={day} style={{ height: bandHeight }}><Svg width={width} height={bandHeight}>
+          {svgText.draw({ x: 0, y: size - 2, text: props.labels.day(day), tone: 'secondary', size: 'body' })}
+          {rows.map((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null ? null : <Circle key={`${index}-${hour}`} cx={r1(gutter + (hour + 0.5) * step)} cy={3 + index * pitch}
+            r={1.9} fill={minutes ? row.color : ink.track} fillOpacity={minutes ? scoreOpacity(props.model.encoding, minutes) : 1} />))}
         </Svg>{rows.flatMap((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null || (props.model.encoding === 'presence' && !minutes) ? null : <ChartMark key={`${index}-${hour}`}
           datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
-          bounds={{ x: hour * step, y: head + 2.5 + index * 7, width: step, height: 7 }} />))}</View>;
-      })}
-      <Svg width={width} height={14}>{[0, 6, 12, 18].map((hour) => svgText.draw({ x: hour * step, y: 11, text: props.labels.clock(hour) }, `h${hour}`))}</Svg>
+          bounds={{ x: gutter + hour * step, y: index * pitch, width: step, height: pitch }} />))}</View>)}
+      <Svg width={width} height={14}>{[0, 6, 12, 18].map((hour) => svgText.draw({ x: gutter + hour * step, y: 11, text: props.labels.clock(hour) }, `h${hour}`))}</Svg>
     </ChartDrawing>;
   }
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
@@ -128,16 +148,31 @@ export type UsageAgentShare = Readonly<{
 }>;
 
 export type UsageOrbitLabels = Readonly<{ percent: (share: number) => string; unknown: (names: string) => string; unknownAgent: string;
+  /** Names the one planet a large cast folds into; without it every Agent keeps its own orbit. */
+  other?: string;
   values: UsageChartValuesLabels & Readonly<{ agentColumn: string; shareColumn: string }> }>;
+
+/** An Orbit names this many Agents; a larger cast folds the rest into one Other planet (the values table keeps every Agent). */
+const ORBIT_LEADERS = 5;
 
 /** Orbit (new body): the closer orbit did more (rank by share); the dot's area is its share; unknown shares sit apart. */
 export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly UsageAgentShare[]; labels: UsageOrbitLabels; renderPlanet?: UsagePlanetSlot }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
-  const known = props.model.filter((entry): entry is UsageAgentShare & { share: number } => entry.share !== null).sort((a, b) => b.share - a.share);
+  const ranked = props.model.filter((entry): entry is UsageAgentShare & { share: number } => entry.share !== null).sort((a, b) => b.share - a.share);
+  // A large cast keeps the lab's handful of planets: the five leaders, then one Other on the outer orbit with the rest.
+  const other = props.labels.other;
+  const known: (Readonly<{ agentId: string | null; share: number; other?: true }>)[] = other && ranked.length > ORBIT_LEADERS + 1
+    ? [...ranked.slice(0, ORBIT_LEADERS), { agentId: null, share: ranked.slice(ORBIT_LEADERS).reduce((sum, entry) => sum + entry.share, 0), other: true }] : ranked;
+  const nameOf = (entry: (typeof known)[number]) => entry.other ? other! : shortName(props.agents, entry.agentId, props.labels.unknownAgent);
+  const fullOf = (entry: (typeof known)[number]) => entry.other ? other! : fullName(props.agents, entry.agentId, props.labels.unknownAgent);
+  const colourOf = (entry: (typeof known)[number]) => entry.other ? ink.neutral : agentOf(props.agents, entry.agentId)?.color ?? ink.neutral;
+  const keyOf = (entry: (typeof known)[number]) => entry.other ? 'other' : JSON.stringify(entry.agentId);
   const unknown = props.model.filter((entry) => entry.share === null);
-  const height = width !== null && width < 420 ? 240 : 300;
+  // One or two planets need fewer orbits: the drawing keeps the lab's room without a tall empty card.
+  const small = known.length <= 2;
+  const height = width !== null && width < 420 ? (small ? 180 : 240) : small ? 220 : 300;
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null ? (() => {
@@ -149,26 +184,28 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
         const angles = usageOrbitAngles(known.length, width < 420);
         const placed = known.map((entry, index) => {
           const rx = rx0 + index * step, ry = rx * aspect, t = angles[index]!;
-          const x = cx + rx * Math.cos(t), y = cy + ry * Math.sin(t), radius = 3 + Math.sqrt(entry.share) * 13, right = Math.cos(t) >= 0;
-          // A label beside its planet, kept inside the body on a narrow width (it moves to the edge, never off it).
-          const text = `${shortName(props.agents, entry.agentId, props.labels.unknownAgent)} ${props.labels.percent(entry.share)}`;
-          const span = text.length * (svgText.styles.body.fontSize ?? 13) * 0.7;
+          const x = cx + rx * Math.cos(t), y = cy + ry * Math.sin(t), radius = 3 + Math.sqrt(entry.share) * 13;
+          // A label sits beside its planet on the outward side; one with no room there sits under its planet, centred and
+          // kept inside the body, so it is never clamped onto its own planet or turned inward onto the centre.
+          const text = `${nameOf(entry)} ${props.labels.percent(entry.share)}`;
+          const size = svgText.styles.body.fontSize ?? 13, span = text.length * size * 0.7, right = Math.cos(t) >= 0;
           const beside = x + (right ? radius + 6 : -radius - 6);
-          return { entry, x, y, radius, text, span, anchor: right ? 'start' as const : 'end' as const,
-            at: right ? Math.min(beside, width - span) : Math.max(beside, span) };
+          if (right ? beside + span > width : beside - span < 0)
+            return { entry, x, y, radius, text, span, anchor: 'start' as const, at: Math.min(Math.max(0, x - span / 2), width - span), baseline: y + radius + size + 2 };
+          return { entry, x, y, radius, text, span, anchor: right ? 'start' as const : 'end' as const, at: beside, baseline: y + 4 };
         });
-        const labelY = placeUsageOrbitLabels(placed.map((label) => ({ x: label.at, y: label.y + 4, span: label.span, anchor: label.anchor })),
+        const labelY = placeUsageOrbitLabels(placed.map((label) => ({ x: label.at, y: label.baseline, span: label.span, anchor: label.anchor })),
           // The "unknown share" line owns the bottom row, so planet labels stay above it.
           { height: unknown.length ? height - ((svgText.styles.body.fontSize ?? 13) + 3) : height, line: (svgText.styles.body.fontSize ?? 13) + 3 });
         return <>
           <Svg width={width} height={height}>
             {known.map((_, index) => <Ellipse key={`o${index}`} cx={cx} cy={cy} rx={r1(rx0 + index * step)} ry={r1((rx0 + index * step) * aspect)} stroke={ink.grid} strokeWidth={1} fill="none" />)}
-            {placed.map(({ entry, x, y, radius }) => <Circle key={JSON.stringify(entry.agentId)} cx={r1(x)} cy={r1(y)} r={r1(radius)} fill={agentOf(props.agents, entry.agentId)?.color ?? ink.neutral} />)}
-            {placed.map(({ entry, text, at, anchor }, index) => svgText.draw({ x: at, y: labelY[index]!, anchor, tone: 'secondary', size: 'body', halo: props.paint.paper, text }, `l${index}-${JSON.stringify(entry.agentId)}`))}
+            {placed.map(({ entry, x, y, radius }) => <Circle key={keyOf(entry)} cx={r1(x)} cy={r1(y)} r={r1(radius)} fill={colourOf(entry)} />)}
+            {placed.map(({ entry, text, at, anchor }, index) => svgText.draw({ x: at, y: labelY[index]!, anchor, tone: 'secondary', size: 'body', halo: props.paint.paper, text }, `l${index}-${keyOf(entry)}`))}
             {unknown.length ? svgText.draw({ x: width, y: height - 4, anchor: 'end', text: props.labels.unknown(unknown.map((entry) => shortName(props.agents, entry.agentId, props.labels.unknownAgent)).join(', ')) }) : null}
           </Svg>
-          {placed.map(({ entry, x, y, radius }) => <ChartMark key={JSON.stringify(entry.agentId)} testID={`${props.testID}.agent.${entry.agentId}`}
-            datum={{ keyboard: false, label: `${props.label} · ${fullName(props.agents, entry.agentId, props.labels.unknownAgent)}`, value: exactPercent(entry.share), color: agentOf(props.agents, entry.agentId)?.color ?? ink.neutral }}
+          {placed.map(({ entry, x, y, radius }) => <ChartMark key={keyOf(entry)} testID={`${props.testID}.agent.${entry.other ? 'other' : entry.agentId}`}
+            datum={{ keyboard: false, label: `${props.label} · ${fullOf(entry)}`, value: exactPercent(entry.share), color: colourOf(entry) }}
             bounds={{ x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 }} />)}
           {props.renderPlanet ? <View pointerEvents="none" style={{ position: 'absolute', left: r1(cx - 36), top: r1(cy - 36), width: 72, height: 72 }}>
             {props.renderPlanet({ size: 72, radius: 20, halo: 0.5, tail: 0, rise: 1, rotate: -0.6, style: 'rich' })}
@@ -205,7 +242,7 @@ export function UsageCrew(props: AgentsProps & Readonly<{ model: readonly UsageA
           : agent?.mark ?? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: agent?.color ?? ink.neutral }} />}</View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <HappierText style={text.strong} numberOfLines={1}>{compact ? shortName(props.agents, entry.agentId, props.labels.unknownAgent) : fullName(props.agents, entry.agentId, props.labels.unknownAgent)}</HappierText>
-          {entry.coverage ? <HappierText style={text.caption} numberOfLines={1}>{compact ? entry.coverage.short : entry.coverage.long}</HappierText> : null}
+          {entry.coverage ? <HappierText style={text.caption} numberOfLines={compact ? 1 : 2}>{compact ? entry.coverage.short : entry.coverage.long}</HappierText> : null}
         </View>
         {!compact ? <View style={{ width: 100, height: 4, borderRadius: 2, backgroundColor: ink.track, overflow: 'hidden' }}>
           {entry.share !== null ? <View style={{ width: `${Math.round(Math.sqrt(entry.share) * 100)}%`, height: 4, borderRadius: 2, backgroundColor: agent?.color ?? ink.neutral }} /> : null}
@@ -430,8 +467,15 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
   // Marker ids are document-global; each drawing owns its own so another edition on the page can't supply its arrows.
   const markerId = `usage-const-${useId().replace(/[^a-zA-Z0-9_-]/gu, '')}`;
   const phone = width !== null && width < 600;
-  // Every member is placed. Up to seven sit on the composed slots; more go round one ring, planets scaled to fit.
-  const nodes = props.model.nodes;
+  // Every linked member is placed; the composed slots fill with the largest unlinked ones (the values table keeps every
+  // member). More linked members than slots go round one ring, planets scaled to fit.
+  const linked = new Set((props.model.edges ?? []).flatMap((edge) => [edge.from, edge.to]));
+  const nodes = props.model.nodes.length <= CONSTELLATION_SLOTS ? props.model.nodes : (() => {
+    const room = Math.max(0, CONSTELLATION_SLOTS - props.model.nodes.filter((node) => node.agentId !== null && linked.has(node.agentId)).length);
+    const kept = new Set(props.model.nodes.filter((node) => node.agentId === null || !linked.has(node.agentId))
+      .sort((a, b) => (b.share ?? 0) - (a.share ?? 0)).slice(0, room));
+    return props.model.nodes.filter((node) => (node.agentId !== null && linked.has(node.agentId)) || kept.has(node));
+  })();
   const crowded = nodes.length > CONSTELLATION_SLOTS;
   const scale = crowded ? Math.sqrt(CONSTELLATION_SLOTS / nodes.length) : 1;
   const height = crowded ? (phone ? 380 : 360) : phone ? 340 : 330;
@@ -532,7 +576,7 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
       table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.shareColumn },
         { label: props.labels.values.kindColumn }, { label: props.labels.values.countColumn }], rows: [
-          ...nodes.map(node => [fullName(props.agents, node.agentId, props.labels.unknownAgent), node.share === null ? unknown : exactPercent(node.share), '', '']),
+          ...props.model.nodes.map(node => [fullName(props.agents, node.agentId, props.labels.unknownAgent), node.share === null ? unknown : exactPercent(node.share), '', '']),
           ...(props.model.edges ?? []).map(edge => [`${fullName(props.agents, edge.from, props.labels.unknownAgent)} → ${fullName(props.agents, edge.to, props.labels.unknownAgent)}`,
             '', props.labels.kinds[edge.kind], formatHappierDataValue(edge.count)]),
         ] }} />

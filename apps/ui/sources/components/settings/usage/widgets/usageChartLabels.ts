@@ -70,7 +70,7 @@ export function usageSkyLabels(input: Readonly<{
 }
 
 export function usageOrbitLabels(): UsageOrbitLabels {
-  return { percent: usageChartPercent, unknown: (names) => t('usage.board.charts.shareUnknown', { names }), unknownAgent: usageAgentTitle(''),
+  return { percent: usageChartPercent, unknown: (names) => t('usage.board.charts.shareUnknown', { names }), unknownAgent: usageAgentTitle(''), other: t('usage.modelMix.other'),
     values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), shareColumn: t('usage.board.charts.shareColumn') } };
 }
 

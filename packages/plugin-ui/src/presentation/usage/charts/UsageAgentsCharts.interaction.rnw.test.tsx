@@ -254,7 +254,8 @@ describe('Agent chart exact data targets', () => {
         const left = anchor === 'end' ? x - span : anchor === 'middle' ? x - span / 2 : x;
         return { text: node.textContent, left, right: left + span, y };
       });
-      expect(boxes).toHaveLength(names.length);
+      // An unlinked crowd keeps the seven composed slots (USAGE-ACCEPT-1118 #8); the values table keeps all 19.
+      expect(boxes).toHaveLength(7);
       for (const box of boxes) {
         expect(box.left, box.text!).toBeGreaterThanOrEqual(0);
         expect(box.right, box.text!).toBeLessThanOrEqual(width);

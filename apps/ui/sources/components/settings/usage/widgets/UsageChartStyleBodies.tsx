@@ -210,7 +210,7 @@ export function UsageScoreBody(props: UsageChartStyleBodyProps) {
       labels={{ day: (index) => dates.weekday(dayDate(index)), clock: usageChartClock,
         key: { light: t('usage.board.charts.scoreLight'), medium: t('usage.board.charts.scoreMedium'), strong: t('usage.board.charts.scoreStrong'),
           presence: t('usage.board.charts.scorePresence'), presenceNote: t('usage.board.charts.scorePresenceNote') },
-        unknownAgent: usageAgentTitle(''),
+        unknownAgent: usageAgentTitle(''), other: t('usage.modelMix.other'),
         values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), dayColumn: t('usage.board.charts.dateColumn'), hoursColumn: t('usage.board.charts.busyHoursColumn'),
           formatHours: (minutes) => minutes.flatMap((value, hour) => value ? [`${usageChartClock(hour)} ${formatUsageDuration(value * 60_000)}`] : []).join(', ') } }} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
@@ -311,6 +311,13 @@ export function UsageConstellationBody(props: UsageChartStyleBodyProps) {
   const model = React.useMemo(() => projectUsageConstellationModel(props.slice, shares ?? []), [props.slice, shares]);
   const agents = React.useMemo(() => model.nodes.flatMap((node) => node.agentId === null ? [] : [host.agent(node.agentId)]), [model, host.agent]);
   if (model.nodes.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCollaborationReason')} />;
+  // No link to draw is one quiet line, as Human loop says it, never the whole cast in a ring (USAGE-ACCEPT-1118 #8).
+  // An unread summary says so; a read one with no links says none happened, or how many starts had no named source.
+  if (!model.edges && isUsageReadOutstanding(props.slice, ['how_you_work']))
+    return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['how_you_work'] }} />;
+  if (!model.edges?.length) return <UsageBodyInsufficient testID={`${props.testID}.empty`}
+    title={model.edges ? t('usage.board.charts.nodesOnly') : t('usage.board.charts.collaborationNotRecorded')}
+    {...(model.edges ? { reason: model.unknownStarts ? t('usage.board.charts.unknownStarts', { count: model.unknownStarts }) : t('usage.board.charts.needsCollaborationReason') } : {})} />;
   return <View style={{ gap: 12 }} testID={`${props.testID}.constellation`}>
     <UsageConstellation theme={host.theme} paint={host.paint} agents={agents} model={model} renderPlanet={host.renderPlanet} testID={`${props.testID}.constellationChart`}
       label={t('usage.board.charts.constellationA11y')}

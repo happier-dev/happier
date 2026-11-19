@@ -263,7 +263,14 @@ describe('one selected money basis across Usage bodies', () => {
       howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [{ kind: 'busy', workId: 'private-work',
         evidenceId: 'private-turn', agentId: 'activity-only', machineId: null, startMs: 10, endMs: 1000 }] } }],
     }, bundledUsageModelPriceCatalog).results[0]!;
-    const screen = await renderScreen(<UsageConstellationBody {...props} query={query} slice={slice} id="usage_constellation" testID="constellation" />);
+    // Without a link the body is one quiet line (USAGE-ACCEPT-1118 #8); one witnessed link draws the whole cohort.
+    const unlinked = await renderScreen(<UsageConstellationBody {...props} query={query} slice={slice} id="usage_constellation" testID="constellation" />);
+    expect(unlinked.findAllByType(UsageConstellation)).toHaveLength(0);
+    expect(unlinked.findByTestId('constellation.empty')).not.toBeNull();
+    await unlinked.unmount();
+    const linked = { ...slice, howYouWork: { ...slice.howYouWork!, collaboration: { coverage: 'partial' as const, unknownTimestampCount: 0, unknownSourceAgentCount: 0,
+      unknownTargetAgentCount: 0, edges: [{ sourceAgentId: 'legacy', targetAgentId: 'legacy', relation: 'run' as const, count: 1 }] } } };
+    const screen = await renderScreen(<UsageConstellationBody {...props} query={query} slice={linked} id="usage_constellation" testID="constellation" />);
     const chart = screen.findByType(UsageConstellation);
     expect(chart.props.model.nodes.map((node: { agentId: string | null }) => node.agentId).sort()).toEqual(['legacy', null]);
     await act(async () => {
