@@ -66,7 +66,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     )).projects);
   }
 
-  async function listGrantedWorkspaces(): Promise<Choice[]> {
+  async function listGrantedWorkspaces() {
     const data = await graphql('query { me { workspaces { id name } } }', {});
     const parsed = defineProtocolArray(choice).safeParse(child(data.me, 'workspaces'));
     if (!parsed.success) throw new NativeError('railway_invalid_response');

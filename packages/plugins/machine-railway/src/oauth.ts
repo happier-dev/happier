@@ -103,7 +103,7 @@ async function stage(store: ConnectedAccountCredentialStore, grant: Awaited<Retu
   await store.set('expiresAtMs', String(grant.expiresAt), { signal });
 }
 
-async function retainedIdentity(store: ConnectedAccountCredentialStore, signal: AbortSignal): Promise<Identity> {
+async function retainedIdentity(store: Pick<ConnectedAccountCredentialStore, 'get'>, signal: AbortSignal): Promise<Identity> {
   const subject = await store.get('subject', { signal });
   const displayName = await store.get('displayName', { signal });
   const email = await store.get('email', { signal });
