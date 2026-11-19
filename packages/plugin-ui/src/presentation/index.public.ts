@@ -343,6 +343,7 @@ export {
   resolveHappierColumnBandSlotStyle,
   useHappierCollectionListRow,
   HappierCollectionList,
+  HappierCollectionListRowScope,
   HappierCollectionListGroupLabel,
   HappierCollectionListMark,
   HappierCollectionRestingRowsContext,

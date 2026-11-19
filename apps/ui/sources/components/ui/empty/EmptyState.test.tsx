@@ -2,7 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen } from '@/dev/testkit';
-import { HAPPIER_MENU_ROW_METRICS, HAPPIER_STATE_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_MENU_ROW_METRICS, HAPPIER_PAGE_METRICS, HAPPIER_STATE_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { CollectionShellColumnScope } from '@/components/ui/lists/collection/CollectionList';
 import { EmptyState } from './EmptyState';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -213,6 +214,15 @@ describe('EmptyState', () => {
         // Among menu rows the line keeps the menu's density.
         const menu = await renderScreen(<EmptyState layout="line" testID="menu-line" lineDensity="menu" title="No matches" />);
         expect(hostStyle(menu, 'menu-line').minHeight).toBe(HAPPIER_MENU_ROW_METRICS.minHeightPx);
+
+        // LABPARITY-ACCEPT-F-1118 fix 7: in the shell's column (an empty Sessions column, whose list is not a
+        // CollectionList) the line starts on the column rows' edge under the title, not a loose page's text inset.
+        const loose = await renderScreen(<EmptyState layout="line" testID="loose-line" title="Sessions you start appear here." />);
+        expect(hostStyle(loose, 'loose-line').paddingHorizontal).toBe(HAPPIER_PAGE_METRICS.pageTextInsetPx);
+        const column = await renderScreen(<CollectionShellColumnScope>
+            <EmptyState layout="line" testID="column-line" title="Sessions you start appear here." />
+        </CollectionShellColumnScope>);
+        expect(hostStyle(column, 'column-line').paddingHorizontal).toBe(HAPPIER_COLLECTION_LIST_METRICS.contentInset);
     });
 
     it('keeps a list line\'s explanation whole instead of cutting it to one line', async () => {

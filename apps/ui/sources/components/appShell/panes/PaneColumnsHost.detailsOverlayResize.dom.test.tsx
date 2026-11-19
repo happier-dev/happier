@@ -51,7 +51,7 @@ afterEach(async () => {
   viewport.width = 1440;
 });
 
-async function renderAt(width: number, panes: Readonly<{ right?: boolean }> = {}) {
+async function renderAt(width: number, panes: Readonly<{ right?: boolean; mainMinWidthPx?: number }> = {}) {
   viewport.width = width;
   vi.stubGlobal('matchMedia', () => ({
     matches: false,
@@ -76,6 +76,7 @@ async function renderAt(width: number, panes: Readonly<{ right?: boolean }> = {}
         detailsOpen={!panes.right}
         rightPane={panes.right ? <div data-testid="side" /> : null}
         rightOpen={panes.right === true}
+        {...(panes.mainMinWidthPx === undefined ? {} : { mainMinWidthPx: panes.mainMinWidthPx })}
       />,
     ),
   );
@@ -114,7 +115,8 @@ it('draws no resize handle on a phone side overlay either', async () => {
 });
 
 it('keeps the handle on a desktop details overlay, which a drag back under its budget docks again', async () => {
-    const q = await renderAt(900);
+    // Details floats only where even its minimum would squeeze main (UI refinements 2026-11-18): 900 − 600 = 300 < 320.
+    const q = await renderAt(900, { mainMinWidthPx: 600 });
     expect(q('multi-pane-details-overlay')).not.toBeNull();
     expect(q('multi-pane-details-overlay-resize-left')).not.toBeNull();
 });

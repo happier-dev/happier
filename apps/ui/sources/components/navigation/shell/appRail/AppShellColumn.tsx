@@ -12,7 +12,7 @@ import { SettingsSidebar } from '@/components/settings/shell/SettingsSidebar';
 import { MachinesColumn } from '@/components/machines/collection/MachinesColumn';
 import { ServicesColumn } from '@/components/projects/deployments/ServicesColumn';
 import { PopoverScope } from '@/components/ui/popover';
-import { CollectionShellColumnSurfaceContext } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionShellColumnScope } from '@/components/ui/lists/collection/CollectionList';
 
 import type { BuiltinAppShellColumnId } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 
@@ -41,11 +41,11 @@ export const AppShellColumn = React.memo(function AppShellColumn(props: Readonly
     return (
         <View testID={`app-shell-column:${id}`} ref={popoverBoundaryRef} style={styles.column}>
             <PopoverScope boundaryRef={popoverBoundaryRef}>
-                {/* Every list standing here is the column on the shell's plane: no ground of its own (A4). */}
-                <CollectionShellColumnSurfaceContext.Provider value="plane">
+                {/* Every list standing here is the column on the shell's plane: no ground of its own (A4), one row edge. */}
+                <CollectionShellColumnScope>
                     {Column ? <Column /> : null}
                     {column.kind === 'plugin' ? <PluginAppPageColumn destinationId={column.destinationId} peeked={props.peeked === true} /> : null}
-                </CollectionShellColumnSurfaceContext.Provider>
+                </CollectionShellColumnScope>
             </PopoverScope>
         </View>
     );

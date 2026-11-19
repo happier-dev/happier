@@ -10,6 +10,7 @@ import {
     resolveHappierCollectionTreeChildIndentPx,
     useHappierCollectionListRow,
     HappierCollectionList,
+    HappierCollectionListRowScope,
     HappierDisclosureChevron,
     HappierTreeDisclosure,
     HappierCollectionListGroupLabel,
@@ -324,6 +325,19 @@ const collectionListPhonePageHost: HappierCollectionListHost = {
  * (owner 2026-11-15, A4: sidebar backgrounds are gone app-wide). A list that names its `surface` keeps it.
  */
 export const CollectionShellColumnSurfaceContext = React.createContext<'plane' | undefined>(undefined);
+
+/**
+ * The app shell's column, stated once (`AppShellColumn`): lists lie on its plane, and whatever stands among its rows
+ * takes the navigation column's anatomy even where the column's list is not a `CollectionList` (Sessions). An empty
+ * Sessions column's line then starts on its rows' edge, under the title (LABPARITY-ACCEPT-F-1118 fix 7: x 74 vs 78).
+ */
+export function CollectionShellColumnScope(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+    return (
+        <CollectionShellColumnSurfaceContext.Provider value="plane">
+            <HappierCollectionListRowScope>{props.children}</HappierCollectionListRowScope>
+        </CollectionShellColumnSurfaceContext.Provider>
+    );
+}
 
 /**
  * Set by a list + detail collection's rail beside its detail (`SettingsCollectionLayout`): a list standing there is a

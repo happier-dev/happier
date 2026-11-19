@@ -241,10 +241,17 @@ it('gives a vacant rail no column only where its More has a home in the title st
     expect(moreHost).toBeNull();
 });
 
+// UI refinements 2026-11-18 23:07Z: one decision per open. Details docks whenever its minimum fits beside main once
+// the rail is reserved, clamped to that budget (1440 with the Sessions sidebar open leaves this host 1120 px:
+// 1120 − 44 rail − 420 main = 656, so a stored 680 docks at 656, the DESIGN-LIVE-225 split). It overlays only
+// where even its minimum doesn't fit (760 − 44 − 420 = 296 < 320), and the late companion moves neither.
 it.each([
-    { storedWidth: 680, placement: 'overlay' },
-    { storedWidth: 640, placement: 'docked' },
-])('keeps Details $placement when a late companion fills the action rail', async ({ storedWidth, placement }) => {
+    { hostWidth: 1120, storedWidth: 680, placement: 'docked', dockedWidth: 656 },
+    { hostWidth: 1120, storedWidth: 640, placement: 'docked', dockedWidth: 640 },
+    { hostWidth: 760, storedWidth: 520, placement: 'overlay', dockedWidth: null },
+])('keeps Details $placement when a late companion fills the action rail (host $hostWidth, stored $storedWidth)', async ({
+    hostWidth, storedWidth, placement, dockedWidth,
+}) => {
     const { container, root } = mountRoot();
     const { getStorage } = await import('@/sync/domains/state/storage');
     const { PaneActionRailContext } = await import('./PaneActionRailContext');
@@ -269,11 +276,10 @@ it.each([
     ));
     const query = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
     await render(false, false);
-    // A 1440 px viewport with the sidebar open leaves 1120 px for this host.
     const host = query('details-columns') as HTMLElement & {
         __reactLayoutHandler: (event: { nativeEvent: { layout: { width: number; height: number } } }) => void;
     };
-    await act(async () => host.__reactLayoutHandler({ nativeEvent: { layout: { width: 1120, height: viewport.height } } }));
+    await act(async () => host.__reactLayoutHandler({ nativeEvent: { layout: { width: hostWidth, height: viewport.height } } }));
     await render(true, false);
     const rail = document.querySelector<HTMLElement>('[data-testid="pane-action-rail-column"]')!;
     expect(getComputedStyle(rail).display).toBe('none');
@@ -289,6 +295,10 @@ it.each([
         `multi-pane-details-${placement}`,
     ]);
     expect(query('triage-details')).toBe(detail);
+    if (dockedWidth !== null) {
+        const column = query('triage-details')!.closest<HTMLElement>('[data-testid="multi-pane-details-docked"]')!;
+        expect(parseFloat(column.style.width || getComputedStyle(column).width)).toBe(dockedWidth);
+    }
 });
 
 // Owner 2026-11-11 (desktop #25a): the right rail stands on the chrome coat like the app rail, never on a content plate.

@@ -80,7 +80,7 @@ describe('DetailsPaneHost', () => {
         expect(hostProps().layout.details).toBe('hidden');
     });
 
-    it('overlays instead of squeezing the main content below the minimum the destination declares', async () => {
+    it('never squeezes the main content below the minimum the destination declares: it clamps, then overlays', async () => {
         useSettings({ detailsPaneWidthPx: 520 });
         const details = { content: React.createElement('PluginDetailStub') };
 
@@ -88,8 +88,14 @@ describe('DetailsPaneHost', () => {
         await renderScreen((<DetailsPaneHost main={<div />} details={details} onCloseDetails={() => {}} />));
         expect(hostProps().layout.details).toBe('docked');
 
-        // …but not for a page that needs 700 (two card columns, say): the pane floats over it.
+        // …a page that needs 700 (two card columns, say) keeps it: the pane docks at the 500 left beside it
+        // (UI refinements 2026-11-18: a stored width is clamped, never a reason to float)…
         await renderScreen((<DetailsPaneHost main={<div />} details={details} onCloseDetails={() => {}} mainMinWidthPx={700} />));
+        expect(hostProps().layout.details).toBe('docked');
+        expect(hostProps().detailsDockMaxWidthPx).toBe(500);
+
+        // …and only a page whose minimum leaves less than the pane's own minimum (300 < 320) has it float over it.
+        await renderScreen((<DetailsPaneHost main={<div />} details={details} onCloseDetails={() => {}} mainMinWidthPx={900} />));
         expect(hostProps().layout.details).toBe('overlay');
         expect(hostProps().detailsDockWidthPx).toBe(520);
     });

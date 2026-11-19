@@ -96,31 +96,43 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         expect(lastProps.rightDockWidthPx).toBe(835 - 420);
     });
 
-    it('turns the details pane into an overlay when its preferred width would squeeze the main content', async () => {
+    // UI refinements 2026-11-18: a stored width never floats Details. It docks, clamped, while its minimum fits beside
+    // main's, and floats only where even that minimum would squeeze the main content.
+    it('clamps a docked details pane to what main leaves, and overlays it only when its minimum would squeeze main', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
-        lastProps = null;
-        mockedWindowWidthPx = 835;
-        mockedScopeOpen = { right: false, details: true };
-        mockedSettings = {
-            uiMultiPanePanelsEnabled: true,
-            rightPaneWidthPx: 320,
-            rightPaneWidthBasisPx: 835,
-            detailsPaneWidthPx: 520,
-            detailsPaneWidthBasisPx: 835,
-            bottomPaneHeightPx: 320,
-            bottomPaneHeightBasisPx: 900,
+        const render = async (windowWidthPx: number) => {
+            lastProps = null;
+            mockedWindowWidthPx = windowWidthPx;
+            mockedSettings = {
+                uiMultiPanePanelsEnabled: true,
+                rightPaneWidthPx: 320,
+                rightPaneWidthBasisPx: windowWidthPx,
+                detailsPaneWidthPx: 520,
+                detailsPaneWidthBasisPx: windowWidthPx,
+                bottomPaneHeightPx: 320,
+                bottomPaneHeightBasisPx: 900,
+            };
+            await renderScreen(<AppPaneScopeHost
+                        scopeId="scope1"
+                        main={<div />}
+                        detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
+                    />);
+            expect(lastProps).not.toBeNull();
+            return lastProps;
         };
-
-        await renderScreen(<AppPaneScopeHost
-                    scopeId="scope1"
-                    main={<div />}
-                    detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
-                />);
-
-        expect(lastProps).not.toBeNull();
-        expect(lastProps.layout.details).toBe('overlay');
-        expect(lastProps.detailsDockWidthPx).toBe(520);
-        mockedScopeOpen = { right: true, details: false };
+        mockedScopeOpen = { right: false, details: true };
+        try {
+            // 835 − 420 leaves 415 beside main: a stored 520 docks at 415.
+            const narrow = await render(835);
+            expect(narrow.layout.details).toBe('docked');
+            expect(narrow.detailsDockMaxWidthPx).toBe(415);
+            // 700 − 420 leaves 280, under the pane's 320 minimum: it floats at its stored width.
+            const tooNarrow = await render(700);
+            expect(tooNarrow.layout.details).toBe('overlay');
+            expect(tooNarrow.detailsDockWidthPx).toBe(520);
+        } finally {
+            mockedScopeOpen = { right: true, details: false };
+        }
     });
 
     it('allows the docked right pane max width to exceed the legacy 720px cap on wide containers', async () => {

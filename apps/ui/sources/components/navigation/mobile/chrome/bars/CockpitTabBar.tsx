@@ -326,15 +326,13 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
     const viewport = React.useRef(0);
     const layouts = React.useRef(new Map<string, Readonly<{ x: number; width: number }>>());
     const reveal = React.useCallback(() => {
-        // The last tab (the open item from More rides there) is the track's end: no measured position can be stale.
-        if (props.activeId !== undefined && props.activeId === props.lastId) {
-            scrollRef.current?.scrollToEnd({ animated: false });
-            return;
-        }
         const active = props.activeId === undefined ? undefined : layouts.current.get(props.activeId);
         if (!active || viewport.current <= 0) return;
         const x = resolveCockpitTrackRevealX({ ...active, offset: offset.current, viewport: viewport.current, fade: TRACK_EDGE_FADE.fadeSize });
-        if (x !== null) scrollRef.current?.scrollTo({ x, animated: false });
+        if (x === null) return;
+        // The last tab (the open item from More rides there) is the track's end, wherever its content ends.
+        if (props.activeId === props.lastId) scrollRef.current?.scrollToEnd({ animated: false });
+        else scrollRef.current?.scrollTo({ x, animated: false });
     }, [props.activeId, props.lastId]);
     React.useEffect(reveal, [reveal]);
     const report = React.useCallback((id: string, x: number, width: number) => {

@@ -1,12 +1,14 @@
 /**
- * Where a scrolling phone bar's track scrolls so its selected tab is whole and clear of the edge fade (Plan 30 §457:
- * the selected tab scrolled into view). Null when it already is.
+ * Where a scrolling phone bar's track scrolls so its selected tab is in view (Plan 30 §457: the selected tab scrolled
+ * into view): whole and clear of the edge fade once it moves. Null when it is already in view. At the end, a tab
+ * showing at least its half (the track's peek) is in view, so the bar opens at its start rather than cutting its
+ * first tab in half (UI refinements 11-18, TRIAGE-W1-BROWSER-A r239).
  */
 export function resolveCockpitTrackRevealX(input: Readonly<{ x: number; width: number; offset: number; viewport: number; fade: number }>): number | null {
     const start = input.x - input.fade;
     const end = input.x + input.width + input.fade;
     if (start < input.offset) return Math.max(0, start);
-    if (end > input.offset + input.viewport) return Math.max(0, end - input.viewport);
+    if (input.x + input.width / 2 > input.offset + input.viewport) return Math.max(0, end - input.viewport);
     return null;
 }
 

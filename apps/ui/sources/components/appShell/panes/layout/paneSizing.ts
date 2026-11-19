@@ -14,7 +14,8 @@ import {
  * - `right`, the sidebar whose content the action rail picks. Widening it stops at the width that
  *   keeps the main content at its minimum.
  * - `details`, the wider pane. Widening it past that width turns it into an overlay over the main
- *   content instead of squeezing it (`overlayWhenWiderThanBudget`).
+ *   content instead of squeezing it (`overlayWhenWiderThanBudget`), for the rest of that open. Each open
+ *   docks it, clamped, whenever its minimum fits; only a window too narrow for that overlays it.
  * The threshold is always the main content's minimum width, never a separate number.
  */
 export const PANE_SIZING_DEFAULTS = {
@@ -46,7 +47,7 @@ export const PANE_SIZING_DEFAULTS = {
 /**
  * The details column's width. A person's dragged width always wins. Until they drag, a destination whose detail is the
  * reading surface (an item opened beside its list) asks for its own width, within what keeps main at its minimum; a
- * stored width that is already over that budget keeps the existing overlay decision.
+ * stored width already over that budget is kept as the preference and clamped where it docks.
  */
 export function resolveDetailsDockPreferredPx(input: Readonly<{
     storedPx: number;

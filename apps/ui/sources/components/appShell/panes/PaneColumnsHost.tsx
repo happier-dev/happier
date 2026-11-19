@@ -249,20 +249,22 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         bottomMinHeightPx: PANE_SIZING_DEFAULTS.bottom.minPx,
         preferredHeightPx: bottomPreferredPxForLayout,
     });
-    // A pane that opts into the overlay-at-threshold behavior becomes an overlay once its preferred
-    // width (stored or mid-drag) would leave the main content narrower than its minimum. A pane
-    // that does not opt in stays docked and is clamped at that budget instead.
+    // A side pane that opts into the overlay-at-threshold behavior becomes an overlay once its preferred
+    // width would leave the main content narrower than its minimum. A pane that does not opt in stays
+    // docked and is clamped at that budget instead. (Details decides per open, below.)
     const singlePaneBudgetMaxPx = React.useMemo(() => {
         const clamp = (value: number, minPx: number, maxPx: number) => Math.min(maxPx, Math.max(minPx, value));
-        return {
-            rightMax: clamp(dockContainerWidthPx - mainMinPx, right.minPx, right.maxPx),
-            detailsMax: clamp(dockContainerWidthPx - mainMinPx, details.minPx, details.maxPx),
-        };
-    }, [dockContainerWidthPx, details.maxPx, details.minPx, mainMinPx, right.maxPx, right.minPx]);
+        return { rightMax: clamp(dockContainerWidthPx - mainMinPx, right.minPx, right.maxPx) };
+    }, [dockContainerWidthPx, mainMinPx, right.maxPx, right.minPx]);
     const rightPrefersOverlay = right.overlayWhenWiderThanBudget
         && (rightDragWidthPx != null || storedEffectiveRightDockWidthPx > singlePaneBudgetMaxPx.rightMax + 1);
+    // One decision per open (UI refinements 2026-11-18): Details docks whenever its minimum fits beside main with the
+    // rail reserved, its stored width clamped to that budget; a stored width never floats it. A person pulling the pane
+    // past the budget floats it for the rest of this open, and pulling it back under docks it again.
+    const [detailsPulledPastBudget, setDetailsPulledPastBudget] = React.useState(false);
+    if (!detailsOpen && detailsPulledPastBudget) setDetailsPulledPastBudget(false);
     const detailsPrefersOverlay = details.overlayWhenWiderThanBudget
-        && (detailsDragWidthPx != null || storedEffectiveDetailsDockWidthPx > singlePaneBudgetMaxPx.detailsMax + 1);
+        && (detailsDragWidthPx != null || detailsPulledPastBudget);
 
     const paneLayoutInput = {
         arrangement,
@@ -519,7 +521,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
             const pulled = lastDetailsDragWidthRef.current;
             lastDetailsDragWidthRef.current = null;
             setDetailsDragWidthPx(null);
-            if (pulled != null && pulled > detailsDockBudgetRef.current.budgetPx + 1) onCommitDetailsDockWidthPx(pulled);
+            if (pulled == null) return;
+            const pastBudget = details.overlayWhenWiderThanBudget && pulled > detailsDockBudgetRef.current.budgetPx + 1;
+            setDetailsPulledPastBudget(pastBudget);
+            if (pastBudget) onCommitDetailsDockWidthPx(pulled);
             return;
         }
         const width = details.overlayWhenWiderThanBudget && detailsDockBudgetRef.current.docked && meta?.exceededMaxPx === true

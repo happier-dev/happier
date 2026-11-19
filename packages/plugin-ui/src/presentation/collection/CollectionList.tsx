@@ -421,6 +421,14 @@ export function useHappierCollectionListRow(): boolean {
 }
 
 /**
+ * A navigation column whose list is not a {@link HappierCollectionList} (the app shell's Sessions column): what stands
+ * in it takes the same column anatomy, so a state line starts on the column rows' edge rather than a loose page's.
+ */
+export function HappierCollectionListRowScope(props: Readonly<{ children: ReactNode }>): ReactElement {
+  return <HappierCollectionListRowContext.Provider value>{props.children}</HappierCollectionListRowContext.Provider>;
+}
+
+/**
  * Present around a Collection's table or list row: the row draws the dense collection anatomy — full
  * bleed with a hairline under it, the pointer's hover fill and the open row's fill with its leading
  * edge across the whole row (accessory included), so selection never reads as a floating chip and

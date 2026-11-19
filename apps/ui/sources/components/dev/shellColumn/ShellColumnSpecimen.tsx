@@ -14,7 +14,7 @@ import {
   CollectionList,
   CollectionListGroupLabel,
   CollectionNavigationRow,
-  CollectionShellColumnSurfaceContext,
+  CollectionShellColumnScope,
 } from '@/components/ui/lists/collection/CollectionList';
 import {
   CollectionSpacesStrip,
@@ -117,7 +117,7 @@ function ShellColumnFrame(props: Readonly<{ frame: Frame }>) {
         ))}
       </View>
       <View style={styles.column}>
-        <CollectionShellColumnSurfaceContext.Provider value="plane">
+        <CollectionShellColumnScope>
           <CollectionList
             testID={`shell-column-specimen-${props.frame.id}:list`}
             title={
@@ -149,7 +149,7 @@ function ShellColumnFrame(props: Readonly<{ frame: Frame }>) {
             <SpecimenRow id={`${props.frame.id}:build-box`} title="Build box" icon="desktop" />
             <SpecimenRow id={`${props.frame.id}:macbook`} title="MacBook Pro" icon="desktop" />
           </CollectionList>
-        </CollectionShellColumnSurfaceContext.Provider>
+        </CollectionShellColumnScope>
       </View>
       {/* Rail-step guides: the title row's centre, then one per step. */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
