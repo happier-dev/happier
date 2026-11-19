@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
@@ -51,6 +52,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let panelAuditPath: string;
   let deepSecAuditPath: string;
   let deepSecExecutablePath: string;
+  let sliceAuditPath: string;
   let nativeHoldPath: string;
   async function createSourceSession(account = owner) {
     const source = await createSessionWithCiphertexts({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
@@ -103,6 +105,41 @@ else {
   }
 }
 `, { mode: 0o755 });
+    sliceAuditPath = join(testDir, 'slice-audit.jsonl');
+    await writeFile(sliceAuditPath, '');
+    // Native 0.8.4 state files are the external process contract. Real host
+    // storage, normalization, Actions and finding persistence remain in use.
+    await writeFile(join(bin, 'clawpatch'), `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+if (args.includes('--version')) console.log('0.8.4');
+else {
+  const state = args[args.indexOf('--state-dir') + 1];
+  fs.appendFileSync(${JSON.stringify(sliceAuditPath)}, JSON.stringify({ args, state }) + '\\n');
+  const save = (name, value) => { const file = path.join(state, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
+  if (args[0] === 'init') { save('project.json', {}); console.log('{}'); }
+  else if (args[0] === 'map') {
+    for (const featureId of ['slice-a', 'slice-b']) save('features/' + featureId + '.json', { schemaVersion: 1, featureId, status: 'reviewed' });
+    console.log('{}');
+  } else if (args[0] === 'review' && fs.existsSync(${JSON.stringify(nativeHoldPath)})) {
+    setInterval(() => {}, 1000);
+  } else if (args[0] === 'review') {
+    const runId = 'native-slices';
+    const ids = ['slice-a', 'slice-b'];
+    for (const [index, featureId] of ids.entries()) {
+      console.error('clawpatch review feature-start index=' + (index + 1) + ' total=2 feature=' + featureId);
+      save('findings/' + featureId + '.json', { schemaVersion: 1, findingId: featureId, featureId,
+        title: 'Defect in ' + featureId, category: 'bug', severity: 'high', confidence: 'high',
+        evidence: [{ path: 'README.md', startLine: 1, endLine: 1, symbol: featureId, quote: 'lost write' }],
+        reasoning: 'The write in ' + featureId + ' is lost.', recommendation: 'Commit before returning.' });
+      console.error('clawpatch review feature-done index=' + (index + 1) + ' total=2 feature=' + featureId);
+    }
+    save('runs/' + runId + '.json', { schemaVersion: 1, runId, status: 'completed', findingIds: ids, errors: [] });
+    console.log(JSON.stringify({ run: runId, reviewed: 2, findings: 2 }));
+  } else process.exitCode = 1;
+}
+`, { mode: 0o755 });
     deepSecAuditPath = join(testDir, 'deepsec-audit.jsonl');
     await writeFile(deepSecAuditPath, '');
     deepSecExecutablePath = join(bin, 'deepsec');
@@ -125,8 +162,21 @@ else {
     fixture = await startFinJourneyFixture({ testDir, dbProvider: 'postgres', requestObservation: {},
       serverEnv: { ...features, DATABASE_URL: databaseUrl } });
     owner = await fixture.createAccount('review-owner');
-    machine = await fixture.enrollDaemon(owner, { env: { ...features,
+    machine = await fixture.enrollDaemon(owner, { prepareHome: async homeDir => {
+      // Pinned npm dependencies execute their package bin, never a PATH shim.
+      // Seed that native boundary in this fixture's private managed install.
+      const command = resolveAgentCliManagedCommandPathForRuntime({
+        id: 'dep.review-slices', title: 'Slice review', binaryName: 'clawpatch', sourcePreferenceDefault: 'managed-first',
+        managedInstall: { kind: 'managed_package', packageName: 'clawpatch@0.8.4', binaryName: 'clawpatch' },
+        manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false,
+      }, { processEnv: { HAPPIER_HOME_DIR: homeDir } });
+      const packageDir = join(dirname(dirname(command)), 'workspace', 'node_modules', 'clawpatch');
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: 'clawpatch', version: '0.8.4', bin: { clawpatch: 'index.cjs' } }));
+      await writeFile(join(packageDir, 'index.cjs'), await readFile(join(bin, 'clawpatch')));
+    }, env: { ...features,
       HAPPIER_MUSE_PATH: executablePath, PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter), MUSE_INSTALL_DIR: bin,
+      HAPPIER_JS_RUNTIME_PATH: process.execPath,
       HOME: nativeHome, XDG_CONFIG_HOME: join(nativeHome, 'config'), XDG_DATA_HOME: join(nativeHome, 'data'),
       XDG_CACHE_HOME: join(nativeHome, 'cache'), CODEX_HOME: join(nativeHome, 'codex'),
     } });
@@ -396,6 +446,43 @@ else {
     expect(commands.map(command => command.args[0])).toEqual(['scan', 'process', 'export']);
     expect(new Set(commands.map(command => command.dataRoot)).size).toBe(1);
     expect(commands[0]?.dataRoot).toBeTruthy();
+  });
+  it('F4 native slices preserve distinct evidence and findings through public Actions, New round and Stop', async () => {
+    let result = await startNativeReview('slices', { scope: 'repository' });
+    const firstRunId = result.run.runId;
+    const reviewId = result.run.display?.groupId;
+    let originalIds: string[] = [];
+    for (const round of [1, 2]) {
+      if (round === 2) {
+        const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
+          runId: firstRunId, target: { kind: 'detached' },
+        }));
+        expect(next.reviewRound).toEqual({ reviewId, roundOrdinal: 2 });
+        await act('execution.run.wait', { runId: next.runId, condition: 'terminal' });
+        result = ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId, includeStructured: true }));
+      }
+      expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: {
+        reviewOutcome: 'complete', findings: [
+          { extensions: { 'happier.review.slices': { featureId: 'slice-a' } } },
+          { extensions: { 'happier.review.slices': { featureId: 'slice-b' } } },
+        ],
+      } });
+      const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
+      expect(persisted.items).toHaveLength(2);
+      if (round === 1) originalIds = persisted.items.map(item => item.id).sort();
+      else expect(persisted.items.map(item => item.id).sort()).toEqual(originalIds);
+      for (const item of persisted.items) {
+        expect(item.author).toEqual({ kind: 'executionRun', agentId: 'slices', runId: firstRunId });
+        expect(item.appearances).toEqual(expect.arrayContaining([expect.objectContaining({ roundOrdinal: round, runId: result.run.runId })]));
+      }
+      expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
+        .toMatchObject({ state: 'completed', currentRoundOrdinal: round, counts: { total: 2 } });
+    }
+    const commands: { args: string[]; state: string }[] = (await readFile(sliceAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.filter(command => command.args[0] === 'review')).toHaveLength(2);
+    expect(new Set(commands.map(command => command.state)).size).toBe(1);
+    expect(commands[0]?.state.startsWith(machine.workspaceDir)).toBe(false);
+    await stopNativeRound(firstRunId, sliceAuditPath, args => args[0] === 'review');
   });
   it('F4 native panel with an explicitly write-enabled Role preserves a failed member and substantive evidence through public Actions, New round and Stop', async () => {
     const panelRecord = structuredClone(panelNativeReview);
