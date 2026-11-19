@@ -141,12 +141,7 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalAct
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { projectAdmittedExternalActionMachineContext } from '@/daemon/externalActions/execution';
 import { createSessionDaemonAuthorityFixture } from '@/mcp/runtime/sessionDaemonAuthority.testkit';
-
-const processIdentity = vi.hoisted(() => vi.fn());
-vi.mock('@/daemon/processIdentity', async importOriginal => ({
-  ...await importOriginal<typeof import('@/daemon/processIdentity')>(),
-  readProcessIdentityByPid: processIdentity,
-}));
+import * as processIdentity from '@/daemon/processIdentity';
 
 // Only database I/O and HTTP delivery are substituted. Home issuance, signature
 // verification, Session custody, scope admission and the transport readers run.
@@ -1043,7 +1038,7 @@ it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-ha
   const command = 'node /runtime/.runner-snapshots/manager-answer/dist/index.mjs';
   const runner = { pid: process.pid, processStartTimeMs: 23349,
     processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:manager-answer' };
-  processIdentity.mockResolvedValue({ ...runner, command });
+  vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({ ...runner, command });
   const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
   const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
     path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
@@ -1389,7 +1384,8 @@ it.each(['direct daemon', 'native agent'] as const)('retains original Home autho
     capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } })));
   const pluginId = f.authoredAccount!.pluginId;
   const machine = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
-    manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { actions: [{ id: 'echo', title: 'Machine echo',
+    includeAvailability: true,
+    manifest: createPluginManifestV2Fixture({ id: pluginId, engines: { happier: '^0.3.0' }, contributes: { actions: [{ id: 'echo', title: 'Machine echo',
       scopes: ['global'], surfaces: ['agent', 'cli'], dangerLevel: 'safe', execution: { target: 'daemon' },
       inputSchema: { type: 'object', properties: { key: { type: 'string' }, machineId: { type: 'string' } }, required: ['key'], additionalProperties: false },
       inputHints: { fields: [{ path: 'key', title: 'Key', widget: 'select', options: [{ value: 'machine', label: 'Machine' }] }] },
@@ -1413,7 +1409,7 @@ export function activate(api) {
   });
 }` },
   }] });
-  const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => machine.lease });
+  const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => machine.controller.tryAcquireRuntimeRegistry() });
   const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: () => machine.controller.acquireRuntimeRegistry() });
   const createExecutor = (options?: Readonly<{ accountPluginActions: true }>,
     pluginActionExecutionOwner: 'current_process' | 'daemon_control' = 'current_process') => createCliActionExecutor({
@@ -1438,6 +1434,8 @@ export function activate(api) {
   const operation = f.operation('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'machine' } });
   try {
     if (entry === 'native agent') {
+      const qualifiedId = `${pluginId}/actions/echo`;
+      expect(list({ id: qualifiedId })).toMatchObject([{ id: qualifiedId, executionPlacement: 'machine' }]);
       f.authoredAccount!.setBundledFallback();
       const daemon = await createSessionDaemonAuthorityFixture({ sessionId,
         execute: request => receiver(true)(request, { sessionId, isCurrent: async () => true }),
@@ -1454,7 +1452,7 @@ export function activate(api) {
       });
       try {
         const input = { key: 'machine', machineId: storage.state.machineId };
-        const result = await invoke(`${pluginId}/actions/echo`, input);
+        const result = await invoke(qualifiedId, input);
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
           machine: { machineId: storage.state.machineId, installationId: storage.state.installationId },
           accountId: storage.account.id, agentCaller: true,
@@ -1501,7 +1499,7 @@ it('executes an authored Account Action through restricted Agent capability cust
     const command = 'node /runtime/.runner-snapshots/restricted-account/dist/index.mjs';
     const runner = { pid: process.pid, processStartTimeMs: 23349,
       processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:restricted-account' };
-    processIdentity.mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
+    vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
     const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
     const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
@@ -1547,8 +1545,8 @@ it('executes an authored Account Action through restricted Agent capability cust
         actionId: 'action.invoke', input: { action: { pluginId: f.authoredAccount!.pluginId, localId: 'echo' }, input: { key: 'restricted' } },
       } });
       const outcome = await invoke();
-      expect(capabilities[0]?.operation).toMatchObject({ kind: 'action.execute', actionId: 'action.spec.get' });
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { key: 'restricted', surface: 'agent' } });
+      expect(capabilities[0]?.operation).toMatchObject({ kind: 'action.execute', actionId: 'action.spec.get' });
       expect(capabilities.some(request => request.operation.kind === 'action.execute' && request.operation.actionId === 'action.invoke')).toBe(true);
       expect(f.observations.some(observation => observation.path.includes('action.invoke/execution-authorization'))).toBe(false);
       const clientStart = capabilities.length;
@@ -1607,7 +1605,7 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
   const command = 'node /runtime/.runner-snapshots/inherited-spawn/dist/index.mjs';
   const runner = { pid: process.pid, processStartTimeMs: 23348,
     processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:inherited-spawn' };
-  processIdentity.mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
+  vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
   const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
   const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
     path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
@@ -1878,7 +1876,7 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
   const command = 'node /runtime/.runner-snapshots/signed-lifecycle/dist/index.mjs';
   const runner = { pid: process.pid, processStartTimeMs: 23347,
     processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:signed-lifecycle' };
-  processIdentity.mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
+  vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({ pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command });
   const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
   const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
     path, sessionId, runner, retainedAgent: createAgentSessionRunnerFactoryBinding({
