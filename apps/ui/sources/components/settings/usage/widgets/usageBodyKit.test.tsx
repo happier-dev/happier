@@ -229,6 +229,10 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(zero.map(entry => entry.points.length)).toEqual([3, 3]);
         const partial = trimUsageFlowUnreadTail([at(5, 3, 1), at(2, 4, null)]);
         expect(partial.map(entry => entry.points.length)).toEqual([3, 3]);
+        // Weeks before anything was recorded (a Year whose history starts in October) are left off the front too;
+        // a recorded zero is a reading and stays.
+        const head = trimUsageFlowUnreadTail([at(null, null, 0, 5, 3), at(null, null, null, 2, 4)]);
+        expect(head.map(entry => entry.points.map(point => point.y))).toEqual([[0, 5, 3], [null, 2, 4]]);
     });
     it('says a flow needs more history when only two adjacent days of a month were recorded, never one stray diagonal (USAGE-ACCEPT 1118 #13)', async () => {
         const day = 86_400_000;
@@ -248,6 +252,10 @@ describe('shared Usage identity and dependent coverage', () => {
         const screen = await renderScreen(<UsageFlowWidget query={query} slice={sparse} model={modelFor(sparse)} serverId="home" id="usage_flow" testID="flow-sparse" />);
         expect(screen.findAllByType(StackedSeriesChart)).toHaveLength(0);
         expect(screen.getTextContent()).toContain(t('usage.board.page.flowEmptyTitle'));
+        // The same two days at the period's start decide the same way: the rule reads the period, not the trimmed drawing (review E-05).
+        const early = sliceFor([0, 1]);
+        await screen.update(<UsageFlowWidget query={query} slice={early} model={modelFor(early)} serverId="home" id="usage_flow" testID="flow-sparse" />);
+        expect(screen.findAllByType(StackedSeriesChart)).toHaveLength(0);
         const run = sliceFor([24, 25, 26, 27]);
         await screen.update(<UsageFlowWidget query={query} slice={run} model={modelFor(run)} serverId="home" id="usage_flow" testID="flow-sparse" />);
         expect(screen.findAllByType(StackedSeriesChart)).toHaveLength(1);

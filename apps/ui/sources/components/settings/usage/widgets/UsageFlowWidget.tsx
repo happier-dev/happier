@@ -87,8 +87,9 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(
     `${byModel ? t('usage.board.page.byModel') : t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}`,
   );
-  const series = React.useMemo(
-    () => trimUsageFlowUnreadTail((() => {
+  // The period's own buckets decide whether there is a flow to draw; the drawing then leaves the unread ends off.
+  const periodSeries = React.useMemo(
+    () => (() => {
       if (sourceSeries.length > 0) return sourceSeries;
       if (cost && view) {
         const trend = usagePageCostTrend(view.pageCost);
@@ -118,9 +119,10 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
                   : usageAgentTitle(mix.keys[index]!.key, entry.label),
           }))
         : [];
-    })()),
+    })(),
     [mix, sourceSeries, cost, view, range, theme, byModel, props.query, props.slice.accounting?.coverage],
   );
+  const series = React.useMemo(() => trimUsageFlowUnreadTail(periodSeries), [periodSeries]);
   // Choosing an Agent in the lens or the legend narrows the page's one filter row to it.
   const drill = useUsageDrill(props.query);
   const byAgent = !byModel && (!cost || sourceSeries.length > 0);
@@ -163,7 +165,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   // Two or three recorded buckets among unread ones have no shape to follow: drawn, they are one stray stroke beside the
   // daily bars that already show them. The flow waits for a stretch of recorded usage (USAGE-ACCEPT 1118 #13).
-  if (series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData) || !usageFlowHasShape(series))
+  if (series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData) || !usageFlowHasShape(periodSeries))
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}
@@ -250,7 +252,9 @@ function usageFlowHasShape(series: readonly Readonly<{ points: readonly Readonly
 /**
  * The period's unread end (today before its first reading lands: some series unknown, none above zero) is left off the
  * flow. Drawn, a stacked area ends in a vertical cut where one series is unknown while its neighbours fall to zero
- * (USAGE-ACCEPT #18). A measured zero day with every series read stays.
+ * (USAGE-ACCEPT #18). A measured zero day with every series read stays. The buckets before anything was recorded (a
+ * Year whose history starts in October) are left off the front, so the flow spans the stretch it can draw; the daily
+ * bars keep the whole period with its unrecorded weeks marked.
  */
 export function trimUsageFlowUnreadTail<Series extends Readonly<{ points: readonly Readonly<{ y: number | null }>[] }>>(series: readonly Series[]): Series[] {
   const length = Math.max(0, ...series.map(entry => entry.points.length));
@@ -260,5 +264,7 @@ export function trimUsageFlowUnreadTail<Series extends Readonly<{ points: readon
     if (!at.some(value => value === null) || at.some(value => value !== null && value > 0)) break;
     end -= 1;
   }
-  return end === length ? [...series] : series.map(entry => ({ ...entry, points: entry.points.slice(0, end) }) as Series);
+  let start = 0;
+  while (end - start > 2 && series.every(entry => (entry.points[start]?.y ?? null) === null)) start += 1;
+  return start === 0 && end === length ? [...series] : series.map(entry => ({ ...entry, points: entry.points.slice(start, end) }) as Series);
 }
