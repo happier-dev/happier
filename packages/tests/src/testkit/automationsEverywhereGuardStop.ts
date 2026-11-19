@@ -3,12 +3,14 @@ import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { MachineResourcesPolicyGetResultV1Schema, MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
+import { SessionGuardStateV1Schema } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import type { TeamSetupFFixture } from './teamSetupF';
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import { fetchJson } from './http';
 import { waitFor } from './timing';
+import { readDaemonDiagnostics } from './daemon/daemon';
 
 type Account = Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 type Machine = Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
@@ -46,13 +48,22 @@ export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, acto
       failureCause: linked.failureCause })})`);
   }
   const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
-  await waitFor(async () => {
+  const readSourceStatus = async () => {
     const listed = await actor.execute('workflow.trigger.list', { automationId: saved.set.automationId, triggerId: saved.triggerId });
     if (!listed.ok) throw new Error(`${eventId} source read refused (${listed.errorCode})`);
     const trigger = WorkflowTriggerListResultV1Schema.parse(listed.result).sets.flatMap(set => set.triggers)
       .find(row => row.id === saved.triggerId);
-    return trigger?.kind === 'pluginEvent' && trigger.sourceStatus?.state === 'observing';
-  }, { context: `${eventId} source observes before its native effect` });
+    return trigger?.kind === 'pluginEvent' ? trigger.sourceStatus : null;
+  };
+  try {
+    await waitFor(async () => (await readSourceStatus())?.state === 'observing',
+      { context: `${eventId} source observes before its native effect` });
+  } catch (error) {
+    console.error('MACHINE_EVENT_SOURCE_DIAGNOSTIC', JSON.stringify({ eventId, triggerId: saved.triggerId,
+      source: await readSourceStatus() }));
+    console.error('MACHINE_EVENT_DAEMON_DIAGNOSTIC', JSON.stringify(await readDaemonDiagnostics(machine.daemon)));
+    throw error;
+  }
   const readRuns = async () => {
     const response = await fetchJson<unknown>(`${fixture.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
       headers: { Authorization: `Bearer ${actor.credentials.token}`,
@@ -62,14 +73,14 @@ export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, acto
     return AutomationV3RunListResponseSchema.parse(response.data).runs;
   };
   expect(await readRuns()).toEqual([]);
-  return { saved, selected, readRuns };
+  return { saved, selected, readRuns, readSourceStatus };
 }
 
 /** Real policy Action → native idle-stop settlement → ordinary observed Run.
  * The minute is the Guard's minimum configured idle deadline, not a test clock. */
 export async function assertGuardStopLifecycle(fixture: TeamSetupFFixture, actor: Account, machine: Machine) {
   const guarded = await fixture.assertKnownGoodSessionControl(actor, machine);
-  const { saved, selected, readRuns } = await attachMachineEventTrigger(fixture, actor, machine, 'guard-stopped',
+  const { saved, selected, readRuns, readSourceStatus } = await attachMachineEventTrigger(fixture, actor, machine, 'guard-stopped',
     { v: 1, all: [{ field: '/sessionId', op: 'eq', value: guarded.sessionId }] });
   const before = await actor.execute('machines.resources.policy.get', machine.target);
   if (!before.ok) throw new Error(`Guard policy read refused (${before.errorCode})`);
@@ -95,6 +106,16 @@ export async function assertGuardStopLifecycle(fixture: TeamSetupFFixture, actor
     expect(JSON.stringify(runs[0]!.cause)).not.toMatch(/stdout|stderr|accessToken|refreshToken/);
     const metadata = await actor.readSessionMetadata(guarded.sessionId);
     expect(metadata.sessionGuardStateV1).toMatchObject({ kind: 'stopped', rule: 'idle_sessions' });
+  } catch (error) {
+    const metadata = await actor.readSessionMetadata(guarded.sessionId);
+    const guard = SessionGuardStateV1Schema.safeParse(metadata.sessionGuardStateV1);
+    console.error('F6_GUARD_SETTLEMENT_DIAGNOSTIC', JSON.stringify({ sessionId: guarded.sessionId,
+      guard: guard.success ? { kind: guard.data.kind, ...('rule' in guard.data ? { rule: guard.data.rule } : {}),
+        ...('at' in guard.data ? { at: guard.data.at } : {}), ...('stopAt' in guard.data ? { stopAt: guard.data.stopAt } : {}) } : null,
+      source: await readSourceStatus(), runs: (await readRuns()).map(run => ({ id: run.id, state: run.state,
+        errorCode: run.errorCode, producedSessionId: run.producedSessionId })) }));
+    console.error('F6_GUARD_DAEMON_DIAGNOSTIC', JSON.stringify(await readDaemonDiagnostics(machine.daemon)));
+    throw error;
   } finally {
     const current = await actor.execute('machines.resources.policy.get', machine.target);
     if (!current.ok) throw new Error(`Guard policy recovery refused (${current.errorCode})`);
