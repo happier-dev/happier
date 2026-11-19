@@ -50,10 +50,11 @@ export function readProjectBaselineRef(workspaceRefs: readonly WorkspaceRefV1[],
     return baseline;
 }
 
-/** One admitted-ref pass; reachability, list order and activity never elect the baseline. */
+/** Reachability, list order and activity never elect the baseline or name its Project. */
 export function buildProjectGroupDisplayIndex(
     workspaceRefs: readonly WorkspaceRefV1[],
     organizations: readonly ProjectOrganizationRow[] = [],
+    machineNames?: Readonly<Record<string, string>>,
 ): ReadonlyMap<string, ProjectGroupDisplay> {
     const result = new Map<string, ProjectGroupDisplay>();
     for (const ref of workspaceRefs) {
@@ -61,14 +62,41 @@ export function buildProjectGroupDisplayIndex(
         const key = projectGroupIdentityKey(project);
         const previous = result.get(key)?.baseline;
         if (previous && !isEarlierBaseline(ref, previous)) continue;
-        result.set(key, { project, baseline: ref, title: ref.label ?? resolveWorkspacePathBasenameV1(ref.rootPath), hasCustomLabel: false });
+        const title = ref.label ?? resolveWorkspacePathBasenameV1(ref.rootPath);
+        result.set(key, { project, baseline: ref, title, hasCustomLabel: false });
     }
     for (const row of organizations) {
         const project = { serverId: row.key.serverId, projectKey: row.key.projectKey };
         const key = projectGroupIdentityKey(project);
         const previous = result.get(key);
-        result.set(key, { project, baseline: previous?.baseline ?? null, title: row.value.label ?? previous?.title ?? null,
+        const title = row.value.label ?? previous?.title ?? null;
+        result.set(key, { project, baseline: previous?.baseline ?? null, title,
             hasCustomLabel: row.value.label !== undefined });
+    }
+    const byTitle = new Map<string, Array<[string, ProjectGroupDisplay]>>();
+    for (const [key, display] of result) {
+        if (!display.title) continue;
+        const matches = byTitle.get(display.title);
+        if (matches) matches.push([key, display]);
+        else byTitle.set(display.title, [[key, display]]);
+    }
+    for (const [title, matches] of byTitle) {
+        if (matches.length < 2) continue;
+        const candidates = matches.map(([key, display]) => {
+            const machine = display.baseline ? machineNames?.[display.baseline.machineId] : undefined;
+            const path = display.baseline?.rootPath;
+            return { key, display, details: [machine, path, machine && path ? `${machine} · ${path}` : undefined] };
+        });
+        const counts = new Map<string, number>();
+        for (const { details } of candidates) {
+            for (const detail of new Set(details)) if (detail) counts.set(detail, (counts.get(detail) ?? 0) + 1);
+        }
+        // If two Projects have the same human facts, use a stable ordinal without printing their identities.
+        candidates.sort((left, right) => left.key.localeCompare(right.key));
+        for (const [index, { key, display, details }] of candidates.entries()) {
+            const detail = details.find(candidate => candidate && counts.get(candidate) === 1) ?? String(index + 1);
+            result.set(key, { ...display, title: `${title} · ${detail}` });
+        }
     }
     return result;
 }
