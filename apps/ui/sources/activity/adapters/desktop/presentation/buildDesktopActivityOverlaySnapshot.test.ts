@@ -184,6 +184,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             sourceOverview: { candidates: [candidate], counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
             activityPolicy: resolveActivitySurfacePolicy({}),
             desktopPolicy: createDesktopPolicy(),
+            pinnedCandidate: candidate,
             conversation: { serverId: 'server-1', accountId: 'account-server-1', sessionId: session.id, reply: { state: 'none' as const, messages: [] }, refreshing: false, reachable: true },
             nowMs: 1_000,
         };

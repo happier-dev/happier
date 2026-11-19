@@ -308,6 +308,31 @@ describe('resolveActivitySurfaceDeliveryAdmission', () => {
         expect(admission.privacyModeFor(homeACandidate!)).toBeNull();
     });
 
+    it('binds explicit opens to the exact Account, desktop channel and privacy even without mute facts', () => {
+        const scope = AUDIENCE_SCOPES.get(HOME_B)!;
+        const admit = (accountId: string, enabled: boolean) => resolveActivitySurfaceDeliveryAdmission({
+            candidates: overview.candidates.filter(candidate => candidate.sessionId === SHARED_SESSION_ID),
+            surface: 'desktop_overlay',
+            intent: { kind: 'explicit_open', scope: { serverId: HOME_B, accountId } },
+            accountDeliveryMutesByServerId: {},
+            resolveAccountSettings: createResolver({
+                [HOME_A]: {},
+                [HOME_B]: { attentionDeliveryPolicyV1: {
+                    v: 1, channels: { desktop_overlay: { enabled } },
+                    privacy: { surfaces: { desktop_overlay: 'status_only' } },
+                } },
+            }),
+            localSettings: LOCAL_SETTINGS,
+            now: NOW,
+        });
+
+        const allowed = admit(scope.accountId, true);
+        expect(candidateAddresses(allowed.candidates)).toEqual([`${HOME_B}/${SHARED_SESSION_ID}`]);
+        expect(allowed.privacyModeFor(allowed.candidates[0]!)).toBe('status_only');
+        expect(admit(AUDIENCE_SCOPES.get(HOME_A)!.accountId, true).candidates).toEqual([]);
+        expect(admit(scope.accountId, false).candidates).toEqual([]);
+    });
+
     it('suppresses a Home whose Account quiet hours suppress the surface', () => {
         const quietHours = {
             attentionDeliveryPolicyV1: {

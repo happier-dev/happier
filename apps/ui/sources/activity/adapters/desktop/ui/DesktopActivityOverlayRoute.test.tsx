@@ -818,8 +818,15 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(dot('bot-release')).toBeTruthy();
         });
 
-        it('pins the island on a face, asks main for that Bot in the overlay, and releases it on Back', async () => {
-            const screen = await renderRoute(withBots());
+        it('shows the conversation that main publishes after a face opens and releases it on Back', async () => {
+            let publish: (state: DesktopActivityOverlayWindowStatePayload) => void = () => {
+                throw new Error('Overlay state listener was not acquired');
+            };
+            listenDesktopActivityOverlayWindowStateMock.mockImplementation(async listener => {
+                publish = listener;
+                return () => {};
+            });
+            const screen = await renderRoute(withBots({}, null));
             expect(screen.findByTestId('desktop-activity-overlay-face-bot-flake')).toBeTruthy();
 
             await act(async () => { screen.pressByTestId('desktop-activity-overlay-face-bot-flake'); });
@@ -827,6 +834,8 @@ describe('DesktopActivityOverlayRoute', () => {
 
             expect(emitted('session.open')).toEqual([{ sessionId: 'bot-flake', serverId: 'server-1', presentation: 'overlay' }]);
             expect(notchForm(screen)).toBe('open');
+            expect(screen.findByTestId('desktop-activity-overlay-conversation')).toBeNull();
+            await act(async () => { publish(withBots()); });
             expect(screen.findByTestId('desktop-activity-overlay-conversation')).toBeTruthy();
 
             await act(async () => { screen.pressByTestId('desktop-activity-overlay-conversation-back'); });

@@ -16,7 +16,7 @@ import { listPendingSessionRequests } from '@/sync/domains/session/pending/listP
 import { listSessionListPresentationPendingRequests } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { readCurrentPersonalFollowOnceOccurrenceForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
 
 type LocalSettingsLike = Readonly<Record<string, unknown>>;
@@ -117,25 +117,31 @@ export function resolveActivitySurfaceDeliveryAdmission(params: Readonly<{
     resolveAccountSettings: ExactHomeAccountSettingsResolver;
     localSettings: LocalSettingsLike;
     now: Date;
+    /** An already-authorized conversation open is scoped to the Action's Account. */
+    intent?: Readonly<{ kind: 'explicit_open'; scope: ServerAccountScope }>;
     accountDeliveryMutesByServerId?: ActivityAttentionSource['accountDeliveryMutesByServerId'];
     audienceScopes?: ActivityAttentionSource['audienceScopes'];
 }>): ActivitySurfaceDeliveryAdmission {
     const privacyModeByKey = new Map<string, ActivitySurfacePrivacyMode>();
     const admitted: SessionActivityAttention[] = [];
     const fingerprintEntries: string[] = [];
+    const explicitScope = params.intent?.scope;
 
     for (const candidate of params.candidates) {
         const key = candidateDeliveryKey(candidate);
         const serverId = resolveCandidateServerId(candidate);
         const muteSnapshot = serverId ? params.accountDeliveryMutesByServerId?.[serverId] : null;
         const scope = serverId ? params.audienceScopes?.get(serverId) : null;
-        if (!muteSnapshot || !scope || !areServerAccountScopesEqual(scope, muteSnapshot.scope)
-            || isFollowDeliveryMutedV1(muteSnapshot.scopes, { senderSessionId: candidate.sessionId,
-                source: { kind: 'session', sessionId: candidate.sessionId } })) {
+        const scoped = scope && (explicitScope
+            ? areServerAccountScopesEqual(scope, explicitScope)
+            : muteSnapshot && areServerAccountScopesEqual(scope, muteSnapshot.scope)
+                && !isFollowDeliveryMutedV1(muteSnapshot.scopes, { senderSessionId: candidate.sessionId,
+                    source: { kind: 'session', sessionId: candidate.sessionId } }));
+        if (!scoped) {
             fingerprintEntries.push(JSON.stringify([key, false]));
             continue;
         }
-        const accountSettings = params.resolveAccountSettings(resolveCandidateServerId(candidate));
+        const accountSettings = params.resolveAccountSettings(serverId);
         const plan = accountSettings
             ? resolveActivityAttentionDeliveryPlan({
                 accountSettings,
@@ -144,9 +150,11 @@ export function resolveActivitySurfaceDeliveryAdmission(params: Readonly<{
                 channel: params.surface,
                 surface: params.surface,
                 now: params.now,
-                follow: resolveCandidateFollowIntent(candidate),
-                inboxItemType: candidate.personalAttention.primary === 'mentioned' ? 'mention'
-                    : candidate.personalAttention.primary === 'unread_discussion' ? 'update' : undefined,
+                ...(explicitScope ? {} : {
+                    follow: resolveCandidateFollowIntent(candidate),
+                    inboxItemType: candidate.personalAttention.primary === 'mentioned' ? 'mention'
+                        : candidate.personalAttention.primary === 'unread_discussion' ? 'update' : undefined,
+                }),
             })
             : null;
         if (!plan || plan.delivery === 'suppress') {

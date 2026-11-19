@@ -6927,6 +6927,9 @@ renderer’s mounted overlay presentation handler for the resolved Home and
 Session. An absent handler, including a non-desktop client, returns
 `unavailable` without navigating the main workspace. The mounted main owner sets
 the admitted Session target, then calls `desktop.notch.set {state:'pinned'}`.
+An explicit open uses the resolved Home and Account and applies their desktop
+channel and preview policy. Follow preferences and delivery mutes govern
+automatic appearance in the notch.
 The presentation interaction's `target:null` releases that target and its one
 transcript consumer; retargeting, delivery withdrawal and disable also release
 it. Faces and ordinary Session rows use this same action path. The device-local

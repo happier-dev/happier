@@ -15,8 +15,9 @@ import {
     type ActivityInteractionIdentity,
     type ActivityInteractionTargetContext,
 } from '@/activity/actions/resolveActivityInteractionCommand';
-import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
+import { resolveActivitySurfacePolicy, type ActivitySurfacePrivacyMode } from '@/activity/attention/resolveActivitySurfacePolicy';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
+import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
 import {
     resolveActivitySurfaceDeliveryAdmission,
 } from '@/activity/delivery/resolveActivitySurfaceDeliveryAdmission';
@@ -38,7 +39,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { storage, useLocalSetting } from '@/sync/domains/state/storage';
 import { isDesktopHost, useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { registerMountedDesktopOverlayPresentation } from '@/components/appShell/workspace/desktopOverlayPresentationRuntime';
+import { registerMountedDesktopOverlayPresentation, type DesktopOverlayPresentationTarget } from '@/components/appShell/workspace/desktopOverlayPresentationRuntime';
 
 import {
     emitDesktopActivityOverlayInteractionResult,
@@ -54,7 +55,9 @@ import { resolveDesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 import { buildDesktopActivityOverlayOverviewFromSource } from '../presentation/snapshot/buildDesktopActivityOverlayOverviewFromSource';
 import { useDesktopActivityOverlaySource } from './useDesktopActivityOverlaySource';
 import { useBotsHomeServerIds, useOrderedBots } from '@/components/sessions/bots/botsSummary';
-import { useMachineDisplaysByServerId, useSessionOrganizationProjections } from '@/sync/store/hooks';
+import { useMachineDisplaysByServerId, useSession, useSessionOrganizationProjections } from '@/sync/store/hooks';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { buildNotchBotFaces } from '../presentation/buildNotchBotFaces';
 import type { NotchBotFaces, PinnedDesktopOverlayConversation } from '../presentation/notchBotTypes';
 import { usePinnedDesktopOverlayConversation } from './usePinnedDesktopOverlayConversation';
@@ -307,15 +310,20 @@ const DESKTOP_OVERLAY_SETTING_KEYS = [
 type ProducerContext = Readonly<{
     snapshot: DesktopActivityOverlaySnapshot;
     source: ReturnType<typeof useDesktopActivityOverlaySource>;
-    admittedCandidates: readonly SessionActivityAttention[];
+    admitPinnedTarget: (target: DesktopOverlayPresentationTarget, session: Session | null) => PinnedTargetAdmission | null;
+}>;
+
+type PinnedTargetAdmission = Readonly<{
+    candidate: SessionActivityAttention;
+    homePrivacyMode: ActivitySurfacePrivacyMode;
 }>;
 
 type ProducerProps = Readonly<{
     detailAddresses: readonly SessionAddress[] | null;
     contextRef: React.MutableRefObject<ProducerContext | null>;
     publishedRef: React.MutableRefObject<DesktopActivityOverlaySyncPayload | null>;
-    pinnedTarget: SessionAddress | null;
-    setPinnedTarget: React.Dispatch<React.SetStateAction<SessionAddress | null>>;
+    pinnedTarget: DesktopOverlayPresentationTarget | null;
+    setPinnedTarget: React.Dispatch<React.SetStateAction<DesktopOverlayPresentationTarget | null>>;
 }>;
 
 function DesktopActivityOverlayPinnedConversation({ target, hidden, reachable, onChange }: Readonly<{
@@ -392,7 +400,7 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
         localSettings: (localSettings ?? {}) as Record<string, unknown>,
         now: new Date(),
     }), [localSettings, resolveAccountSettings, source.accountDeliveryMutesByServerId, source.audienceScopes, unfilteredOverview]);
-    // Explicit conversation detail keeps its admission; ambient identities never reach the native projection.
+    // Recording privacy may withhold an ambient identity while preserving an explicitly opened conversation.
     const ambientAdmission = React.useMemo(() => ({
         ...deliveryAdmission,
         candidates: deliveryAdmission.candidates.filter(candidate => isSessionVisible(candidate.address ?? candidate)),
@@ -401,29 +409,48 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
         () => buildActivityOverviewFromCandidates(ambientAdmission.candidates),
         [ambientAdmission],
     );
+    const admitPinnedTarget = React.useCallback((target: DesktopOverlayPresentationTarget, session: Session | null): PinnedTargetAdmission | null => {
+        // The Action hydrated an accessible Session even when it is outside personal Activity.
+        const candidate = unfilteredOverview.candidates.find(value => areSessionAddressesEqual(value.address, target))
+            ?? (session ? { ...buildSessionActivityAttention({ session }),
+                address: { serverId: target.serverId, sessionId: target.sessionId } } : null);
+        if (!candidate) return null;
+        const admission = resolveActivitySurfaceDeliveryAdmission({
+            candidates: [candidate],
+            intent: { kind: 'explicit_open', scope: target },
+            surface: 'desktop_overlay',
+            resolveAccountSettings,
+            audienceScopes: source.audienceScopes,
+            localSettings,
+            now: new Date(),
+        });
+        const homePrivacyMode = admission.privacyModeFor(candidate);
+        return homePrivacyMode ? { candidate, homePrivacyMode } : null;
+    }, [localSettings, resolveAccountSettings, source.audienceScopes, unfilteredOverview]);
+    const pinnedSession = useSession(pinnedTarget?.sessionId ?? '', pinnedTarget?.serverId);
+    const pinnedAdmission = React.useMemo(() => pinnedTarget ? admitPinnedTarget(pinnedTarget, pinnedSession) : null,
+        [admitPinnedTarget, pinnedSession, pinnedTarget]);
+    const pinnedCandidate = pinnedAdmission?.candidate;
     // The device-global overlay privacy preference and the exact Home's plan are two
     // gates; the overlay shows only what both allow.
     const resolveCandidatePrivacyMode = React.useCallback(
         (candidate: SessionActivityAttention) => {
-            const homePrivacyMode = deliveryAdmission.privacyModeFor(candidate);
+            const homePrivacyMode = pinnedAdmission?.candidate === candidate
+                ? pinnedAdmission.homePrivacyMode : deliveryAdmission.privacyModeFor(candidate);
             return homePrivacyMode
                 ? resolveStricterActivitySurfacePrivacyMode(homePrivacyMode, activityPolicy.privacyMode)
                 : null;
         },
-        [activityPolicy.privacyMode, deliveryAdmission],
+        [activityPolicy.privacyMode, deliveryAdmission, pinnedAdmission],
     );
-    const pinnedCandidate = pinnedTarget ? deliveryAdmission.candidates.find(candidate =>
-        areSessionAddressesEqual(candidate.address, pinnedTarget)) : null;
-    // Admission already used this exact Home/Account scope; carry it to M6 unchanged.
-    const pinnedScope = pinnedCandidate?.address ? source.audienceScopes?.get(pinnedCandidate.address.serverId) : undefined;
     const pinnedHidden = pinnedCandidate ? resolveCandidatePrivacyMode(pinnedCandidate) === 'status_only' : false;
     // A child effect may still hold the previous slice during a retarget/privacy change.
     // Consume the already-decided privacy mode before any content crosses the bridge.
-    const conversation = React.useMemo(() => pinnedCandidate && pinnedScope && pinnedConversation?.accountId === pinnedScope.accountId
-        && areSessionAddressesEqual(pinnedConversation, pinnedCandidate.address)
+    const conversation = React.useMemo(() => pinnedAdmission && pinnedTarget && pinnedConversation?.accountId === pinnedTarget.accountId
+        && areSessionAddressesEqual(pinnedConversation, pinnedTarget)
         ? pinnedHidden && pinnedConversation ? { ...pinnedConversation, reply: { state: 'hidden' as const, messages: [] } }
             : pinnedConversation
-        : null, [pinnedCandidate, pinnedScope, pinnedConversation, pinnedHidden]);
+        : null, [pinnedAdmission, pinnedTarget, pinnedConversation, pinnedHidden]);
     React.useEffect(() => {
         if (pinnedTarget && !pinnedCandidate) setPinnedTarget(null);
     }, [pinnedCandidate, pinnedTarget, setPinnedTarget]);
@@ -437,6 +464,7 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
     const sharedActivity = React.useMemo(() => buildSharedActivityProjection({
         admission: ambientAdmission, policy: activityPolicy, selectedFaces: bots.faces,
     }), [ambientAdmission, activityPolicy, bots]);
+    const visiblePinnedCandidate = pinnedCandidate && pinnedTarget && isSessionVisible(pinnedTarget) ? pinnedCandidate : undefined;
     const snapshot = React.useMemo(
         () => buildDesktopActivityOverlaySnapshot({
             source,
@@ -446,6 +474,7 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
             resolveCandidatePrivacyMode,
             bots,
             conversation,
+            pinnedCandidate: visiblePinnedCandidate,
             machineDisplaysByServerId,
             previousPrimaryAddress: previousPrimaryRef.current.serverId && previousPrimaryRef.current.sessionId
                 ? {
@@ -455,7 +484,7 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
                 : null,
             previousPrimaryChangedAtMs: previousPrimaryRef.current.changedAtMs,
         }),
-        [activityPolicy, desktopPolicy, resolveCandidatePrivacyMode, source, sourceOverview, bots, conversation, machineDisplaysByServerId],
+        [activityPolicy, desktopPolicy, resolveCandidatePrivacyMode, source, sourceOverview, bots, conversation, visiblePinnedCandidate, machineDisplaysByServerId],
     );
     const snapshotPrimarySessionId = snapshot.primary?.sessionId ?? null;
     const snapshotPrimaryServerId = snapshot.primary?.serverId ?? null;
@@ -469,7 +498,7 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
             changedAtMs: snapshotPrimarySessionId ? snapshot.generatedAt : null,
         };
     }
-    contextRef.current = { snapshot, source, admittedCandidates: deliveryAdmission.candidates };
+    contextRef.current = { snapshot, source, admitPinnedTarget };
     const model = React.useMemo(
         () => qaModel ? { ...qaModel, generatedAt: snapshot.generatedAt } : buildDesktopActivityOverlayModel({
             snapshot,
@@ -511,8 +540,8 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
                 sessionId={request.sessionId} requestId={request.requestId} turnId={request.turnId} scope={scope}
                 choice={{ ...choice, catalog: choice.catalog }} />] : [];
         })}
-        {pinnedCandidate?.address && pinnedScope ? <DesktopActivityOverlayPinnedConversation key={JSON.stringify([pinnedScope.accountId, sessionAddressKey(pinnedCandidate.address)])}
-            target={{ ...pinnedCandidate.address, accountId: pinnedScope.accountId }} hidden={pinnedHidden} reachable={pinnedCandidate.awareness.runtime !== 'offline'}
+        {pinnedCandidate && pinnedTarget ? <DesktopActivityOverlayPinnedConversation key={JSON.stringify([pinnedTarget.accountId, sessionAddressKey(pinnedTarget)])}
+            target={pinnedTarget} hidden={pinnedHidden} reachable={pinnedCandidate.awareness.runtime !== 'offline'}
             onChange={setPinnedConversation} /> : null}
         {detailDemanded ? <DesktopActivityOverlayQuotaDemand onChange={setQuotaSummaries} /> : null}
     </>;
@@ -524,7 +553,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
     const isDesktop = isDesktopHost();
     const isOverlayWindow = isDesktopActivityOverlayWindowContext();
     const [detailAddresses, setDetailAddresses] = React.useState<readonly SessionAddress[] | null>(null);
-    const [pinnedTarget, setPinnedTarget] = React.useState<SessionAddress | null>(null);
+    const [pinnedTarget, setPinnedTarget] = React.useState<DesktopOverlayPresentationTarget | null>(null);
     const contextRef = React.useRef<ProducerContext | null>(null);
     const publishedRef = React.useRef<DesktopActivityOverlaySyncPayload | null>(null);
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
@@ -540,17 +569,18 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
     React.useEffect(() => {
         if (!producing) return;
         return registerMountedDesktopOverlayPresentation(async target => {
-            const candidate = contextRef.current?.admittedCandidates.find(value => areSessionAddressesEqual(value.address, target));
-            if (!candidate) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            const context = contextRef.current;
+            const session = selectHomeQualifiedSession(storage.getState(), target.sessionId, target.serverId, context?.source.activeServerId);
+            if (!context?.admitPinnedTarget(target, session)) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
             setDetailAddresses(null);
-            setPinnedTarget(previous => areSessionAddressesEqual(previous, target) ? previous : target);
+            setPinnedTarget(previous => previous?.accountId === target.accountId && areSessionAddressesEqual(previous, target) ? previous : target);
             let applied = false;
             try {
                 const result = await actionExecutor.execute('desktop.notch.set', { state: 'pinned' }, { surface: 'ui', serverId: target.serverId });
                 applied = result.ok;
                 return result.ok ? { ok: true } : result;
             } finally {
-                if (!applied) setPinnedTarget(current => areSessionAddressesEqual(current, target) ? null : current);
+                if (!applied) setPinnedTarget(current => current?.accountId === target.accountId && areSessionAddressesEqual(current, target) ? null : current);
             }
         });
     }, [actionExecutor, producing]);

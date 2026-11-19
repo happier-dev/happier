@@ -237,7 +237,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       expect.soft(displayList).toEqual({ ok: true, result: displays });
       expect.soft(overlay).toMatchObject({ ok: true, result: { ok: true } });
       expect.soft(window).toMatchObject({ ok: true, result: { status: 'opened', windowId: expect.any(String) } });
-      expect(pinned).toEqual([{ serverId, sessionId }]);
+      expect(pinned).toEqual([{ ...scope, sessionId }]);
       expect(browserDelivery).not.toHaveBeenCalled();
       expect(invoke).toHaveBeenCalledWith('desktop_activity_overlay_request_presentation', { requestedState: 'open' });
     } finally {

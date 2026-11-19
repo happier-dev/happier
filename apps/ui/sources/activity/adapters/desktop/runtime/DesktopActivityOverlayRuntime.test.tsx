@@ -552,20 +552,37 @@ describe('DesktopActivityOverlayRuntime', () => {
         await screen.unmount();
     });
 
-    it('N3 pins an admitted Session through the presentation Action and releases its conversation on target:null and disable', async () => {
+    it.each(['permission', 'unread'] as const)('N3 explicitly pins a Session with %s attention and releases it on target:null and disable', async attention => {
         const target = { serverId: 'server-1', sessionId: 'session-1' };
+        if (attention === 'unread') {
+            sessionsState.value = [{
+                ...sessionsState.value[0]!,
+                unreadSince: 950,
+                pendingCount: 0,
+                pendingPermissionRequestCount: 0,
+                agentState: null,
+                metadata: { ...(sessionsState.value[0]!.metadata as object), bot: { kind: 'bot' } },
+            }];
+            syncCanonicalSessionListState();
+        }
         storage.setState({ sessionMessages: { 'session-1': createSessionMessagesFixture({ isLoaded: true,
             messageIdsOldestFirst: ['reply'], messagesById: { reply: {
                 kind: 'agent-text', id: 'reply', localId: null, createdAt: 1, text: 'Pinned reply',
             } },
         }) } });
         const screen = await renderScreen(<NativeDesktopActivityOverlayRuntime />);
-        await waitForHomeGovernance(() => expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ visible: true }));
+        await waitForHomeGovernance(() => expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toBeDefined());
+        if (attention === 'unread') {
+            expect(storage.getState().sessions[target.sessionId]?.viewer?.attention.primary).toBe('unread');
+            expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: {
+                conversation: null, expanded: { rows: [] }, faces: { faces: [] },
+            } });
+        }
         const executor = actionExecutor.createDefaultActionExecutor();
         let result: unknown;
         await act(async () => { result = await executor.execute('session.open', { ...target, presentation: 'overlay' },
             { surface: 'ui', serverId: target.serverId }); });
-        expect(result).toMatchObject({ ok: true });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
         expect(notchPresentationRequests).toEqual(['pinned']);
         await act(async () => {
             const result = await executor.execute('session.open', { ...target, presentation: 'overlay' },
@@ -576,6 +593,9 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(notchPresentationRequests).toEqual(['pinned', 'pinned']);
         expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: {
             conversation: { ...target, accountId: 'account-server-1', reply: { state: 'ready', messages: [{ id: 'reply', role: 'agent', text: 'Pinned reply' }] }, refreshing: false },
+            ...(attention === 'unread' ? { faces: { faces: [] }, expanded: { rows: expect.arrayContaining([
+                expect.objectContaining(target),
+            ]) } } : {}),
         } });
         expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(target.serverId)).toEqual([target.sessionId]);
         await act(async () => { dispatchDesktopInteraction({ actionIdentifier: 'overlay-set-expanded',
@@ -626,12 +646,18 @@ describe('DesktopActivityOverlayRuntime', () => {
             const cards = (payload as DesktopActivityOverlaySyncPayload).model.expanded.cards ?? [];
             expect(cards.some(card => card.kind === 'permission_request' || card.kind === 'user_question')).toBe(false);
         }
+        const muteReadCount = () => desktopHomes.requests.filter(request =>
+            request.serverId === 'server-1' && request.path === '/v2/account/session-delivery-mutes').length;
+        const priorMuteReads = muteReadCount();
         desktopHomes.answer('server-1', '/v2/account/session-delivery-mutes', {
             body: { scopes: [{ kind: 'source', source: { kind: 'session', sessionId: 'session-2' } }] },
         });
         await act(async () => publishHomeAccountChange('server-1', ['session-follows']));
-        await waitForHomeGovernance(() => expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: { conversation: null } }));
-        expect(readMountedSessionRealtimeTranscriptConsumerSessionIds('server-1')).toEqual([]);
+        await waitForHomeGovernance(() => expect(muteReadCount()).toBeGreaterThan(priorMuteReads));
+        expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: {
+            conversation: { sessionId: 'session-2', reply: { state: 'hidden', messages: [] } },
+        } });
+        expect(readMountedSessionRealtimeTranscriptConsumerSessionIds('server-1')).toEqual(['session-2']);
         await screen.unmount();
     });
 

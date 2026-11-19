@@ -134,6 +134,7 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
     resolveCandidatePrivacyMode?: ActivitySurfaceCandidatePrivacyModeResolver;
     bots?: NotchBotFaces;
     conversation?: PinnedDesktopOverlayConversation | null;
+    pinnedCandidate?: SessionActivityAttention;
     machineDisplaysByServerId?: DesktopActivityOverlayMachineDisplays;
 }>): DesktopActivityOverlaySnapshot {
     const nowMs = params.nowMs ?? Date.now();
@@ -154,9 +155,7 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
         previousPrimaryChangedAtMs: params.previousPrimaryChangedAtMs ?? null,
         nowMs,
     });
-    const conversation = params.conversation;
-    const pinnedCandidate = conversation && overview.candidates.find(candidate =>
-        candidate.address?.serverId === conversation.serverId && candidate.sessionId === conversation.sessionId);
+    const pinnedCandidate = params.conversation ? params.pinnedCandidate : undefined;
     // The pinned header reads this same row projection even outside the overview slots.
     const presentedCandidates = pinnedCandidate && !slots.selectedSessions.includes(pinnedCandidate)
         ? [...slots.selectedSessions, pinnedCandidate] : slots.selectedSessions;

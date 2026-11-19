@@ -2763,8 +2763,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     sessionOpen: async ({ sessionId, serverId, presentation, intent, resumeRequest, approvedNewDirectoryCreation, actionRequestId, tabId, destination, signal }, context) => {
       if (presentation === 'overlay') {
         const present = captureMountedDesktopOverlayPresentation();
-        if (!present || !serverId) return { ok: false, errorCode: 'unavailable', error: 'desktop_overlay_unavailable' };
-        return await present({ sessionId, serverId });
+        if (!present || !serverId || !context.runtimeAccountId) return { ok: false, errorCode: 'unavailable', error: 'desktop_overlay_unavailable' };
+        return await present({ sessionId, serverId, accountId: context.runtimeAccountId });
       }
       if (presentation === 'main' && serverId && isDesktopHost()) {
         // The desktop window owner returns a Session window first, or forwards from one to main.
