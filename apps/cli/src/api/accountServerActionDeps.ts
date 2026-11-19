@@ -11,7 +11,7 @@ import { type AxiosResponse } from 'axios';
 import { createHash, randomUUID } from 'node:crypto';
 import { executeSessionSectionActionV1, isSessionSectionActionIdV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
-import { CreateOrUpdateSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationFolderResponseSchema, SetSessionFolderAssignmentResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import { CreateOrUpdateSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationFolderResponseSchema, SetSessionFolderAssignmentResponseSchema, SetWorkflowFolderAssignmentResponseV1Schema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, AccountApiTokensServerErrorV1Schema, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
@@ -1320,6 +1320,8 @@ export function createAccountServerActionDeps(input: Readonly<{
             DeleteSessionOrganizationFolderResponseSchema, folder),
           setAssignment: (sessionId, folderId) => request('PUT', `/v2/session-organization/folder-assignments/${encodeURIComponent(sessionId)}`,
             SetSessionFolderAssignmentResponseSchema, { folderId }),
+          setWorkflowAssignment: (entityId, folderId) => request('PUT', `/v2/session-organization/folder-assignments/${encodeURIComponent(entityId)}`,
+            SetWorkflowFolderAssignmentResponseV1Schema, { entityKind: 'workflow', folderId }),
         });
       }
       if (isReviewHumanActionIdV1(actionId)) {

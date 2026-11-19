@@ -1,5 +1,6 @@
 import type { ResourceSpaceMembershipMutationV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
+import { WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
 import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
@@ -785,6 +786,10 @@ export async function deleteSessionOrganizationFolder(params: Readonly<{
                 where: { accountId: params.accountId, folderId: folder.id },
                 data: { folderId: assignmentTargetFolderId },
             });
+        const entityAssignmentWhere = { accountId: params.accountId, folderId: folder.id };
+        const entityWrites = assignmentTargetFolderId === null
+            ? await tx.organizationFolderAssignment.deleteMany({ where: entityAssignmentWhere })
+            : await tx.organizationFolderAssignment.updateMany({ where: entityAssignmentWhere, data: { folderId: assignmentTargetFolderId } });
 
         await markSessionOrganizationChanged(tx, {
             accountId: params.accountId,
@@ -808,7 +813,7 @@ export async function deleteSessionOrganizationFolder(params: Readonly<{
         return {
             deletedFolderIds,
             assignmentTargetFolderId,
-            affectedAssignmentCount: writeResult.count,
+            affectedAssignmentCount: writeResult.count + entityWrites.count,
         };
     }, { isolationLevel: "ReadCommitted" });
 }
@@ -879,6 +884,37 @@ export async function setSessionFolderAssignment(params: Readonly<{
     return await inTx(async (tx) =>
         await setSessionFolderAssignmentInTx(tx, params),
         { isolationLevel: "ReadCommitted" });
+}
+
+/** Move a readable saved Workflow in the viewer's existing Account folder hierarchy. */
+export async function setWorkflowFolderAssignment(params: Readonly<{
+    accountId: string;
+    entityId: string;
+    folderId: string | null;
+}>) {
+    return await inTx(async tx => {
+        await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
+        const workflow = await tx.artifact.findFirst({
+            where: { id: params.entityId, kind: WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 }, select: { id: true },
+        });
+        if (!workflow || !await resolveArtifactAccessInTx(tx, { actorAccountId: params.accountId, artifactId: workflow.id })) {
+            return { error: 'workflow-not-found' } as const;
+        }
+        if (params.folderId !== null && (await findActiveSessionOrganizationFoldersById({
+            tx, accountId: params.accountId, folderIds: [params.folderId],
+        })).length !== 1) return { error: 'invalid-folder' } as const;
+
+        const key = { accountId: params.accountId, entityKind: 'workflow', entityId: params.entityId };
+        const where = { accountId_entityKind_entityId: key };
+        const previousFolderId = (await tx.organizationFolderAssignment.findUnique({ where, select: { folderId: true } }))?.folderId ?? null;
+        if (previousFolderId !== params.folderId) {
+            if (params.folderId === null) await tx.organizationFolderAssignment.delete({ where });
+            else await tx.organizationFolderAssignment.upsert({ where, create: { ...key, folderId: params.folderId },
+                update: { folderId: params.folderId } });
+            await markSessionOrganizationChanged(tx, { accountId: params.accountId, scope: 'folderAssignments', resourceIds: [params.entityId] });
+        }
+        return { entityKind: 'workflow', entityId: params.entityId, folderId: params.folderId, previousFolderId } as const;
+    }, { isolationLevel: 'ReadCommitted' });
 }
 
 async function validateSessionOrganizationTagIdsInTx(tx: SessionOrganizationTx, params: Readonly<{

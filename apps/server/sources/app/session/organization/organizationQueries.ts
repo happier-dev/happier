@@ -158,16 +158,27 @@ function createTagAssignmentWhere(sessionWhere: Prisma.SessionWhereInput, params
     };
 }
 
+async function readOrganizationFolders(tx: Tx, accountId: string) {
+    return await tx.sessionOrganizationFolder.findMany({
+        where: { accountId, archivedAt: null },
+        orderBy: [{ parentHash: 'asc' }, { sortKey: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true, folderKey: true, parentKey: true, sortKey: true, displayDbValue: true,
+            archivedAt: true, createdAt: true, updatedAt: true },
+    });
+}
+
+function projectOrganizationFolders(folders: Awaited<ReturnType<typeof readOrganizationFolders>>, accountMode: Parameters<typeof mapSessionOrganizationFolder>[2]) {
+    const folderIdsByKey = new Map(folders.map(folder => [folder.folderKey, folder.id]));
+    return folders.map(folder => mapSessionOrganizationFolder(folder,
+        folder.parentKey ? folderIdsByKey.get(folder.parentKey) ?? null : null, accountMode));
+}
+
 export async function fetchSessionOrganizationSnapshot(params: Readonly<{
     accountId: string;
     request: SessionOrganizationSnapshotRequest;
     authentication: SessionAccessAuthentication;
 }>) {
     return await captureReadSnapshot(async (tx) => {
-        // One access resolution per snapshot: assignments read readable Sessions, pins and
-        // appearances read the unarchived subset of the same admitted relation.
-        const sessionWhere = await buildReadableOrganizationSessionWhere(tx, params.accountId, params.authentication);
-        const visibleSessionWhere = visibleUnarchivedOrganizationSessionWhere(sessionWhere);
         const account = await tx.account.findUnique({
             where: { id: params.accountId },
             select: {
@@ -183,6 +194,28 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
         const accountMode = accountCurrentness?.status === "ready"
             ? accountCurrentness.currentness.encryptionMode
             : null;
+
+        if (params.request.entityKind === 'workflow') {
+            // These are the viewer's personal assignments, scoped to the exact held Workflow ids.
+            const entityIds = params.request.assignmentEntityIds ?? [];
+            const [checkpoint, folders, assignments] = await Promise.all([
+                tx.sessionOrganizationCheckpoint.findUnique({ where: { accountId: params.accountId }, select: { version: true } }),
+                params.request.includeFolders ? readOrganizationFolders(tx, params.accountId) : [],
+                entityIds.length > 0 ? tx.organizationFolderAssignment.findMany({
+                    where: { accountId: params.accountId, entityKind: 'workflow', entityId: { in: entityIds } },
+                    select: { entityId: true, folderId: true },
+                }) : [],
+            ]);
+            return createSessionOrganizationSnapshot({ version: checkpoint?.version ?? 0,
+                folders: projectOrganizationFolders(folders, accountMode),
+                entityFolderAssignments: assignments.map(row => ({ ...row, entityKind: 'workflow' })),
+                folderAssignments: [], pins: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+            });
+        }
+
+        // One access resolution per Session snapshot: pins and appearances read the unarchived subset.
+        const sessionWhere = await buildReadableOrganizationSessionWhere(tx, params.accountId, params.authentication);
+        const visibleSessionWhere = visibleUnarchivedOrganizationSessionWhere(sessionWhere);
 
         const [
             checkpoint,
@@ -209,20 +242,7 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
                 select: { sessionId: true, sortKey: true, pinnedAt: true, listPinned: true, railPinned: true },
             }),
             params.request.includeFolders
-                ? tx.sessionOrganizationFolder.findMany({
-                    where: { accountId: params.accountId, archivedAt: null },
-                    orderBy: [{ parentHash: "asc" }, { sortKey: "asc" }, { createdAt: "asc" }],
-                    select: {
-                        id: true,
-                        folderKey: true,
-                        parentKey: true,
-                        sortKey: true,
-                        displayDbValue: true,
-                        archivedAt: true,
-                        createdAt: true,
-                        updatedAt: true,
-                    },
-                })
+                ? readOrganizationFolders(tx, params.accountId)
                 : Promise.resolve([]),
             tx.sessionFolderAssignment.findMany({
                 where: createFolderAssignmentWhere(sessionWhere, params),
@@ -304,7 +324,6 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
             tagIds.push(assignment.tagId);
             groupedTagAssignments.set(assignment.sessionId, tagIds);
         }
-        const folderIdsByKey = new Map(folders.map((folder) => [folder.folderKey, folder.id]));
         const validOrderEntries = await filterValidSessionOrganizationOrderEntries({
             accountId: params.accountId,
             entries: orderEntries,
@@ -315,13 +334,7 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
         return createSessionOrganizationSnapshot({
             version: checkpoint?.version ?? 0,
             pins: pins.map(mapSessionOrganizationPin),
-            folders: folders.map((folder) => mapSessionOrganizationFolder(
-                folder,
-                folder.parentKey
-                    ? folderIdsByKey.get(folder.parentKey) ?? null
-                    : null,
-                accountMode,
-            )),
+            folders: projectOrganizationFolders(folders, accountMode),
             folderAssignments,
             tags: tags.map((tag) => mapSessionOrganizationTag(tag, accountMode)),
             tagAssignments: [...groupedTagAssignments.entries()].map(([sessionId, tagIds]) => ({ sessionId, tagIds })),

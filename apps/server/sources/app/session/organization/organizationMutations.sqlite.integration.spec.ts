@@ -8,6 +8,7 @@ import {
     SetSessionPinResponseSchema,
     SetSessionTagAssignmentsResponseSchema,
 } from "@happier-dev/protocol";
+import { WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from "@happier-dev/protocol/artifacts/artifactKindV1";
 import { SessionOrganizationChangeHintSchema } from "@happier-dev/protocol/changes";
 import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
 
@@ -44,6 +45,53 @@ describe("session organization mutations on SQLite", () => {
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it('routes private Workflow assignments through the same folders without replacing Session rows', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const foreignAccount = await db.account.create({ data: { publicKey: randomUUID() } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', agentState: null } });
+        const workflow = (accountId: string) => db.artifact.create({ data: {
+            id: randomUUID(), accountId, kind: WORKFLOW_DEFINITION_ARTIFACT_KIND_V1,
+            header: Buffer.alloc(0), body: Buffer.alloc(0), dataEncryptionKey: Buffer.alloc(0),
+        } });
+        const [saved, foreign] = await Promise.all([workflow(account.id), workflow(foreignAccount.id)]);
+        const folder = (accountId: string, folderKey: string) => db.sessionOrganizationFolder.create({ data: {
+            accountId, folderKey, folderHash: hashSessionOrganizationKey(folderKey),
+        } });
+        const [first, second, privateFolder] = await Promise.all([
+            folder(account.id, 'first'), folder(account.id, 'second'), folder(foreignAccount.id, 'private'),
+        ]);
+        await db.sessionFolderAssignment.create({ data: { accountId: account.id, sessionId: session.id, folderId: first.id } });
+        const app = createAuthenticatedTestApp();
+        registerSessionOrganizationRoutes(app);
+        await app.ready();
+        const headers = { 'x-test-user-id': account.id };
+        const setSection = (entityId: string, folderId: string | null) => app.inject({ method: 'PUT', headers,
+            url: `/v2/session-organization/folder-assignments/${entityId}`, payload: { entityKind: 'workflow', folderId } });
+        try {
+            expect((await setSection(foreign.id, first.id)).statusCode).toBe(404);
+            expect((await setSection(saved.id, privateFolder.id)).statusCode).toBe(400);
+            const placed = await setSection(saved.id, first.id);
+            expect(placed.statusCode).toBe(200);
+            expect(placed.json()).toMatchObject({ entityKind: 'workflow', entityId: saved.id, folderId: first.id, previousFolderId: null });
+            const moved = await setSection(saved.id, second.id);
+            expect(moved.json()).toMatchObject({ folderId: second.id, previousFolderId: first.id });
+            const read = await app.inject({ method: 'GET', headers, url: '/v2/session-organization?' + new URLSearchParams({
+                entityKind: 'workflow', assignmentEntityIds: [saved.id, foreign.id].join(','), includeTags: 'false', includeLabels: 'false',
+            }) });
+            expect(read.statusCode).toBe(200);
+            const { snapshot } = SessionOrganizationSnapshotResponseSchema.parse(read.json());
+            expect(snapshot.folders.map(row => row.folderId).sort()).toEqual([first.id, second.id].sort());
+            expect(snapshot.folderAssignments).toEqual([]);
+            expect(snapshot.entityFolderAssignments).toEqual([{ entityKind: 'workflow', entityId: saved.id, folderId: second.id }]);
+            const removed = await setSection(saved.id, null);
+            expect(removed.json()).toMatchObject({ folderId: null, previousFolderId: second.id });
+            expect(await db.sessionFolderAssignment.findMany({ where: { accountId: account.id }, select: { sessionId: true, folderId: true } }))
+                .toEqual([{ sessionId: session.id, folderId: first.id }]);
+        } finally {
+            await app.close();
+        }
     });
 
     it('patches only named tag assignments and rejects another Account tag without changing membership', async () => {

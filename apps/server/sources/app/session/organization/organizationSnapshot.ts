@@ -1,7 +1,7 @@
 import { type SessionAttentionStanding } from '@happier-dev/protocol/sessions/organization/standings';
 import type { SessionOrganizationSessionAppearance } from '@happier-dev/protocol/sessions/organization/appearances';
 import { type SessionOrganizationContentEnvelope, type SessionOrganizationDisplayState } from '@happier-dev/protocol/sessions/organization/content';
-import { type SessionFolderAssignment, type SessionOrganizationFolder } from '@happier-dev/protocol/sessions/organization/folders';
+import { type OrganizationEntityFolderAssignmentV1, type SessionFolderAssignment, type SessionOrganizationFolder } from '@happier-dev/protocol/sessions/organization/folders';
 import { type SessionOrganizationLabel, type SessionOrganizationOrderEntry } from '@happier-dev/protocol/sessions/organization/ordering';
 import { type SessionOrganizationPin } from '@happier-dev/protocol/sessions/organization/pins';
 import { type SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
@@ -160,6 +160,7 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
     pins: SessionOrganizationPin[];
     folders: SessionOrganizationFolder[];
     folderAssignments: SessionFolderAssignment[];
+    entityFolderAssignments?: OrganizationEntityFolderAssignmentV1[];
     tags: SessionOrganizationTag[];
     tagAssignments: SessionTagAssignment[];
     orderEntries: SessionOrganizationOrderEntry[];
@@ -173,6 +174,7 @@ export function createSessionOrganizationSnapshot(params: Readonly<{
         pins: params.pins,
         folders: params.folders,
         folderAssignments: params.folderAssignments,
+        ...(params.entityFolderAssignments ? { entityFolderAssignments: params.entityFolderAssignments } : {}),
         tags: params.tags,
         tagAssignments: params.tagAssignments,
         orderEntries: params.orderEntries,

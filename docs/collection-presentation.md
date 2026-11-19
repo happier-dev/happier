@@ -979,3 +979,9 @@ title: a draft supplies New task, an existing item supplies its title. The
 Details tab group owns this ephemeral title and restores the resource title when
 the detail withdraws it. The wide tab strip and phone overflow menu consume that
 same value; no surface-specific title override or persisted setting is needed.
+
+### Workflow sections
+
+Saved Workflows can be filed into the viewer's existing Account sections through the same organizer as Sessions. Workflow assignments use a sibling relation keyed by Account, entity kind, and entity ID. Session assignments retain their Session foreign key. Runs have no section membership.
+
+`GET /v2/session-organization` with `entityKind=workflow` reads only the requested `assignmentEntityIds` plus the shared folders when requested. A response from an older server without `entityFolderAssignments` leaves membership unknown. The existing `session.section.set` Action accepts `{entityKind: 'workflow', entityId, sectionId}` for a Workflow, while the Session input remains `{sessionId, sectionId}`. Moving a readable shared Workflow changes only the viewer's filing.

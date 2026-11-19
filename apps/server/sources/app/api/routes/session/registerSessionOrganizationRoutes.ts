@@ -2,6 +2,7 @@ import { AnyClientUpgradeRequiredV1Schema, CLIENT_UPGRADE_REQUIRED_ERROR_CODE, C
 import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION, SESSION_ORGANIZATION_LEGACY_MAX_ATTENTION_STANDINGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, DeleteSessionOrganizationLabelRequestSchema, DeleteSessionOrganizationLabelResponseSchema, DeleteSessionOrganizationFolderRequestSchema, DeleteSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationTagRequestSchema, DeleteSessionOrganizationTagResponseSchema, ImportLegacySessionOrganizationRequestSchema, ImportLegacySessionOrganizationResponseSchema, MoveSessionFolderAssignmentsRequestSchema, MoveSessionFolderAssignmentsResponseSchema, ReorderSessionOrganizationRequestSchema, ReorderSessionOrganizationResponseSchema, SetSessionFolderAssignmentRequestSchema, SetSessionFolderAssignmentResponseSchema, SetSessionPinRequestSchema, SetSessionPinResponseSchema, MutateSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema, UpsertSessionOrganizationLabelRequestSchema, UpsertSessionOrganizationLabelResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema, sessionOrganizationSnapshotRequestFromQueryV1 } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { SetWorkflowFolderAssignmentResponseV1Schema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { SetSessionAttentionStandingRequestSchema, SetSessionAttentionStandingResponseSchema } from '@happier-dev/protocol/sessions/organization/standings';
 import { SetSessionAppearanceRequestSchema, SetSessionAppearanceResponseSchema } from '@happier-dev/protocol/sessions/organization/appearances';
 import { z } from "zod/mini";
@@ -11,6 +12,7 @@ import { fetchResourceSpaceMemberships } from '@/app/session/organization/organi
 
 import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
+import { PresentUserRequiredResponseSchema, requirePresentUser } from '@/app/api/utils/requirePresentUser';
 import {
     deleteSessionOrganizationFolder,
     deleteSessionOrganizationLabel,
@@ -20,6 +22,7 @@ import {
     setSessionAttentionStanding,
     setSessionAppearance,
     setSessionFolderAssignment,
+    setWorkflowFolderAssignment,
     setSessionPin,
     setSessionTagAssignments,
     upsertSessionOrganizationLabel,
@@ -64,6 +67,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             response: {
                 200: SessionOrganizationSnapshotResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-organization-snapshot-request") }),
+                403: PresentUserRequiredResponseSchema,
                 426: AnyClientUpgradeRequiredV1Schema,
             },
         },
@@ -71,6 +75,10 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
         const parsedRequest = SessionOrganizationSnapshotRequestSchema.safeParse(sessionOrganizationSnapshotRequestFromQueryV1(request.query));
         if (!parsedRequest.success) {
             return reply.code(400).send({ error: "invalid-session-organization-snapshot-request" });
+        }
+        if (parsedRequest.data.entityKind === 'workflow') {
+            await requirePresentUser(request, reply);
+            if (reply.sent) return reply;
         }
 
         const snapshot = await fetchSessionOrganizationSnapshot({
@@ -351,9 +359,10 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             params: sessionIdParamsSchema,
             body: SetSessionFolderAssignmentRequestSchema,
             response: {
-                200: SetSessionFolderAssignmentResponseSchema,
+                200: z.union([SetSessionFolderAssignmentResponseSchema, SetWorkflowFolderAssignmentResponseV1Schema]),
                 400: z.object({ error: z.literal("invalid-session-folder-assignment") }),
-                404: z.object({ error: z.literal("Session not found") }),
+                403: PresentUserRequiredResponseSchema,
+                404: z.object({ error: z.enum(['Session not found', 'Workflow not found']) }),
             },
         },
     }, async (request, reply) => {
@@ -361,6 +370,16 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
         const parsedBody = SetSessionFolderAssignmentRequestSchema.safeParse(request.body);
         if (!parsedParams.success || !parsedBody.success) {
             return reply.code(400).send({ error: "invalid-session-folder-assignment" });
+        }
+
+        if (parsedBody.data.entityKind === 'workflow') {
+            await requirePresentUser(request, reply);
+            if (reply.sent) return reply;
+            const result = await setWorkflowFolderAssignment({ accountId: request.userId,
+                entityId: parsedParams.data.sessionId, folderId: parsedBody.data.folderId });
+            if (!('error' in result)) return reply.send(result);
+            return result.error === 'workflow-not-found' ? reply.code(404).send({ error: 'Workflow not found' })
+                : reply.code(400).send({ error: 'invalid-session-folder-assignment' });
         }
 
         const result = await setSessionFolderAssignment({

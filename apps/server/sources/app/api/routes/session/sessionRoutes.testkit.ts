@@ -163,6 +163,7 @@ const txDbMocks = createDbMocks({
     sessionTurn: ["findFirst", "findMany", "findUnique", "updateMany"],
     sessionPin: ["count", "deleteMany", "findMany", "findUnique", "updateMany", "upsert"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
+    organizationFolderAssignment: ["deleteMany", "updateMany"],
     sessionOrganizationFolder: ["count", "findMany", "updateMany", "upsert"],
     sessionOrganizationTag: ["count", "deleteMany", "findMany", "updateMany", "upsert"],
     sessionTagAssignment: ["createMany", "deleteMany", "findMany"],
@@ -798,6 +799,8 @@ export function resetSessionRouteMocks(): void {
         throw new Error("txSessionPinUpsert not configured for test");
     });
     txSessionFolderAssignmentDeleteMany.mockResolvedValue({ count: 0 });
+    txDbMocks.db.organizationFolderAssignment.deleteMany.mockResolvedValue({ count: 0 });
+    txDbMocks.db.organizationFolderAssignment.updateMany.mockResolvedValue({ count: 0 });
     txSessionFolderAssignmentFindMany.mockResolvedValue([]);
     txSessionFolderAssignmentUpdateMany.mockResolvedValue({ count: 0 });
     txSessionFolderAssignmentUpsert.mockImplementation(async () => {

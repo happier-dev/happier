@@ -11,7 +11,7 @@ import {
   SESSION_ORGANIZATION_MAX_TAGS,
   SESSION_ORGANIZATION_SNAPSHOT_VERSION,
 } from './constants.js';
-import { SessionFolderAssignmentSchema, SessionOrganizationFolderSchema } from './folders.js';
+import { OrganizationEntityFolderAssignmentV1Schema, OrganizationFolderEntityKindV1Schema, SessionFolderAssignmentSchema, SessionOrganizationFolderSchema } from './folders.js';
 import { SessionOrganizationLabelSchema, SessionOrganizationOrderEntrySchema } from './ordering.js';
 import { SessionOrganizationPinSchema } from './pins.js';
 import { SessionAttentionStandingSchema } from './standings.js';
@@ -32,6 +32,8 @@ export const SessionOrganizationSnapshotRequestSchema = lazyZodSchema(() => z.st
     includeLabels: z._default(z.boolean(), true),
     includeAllFolderAssignments: z._default(z.boolean(), false),
     includeAllTagAssignments: z._default(z.boolean(), false),
+    entityKind: z.optional(OrganizationFolderEntityKindV1Schema),
+    assignmentEntityIds: z.optional(z.array(SessionOrganizationScopedIdSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS))),
     assignmentSessionIds: z._default(z.array(SessionOrganizationScopedIdSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS)), []),
     folderIds: z._default(z.array(SessionOrganizationScopedIdSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS)), []),
     tagIds: z._default(z.array(SessionOrganizationScopedIdSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS)), []),
@@ -39,7 +41,9 @@ export const SessionOrganizationSnapshotRequestSchema = lazyZodSchema(() => z.st
     includeAttentionStandings: z._default(z.boolean(), false),
     includeAttentionReminderTimes: z._default(z.boolean(), false),
     includeSessionAppearances: z._default(z.boolean(), false),
-  }));
+  }).check(z.refine(request => request.entityKind === 'workflow'
+    ? request.assignmentSessionIds.length === 0 && !request.includeAllFolderAssignments
+    : request.assignmentEntityIds === undefined, 'Select assignments for one kind')));
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
 
 /** The existing HTTP query codec, shared by the route and signed-phase admission. */
@@ -58,6 +62,7 @@ export function sessionOrganizationSnapshotRequestFromQueryV1(query: unknown): R
     catch { return [{}]; }
   })();
   const result: Record<string, unknown> = {};
+  if (record.entityKind !== undefined) result.entityKind = record.entityKind;
   if (record.projectionVersion !== undefined) result.projectionVersion = record.projectionVersion === String(SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION)
     ? SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION : record.projectionVersion;
   for (const key of ['includeFolders', 'includeTags', 'includeLabels', 'includeAllFolderAssignments',
@@ -65,7 +70,7 @@ export function sessionOrganizationSnapshotRequestFromQueryV1(query: unknown): R
     const value = boolean(record[key]);
     if (value !== undefined) result[key] = value;
   }
-  for (const key of ['assignmentSessionIds', 'folderIds', 'tagIds'] as const) {
+  for (const key of ['assignmentSessionIds', 'assignmentEntityIds', 'folderIds', 'tagIds'] as const) {
     const value = list(record[key]);
     if (value) result[key] = value;
   }
@@ -89,6 +94,7 @@ export const SessionOrganizationSnapshotSchema = lazyZodSchema(() => z.strictObj
     pins: z.array(SessionOrganizationPinSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_PINNED_SESSIONS)),
     folders: z.array(SessionOrganizationFolderSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_FOLDERS)),
     folderAssignments: z.array(SessionFolderAssignmentSchema),
+    entityFolderAssignments: z.optional(z.array(OrganizationEntityFolderAssignmentV1Schema)),
     tags: z.array(SessionOrganizationTagSchema).check(z.maxLength(SESSION_ORGANIZATION_MAX_TAGS)),
     tagAssignments: z.array(SessionTagAssignmentSchema),
     orderEntries: z.array(SessionOrganizationOrderEntrySchema),

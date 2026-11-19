@@ -136,6 +136,15 @@ export const SessionFolderAssignmentSchema = lazyZodSchema(() => z.strictObject(
   }));
 export type SessionFolderAssignment = z.infer<typeof SessionFolderAssignmentSchema>;
 
+export const OrganizationFolderEntityKindV1Schema = lazyZodSchema(() => z.enum(['session', 'workflow']));
+
+export const OrganizationEntityFolderAssignmentV1Schema = lazyZodSchema(() => z.strictObject({
+  entityKind: z.literal('workflow'),
+  entityId: SessionOrganizationSessionIdSchema,
+  folderId: SessionOrganizationFolderIdSchema,
+}));
+export type OrganizationEntityFolderAssignmentV1 = z.infer<typeof OrganizationEntityFolderAssignmentV1Schema>;
+
 export const SessionFolderAssignmentMutationResultSchema = lazyZodSchema(() => z.strictObject({
     sessionId: SessionOrganizationSessionIdSchema,
     folderId: z.nullable(SessionOrganizationFolderIdSchema),

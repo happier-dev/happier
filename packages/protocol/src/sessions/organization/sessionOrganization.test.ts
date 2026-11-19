@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { sessionOrganizationSnapshotRequestFromQueryV1 } from './snapshot.js';
 import { SessionOrganizationPinSchema, SessionOrganizationPinStoredSchema } from './pins.js';
 import { SessionOrganizationOrderEntryStoredSchema, SessionOrganizationLabelStoredSchema } from './ordering.js';
 import {
@@ -585,5 +586,19 @@ describe('session organization protocol contracts', () => {
     expect(parsed.pins).toEqual([{ sessionId: 'session_1', sortKey: 'pin-a' }]);
     expect(parsed.tagAssignments).toEqual([{ sessionId: 'session_1', tagIds: ['tag_1'] }]);
     expect(parsed.labels[0]?.labelKind).toBe('workspace');
+  });
+});
+
+
+describe('Workflow section selection', () => {
+  it('carries Workflow identities on the organizer without accepting Runs or changing Session inputs', () => {
+    const query = sessionOrganizationSnapshotRequestFromQueryV1({ entityKind: 'workflow', assignmentEntityIds: 'wf-a,wf-a,wf-b' });
+    expect(SessionOrganizationSnapshotRequestSchema.parse(query)).toMatchObject({
+      entityKind: 'workflow', assignmentEntityIds: ['wf-a', 'wf-b'], assignmentSessionIds: [],
+    });
+    expect(SessionOrganizationSnapshotRequestSchema.parse({ assignmentSessionIds: ['session-a'] }).entityKind).toBeUndefined();
+    expect(SetSessionFolderAssignmentRequestSchema.parse({ folderId: null })).toEqual({ folderId: null });
+    expect(SetSessionFolderAssignmentRequestSchema.parse({ folderId: 'inbox', entityKind: 'workflow' })).toEqual({ folderId: 'inbox', entityKind: 'workflow' });
+    expect(SetSessionFolderAssignmentRequestSchema.safeParse({ folderId: 'inbox', entityKind: 'workflowRun' }).success).toBe(false);
   });
 });

@@ -187,6 +187,7 @@ model Account {
     automationEventCatalogState AutomationEventCatalogState?
     automationEventSourceCatalogStatuses AutomationEventSourceCatalogStatus[]
     SessionFolderAssignment SessionFolderAssignment[]
+    organizationFolderAssignments OrganizationFolderAssignment[]
     SessionPin                    SessionPin[]
     SessionAttentionStanding      SessionAttentionStanding[]
     SessionAppearance            SessionAppearance[]
@@ -1804,9 +1805,26 @@ model SessionOrganizationFolder {
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+    entityAssignments OrganizationFolderAssignment[]
+
     @@unique([accountId, folderHash])
     @@index([accountId, parentHash, sortKey])
     @@index([accountId, archivedAt])
+}
+
+/// A Folder’s personal membership for non-Session entities.
+model OrganizationFolderAssignment {
+    accountId  String
+    entityKind String
+    entityId   String
+    folderId   String
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    folder SessionOrganizationFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+    @@id([accountId, entityKind, entityId])
+    @@index([accountId, folderId])
+    @@index([folderId])
 }
 
 model SessionOrganizationTag {

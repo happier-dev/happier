@@ -24,8 +24,14 @@ export const SessionSectionsUpdateInputV1Schema = lazyZodSchema(() => z.strictOb
   sectionId: id, name: z.optional(SessionSectionDisplayV1Schema.shape.name), icon: z.optional(SessionSectionDisplayV1Schema.shape.icon),
 }).check(z.refine(value => value.name !== undefined || value.icon !== undefined, 'Provide a name or icon')));
 export const SessionSectionsReorderInputV1Schema = lazyZodSchema(() => z.strictObject({ sectionId: id, beforeSectionId: z.nullable(id) }));
-export const SessionSectionSetInputV1Schema = lazyZodSchema(() => z.strictObject({ sessionId: id, sectionId: z.nullable(id) }));
-export const SessionSectionSetResultV1Schema = lazyZodSchema(() => z.strictObject({ sessionId: id, sectionId: z.nullable(id), previousSectionId: z.nullable(id) }));
+export const SessionSectionSetInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ sessionId: id, sectionId: z.nullable(id) }),
+  z.strictObject({ entityKind: z.literal('workflow'), entityId: id, sectionId: z.nullable(id) }),
+]));
+export const SessionSectionSetResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ sessionId: id, sectionId: z.nullable(id), previousSectionId: z.nullable(id) }),
+  z.strictObject({ entityKind: z.literal('workflow'), entityId: id, sectionId: z.nullable(id), previousSectionId: z.nullable(id) }),
+]));
 export const SessionSectionsListResultV1Schema = lazyZodSchema(() => z.strictObject({ sections: z.array(SessionSectionV1Schema) }));
 export const SessionSectionResultV1Schema = lazyZodSchema(() => z.strictObject({ section: SessionSectionV1Schema }));
 export const SessionSectionsReorderResultV1Schema = lazyZodSchema(() => z.strictObject({ sectionId: id, sortKey: SessionSectionV1Schema.shape.sortKey }));
@@ -63,7 +69,7 @@ export function readSessionSectionActionHttpPurposeV1(actionId: SessionSectionAc
     const parsed = SessionOrganizationSnapshotRequestSchema.safeParse(sessionOrganizationSnapshotRequestFromQueryV1(query));
     if (!parsed.success) return null;
     const value = parsed.data;
-    if (value.includeTags || value.includeLabels || value.includeAllFolderAssignments || value.includeAllTagAssignments
+    if (value.entityKind === 'workflow' || value.includeTags || value.includeLabels || value.includeAllFolderAssignments || value.includeAllTagAssignments
       || value.includeAttentionStandings || value.includeAttentionReminderTimes || value.tagIds.length || value.orderScopes.length) return null;
     const assignment = actionId === 'session.section.set';
     const named = actionId === 'session.sections.update' || actionId === 'session.sections.archive';
@@ -85,7 +91,7 @@ export function readSessionSectionActionHttpPurposeV1(actionId: SessionSectionAc
   if (actionId === 'session.section.set' && method === 'PUT' && request.sessionRouteSessionId) {
     const parsed = SetSessionFolderAssignmentRequestSchema.safeParse(request.body);
     const sessionId = request.sessionRouteSessionId;
-    return parsed.success && request.path === `/v2/session-organization/folder-assignments/${encodeURIComponent(sessionId)}`
+    return parsed.success && parsed.data.entityKind !== 'workflow' && request.path === `/v2/session-organization/folder-assignments/${encodeURIComponent(sessionId)}`
       && matchesRoute({ sessionId, ...parsed.data }) ? { sessionIds: [sessionId] } : null;
   }
   return null;
@@ -102,6 +108,9 @@ export type SessionSectionActionPortV1 = Readonly<{
   upsertFolder(request: CreateOrUpdateSessionOrganizationFolderRequest): Promise<SessionSectionFolderV1 | ActionExecuteFailure>;
   deleteFolder(request: DeleteSessionOrganizationFolderRequest): Promise<DeleteSessionOrganizationFolderResponse | ActionExecuteFailure>;
   setAssignment(sessionId: string, folderId: string | null): Promise<SetSessionFolderAssignmentResponse | ActionExecuteFailure>;
+  setWorkflowAssignment?(entityId: string, folderId: string | null): Promise<Readonly<{
+    entityId: string; folderId: string | null; previousFolderId: string | null;
+  }> | ActionExecuteFailure>;
   archiveSession?: (sessionId: string) => Promise<ActionExecuteResult>;
 }>;
 const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -124,7 +133,16 @@ export async function executeSessionSectionActionV1(actionId: SessionSectionActi
     return { sectionId, removed: result.deletedFolderIds.includes(sectionId), affectedAssignmentCount: result.affectedAssignmentCount };
   }
   if (actionId === 'session.section.set') {
-    const { sessionId, sectionId } = SessionSectionSetInputV1Schema.parse(input);
+    const parsed = SessionSectionSetInputV1Schema.parse(input);
+    if ('entityKind' in parsed) {
+      if (!port.setWorkflowAssignment) return fail('unsupported_action');
+      const result = await port.setWorkflowAssignment(parsed.entityId, parsed.sectionId);
+      if ('ok' in result) return result;
+      if (result.entityId !== parsed.entityId || result.folderId !== parsed.sectionId) return fail('outcome_unknown');
+      return { entityKind: parsed.entityKind, entityId: result.entityId, sectionId: result.folderId,
+        previousSectionId: result.previousFolderId };
+    }
+    const { sessionId, sectionId } = parsed;
     const snapshot = await port.readSnapshot({ includeFolders: false, includeTags: false, includeLabels: false, assignmentSessionIds: [sessionId] });
     if ('ok' in snapshot) return snapshot;
     // This is the admitted snapshot's captured inverse, not a transactional rollback.

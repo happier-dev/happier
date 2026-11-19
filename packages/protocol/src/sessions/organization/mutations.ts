@@ -18,6 +18,7 @@ import {
 } from './constants.js';
 import { SessionOrganizationContentEnvelopeSchema } from './contentSchemas.js';
 import {
+  OrganizationFolderEntityKindV1Schema,
   SessionFolderAssignmentMutationResultSchema,
   SessionFolderAssignmentSchema,
   SessionOrganizationFolderSchema,
@@ -91,11 +92,19 @@ export type DeleteSessionOrganizationFolderResponse = z.infer<typeof DeleteSessi
 
 export const SetSessionFolderAssignmentRequestSchema = lazyZodSchema(() => z.strictObject({
     folderId: z.nullable(SessionOrganizationIdSchema),
+    entityKind: z.optional(OrganizationFolderEntityKindV1Schema),
   }));
 export type SetSessionFolderAssignmentRequest = z.infer<typeof SetSessionFolderAssignmentRequestSchema>;
 
 export const SetSessionFolderAssignmentResponseSchema = SessionFolderAssignmentMutationResultSchema;
 export type SetSessionFolderAssignmentResponse = z.infer<typeof SetSessionFolderAssignmentResponseSchema>;
+
+export const SetWorkflowFolderAssignmentResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  entityKind: z.literal('workflow'),
+  entityId: SessionOrganizationIdSchema,
+  folderId: z.nullable(SessionOrganizationIdSchema),
+  previousFolderId: z.nullable(SessionOrganizationIdSchema),
+}));
 
 export const MoveSessionFolderAssignmentsRequestSchema = lazyZodSchema(() => z.strictObject({
     fromFolderIds: z.array(SessionOrganizationIdSchema).check(z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION)),
