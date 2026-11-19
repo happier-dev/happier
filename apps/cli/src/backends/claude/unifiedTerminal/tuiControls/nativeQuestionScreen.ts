@@ -102,11 +102,10 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     while (bodyStart < lines.length && lines[bodyStart]!.trim()) bodyStart += 1;
   }
   const reviewHeading = lines.slice(bodyStart).find((line) => line.trim().length > 0)?.trim() === 'Review your answers';
-  const tail = lines.filter((line) => line.trim().length > 0).slice(-3);
+  const tail = lines.filter((line) => line.trim().length > 0).slice(-2);
   const reviewClipped = headerIndex < 0 && !reviewHeading
-    && tail[0]?.trim() === 'Ready to submit your answers?'
-    && REVIEW_SUBMIT_ROW.test(tail[1] ?? '')
-    && /^\s*[>›❯]?\s*2\. Cancel$/u.test(tail[2] ?? '');
+    && REVIEW_SUBMIT_ROW.test(tail[0] ?? '')
+    && /^\s*[>›❯]?\s*2\. Cancel$/u.test(tail[1] ?? '');
   const review = reviewHeading || reviewClipped;
   if (!boundary && !review) return null;
   const header = lines[headerIndex] ?? '';
@@ -205,7 +204,8 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
     // Only the top viewport fragment may be missing. Never skip an entry in the middle.
     if (reviewClipped && (firstEntry < 0 || heading.slice(0, firstEntry).some((line) => !/^\s{3,}\S/u.test(line)))) return null;
     const entries = heading.slice(firstEntry);
-    if (entries.pop()?.trim() !== 'Ready to submit your answers?') return null;
+    // Claude can omit this prose. Indented copies belong to an answer.
+    if (entries.at(-1) === 'Ready to submit your answers?') entries.pop();
     const incomplete = entries[0]?.trim() === '⚠ You have not answered all questions';
     if (incomplete) entries.shift();
     for (let index = 0; index < entries.length;) {

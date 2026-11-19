@@ -152,6 +152,8 @@ The existing screen probe observes native rendering and the existing terminal
 drivers navigate verified forms. App question responses are acknowledged only
 after Claude's correlated structured result matches. Native tool results,
 including cancellation results without a completion hook, retire the app waiter.
+Native reviews match the hook-owned questions, requested answers and Submit/Cancel
+controls; the optional “Ready to submit your answers?” prose is not required.
 Terminal successes record the observed answer instead of a canceled request.
 Unknown forms and conflicting local drafts fail closed to terminal interaction.
 This is development source behavior, not a released-channel guarantee.

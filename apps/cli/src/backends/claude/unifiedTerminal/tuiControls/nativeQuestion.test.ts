@@ -155,7 +155,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     }
   });
 
-  it('answers every question and submits when narrow tabs and Submit wrap into aligned columns', async () => {
+  it.each([true, false])('answers every question with wrapped tabs and review confirmation prose present: %s', async (confirmationProse) => {
     // Tab columns captured from Claude 2.1.316 at 48 columns.
     const input = ['Color mode', 'Glass style', 'Phone hints'].map((header, index) => ({
       ...questions[0]!, header, question: `Which probe color for panel ${index + 1}?`,
@@ -169,7 +169,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
       .replaceAll('Which probe color?', question.question));
     const reviewed = [header(3), '', 'Review your answers', '',
       ...input.flatMap((question) => [` ● ${question.question}`, '   → Amber']),
-      '', 'Ready to submit your answers?', '', '❯ 1. Submit answers', '  2. Cancel',
+      '', ...(confirmationProse ? ['Ready to submit your answers?', ''] : []), '❯ 1. Submit answers', '  2. Cancel',
     ].join('\n');
     const parsed = parseClaudeNativeQuestionScreen(reviewed);
     expect(parsed?.tabs).toEqual(input.map(({ header }) => ({ header: header.replace(' ', '\n'), answered: true })));
@@ -351,8 +351,9 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     expect(parseClaudeScreenState(screen).nativeQuestionPresentation).not.toBeNull();
   });
 
-  it('recognizes an overflowing review by its complete visible suffix and submits after inspecting every question page', async () => {
-    const clipped = review.slice(review.indexOf(' ● Which probe size?'));
+  it.each([true, false])('submits an overflowing review after inspecting every page, confirmation prose present: %s', async (confirmationProse) => {
+    const source = confirmationProse ? review : review.replace('Ready to submit your answers?\n', '');
+    const clipped = source.slice(source.indexOf(' ● Which probe size?'));
     const parsed = parseClaudeNativeQuestionScreen(clipped);
     expect(parsed).toMatchObject({ kind: 'review', reviewClipped: true, reviewAnswers: [{ question: 'Which probe size?', answer: 'Large' }] });
     expect(matchesClaudeNativeQuestionScreen(parsed!, multipleQuestions)).toBe(true);
@@ -374,7 +375,7 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     await expect(answerClaudeNativeQuestion({ ...controls, port: premature, questions: multipleQuestions, answers: fruitAnswers })).resolves.toEqual({ status: 'failed', reason: 'native_review_answers_mismatch' });
     expect(premature.sentKeys.filter((key) => key === 'Enter')).toHaveLength(2);
     expect(parseClaudeNativeQuestionScreen(clipped + '\nUnknown dialog')).toBeNull();
-    expect(parseClaudeNativeQuestionScreen(clipped.slice(clipped.indexOf('Ready to submit your answers?')))).toBeNull();
+    expect(parseClaudeNativeQuestionScreen(clipped.slice(clipped.indexOf('❯ 1. Submit answers')))).toBeNull();
   });
 
   it('recognizes the live Claude 309 question above its trailing native session-title rule', () => {
@@ -392,6 +393,10 @@ describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
     ]);
     expect(parseClaudeNativeQuestionScreen(size)).toMatchObject({ kind: 'question', question: 'Which probe size?' });
     expect(parseClaudeNativeQuestionScreen(review)).toMatchObject({ kind: 'review' });
+    const literalConfirmation = review.replace(/^Ready to submit your answers\?\n/mu, '')
+      .replace('→ Large', '→ Large\n   Ready to submit your answers?');
+    expect(parseClaudeNativeQuestionScreen(literalConfirmation)?.reviewAnswers.at(-1)?.answer)
+      .toBe('Large\nReady to submit your answers?');
     expect(parseClaudeNativeQuestionScreen(unfilledReview)).toMatchObject({ kind: 'review', reviewAnswers: [] });
     expect(parseClaudeNativeQuestionScreen(partialReview)).toMatchObject({ kind: 'review', reviewAnswers: [{ question: 'Which probe size?', answer: 'Small' }] });
     expect(parseClaudeNativeQuestionScreen(freeform)?.options.at(-1)?.label).toBe('Otter freeform probe');
