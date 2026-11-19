@@ -9376,6 +9376,8 @@ const machineDetailPageTranslations = { ru: translated({
                 approvalWaiting: "Ждёт одобрения",
                 apply: "Применить",
                 applied: ({ machine }) => `${machine} теперь следует вашему новому выбору.`,
+                savedNotEnforced: ({ machine }) => `Настройки SSH для ${machine} сохранены. Межсетевой экран не изменился.`,
+                applyFirewallRecipe: "Чтобы изменить доступ по SSH, примените проверенный рецепт межсетевого экрана в настройке машины.",
                 unchanged: ({ machine }) => `${machine} уже работал так. Ничего не изменилось.`,
                 outcomeUnknown: ({ machine }) => `Happier не знает, завершил ли ${machine} изменение. Обновите, чтобы увидеть состояние.`,
                 applyFailed: ({ machine }) => `${machine} не применил изменение`,

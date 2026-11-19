@@ -18,7 +18,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { MachineRecipeSelectionV1Schema, type MachineRecipeSelectionV1, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityPlanBasisV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanBasisV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { checkMachineSetupEffectPlan, createMachineSetupEffectPlan, createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
@@ -385,7 +385,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       }
       return refuse(result.status === 'conflict' ? 'plan_changed' : 'machine_metadata_unavailable');
     };
-    let status: 'applied' | 'unchanged' | 'outcome_unknown' = 'applied';
+    let status: MachineReachabilityConfigureResultV1['status'] = 'applied';
     let verifiedPublicSsh: 'closed' | undefined;
     let firewallRecovery: MachineFirewallRecoveryV1 | undefined;
     let failureCode: string | undefined;
@@ -444,8 +444,10 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           status = transitioned.status;
           if (transition.intent.publicSsh.kind === 'closed') verifiedPublicSsh = 'closed';
         } else {
+          const firstOpenPosture = currentState.posture === null && input.change.posture.management.publicSsh.kind === 'open';
           const written = await write(input.change);
-          status = written === 'unchanged' || written === 'satisfied' ? 'unchanged' : 'applied';
+          if (written === 'unchanged' || written === 'satisfied') status = 'unchanged';
+          else status = firstOpenPosture ? 'saved_not_enforced' : 'applied';
         }
       } else {
         const change = input.change;
@@ -669,7 +671,11 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     });
     let observation: MachineReachabilityObservationV1;
     try { observation = await deps.publish(verifiedPublicSsh
-      ? { ...observed, management: { ...observed.management, publicSsh: verifiedPublicSsh } } : observed); }
+      ? { ...observed, management: { ...observed.management, publicSsh: verifiedPublicSsh } }
+      : status === 'saved_not_enforced'
+        ? { ...observed, nativeFirewall: prepared.observation.nativeFirewall,
+          management: { ...observed.management, publicSsh: prepared.observation.management.publicSsh } }
+        : observed); }
     catch (error) {
       // Publication is not native outcome authority. Keep an already known
       // refusal or uncertainty, and never discard confirmed setup evidence.
@@ -687,6 +693,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     }
     if (knownFailure) return knownFailure;
     return { status, machineId: deps.target.machineId, ...currentState, observation,
+      ...(status === 'saved_not_enforced' ? { nextStep: 'apply_firewall_recipe' as const } : {}),
       ...(firewallRecovery ? { recovery: firewallRecovery } : {}),
       ...(failureCode ? { errorCode: failureCode } : {}) };
   });

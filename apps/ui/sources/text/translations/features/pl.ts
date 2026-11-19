@@ -9375,6 +9375,8 @@ const machineDetailPageTranslations = { pl: translated({
                 approvalWaiting: "Czeka na zatwierdzenie",
                 apply: "Zastosuj",
                 applied: ({ machine }) => `${machine} działa teraz według nowego wyboru.`,
+                savedNotEnforced: ({ machine }) => `Zapisano ustawienia SSH dla ${machine}. Zapora sieciowa pozostała bez zmian.`,
+                applyFirewallRecipe: "Aby zmienić dostęp SSH, zastosuj sprawdzony przepis zapory sieciowej w konfiguracji maszyny.",
                 unchanged: ({ machine }) => `${machine} już tak działał. Nic się nie zmieniło.`,
                 outcomeUnknown: ({ machine }) => `Happier nie wie, czy ${machine} zakończył zmianę. Odśwież, aby zobaczyć stan.`,
                 applyFailed: ({ machine }) => `${machine} nie zastosował zmiany`,

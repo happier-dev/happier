@@ -9240,6 +9240,8 @@ const machineDetailPageTranslations = { es: translated({
                 approvalWaiting: "Esperando aprobación",
                 apply: "Aplicar",
                 applied: ({ machine }) => `${machine} ya sigue tu nueva elección.`,
+                savedNotEnforced: ({ machine }) => `Se guardó la configuración SSH de ${machine}. El cortafuegos no cambió.`,
+                applyFirewallRecipe: "Aplica una receta de cortafuegos revisada en la configuración de la máquina para cambiar el acceso SSH.",
                 unchanged: ({ machine }) => `${machine} ya funcionaba así. No cambió nada.`,
                 outcomeUnknown: ({ machine }) => `Happier no sabe si ${machine} terminó el cambio. Actualiza para ver el estado.`,
                 applyFailed: ({ machine }) => `${machine} no aplicó el cambio`,

@@ -5,6 +5,7 @@ import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney
 import { userInfo } from 'node:os';
 import { readFile, unlink } from 'node:fs/promises';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
+import { inspectMachineReachability } from './machineReachabilityHost';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nativeCaddyImage, nativeCaddyProfile, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
@@ -31,6 +32,33 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     f.hostNative.setTailscaleOperator('another-operator');
     return { f, api, selected };
   }
+
+  it('saves a restricted first SSH posture and returns the firewall apply step', async () => {
+    const f = await journey('external', [], {
+      authoredProvider: createDockerNetworkAuthoredProvider(false, true),
+    });
+    const { metadata: { reachabilityPosture: _posture, ...metadata }, metadataVersion } = f.metadata.read();
+    expect(await f.metadata.port.compareAndSwap({ expectedMetadataVersion: metadataVersion, metadata }))
+      .toMatchObject({ status: 'applied' });
+    await f.hostNative.setNativeSshPort(22);
+    const posture = MachineReachabilityPostureV1Schema.parse({
+      revision: 0,
+      management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['10.0.2.0/24'] },
+        independentRecovery: { kind: 'providerConsole', evidence: 'userAttested', confirmedAtMs: 1_793_610_000_000 } },
+      defaultServiceIngress: { kind: 'none' },
+    });
+    const review = parseReachabilityInspectResult(await inspectMachineReachability({
+      serverId: 'generic-home', machineId, change: { kind: 'posture', posture },
+    }, f.dependencies(f.context())));
+
+    const configured = parseCompletedReachabilityConfigure(await f.configure(review));
+    expect(configured).toMatchObject({
+      status: 'saved_not_enforced', nextStep: 'apply_firewall_recipe', posture,
+      observation: { management: { publicSsh: 'open' }, nativeFirewall: { ownedTable: 'absent' } },
+    });
+    expect(f.metadata.read().metadata.reachabilityPosture).toEqual(posture);
+    expect(f.hostNative.firewallStages).toEqual([]);
+  });
 
   // Reuse the generic journey's Server QB87 Home-acquisition budget. The
   // observable Action bodies keep the CLI's unchanged 30-second budget.

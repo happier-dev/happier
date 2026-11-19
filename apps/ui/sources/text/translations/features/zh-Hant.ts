@@ -9238,6 +9238,8 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 approvalWaiting: "等待核准",
                 apply: "套用",
                 applied: ({ machine }) => `${machine} 現在依照你的新選擇運作。`,
+                savedNotEnforced: ({ machine }) => `已儲存 ${machine} 的 SSH 設定，防火牆未變更。`,
+                applyFirewallRecipe: "若要變更 SSH 存取權限，請在機器設定中套用已審查的防火牆配方。",
                 unchanged: ({ machine }) => `${machine} 已經是這樣。沒有任何變更。`,
                 outcomeUnknown: ({ machine }) => `Happier 無法確定 ${machine} 是否完成變更。重新整理以查看目前狀態。`,
                 applyFailed: ({ machine }) => `${machine} 未套用變更`,

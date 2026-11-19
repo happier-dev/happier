@@ -1030,11 +1030,12 @@ function NetworkReviewFoot(
         <SurfaceStateCard
           testID="machine-network-settled"
           kind={
-            review.result.status === 'outcome_unknown' ? 'warning' : 'success'
+            review.result.status === 'outcome_unknown' || review.result.status === 'saved_not_enforced' ? 'warning' : 'success'
           }
           layout="inline"
           size="line"
           title={t(SETTLED_KEYS[review.result.status], { machine })}
+          reason={review.result.nextStep === 'apply_firewall_recipe' ? t('machineDetailPage.network.applyFirewallRecipe') : undefined}
           diagnosticCode={review.result.errorCode ?? null}
         />
       </ItemGroup>
@@ -1404,4 +1405,5 @@ const SETTLED_KEYS = {
   applied: 'machineDetailPage.network.applied',
   unchanged: 'machineDetailPage.network.unchanged',
   outcome_unknown: 'machineDetailPage.network.outcomeUnknown',
+  saved_not_enforced: 'machineDetailPage.network.savedNotEnforced',
 } as const;

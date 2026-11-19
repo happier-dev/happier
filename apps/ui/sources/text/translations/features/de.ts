@@ -9356,6 +9356,8 @@ const machineDetailPageTranslations = { de: translated({
                 approvalWaiting: "Wartet auf Freigabe",
                 apply: "Anwenden",
                 applied: ({ machine }) => `${machine} folgt jetzt deiner neuen Wahl.`,
+                savedNotEnforced: ({ machine }) => `SSH-Einstellungen für ${machine} gespeichert. Die Firewall ist unverändert.`,
+                applyFirewallRecipe: "Wende unter Maschineneinrichtung ein geprüftes Firewall-Rezept an, um den SSH-Zugriff zu ändern.",
                 unchanged: ({ machine }) => `${machine} lief schon so. Nichts hat sich geändert.`,
                 outcomeUnknown: ({ machine }) => `Happier weiß nicht, ob ${machine} die Änderung abgeschlossen hat. Aktualisiere, um den Stand zu sehen.`,
                 applyFailed: ({ machine }) => `${machine} hat die Änderung nicht angewendet`,

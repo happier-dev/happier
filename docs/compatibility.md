@@ -11437,6 +11437,13 @@ The unreleased Configure result also retains the firewall owner's optional
 0.3 protocol, daemon, UI and generated SDK readers refresh together; no migration
 is needed. Existing results without the optional capture remain readable.
 
+Saving the first open public SSH posture records the desired settings without
+changing the native firewall. Configure returns `saved_not_enforced` with
+`nextStep: 'apply_firewall_recipe'`. To change native SSH access, apply a reviewed
+Firewall recipe in Machine Setup with the intended SSH scope. Existing Configure
+outcomes remain readable by refreshed 0.3 readers. Older strict output readers
+need the refreshed protocol to accept the new status.
+
 The unreleased Domain failure details also distinguish a missing post-stage
 Home-routed daemon ACK (`requiredFact: 'homeRoutedDaemonAck'`) from a native
 firewall observation. They retain the observer's optional non-secret RPC error

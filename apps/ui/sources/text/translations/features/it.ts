@@ -9352,6 +9352,8 @@ const machineDetailPageTranslations = { it: translated({
                 approvalWaiting: "In attesa di approvazione",
                 apply: "Applica",
                 applied: ({ machine }) => `${machine} ora segue la tua nuova scelta.`,
+                savedNotEnforced: ({ machine }) => `Le impostazioni SSH per ${machine} sono state salvate. Il firewall non è cambiato.`,
+                applyFirewallRecipe: "Applica una ricetta del firewall già verificata nella configurazione della macchina per modificare l’accesso SSH.",
                 unchanged: ({ machine }) => `${machine} funzionava già così. Non è cambiato nulla.`,
                 outcomeUnknown: ({ machine }) => `Happier non sa se ${machine} ha completato la modifica. Aggiorna per vedere lo stato.`,
                 applyFailed: ({ machine }) => `${machine} non ha applicato la modifica`,

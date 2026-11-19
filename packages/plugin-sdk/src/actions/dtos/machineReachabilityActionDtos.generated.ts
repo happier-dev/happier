@@ -3335,7 +3335,7 @@ export type MachineReachabilityActionResultById = {
         };
     };
     readonly "machines.reachability.configure": {
-        status: 'applied' | 'outcome_unknown' | 'unchanged';
+        status: 'applied' | 'outcome_unknown' | 'saved_not_enforced' | 'unchanged';
         machineId: string;
         metadataVersion: number;
         posture: null | {
@@ -3698,5 +3698,6 @@ export type MachineReachabilityActionResultById = {
                 commands: string[];
             };
         };
+        nextStep?: 'apply_firewall_recipe' | undefined;
     };
 };

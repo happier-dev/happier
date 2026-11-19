@@ -533,6 +533,8 @@ export const english = {
             approvalWaiting: "Waiting for approval",
             apply: "Apply",
             applied: ({ machine }: { machine: string }) => `${machine} now follows your new choice.`,
+            savedNotEnforced: ({ machine }: { machine: string }) => `SSH settings saved for ${machine}. This save leaves the firewall unchanged.`,
+            applyFirewallRecipe: "Apply a reviewed Firewall recipe in Machine Setup to change SSH access.",
             unchanged: ({ machine }: { machine: string }) => `${machine} already worked this way. Nothing changed.`,
             outcomeUnknown: ({ machine }: { machine: string }) => `Happier can't tell whether ${machine} finished the change. Refresh to see what's in place.`,
             applyFailed: ({ machine }: { machine: string }) => `${machine} didn't apply the change`,

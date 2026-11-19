@@ -9298,6 +9298,8 @@ const machineDetailPageTranslations = { ja: translated({
                 approvalWaiting: "承認待ち",
                 apply: "適用",
                 applied: ({ machine }) => `${machine} は新しい選択に従っています。`,
+                savedNotEnforced: ({ machine }) => `${machine} の SSH 設定を保存しました。ファイアウォールは変更されていません。`,
+                applyFirewallRecipe: "SSH アクセスを変更するには、マシンセットアップで確認済みのファイアウォールレシピを適用してください。",
                 unchanged: ({ machine }) => `${machine} はすでにこの設定でした。変更はありません。`,
                 outcomeUnknown: ({ machine }) => `${machine} が変更を終えたか Happier には分かりません。更新して状態を確認してください。`,
                 applyFailed: ({ machine }) => `${machine} は変更を適用しませんでした`,

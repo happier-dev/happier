@@ -741,6 +741,17 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     expect(await manageAction(await render(network, true, { kind: 'review', plan }))).toBeNull();
   });
 
+  it('shows a settings-only SSH save as a warning with the firewall apply step', async () => {
+    const screen = await render(model({ kind: 'settled' }, true), true, {
+      kind: 'settled',
+      result: { status: 'saved_not_enforced', nextStep: 'apply_firewall_recipe',
+        machineId: 'shop-prod', metadataVersion: 4, posture, selections: [], observation },
+    });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-settled' });
+    expect(card?.props.kind).toBe('warning');
+    expect(card?.props.reason).toBe('machineDetailPage.network.applyFirewallRecipe');
+  });
+
   it('says a failed apply was rolled back and verified, from the firewall owner\'s closed result', async () => {
     const absent = { kind: 'absent' as const };
     const recovery = { rules: absent, unit: absent, table: null, boot: { present: true, enabled: true, running: true } };

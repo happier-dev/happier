@@ -9345,6 +9345,8 @@ const machineDetailPageTranslations = { ca: translated({
                 approvalWaiting: "Esperant aprovació",
                 apply: "Aplicar",
                 applied: ({ machine }) => `${machine} ja segueix la teva nova elecció.`,
+                savedNotEnforced: ({ machine }) => `S’ha desat la configuració SSH de ${machine}. El tallafoc no ha canviat.`,
+                applyFirewallRecipe: "Aplica una recepta de tallafoc revisada a la configuració de la màquina per canviar l’accés SSH.",
                 unchanged: ({ machine }) => `${machine} ja funcionava així. No ha canviat res.`,
                 outcomeUnknown: ({ machine }) => `Happier no sap si ${machine} ha acabat el canvi. Actualitza per veure l’estat.`,
                 applyFailed: ({ machine }) => `${machine} no ha aplicat el canvi`,

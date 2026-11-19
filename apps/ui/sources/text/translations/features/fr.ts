@@ -9361,6 +9361,8 @@ const machineDetailPageTranslations = { fr: translated({
                 approvalWaiting: "En attente d’approbation",
                 apply: "Appliquer",
                 applied: ({ machine }) => `${machine} suit maintenant votre nouveau choix.`,
+                savedNotEnforced: ({ machine }) => `Les réglages SSH de ${machine} ont été enregistrés. Le pare-feu reste inchangé.`,
+                applyFirewallRecipe: "Appliquez une recette de pare-feu vérifiée dans la configuration de la machine pour modifier l’accès SSH.",
                 unchanged: ({ machine }) => `${machine} fonctionnait déjà ainsi. Rien n’a changé.`,
                 outcomeUnknown: ({ machine }) => `Happier ne sait pas si ${machine} a terminé le changement. Actualisez pour voir l’état.`,
                 applyFailed: ({ machine }) => `${machine} n’a pas appliqué le changement`,
