@@ -169,10 +169,9 @@ export function Timeline<Item>({ renderItem, endContent, timeAlign = 'sentence',
       {...(endContent === undefined ? {} : {
         endContent: <View style={endColumn}>{endContent}</View>,
       })}
+      // List owns each row's list membership; a second listitem here would nest one inside another.
       renderItem={(item: Item, index: number) => (
-        <View role="listitem">
-          <TimelineRow content={renderItem(item, index)} first={index === 0} last={index === lastIndex} timeAlign={timeAlign} />
-        </View>
+        <TimelineRow content={renderItem(item, index)} first={index === 0} last={index === lastIndex} timeAlign={timeAlign} />
       )}
     />
   );
