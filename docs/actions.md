@@ -6214,6 +6214,15 @@ an approved deployment rolls out its replacement. The archive holder uses the
 existing signed Deploy child and checks the exact archive provenance before
 starting the transfer. The deployment approval covers that download.
 
+An own-server deployment reviews its runtime Machines before presenting the
+approval request. When a remote review renders a saved private-service
+reference, its receiving installation signs the Environment read with the
+controller's existing deployment child packet. Home verifies that packet
+against the same request and current placement. The referenced Environment,
+its content, and the Machine reads keep their existing access rules. After
+approval, member activation uses the accepted deployment receipt for the
+same reference read.
+
 ### Transport and header refusals (0.3 development source)
 
 `not_authenticated` means Home answered an authentication refusal (HTTP 401/403).

@@ -1387,6 +1387,115 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('admits the remote edge member saved-reference read before deploy approval', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true });
+        await db.deployment.delete({ where: { id: f.receipt.id } });
+        const consumer = createDeploymentEnvironmentDetailV1();
+        const exported = createDeploymentEnvironmentDetailV1();
+        exported.content.ownServer!.serviceExports = [{ key: 'origin', service: 'app', containerPort: 3000,
+            scheme: 'http', exposure: 'loopback', transport: { kind: 'iroh' } }];
+        const reference = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.environment.projectSourceId, createdByAccountId: f.account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+            ...await f.content('deployment-environment.v1', exported.content),
+        } });
+        exported.environment.id = reference.id;
+        const binding = { purpose: 'variable' as const, name: 'ORIGIN_URL', phase: 'runtime' as const,
+            source: { kind: 'reference' as const, environmentId: reference.id, export: 'origin', via: 'privateNetwork' as const } };
+        consumer.environment.id = f.environment.id;
+        consumer.content.bindings = [binding];
+        consumer.content.ingress = { kind: 'edgeCaddy', edgeMachineId: f.member.id };
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: {
+            revision: f.input.expectedRevision, edgeMachineId: f.member.id,
+            ...await f.content('deployment-environment.v1', consumer.content),
+        } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: {
+            revision: f.input.expectedTargetLinkRevision,
+            machines: { create: { machineId: f.controller.id, installationId: f.controller.installationId, position: 1, state: 'active' } },
+        } });
+        const job = { v: 1, kind: 'review', actionId: f.job.actionId, input: f.input,
+            machineId: f.member.id, installationId: f.member.installationId } satisfies DeploymentChildRpcV1;
+        const packet = f.rpc(job);
+        expect(await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, packet)).toMatchObject({
+            deploymentChildAdmission: { routing: projectDeploymentChildRoutingV1(job) },
+        });
+        const target = f.authorization.binding.target;
+        const member = await projectExternalActionRequesterHttpAuthorization({ authorization: f.authorization,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+            installationId: f.member.installationId, privateKey: f.member.keys.secretKey, rootAdmitted: true,
+            forwardedMove: { credentials: { token: 'unused-member-bearer', encryption: null }, isCurrent: async () => true },
+            forwardedDeploymentChild: job, deploymentChildExecution: packet });
+        if (!member?.requesterHttpProjection) throw new Error('Expected the admitted review HTTP projection');
+        const action = 'deployments.environments.get';
+        const path = `/v1/deployments/environments/${reference.id}?serverId=${serverId}`;
+        const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
+        try {
+            await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); machinesRoutes(app); registerAccountEncryptionRoutes(app); }, async app => {
+                const get = (url: string, headers: Readonly<Record<string, string>>) => app.inject({ method: 'GET', url,
+                    headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+                const admittedReads: string[] = [];
+                let referenceHeaders: Readonly<Record<string, string>> | undefined;
+                await expect(resolvePrivateServiceExportAdmissionForHost({ source: binding.source, environment: consumer,
+                    context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                        externalActionExecutionAuthorization: member, surface: 'cli' },
+                    actionId: f.job.actionId, signal: new AbortController().signal,
+                    host: { credentials: { token: 'unused-host-bearer', encryption: null }, serverId,
+                        serverHttpBaseUrl: 'http://home.test', machineId: f.member.id },
+                    homeServerIdentityId: serverId, installationId: f.member.installationId, privateKey: f.member.keys.secretKey,
+                    owner: runtime.registry.projectManagedServices,
+                    readEnvironment: async request => {
+                        expect(request.environmentId).toBe(reference.id);
+                        for (const url of [path, `/v1/artifacts/${reference.contentArtifactId}`, `/v1/machines/${f.member.id}`]) {
+                            const signed = await captureRequesterCurrentnessRefusal(() =>
+                                request.context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                                    effectActionId: f.job.actionId, method: 'GET', path: url }));
+                            if (!signed.value) throw new Error(signed.branch ?? 'Missing signed reference read');
+                            const response = await get(url, signed.value);
+                            expect(response.statusCode, response.body).toBe(200);
+                            admittedReads.push(url);
+                            if (url === path) referenceHeaders = signed.value;
+                        }
+                        const url = '/v1/account/encryption/currentness';
+                        const headers = await request.context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                            effectActionId: f.job.actionId, method: 'GET', path: url });
+                        if (!headers) throw new Error('Expected signed review currentness read');
+                        const models: string[] = [];
+                        const stopReads = observeSqliteRequests({ before: query => { if (query.model) models.push(query.model); } });
+                        try {
+                            const response = await get(url, headers);
+                            expect(response.statusCode, response.body).toBe(200);
+                        } finally { stopReads(); }
+                        expect(models.filter(model => ['TeamMembership', 'MachineGrant', 'Artifact'].includes(model))).toEqual([]);
+                        // The admission test stops at the native runtime boundary.
+                        return { ...exported, targetLinks: [] };
+                    },
+                })).rejects.toMatchObject({ code: 'reference_unavailable' });
+                expect(admittedReads).toHaveLength(3);
+                const reviewedChild = { actionId: action, role: 'deployment.reference', environmentId: reference.id,
+                    inputDigest: computeActionInputApprovalDigestV1(action, { serverId, environmentId: reference.id }) };
+                const signed = (authorization: typeof f.authorization, deploymentChildExecution?: typeof packet) =>
+                    createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: action,
+                        target: authorization.binding.target, installationId: f.member.installationId, method: 'GET', path,
+                        reviewedChild, deploymentChildExecution, privateKey: f.member.keys.secretKey });
+                const otherEnvelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID(),
+                    input: { ...f.input, requestKey: crypto.randomUUID() } };
+                const otherDeploy = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                    accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                    actionId: f.job.actionId, machineId: f.controller.id, target, requestId: otherEnvelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(otherEnvelope) }, { input: otherEnvelope.input });
+                for (const headers of [signed(f.authorization), signed(foreign.authorization, packet), signed(otherDeploy, packet)]) {
+                    const response = await get(path, headers);
+                    expect(response.statusCode, response.body).toBe(401);
+                }
+                if (!referenceHeaders) throw new Error('Expected a signed reference read before checking its placement');
+                await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { revision: { increment: 1 } } });
+                const stale = await get(path, referenceHeaders);
+                expect(stale.statusCode, stale.body).toBe(401);
+            }, { authentication: 'real' });
+        } finally { await runtime.dispose(); }
+    });
+
     it('admits a saved-reference read during the root review before any receipt exists', async () => {
         // DB-MOVE cutover (COR3B-DATA-1115): Environment A references B's export.
         // The Deploy review renders A's runtime bindings before Home accepts a

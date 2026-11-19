@@ -1430,7 +1430,8 @@ function isProjectPrepareReviewEffect(rootActionId: string, effectActionId: stri
 
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
-    effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string) {
+    effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string,
+    referenceReceiverMachineId?: string) {
     const reviewedManagedAcquirePurpose = await isReviewedManagedAcquirePurpose(binding, effectActionId, proof);
     const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof);
     const teardownDomainContinuation = binding.actionId === 'deployments.teardown' && domainPurpose?.kind === 'transition';
@@ -1454,7 +1455,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         isEnvironmentRead: () => isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof),
         isCurrentnessRead: () => isAccountEncryptionCurrentnessHttpRead(proof),
         readArtifactId: () => readArtifactGetHttpPurpose(proof),
-    }, signerAccountId);
+    }, signerAccountId, referenceReceiverMachineId);
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
@@ -1586,24 +1587,27 @@ async function verifyCommon(
     if (proof.deploymentChildExecution) {
         const packet = proof.deploymentChildExecution;
         const routing = packet.externalActionExecution.deploymentChildRouting;
-        // A member's activation renders saved references: it may carry only the
-        // reviewed reference read, which readDeploymentReferenceHttpPurpose decides below.
-        if (proof.reviewedChild && (routing?.kind !== 'member' || proof.reviewedChild.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
+        // Review and activation may forward the exact saved-reference read.
+        if (proof.reviewedChild && ((routing?.kind !== 'member' && routing?.kind !== 'review')
+            || proof.reviewedChild.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
             || effectActionId.data !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
-        const admittedReadReceiver = (routing?.kind === 'dataRole' || routing?.kind === 'domainDns') ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
-            accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } }) : null;
+        const referenceReview = routing?.kind === 'review' && proof.reviewedChild !== undefined;
+        const admittedReadReceiver = routing && (routing.kind === 'dataRole' || routing.kind === 'domainDns' || referenceReview)
+            ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
+                accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } }) : null;
         // The installed receiver spends the source-signed admitted packet. Its
         // root binding and source signature are verified by the recursive owner.
-        const admittedReadContinuation = (routing?.kind === 'dataRole' || routing?.kind === 'domainDns')
-            && admittedReadReceiver?.installationPublicKey && admittedReadReceiver.installationId === routing.installationId
+        const admittedReadContinuation = routing && admittedReadReceiver?.installationPublicKey && admittedReadReceiver.installationId === routing.installationId
             && classifyMachineAvailabilityState(admittedReadReceiver) === 'available'
             && verifyExternalActionMachineRequestV1({ authorizationToken: proof.authorizationToken,
                 effectActionId: effectActionId.data, target, installationId: routing.installationId,
                 requestId: packet.externalActionExecution.authorization.binding.requestId,
                 method: proof.method, path: proof.path, body: proof.body, deploymentChildExecution: packet,
                 ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
+                ...(proof.reviewedChild ? { reviewedChild: proof.reviewedChild } : {}),
                 publicKey: admittedReadReceiver.installationPublicKey, signature: proof.machineSignature });
+        if (referenceReview && !admittedReadContinuation) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const verified = await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
             method: packet.method, requestId: packet.requestId, paramsPresent: packet.paramsPresent, paramsDigest: packet.paramsDigest,
             ...(admittedReadContinuation ? { admittedReadContinuation: true } : {}),
@@ -1645,7 +1649,8 @@ async function verifyCommon(
                     custodianAccountId: verified.binding.custodianAccountId };
             }
         }
-        const childPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof, signer.custodianAccountId);
+        const childPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof,
+            signer.custodianAccountId, signer.machineId);
         if (proof.reviewedChild && childPurpose.deploymentReferenceRead !== true) return refuseExternalActionExecutionRequest('verification_purpose', proof);
         const preparationRead = childPurpose.deploymentReferenceRead === null
             ? await readDeploymentPreparationHttpReadPurpose(db, verified.binding, effectActionId.data, proof,
@@ -4919,7 +4924,7 @@ export async function verifyExternalActionMachineRpcExecution(
         paramsPresent?: boolean; paramsDigest?: string;
         /** Host-only issuer purpose: a spawn proof never directly dispatches a credential effect. */
         nativeCredentialSpawnChildIssuance?: true;
-        /** Host-only: verifyCommon has authenticated the installed data-role receiver's continuation signature. */
+        /** Host-only: verifyCommon authenticated the installed receiver's read continuation signature. */
         admittedReadContinuation?: true;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
@@ -5060,6 +5065,12 @@ export async function verifyExternalActionMachineRpcExecution(
                 { machineId: binding.machineId, installationId: binding.installationId, publicKey: machine.installationPublicKey });
             if (!domainAdmission) return refuseExternalActionExecutionRequest('deployment_child_routing', { rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD });
             deploymentChildAdmission = { ...deploymentChildAdmission, domainAdmission };
+        }
+        // The reference read spends the receiver's signed continuation. Its
+        // Home route owns content access and does not open a destination codec.
+        if (routing.data.kind === 'review' && request.admittedReadContinuation) {
+            return { binding, effectActionId: execution.effectActionId, target: execution.target, principal,
+                effectiveAuthority: principal.authority, deploymentChildAdmission };
         }
         const destinationCodec = deploymentChildAdmission.destinationCodecAdmission
             ?? (await readDeploymentChildMachineReadInTx(db, deploymentChildAdmission, routing.data.machineId))?.codecAdmission;

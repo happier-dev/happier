@@ -1752,10 +1752,10 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
         const packet = input.deploymentChildExecution;
         const domainController = child.kind === 'domain' && input.installationId === authorization.binding.installationId;
         const childReceiver = input.forwardedMove && child.installationId === input.installationId;
-        // Member activation renders saved references, so it also signs that one
-        // reviewed Environment read; Home's reference-purpose owner decides it.
+        // Remote review and activation both render saved references. Home admits
+        // the exact Environment read carried alongside the signed parent packet.
         const reference = request.reviewedChild?.role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 ? request.reviewedChild : undefined;
-        const referenceRead = reference !== undefined && child.kind === 'member'
+        const referenceRead = reference !== undefined && (child.kind === 'review' || child.kind === 'member')
           && reference.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && request.effectActionId === reference.actionId;
         if ((!domainController && !childReceiver) || !packet || child.actionId !== deploymentChildEffectActionIdForRootV1(
           authorization.binding.actionId, authorization.binding.deploymentPreparationAdmission, child.actionId)

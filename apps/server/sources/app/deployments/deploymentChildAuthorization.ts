@@ -138,11 +138,13 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
                 id: routing.input.environmentId, edgeMachineId: routing.machineId }, select: { id: true } }))
             ? { binding, routing } : null;
     }
-    const current = await isCurrentDeploymentChildRoutingInTx(tx, binding, routing, authentication);
+    const retainedReview = routing.kind === 'review' && admittedReadContinuation === true;
+    const current = await isCurrentDeploymentChildRoutingInTx(tx, binding, routing, authentication, retainedReview);
     if (current === null || current === false) return null;
     if (typeof current !== 'boolean') {
         return 'ok' in current ? current : { binding, routing, acceptedReceipt: current };
     }
+    if (retainedReview) return { binding, routing };
     // These destinations are selected after mint. Source custody alone never grants the requester Use.
     const destination = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
         machineId: routing.machineId, requiredRole: 'use' });
@@ -271,7 +273,8 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
 /** ActionSpec selects preparation custody; accepted jobs retain their captured admission. */
 async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, routing: Exclude<DeploymentChildRoutingV1, { kind: 'dataRole' | 'snapshot' }>,
-    authentication: DeploymentAuthentication = {},
+    authentication: DeploymentAuthentication,
+    retainedReview: boolean,
 ): Promise<boolean | ActionExecuteFailure | Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>> {
     const rootAction = ActionIdSchema.safeParse(binding.actionId);
     const preparationScope = rootAction.success ? getActionSpec(rootAction.data).deploymentPreparationScope?.(binding) : undefined;
@@ -331,8 +334,11 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     const allocated = preparationScope?.environment === 'create'
         ? await readAdmittedCreateDeploymentEnvironmentCustodyInTx(tx, binding) : null;
     if (preparationScope?.environment === 'create' && allocated?.row.id !== routing.input.environmentId) return false;
+    if (retainedReview && !allocated && preparationScope?.environment !== 'template'
+        && (binding.environmentId ?? binding.deploymentCandidatePublication?.environmentId) !== routing.input.environmentId) return false;
     const loaded = allocated ? { ok: true as const, row: allocated.row, owner: allocated.owner }
-        : await loadDeploymentEnvironmentInTx(tx, binding.accountId, routing.input.serverId, routing.input.environmentId, authentication);
+        : retainedReview ? await loadDeploymentEnvironmentCustodyInTx(tx, routing.input)
+            : await loadDeploymentEnvironmentInTx(tx, binding.accountId, routing.input.serverId, routing.input.environmentId, authentication);
     if (!loaded.ok || loaded.row.deletedAt
         || 'admission' in loaded && binding.environmentId === undefined && !canDeployDeploymentEnvironment(loaded.admission, loaded.row)
         || loaded.row.runtimeTargetLinkId !== routing.input.targetLinkId) return false;
@@ -347,6 +353,9 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     const builder = loaded.row.buildMachineId === routing.machineId;
     const preparesTeardown = routing.kind === 'prepare' && getActionSpec(routing.actionId).deploymentReadScope?.childReadOnly === true;
     if (routing.kind === 'prepare' ? preparesTeardown ? !member : !builder : !member && !builder) return false;
+    // Before a receipt exists the exact signed review uses the admitted
+    // placement and revision. Its new operands are admitted by the read owner.
+    if (routing.kind === 'review' && retainedReview) return loaded.row.revision === routing.input.expectedRevision;
     if (!loaded.row.controllerMachineId) return false;
     const denied = await admitDeploymentMachinesInTx(tx, owner, [
         { machineId: loaded.row.controllerMachineId, role: 'controller',

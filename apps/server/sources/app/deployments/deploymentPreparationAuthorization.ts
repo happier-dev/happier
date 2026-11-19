@@ -1650,7 +1650,7 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
     transports: Readonly<{ isEnvironmentRead(): boolean; isCurrentnessRead(): boolean; readArtifactId(): string | null }>,
-    signerAccountId: string,
+    signerAccountId: string, referenceReceiverMachineId?: string,
 ): Promise<boolean | null> {
     const child = proof.reviewedChild;
     if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
@@ -1673,7 +1673,7 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     const scope = await readAdmittedDeploymentScopeInTx(tx, binding, undefined, undefined, undefined, undefined, false, child.environmentId);
     if (!scope) return false;
     if (artifactId) return scope.artifactIds.has(artifactId);
-    return [...scope.machineIds, binding.machineId].some(machineId =>
+    return [...scope.machineIds, binding.machineId, ...(referenceReceiverMachineId ? [referenceReceiverMachineId] : [])].some(machineId =>
         proof.path === `/v1/machines/${encodeURIComponent(machineId)}`
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { id: machineId })));
 }
