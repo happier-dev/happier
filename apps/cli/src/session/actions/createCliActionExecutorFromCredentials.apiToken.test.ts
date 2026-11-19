@@ -17,7 +17,11 @@ import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from '@/daemon/externalActions/signed
 import { createAccountEncryptionCurrentnessFixture, createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
+import { ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { REVIEW_HUMAN_ACTION_IDS_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DiscussionSecondOpinionPreviewV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
@@ -138,7 +142,7 @@ type MockActionResponse = Readonly<{
   statusCode: number;
   body: Readonly<Record<string, unknown>>;
 }>;
-type FetchLike = (input: URL, init?: RequestInit) => MockActionResponse;
+type FetchLike = (input: URL, init?: RequestInit) => MockActionResponse | Promise<MockActionResponse>;
 
 let patActionServer: Server | null = null;
 let patActionEndpoint: string | null = null;
@@ -173,7 +177,7 @@ async function handlePatActionRequest(request: IncomingMessage, response: import
   }
   try {
     const requestBody = await readRequestBody(request);
-    const result = fetch(new URL(request.url ?? '/', endpoint), {
+    const result = await fetch(new URL(request.url ?? '/', endpoint), {
       method: request.method,
       headers: requestHeaders(request),
       body: requestBody,
@@ -810,6 +814,117 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       v: 1, target: { kind: 'machine', machineId: 'machine-review' },
       input: { sessionId: null, machineId: 'machine-review', scope: 'paths' },
     });
+  });
+
+  it.each([undefined, exactSessionId])('captures a detached person-only Review on the explicit Machine with contextual Session %s', async (defaultSessionId) => {
+    const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
+      '@/api/machine/resolveCurrentAccountMachineTarget',
+    );
+    resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const records = createInMemoryReviewRecordPortV1();
+    const captures: ReturnType<typeof ScmComparisonCaptureInputSchema.parse>[] = [];
+    let requested: ReturnType<typeof ReviewReviewersSetInputV1Schema.parse> | undefined;
+    const person = { kind: 'person', principal: { kind: 'account', accountId: 'requested-person' }, required: true } as const;
+    const comparisonId = 'c'.repeat(64);
+    // Substitute Home HTTP, SCM and Artifact storage boundaries only. Both
+    // Action executors and Review admission/settlement retain their real owners.
+    const receiver = createActionExecutor({
+      reviewRecords: () => records,
+      scmActionExecute: async ({ actionId, input }) => {
+        expect(actionId).toBe('scm.diffSummary.capture');
+        captures.push(ScmComparisonCaptureInputSchema.parse(input));
+        return ScmComparisonCaptureOutputSchema.parse({ success: true,
+          comparison: { id: comparisonId, source: { kind: 'workingTree', area: 'pending' },
+            repository: { rootPath: '/workspace' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+          metadata: { sourceKey: comparisonId, source: { kind: 'workingTree', area: 'pending' } },
+        });
+      },
+      homeDomainAction: async ({ actionId, input }) => {
+        expect(actionId).toBe(REVIEW_HUMAN_ACTION_IDS_V1.setReviewers);
+        requested = ReviewReviewersSetInputV1Schema.parse(input);
+        return ReviewHumanActionStateV1Schema.parse({ reviewId: requested.reviewId, roundOrdinal: requested.roundOrdinal,
+          requests: [{ id: 'request', roundOrdinal: requested.roundOrdinal, principal: person.principal,
+            required: true, needsAccess: false }], verdicts: [], needsYou: {
+            reviewId: requested.reviewId, roundOrdinal: requested.roundOrdinal, reason: 'review_needs_you',
+            needsYou: true, requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true,
+          } });
+      },
+      executionRunStart: async () => { throw new Error('A person-only Review must not launch an Agent'); },
+      workflowAction: async () => { throw new Error('A person-only Review must not launch a Workflow'); },
+    } satisfies ActionExecutorDeps);
+    installPatActionTransportMock(async (url, init) => {
+      expect(url.pathname).toBe('/v1/actions/review.start');
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+      expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-review' });
+      const execution = await receiver.execute('review.start', envelope.input, {
+        surface: 'cli', serverId: 'home', externalActionTarget: envelope.target,
+      });
+      return { statusCode: 200, body: { v: 1, actionId: 'review.start', execution } };
+    });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token' },
+      machineId: 'machine-review', serverId: 'home', serverApiUrl: patActionEndpoint!,
+    });
+    const result = await executor.execute('review.start', { target: { kind: 'detached' }, cwd: '/workspace',
+      scope: 'changes', changeType: 'uncommitted', instructions: 'Please review this change.', reviewers: [person],
+    }, { surface: 'cli', ...(defaultSessionId ? { defaultSessionId } : {}) });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { sessionId: null, results: [],
+      reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 } } });
+    expect(captures).toEqual([expect.objectContaining({ cwd: '/workspace', source: { kind: 'workingTree', area: 'pending' } })]);
+    expect(requested?.reviewers).toEqual([{ principal: person.principal, required: true }]);
+    expect((await records.read(requested!.reviewId))?.rounds).toEqual([
+      expect.objectContaining({ state: 'completed', runs: [], reviewerIds: [], comparisonId }),
+    ]);
+  });
+
+  it.each([
+    { actionId: 'review.walkthrough', input: { runId: 'review-run', comparisonId: 'comparison' },
+      expected: { runId: 'narrator-run', state: 'collecting' } },
+    { actionId: 'review.explain_findings', input: { runId: 'review-run', cwd: '/workspace', resultId: 'result',
+      expectedRevision: 2, findingIds: [{ runId: 'review-run', findingId: 'finding' }] },
+      expected: { success: false, errorCode: 'revision_conflict' } },
+    { actionId: REVIEW_NEW_ROUND_ACTION_ID_V1, input: { runId: 'review-run', fresh: true },
+      expected: { runId: 'next-review-run', reviewRound: { reviewId: 'review', roundOrdinal: 2 } } },
+  ] as const)('executes detached $actionId on the explicit Machine without a Session', async ({ actionId, input, expected }) => {
+    const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
+      '@/api/machine/resolveCurrentAccountMachineTarget',
+    );
+    resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const receiver = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      executionRunAction: async (sessionId, request, options) => {
+        expect(sessionId).toBeNull();
+        expect(options?.targetMachineId).toBe('machine-review');
+        if (request.actionId === 'review.explain_findings') return { ok: true, result: {
+          refinement: { actionId: 'scm.diffSummary.refine', input: { cwd: '/workspace', resultId: 'result',
+            expectedRevision: 2, output: 'walkthrough', stopIds: ['stop'], instructions: 'Explain this finding.' } },
+        } };
+        return { ok: true, result: actionId === REVIEW_NEW_ROUND_ACTION_ID_V1
+          ? { runId: 'next-review-run', callId: 'call', sidechainId: 'call', reviewRound: { reviewId: 'review', roundOrdinal: 2 } }
+          : { runId: 'narrator-run', state: 'collecting' } };
+      },
+      scmActionExecute: async ({ actionId: childActionId }) => {
+        expect(childActionId).toBe('scm.diffSummary.refine');
+        return { success: false, errorCode: 'revision_conflict', error: 'Saved result changed', latestRevision: 3 };
+      },
+    } satisfies ActionExecutorDeps);
+    installPatActionTransportMock(async (url, init) => {
+      expect(url.pathname).toBe(`/v1/actions/${actionId}`);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+      expect(envelope.target).toEqual({ kind: 'machine', machineId: 'machine-review' });
+      const execution = await receiver.execute(actionId, envelope.input, {
+        surface: 'cli', serverId: 'home', externalActionTarget: envelope.target,
+      });
+      return { statusCode: 200, body: { v: 1, actionId, execution } };
+    });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token' },
+      machineId: 'machine-review', serverId: 'home', serverApiUrl: patActionEndpoint!,
+    });
+    const result = await executor.execute(actionId, { ...input, target: { kind: 'detached' } }, {
+      surface: 'cli',
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: expected });
   });
 
   it('uses the sole current account machine when a PAT has no daemon-local target', async () => {

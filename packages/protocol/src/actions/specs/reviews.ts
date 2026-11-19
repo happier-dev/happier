@@ -20,6 +20,10 @@ import { ReviewPrepareRoundInputV1Schema, ReviewPreparedRoundV1Schema, ReviewSet
 import { ReviewRoundBindingV1Schema } from '../../reviews/reviewArtifactV1.js';
 import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_SETTLE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '../actionIds.js';
 
+function resolveReviewExecutionPlacementForInput(input: unknown): 'machine' | 'session' {
+  return readRecord(readRecord(input).target).kind === 'detached' ? 'machine' : 'session';
+}
+
 function createReviewActionSpecs(): readonly [
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.get; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewHumanGetInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
   PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.setReviewers; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewReviewersSetInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
@@ -94,6 +98,8 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: REVIEW_NEW_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
+    executionPlacements: ['session', 'machine'],
+    executionPlacementForInput: resolveReviewExecutionPlacementForInput,
     title: 'New Review round', safety: 'safe', sideEffectClass: 'external', placements: [],
     description: 'Review current code in the same Review, reusing the accepted workflow or retained native reviewer.',
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
@@ -139,9 +145,11 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    executionPlacements: ['session', 'machine'],
+    executionPlacementForInput: resolveReviewExecutionPlacementForInput,
     approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: (input, context) => resolveExecutionRunMachineRuntimeDemand(
-      readRecord(readRecord(input).target).kind === 'detached'
+      resolveReviewExecutionPlacementForInput(input) === 'machine'
         || context.actionCaller?.kind === 'workflowRun' && readRecord(input).sessionId === undefined
         ? { sessionId: null } : input, context),
     title: 'Start review',
@@ -277,6 +285,8 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.walkthrough', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    executionPlacements: ['session', 'machine'],
+    executionPlacementForInput: resolveReviewExecutionPlacementForInput,
     title: 'Walk through review',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -299,6 +309,8 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.explain_findings', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    executionPlacements: ['session', 'machine'],
+    executionPlacementForInput: resolveReviewExecutionPlacementForInput,
     title: 'Explain review findings',
     sideEffectClass: 'external',
     safety: 'safe',
