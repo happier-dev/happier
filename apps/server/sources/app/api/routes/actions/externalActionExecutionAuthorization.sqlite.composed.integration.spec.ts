@@ -12250,23 +12250,44 @@ describe("external Action execution authorization", () => {
             const post = (path: string, body: InjectOptions['payload']) => app.inject({ method: 'POST', url: path, payload: body,
                 headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                     method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+            const currentPath = '/v1/machines/managed/controller/current';
+            const submitPath = '/v1/machines/managed/controller/submit-intent';
+            const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 1, requestId, controller };
+            if (intent === 'stop') expect((await post(submitPath, correlation)).statusCode).not.toBe(200);
             const admitted = await post('/v1/machines/managed/controller/admit-control', { action: actionId, requestId, input: control });
             expect(admitted.statusCode, admitted.body).toBe(200);
-            const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 1, requestId, controller };
-            const submitted = await post('/v1/machines/managed/controller/submit-intent', correlation);
+            const withdraw = async () => {
+                if (credential === 'api_token') await auth.revokeApiToken({ accountId: fixture.account.id, tokenId: fixture.pat.tokenId });
+                else if (credential === 'machine_grant') await inTx(tx => removeMachineAccessGrantInTx(tx, {
+                    actorAccountId: fixture.account.id, machineId: controller.machineId,
+                    principal: { kind: 'account', accountId: actor.account.id } }));
+                else await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
+            };
+            if (intent === 'stop') {
+                const before = await post(currentPath, correlation);
+                expect(before.statusCode, before.body).toBe(200);
+                await withdraw();
+                for (const path of [currentPath, submitPath]) {
+                    for (const mismatch of [{ requestId: crypto.randomUUID() }, { expectedIntentRevision: 2 },
+                        { controller: { ...controller, installationId: crypto.randomUUID() } }]) {
+                        expect((await post(path, { ...correlation, ...mismatch })).statusCode).not.toBe(200);
+                    }
+                }
+                const current = await post(currentPath, correlation);
+                expect(current.statusCode, current.body).toBe(200);
+                expect(current.json()).toMatchObject({ machine: { intentRevision: 1, desired: 'stop' } });
+            }
+            const submitted = await post(submitPath, correlation);
             expect(submitted.statusCode, submitted.body).toBe(200);
             expect(submitted.json()).toMatchObject({ submitted: true });
-            if (credential === 'api_token') await auth.revokeApiToken({ accountId: fixture.account.id, tokenId: fixture.pat.tokenId });
-            else if (credential === 'machine_grant') await inTx(tx => removeMachineAccessGrantInTx(tx, {
-                actorAccountId: fixture.account.id, machineId: controller.machineId,
-                principal: { kind: 'account', accountId: actor.account.id } }));
-            else await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
+            if (intent === 'delete') await withdraw();
             const observation = intent === 'delete' ? { observedAt: 30, availability: 'absent' }
                 : { observedAt: 30, availability: 'present', power: 'stopped' };
             const report = { ...correlation, result: { kind: 'confirmed' }, observation };
             for (const mismatch of [{ requestId: crypto.randomUUID() }, { expectedIntentRevision: 2 },
                 { controller: { ...controller, installationId: crypto.randomUUID() } }]) {
-                expect((await post('/v1/machines/managed/controller/report-intent', { ...report, ...mismatch })).statusCode).toBe(401);
+                const refusal = await post('/v1/machines/managed/controller/report-intent', { ...report, ...mismatch });
+                expect([401, 409]).toContain(refusal.statusCode);
             }
             const settled = await post('/v1/machines/managed/controller/report-intent', report);
             expect(settled.statusCode, settled.body).toBe(200);

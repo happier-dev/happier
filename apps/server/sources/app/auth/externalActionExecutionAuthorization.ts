@@ -147,7 +147,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
     type ManagedActivityRpcRequestV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
-import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControllerCurrentnessV1Schema, type ManagedControllerCurrentnessV1, ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
 import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -735,7 +735,7 @@ type IssuedIntentNativeFactPurpose = Readonly<{ kind: 'issued-managed-intent-nat
 type IssuedNativeCredentialFactPurpose = Readonly<{ kind: 'issued-managed-native-credential-fact'; report: ReturnType<typeof ManagedControllerCredentialDeliveryReportV1Schema.parse> }>;
 type RetainedDiscussionPublicationPurpose = Readonly<{ kind: 'retained-discussion-publication'; source: SessionInputSourceSessionV1 }>;
 type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | IssuedIntentNativeFactPurpose | IssuedNativeCredentialFactPurpose
-    | RetainedDiscussionPublicationPurpose;
+    | RetainedDiscussionPublicationPurpose | Readonly<{ kind: 'admitted-managed-power-continuation' }>;
 
 /** Consumption may end after submission; only that installed operation may report its disposition. */
 async function isIssuedNativeCredentialFactReportInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -816,6 +816,28 @@ async function isIssuedIntentNativeFactReportInTx(reader: Tx, binding: ExternalA
         const pending = readManagedIntentReportAuthority(row, report);
         return row.custodianAccountId === binding.custodianAccountId && pending !== undefined
             && (binding.actionId === 'machines.managed.delete' ? pending.intent === 'delete' : pending.intent === 'stop' || pending.intent === 'suspend' || pending.intent === 'start' || pending.intent === 'resume');
+    } catch (error) {
+        if (!(error instanceof ManagedMachineError)) throw error;
+        return false;
+    }
+}
+
+async function isAdmittedManagedPowerContinuationInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    input: ManagedControllerCurrentnessV1): Promise<boolean> {
+    const admitted = binding.managedAdmission;
+    if (admitted?.actionId !== 'machines.managed.power.set'
+        || binding.serverIdentityId !== input.homeId || binding.requestId !== input.requestId
+        || admitted.input.homeId !== input.homeId || admitted.input.managedId !== input.managedId
+        || (input.controller && (input.controller.machineId !== binding.machineId
+            || input.controller.installationId !== binding.installationId))) return false;
+    try {
+        const row = await requireCurrentManagedMachineInTx(reader, input, { requestAuthority: 'intent' });
+        const current = readManagedAdmissionState(row.admittedInput).currentAdmission;
+        return row.custodianAccountId === binding.custodianAccountId
+            && (input.controller !== undefined || (!!binding.managedAccountExecutor
+                && binding.managedAccountExecutor.enrolledMachineId === row.enrolledMachineId))
+            && current?.kind === 'control' && current.request.action === admitted.actionId
+            && sameManagedInput(current.request.input, admitted.input);
     } catch (error) {
         if (!(error instanceof ManagedMachineError)) throw error;
         return false;
@@ -1778,6 +1800,10 @@ async function verifyCommon(
         actionOrigin: { v: 1, token: proof.authorizationToken, binding }, target: custodyTarget,
     }) : undefined;
     if (custodyTarget && !custody) return refuse('custody_before_principal');
+    const managedPowerContinuation = binding.actionId === 'machines.managed.power.set'
+        && effectActionId.data === binding.actionId && proof.method.toUpperCase() === 'POST'
+        && (proof.path === '/v1/machines/managed/controller/current' || proof.path === '/v1/machines/managed/controller/submit-intent')
+        ? ManagedControllerCurrentnessV1Schema.safeParse(proof.body) : null;
     const report = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report'
         ? ManagedControllerReportV1Schema.safeParse(proof.body) : null;
     const intentReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report-intent'
@@ -1786,7 +1812,9 @@ async function verifyCommon(
         ? ManagedControllerResizeReportV1Schema.safeParse(proof.body) : null;
     const nativeReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report'
         ? ManagedControllerCredentialDeliveryReportV1Schema.safeParse(proof.body) : null;
-    const purpose: ExternalActionVerificationPurpose | undefined = report?.success
+    const purpose: ExternalActionVerificationPurpose | undefined = managedPowerContinuation
+        ? { kind: 'admitted-managed-power-continuation' }
+        : report?.success
         && await isIssuedAcquireNativeFactReportInTx(db, binding, report.data)
         ? { kind: 'issued-managed-acquire-native-fact', report: report.data }
         : intentReport?.success && await isIssuedIntentNativeFactReportInTx(db, binding, intentReport.data)
@@ -1835,6 +1863,13 @@ async function verifyCommon(
         ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
         : Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
     const boundMachineSigned = signatureCurrent;
+    if (managedPowerContinuation) {
+        if (!boundMachineSigned) return refuse('machine_signature');
+        if (!managedPowerContinuation.success
+            || !await isAdmittedManagedPowerContinuationInTx(db, binding, managedPowerContinuation.data)) {
+            return refuse('managed_control_purpose');
+        }
+    }
     // Target currentness and the captured source both sign the exact destination
     // tuple. Only the accepted continuation survives its publisher stopping.
     const managedGuestMetadata = proof.method.toUpperCase() === 'GET'
@@ -2022,9 +2057,10 @@ async function verifyCommon(
         ...(reviewedSetupRead ? { deploymentReviewedSetupRead: true as const } : {}),
     };
 
-    // The exact submitted native effect already admitted its requester. Its signed
-    // native result must remain recordable after that credential is withdrawn.
-    if (purpose?.kind === 'issued-managed-acquire-native-fact' || purpose?.kind === 'issued-managed-intent-native-fact') {
+    // An admitted power intent can submit, and a submitted native effect can
+    // report its result, using the installed controller's retained authority.
+    if (purpose?.kind === 'admitted-managed-power-continuation'
+        || purpose?.kind === 'issued-managed-acquire-native-fact' || purpose?.kind === 'issued-managed-intent-native-fact') {
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority, ...reviewedAdmission }
