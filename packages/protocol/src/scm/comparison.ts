@@ -7,7 +7,7 @@ export { ScmFileViewedStateV1Schema, ScmFileViewedReadResultV1Schema, ScmFileVie
 export type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from './fileViewed.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
-import type { ScmDiffArea } from './workingSnapshot.js';
+import { ScmDiffAreaProtocolSchema, type ScmDiffArea } from './workingSnapshot.js';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolJsonValue, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '../plugins/actions/protocolComposableSchema.js';
 
 /** Views of one comparison; Commits requires a complete working-tree capture. */
@@ -38,10 +38,7 @@ export const ScmComparisonSourceProtocolSchema = defineProtocolUnion([
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('session'), sessionId: sourceIdentity }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('workingTree'),
-    // Canonical literals, not a projected Zod enum: contribution points embed this
-    // source, and only canonical schemas keep their semantics admissible.
-    area: defineProtocolUnion([defineProtocolLiteral('included'), defineProtocolLiteral('pending'),
-      defineProtocolLiteral('both')]).optional() }, { policy: 'closed' }),
+    area: ScmDiffAreaProtocolSchema.optional() }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('branch'), head: sourceIdentity, base: sourceIdentity }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('commit'), commit: sourceIdentity, parent: sourceIdentity.optional() }, { policy: 'closed' }),
   ScmRevisionRangeV1ProtocolSchema,
