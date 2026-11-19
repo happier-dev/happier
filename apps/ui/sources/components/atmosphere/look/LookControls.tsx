@@ -15,7 +15,6 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearanceSettings';
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { Item } from '@/components/ui/lists/Item';
-import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -27,8 +26,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { AtmosphereLookCopyKey } from '@/text/translations/glassAppearanceTranslations.shared';
-import { ATMOSPHERE_PLANET_INTENSITIES } from '@happier-dev/protocol/account/settings/accountSettings';
-import type { PlanetIntensity } from '@happier-dev/brand/glyph-scene';
+import { ATMOSPHERE_PLANET_INTENSITIES, HOME_BACKGROUND_FIELD_MODES } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { GlyphFieldMode, PlanetIntensity } from '@happier-dev/brand/glyph-scene';
+import { useSettingMutable } from '@/sync/store/hooks';
 import type { PictureRecord } from '../pictureStore.types';
 import type { AtmosphereEditor } from './atmosphereEditor';
 import {
@@ -108,9 +108,10 @@ function lookWithEffect(
 }
 
 /**
- * One block of the Look panel: a small header, its control beneath, and a note under the control when
- * the choice needs one (lab Personalize). Every block of the panel has this one anatomy, the glass
- * ones included; only a switch keeps a row.
+ * One block of the Look panel, a row of the sheet (the first-open Home look sheet): its title, what the
+ * choice means under it when the sheet says so, its control beneath, and a note under the control when
+ * the choice needs one. It is the panel's switch row (`Item`) with the control below, so every block,
+ * the glass ones included, shares one title, description and edge with Digits.
  */
 export function LookPanelBlock(
   props: Readonly<{
@@ -119,6 +120,8 @@ export function LookPanelBlock(
     accessory?: React.ReactNode;
     /** A live value as text at the header's end (Strength's percentage); `accessory` wins when both are set. */
     value?: string;
+    /** What the choice means, under the header and above the control. */
+    description?: string;
     /** What the choice needs or does right now, under the control. */
     note?: string;
     testID?: string;
@@ -127,14 +130,21 @@ export function LookPanelBlock(
 ) {
   return (
     <View testID={props.testID}>
-      <SelectionListSectionHeader
+      <Item
         title={props.title}
-        rightAccessory={props.accessory ?? (props.value !== undefined ? <Text style={styles.value}>{props.value}</Text> : undefined)}
+        subtitle={props.description}
+        subtitleLines={0}
+        showChevron={false}
+        // The sheet's rows are separated by space alone (the Home look sheet draws no hairlines).
+        showDivider={false}
+        rightElement={props.accessory ?? (props.value !== undefined ? <Text style={styles.value}>{props.value}</Text> : undefined)}
+        bottomElement={
+          <View style={styles.panelBlock}>
+            {props.children}
+            {props.note ? <Text style={styles.note}>{props.note}</Text> : null}
+          </View>
+        }
       />
-      <View style={styles.panelBlock}>
-        {props.children}
-        {props.note ? <Text style={styles.note}>{props.note}</Text> : null}
-      </View>
     </View>
   );
 }
@@ -172,6 +182,8 @@ function LookBlock(
     title: string;
     /** The page row's description: what the choice changes. */
     description: string;
+    /** The panel shows the description under the title too (the Home look sheet's planet and field rows). */
+    describeInPanel?: boolean;
     setting: SettingRef;
     /** A live value beside the title (Strength's percentage). */
     value?: string;
@@ -203,6 +215,7 @@ function LookBlock(
       title={props.title}
       accessory={props.action}
       value={props.value}
+      description={props.describeInPanel ? props.description : undefined}
     >
       {props.children}
     </LookPanelBlock>
@@ -225,9 +238,9 @@ export function SourceControl(
           label={lookCopy('backdrop')}
           testIDPrefix="look-source"
           options={[
-            { id: 'none', label: lookCopy('sourceNone') },
             { id: 'planet', label: lookCopy('sourcePlanet') },
             { id: 'picture', label: lookCopy('sourcePicture') },
+            { id: 'none', label: lookCopy('sourceNone') },
           ]}
           value={value.source}
           onChange={(source) => update((current) => withSource(current, source))}
@@ -257,12 +270,6 @@ export function SourceControl(
         testIdPrefix="look-source"
         options={[
           {
-            id: 'none',
-            title: lookCopy('sourceNone'),
-            subtitle: lookCopy('sourceNoneNote'),
-            preview: <PlainPagePreview />,
-          },
-          {
             id: 'planet',
             title: lookCopy('sourcePlanet'),
             subtitle: lookCopy('sourcePlanetNote'),
@@ -273,6 +280,12 @@ export function SourceControl(
             title: lookCopy('sourcePicture'),
             subtitle: lookCopy('sourcePictureNote'),
             preview: <ChosenPictureThumbnail pictureRef={ref} picture={picture} />,
+          },
+          {
+            id: 'none',
+            title: lookCopy('sourceNone'),
+            subtitle: lookCopy('sourceNoneNote'),
+            preview: <PlainPagePreview />,
           },
         ]}
         value={value.source}
@@ -300,7 +313,12 @@ function ChosenPictureThumbnail(
 }
 
 export function PlanetControls(
-  props: Readonly<{ editor: AtmosphereEditor; presentation: LookPresentation }>,
+  props: Readonly<{
+    editor: AtmosphereEditor;
+    presentation: LookPresentation;
+    /** Home's Background field row, between the intensity and the digits (the Home look sheet's order). */
+    field?: React.ReactNode;
+  }>,
 ) {
   const { value, update } = props.editor;
   const planet = value.planet;
@@ -313,6 +331,7 @@ export function PlanetControls(
         presentation={props.presentation}
         title={label}
         description={lookCopy('planetIntensityDescription')}
+        describeInPanel
         setting={APPEARANCE_SETTINGS.settings.atmospherePlanetIntensity}
       >
         {props.presentation === 'page' ? (
@@ -332,6 +351,7 @@ export function PlanetControls(
           <LookSegments label={label} testIDPrefix="look-intensity" options={choices} value={planet.intensity} onChange={change} />
         )}
       </LookBlock>
+      {props.field}
       <SettingAnchor
         setting={APPEARANCE_SETTINGS.settings.atmospherePlanetDigits}
       >
@@ -340,6 +360,7 @@ export function PlanetControls(
           title={lookCopy('digits')}
           subtitle={lookCopy('digitsDescription')}
           showChevron={false}
+          showDivider={props.presentation === 'panel' ? false : undefined}
           onPress={() =>
             update((current) =>
               withPlanet(current, { digits: !current.planet.digits }),
@@ -356,6 +377,49 @@ export function PlanetControls(
         />
       </SettingAnchor>
     </>
+  );
+}
+
+const FIELD_KEY = {
+  animated: 'fieldAnimated',
+  still: 'fieldStill',
+  off: 'fieldOff',
+} as const satisfies Record<GlyphFieldMode, AtmosphereLookCopyKey>;
+
+/**
+ * Background field: the living dot field behind welcome and Home, an Account preference of its own
+ * (`homeBackgroundField`), so choosing it re-renders no atmosphere reader. Home's Look only: a project
+ * or a public profile has no field. Over a picture the row stays and says where the field shows (OQ3).
+ */
+export function BackgroundFieldControl(
+  props: Readonly<{ presentation: LookPresentation; source: AtmosphereEditor['value']['source'] }>,
+) {
+  const [mode, setMode] = useSettingMutable('homeBackgroundField');
+  const title = t('settingsAppearance.glassControls.homeBackgroundField');
+  const description = lookCopy(props.source === 'picture' ? 'fieldPictureNote' : 'homeBackgroundFieldDescription');
+  const options = HOME_BACKGROUND_FIELD_MODES.map(id => ({ id, label: lookCopy(FIELD_KEY[id]) }));
+  const change = (next: GlyphFieldMode) => { if (next !== mode) setMode(next); };
+  if (props.presentation === 'page') {
+    return (
+      <SettingAnchor setting={APPEARANCE_SETTINGS.settings.homeBackgroundField}>
+        <SegmentedChoiceItem
+          title={title}
+          subtitle={description}
+          subtitleLines={0}
+          testIDPrefix="look-field"
+          options={options}
+          value={mode}
+          onChange={change}
+        />
+      </SettingAnchor>
+    );
+  }
+  return (
+    <SettingAnchor setting={APPEARANCE_SETTINGS.settings.homeBackgroundField}>
+      <LookPanelBlock title={title} description={description} testID="look-field">
+        <LookSegments label={title} testIDPrefix="look-field" options={options} value={mode} onChange={change} />
+      </LookPanelBlock>
+    </SettingAnchor>
   );
 }
 
@@ -625,14 +689,13 @@ function ResetLookRow(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  panelBlock: { paddingHorizontal: theme.space.s12, paddingBottom: theme.space.s4, gap: theme.space.s6 },
+  // The control and its note share the row's text edge (the Item's bottom inset).
+  panelBlock: { gap: theme.space.s6 },
   pageBlock: { alignSelf: 'stretch' },
   note: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
     color: theme.colors.text.secondary,
-    // The block's control sits 12 in; its note starts where the header's text does.
-    paddingHorizontal: theme.space.s4,
   },
   value: {
     ...Typography.default('medium'),

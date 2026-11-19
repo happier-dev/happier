@@ -478,3 +478,19 @@ it('offers the contracted Notch controls and retires competing preference Action
         expect(readBuiltInSettingDeclarationV1(anchor)).toBeNull();
     }
 });
+
+it('lets an agent change the four Home look choices without a prompt, in the words the sheet shows', () => {
+    const rows = [
+        ['appearance.atmosphereSource', undefined],
+        ['appearance.atmospherePlanetIntensity', ['quiet', 'calm', 'full']],
+        ['appearance.homeBackgroundField', ['animated', 'still', 'off']],
+        ['appearance.atmospherePlanetDigits', undefined],
+    ] as const;
+    for (const [anchor, allowedValues] of rows) {
+        const declaration = readBuiltInSettingDeclarationV1(anchor);
+        expect(declaration, anchor).toMatchObject({ pageId: 'appearance', agentSafety: 'safe', sensitive: false });
+        if (allowedValues) expect(declaration?.storage?.allowedValues, anchor).toEqual(allowedValues);
+    }
+    expect(readBuiltInSettingDeclarationV1('appearance.atmospherePlanetPlacement')).toBeNull();
+    expect(readBuiltInSettingDeclarationV1('appearance.atmospherePlanetStyle')).toBeNull();
+});

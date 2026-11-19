@@ -6,7 +6,7 @@ import { GlassAppearanceControls } from '@/components/settings/appearance/GlassA
 import { useAtmospherePictureCatalog } from '../useAtmospherePictureCatalog';
 import type { AtmospherePicture } from '@happier-dev/brand/atmosphere';
 import type { AtmosphereEditor } from './atmosphereEditor';
-import { LookPanelBlock, LookSegments, PictureControls, PlanetControls, SourceControl } from './LookControls';
+import { BackgroundFieldControl, LookPanelBlock, LookSegments, PictureControls, PlanetControls, SourceControl } from './LookControls';
 import { AtmosphereShowOnPanel } from './AtmosphereShowOnControl';
 import { useRightPanelPlacement, type RightPanelPlacement } from '@/components/appShell/panes/arrangement/useRightPanelPlacement';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -14,15 +14,18 @@ import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 
 /**
- * Look: the one control for the atmosphere behind Home, a new session or a project (lab Personalize).
- * The same content sits in the desktop popover and the phone sheet. Source first; then the planet's
- * placement, style and digits, or the picture, its look, fade, strength and layout; then the glass
- * over it (the existing glass controls, writing the existing glass settings). Every block has the one
- * panel anatomy: a small header with its control beneath.
+ * Look: the one control for the atmosphere behind Home, a new session or a project (lab Personalize;
+ * the first-open Home look sheet). The same content sits in the desktop popover and the phone sheet.
+ * Background first; then the planet's intensity, Home's Background field and the digits, or Home's
+ * field and the picture, its look, fade, strength and layout; then the glass over it (the existing
+ * glass controls, writing the existing glass settings). Every block has the one panel anatomy: a small
+ * header with its control beneath.
  */
 export const LookPanel = React.memo(function LookPanel(
   props: Readonly<{
     editor: AtmosphereEditor;
+    /** Home's Look: the Background field row (a project's Look has no field). */
+    field?: boolean;
     testID?: string;
   }>,
 ) {
@@ -46,7 +49,7 @@ export const LookPanel = React.memo(function LookPanel(
           rightElement={<Switch value={same} onValueChange={setSame} />}
         />
       ) : null}
-      <LookBackdropControls editor={editor} pictures={pictures} />
+      <LookBackdropControls editor={editor} pictures={pictures} field={props.field} />
       {editor.value.source !== 'none' ? <AtmosphereShowOnPanel editor={editor} /> : null}
       <GlassAppearanceControls presentation="panel" />
       <RightPanelPlacementBlock />
@@ -88,21 +91,30 @@ export function LookBackdropControls(
   props: Readonly<{
     editor: AtmosphereEditor;
     pictures: readonly AtmospherePicture[];
+    /** Home's Look: the Background field row after the intensity, or after Background otherwise. */
+    field?: boolean;
   }>,
 ) {
   const { editor, pictures } = props;
+  const source = editor.value.source;
+  const field = props.field ? <BackgroundFieldControl presentation="panel" source={source} /> : null;
   return (
     <>
       <SourceControl editor={editor} presentation="panel" pictures={pictures} />
-      {editor.value.source === 'planet' ? (
-        <PlanetControls editor={editor} presentation="panel" />
-      ) : editor.value.source === 'picture' ? (
-        <PictureControls
-          editor={editor}
-          presentation="panel"
-          pictures={pictures}
-        />
-      ) : null}
+      {source === 'planet' ? (
+        <PlanetControls editor={editor} presentation="panel" field={field} />
+      ) : (
+        <>
+          {field}
+          {source === 'picture' ? (
+            <PictureControls
+              editor={editor}
+              presentation="panel"
+              pictures={pictures}
+            />
+          ) : null}
+        </>
+      )}
     </>
   );
 }

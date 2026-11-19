@@ -40,6 +40,7 @@ function HomeLookContent() {
   return (
     <LookPanel
       editor={home}
+      field
       testID="look-panel"
     />
   );
@@ -66,7 +67,8 @@ export function LookPopover(
     <Popover
       open
       phonePresentation="sheet"
-      accessibilityLabel={props.accessibilityLabel ?? t('settingsAppearance.glassControls.look')}
+      accessibilityLabel={props.accessibilityLabel ?? (props.target && !props.target.editor
+        ? t('settingsAppearance.glassControls.homeLook') : t('settingsAppearance.glassControls.look'))}
       anchorRef={props.anchorRef}
       autoFocusOnOpen
       placement="bottom"

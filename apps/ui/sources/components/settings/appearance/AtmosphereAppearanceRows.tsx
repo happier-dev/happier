@@ -8,6 +8,7 @@ import { useHomeAtmosphereEditor, useHomeAtmosphereValueEditor } from '@/compone
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { AtmospherePlacesField, AtmosphereShowOnSelector, useAtmosphereShowOn } from '@/components/atmosphere/look/AtmosphereShowOnControl';
 import {
+  BackgroundFieldControl,
   PictureControls,
   PlanetControls,
   SourceControl,
@@ -22,18 +23,25 @@ import { APPEARANCE_SETTINGS } from './appearanceSettings';
 export function AtmosphereAppearanceRows() {
   const editor = useHomeAtmosphereEditor();
   const pictures = useAtmospherePictureCatalog();
+  const source = editor.value.source;
+  const field = <BackgroundFieldControl presentation="page" source={source} />;
   return (
     <>
       <SourceControl editor={editor} presentation="page" pictures={pictures} />
-      {editor.value.source === 'planet' ? (
-        <PlanetControls editor={editor} presentation="page" />
-      ) : editor.value.source === 'picture' ? (
-        <PictureControls
-          editor={editor}
-          presentation="page"
-          pictures={pictures}
-        />
-      ) : null}
+      {source === 'planet' ? (
+        <PlanetControls editor={editor} presentation="page" field={field} />
+      ) : (
+        <>
+          {field}
+          {source === 'picture' ? (
+            <PictureControls
+              editor={editor}
+              presentation="page"
+              pictures={pictures}
+            />
+          ) : null}
+        </>
+      )}
     </>
   );
 }
