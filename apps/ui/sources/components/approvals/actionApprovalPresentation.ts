@@ -247,12 +247,15 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;
+    const confirmationDraftSubject = input.kind === 'confirmation' && spec.id === 'session.draft.delete'
+        ? draftSubject : null;
     const title = t('actionPresentation.title', { actionId: spec.id, source: titleSource,
-        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : subject ?? draftSubject ?? null });
+        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}`
+            : subject ?? (confirmationDraftSubject ? null : draftSubject ?? null) });
     return {
         confirmLabel,
         title,
-        summary: disclosure ? [visibleSummary, disclosure].filter(Boolean).join('\n\n') : visibleSummary,
+        summary: [confirmationDraftSubject, visibleSummary, disclosure].filter(Boolean).join('\n\n') || null,
         ...(spec.irreversible ? { destructive: true } : {}),
     };
 }

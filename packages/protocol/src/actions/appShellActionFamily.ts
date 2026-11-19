@@ -297,7 +297,7 @@ function createAppShellActionSpecs() {
     inputHints: { fields: [{ path: 'targets', title: 'Inbox snapshot', widget: 'json', required: true }] },
   },
   {
-    id: 'session.draft.delete', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' }, title: 'Delete a New Session draft',
+    id: 'session.draft.delete', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' }, title: 'Delete draft',
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
     description: 'Delete an exact New Session draft on the answering client through draft tombstone and attachment cleanup. Refuses launches already in custody.',
     safety: 'danger', sideEffectClass: 'danger', requiredAuthority: 'account_automation', executionPlacement: 'client',

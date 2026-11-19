@@ -618,9 +618,10 @@ describe('web shell Docked composer', () => {
       } });
     });
     const confirmation = presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId }, kind: 'confirmation' });
-    expect(confirmation.title).toContain('happier-dev/triage-qa-sandbox#4');
-    expect(confirmation.title).toContain('Review the branch');
-    expect(confirmation.title).not.toContain('Check the tests.');
+    expect(confirmation.title).toBe('Delete draft');
+    expect(confirmation.summary).toContain('happier-dev/triage-qa-sandbox#4');
+    expect(confirmation.summary).toContain('Review the branch');
+    expect(confirmation.summary).not.toContain('Check the tests.');
     expect(JSON.stringify(confirmation)).not.toContain(draftId);
     await screen.unmount();
   });
@@ -647,7 +648,7 @@ describe('web shell Docked composer', () => {
     // F6 (UI refinements ruling): a named draft folds to its name; "New bot" shows only until it has one.
     await act(async () => { writeNewSessionDraft({ scope, draftId: state().draftId, materializationIntent: 'seeded', patch: { authoring: { sessionName: 'Nightly build watcher' } } }); });
     await vi.waitFor(() => expect(screen.findAllHostsByTestId('new-session-docked-pill')[0]!.props.accessibilityLabel).toBe('Nightly build watcher'));
-    expect(presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId: state().draftId }, kind: 'confirmation' }).title)
+    expect(presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId: state().draftId }, kind: 'confirmation' }).summary)
       .toContain('Nightly build watcher');
     // COPY-NOUN-HUNT-1113: every draft Action names the Bot draft through the same identity, not just Delete.
     expect(presentActionApproval({ actionId: 'session.draft.open', actionArgs: { draftId: state().draftId } }).title)
