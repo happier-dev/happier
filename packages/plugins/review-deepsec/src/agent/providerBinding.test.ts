@@ -50,8 +50,8 @@ describe('DeepSec native Provider constraints', () => {
         endpoint: { ...input.binding.endpoint, publicHeaders: { 'x-team': 'coding' } } } })).rejects.toThrow('public headers');
       await expect(adapter.materialize({ ...input, credential: { kind: 'none' } })).rejects.toThrow('API key');
       await expect(adapter.materialize({ ...input, credential: { kind: 'apiKey', value: 'fixture-key',
-        transport: { ...input.binding.runtimeCredentialTransport!, protocols: ['anthropic-messages'],
-          destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } } })).rejects.toThrow('selected transport');
+        transport: { ...input.binding.runtimeCredentialTransport!, protocols: ['anthropic-messages'] } },
+      })).rejects.toThrow('selected transport');
     } finally { await activation.dispose(); }
   });
 
@@ -62,7 +62,10 @@ describe('DeepSec native Provider constraints', () => {
       if (!adapter) throw new Error('Expected DeepSec Provider adapter');
       const input = createInput();
       await expect(adapter.materialize({ ...input, binding: { ...input.binding,
-        runtimeCredentialTransport: null } })).resolves.toMatchObject({ kind: 'spawnEnv' });
+        runtimeCredentialTransport: null }, credential: { kind: 'apiKey', value: 'fixture-key',
+          transport: { ...input.binding.runtimeCredentialTransport!,
+            destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
+      })).resolves.toMatchObject({ kind: 'spawnEnv' });
     } finally { await activation.dispose(); }
   });
 

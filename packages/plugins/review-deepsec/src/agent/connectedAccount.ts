@@ -1,14 +1,14 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountBindingSummary } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { buildDeepSecLaunchEnvironment } from './providerBinding.js';
 
 export const DEEPSEC_CLAUDE_ACCOUNT_PURPOSE = 'claude-subscription';
 
-export async function prepareDeepSecClaudeAccount(context: AgentRuntimeContext, agentCli: string | null | undefined) {
-  const binding = await context.services.connectedAccounts.getBinding(DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, { signal: context.signal });
-  if (!binding) return null;
+export async function prepareDeepSecClaudeAccount(context: AgentRuntimeContext, agentCli: string | null | undefined,
+  binding: ConnectedAccountBindingSummary) {
   if (agentCli && agentCli !== 'claude') {
     throw new PluginError({ code: 'deepsec_connected_account_harness_mismatch',
       message: 'The selected Claude Connected Account requires the Claude harness.' });

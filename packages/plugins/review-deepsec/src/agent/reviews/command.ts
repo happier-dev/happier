@@ -23,6 +23,7 @@ export type DeepSecCommandInput = Readonly<{
   provider?: DeepSecProviderRoute;
   claudeSubscription?: boolean;
   gateway?: boolean;
+  machineLogin?: boolean;
   model?: string;
   thinkingLevel?: DeepSecThinkingLevel;
   agentCli?: 'claude' | 'codex';
@@ -51,6 +52,13 @@ export function buildDeepSecCommand(input: DeepSecCommandInput): readonly string
     const agent = input.agentCli ?? 'codex';
     return [...args, '--agent', agent, '--ai-provider', agent === 'claude' ? 'anthropic' : 'openai',
       '--ai-base-url', agent === 'claude' ? 'https://ai-gateway.vercel.sh' : 'https://ai-gateway.vercel.sh/v1'];
+  }
+  if (input.machineLogin) {
+    const agent = input.agentCli ?? 'codex';
+    // DeepSec 2.3.12 skips its saved model route when an explicit key-env is
+    // supplied. The blank native key leaves the selected harness's login in use.
+    return [...args, '--agent', agent, '--ai-provider', agent === 'claude' ? 'anthropic' : 'openai',
+      '--ai-api-key-env', agent === 'claude' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'];
   }
   if (!input.provider) return input.agentCli ? [...args, '--agent', input.agentCli] : args;
   // The explicit base flag also prevents DeepSec from reapplying a persisted

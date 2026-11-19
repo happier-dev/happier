@@ -7,6 +7,7 @@ import type {
   AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   PluginExecSpawnRequest,
   PluginProcessResult,
@@ -49,7 +50,7 @@ function createRuntimeContext(params?: Readonly<{
     size: number;
     modifiedAtMs: number;
   }>>;
-  connectedAccounts?: Pick<PluginServices['connectedAccounts'], 'getBinding' | 'materialize'>;
+  connectedAccounts?: Pick<PluginServices['connectedAccounts'], 'getBinding' | 'materialize' | 'resolveSelection'>;
   checkReadiness?: (request: Readonly<{
     candidates: readonly string[];
     requirement: 'any' | 'all';
@@ -91,7 +92,8 @@ function createRuntimeContext(params?: Readonly<{
     availability: (id: string) => id === 'exec' || id === 'fs'
       ? { status: 'available' as const }
       : { status: 'unavailable' as const },
-    connectedAccounts: params?.connectedAccounts ?? { getBinding: async () => null },
+    connectedAccounts: params?.connectedAccounts ?? { getBinding: async () => null,
+      resolveSelection: async () => ({ credentialSource: 'machineLogin' as const }) },
     exec: {
       agentCli: { checkReadiness },
       systemTools: { resolve },
@@ -259,12 +261,16 @@ function createClaudeAccountFixture(modeId: 'oauth' | 'native-import' | 'setup-t
     claudeSubscriptionConnectedAccountRuntime.materialize(request, context));
   return { account, readCredential, connectedAccounts: {
     getBinding: async (purpose: string) => ({ purpose, service, account, target: { kind: 'account' as const, displayName: 'Claude' } }),
+    resolveSelection: async (purpose: string) => ({ credentialSource: 'connectedAccount' as const,
+      binding: { purpose, service, account, target: { kind: 'account' as const, displayName: 'Claude' } } }),
     materialize,
   } };
 }
 
 describe('activate', () => {
   it.each([
+    { route: 'Machine login', audit: false },
+    { route: 'Machine login', audit: true },
     { route: 'Gateway', audit: false },
     { route: 'Gateway', audit: true },
     { route: 'Claude subscription', audit: false },
@@ -369,6 +375,7 @@ describe('activate', () => {
       expect(JSON.stringify(binding)).not.toContain('fixture-provider-secret');
       const fixture = createRuntimeContext({
         connectedAccounts: { getBinding: async () => { throw new Error('Explicit Provider must bypass conflicting linked selection'); },
+          resolveSelection: async () => { throw new Error('Explicit Provider must bypass conflicting linked selection'); },
           materialize: async () => { throw new Error('Explicit Provider must bypass linked credentials'); } },
         checkReadiness: async (request) => ({ launchable: request.candidates.map(agentId => ({ agentId })) }),
       });
@@ -879,9 +886,13 @@ describe('activate', () => {
     expect(JSON.stringify(readStructuredOutput(events))).not.toContain('claude-or-codex');
   });
 
-  it('honors an explicit gateway-key unset without reading ambient environment', async () => {
+  it.each([
+    { ready: ['claude'], agent: 'claude', provider: 'anthropic', key: 'ANTHROPIC_API_KEY' },
+    { ready: ['codex'], agent: 'codex', provider: 'openai', key: 'OPENAI_API_KEY' },
+    { ready: ['claude', 'codex'], agent: 'codex', provider: 'openai', key: 'OPENAI_API_KEY' },
+  ])('uses the host-selected Machine login with blank competing credentials on the ready $agent harness after a Gateway unset', async ({ ready, agent, provider, key }) => {
     vi.stubEnv('AI_GATEWAY_API_KEY', 'ambient-key-must-not-be-used');
-    const fixture = createRuntimeContext();
+    const fixture = createRuntimeContext({ checkReadiness: async () => ({ launchable: ready.map(agentId => ({ agentId })) }) });
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open({
       ...createOpenRequest({ runId: 'run-unset' }),
@@ -895,8 +906,41 @@ describe('activate', () => {
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
+    expect(events.at(-1)).toMatchObject({ kind: 'run-complete' });
+    expect(fixture.run).toHaveBeenCalled();
+    for (const [request] of fixture.run.mock.calls) {
+      expect(request.env).toMatchObject(Object.fromEntries(DEEPSEC_PROVIDER_ENV_KEYS.map(name => [name, ''])));
+      expect(request.args).toEqual(expect.arrayContaining([
+        '--agent', agent, '--ai-provider', provider, '--ai-api-key-env', key,
+      ]));
+    }
+  });
+
+  it('does not infer Machine login from an older host null binding read', async () => {
+    const fixture = createRuntimeContext({ connectedAccounts: { getBinding: async () => null,
+      materialize: async () => { throw new Error('No selected account'); } } });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(), launchEnvironment: { values: {}, unset: [] } }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
     expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_model_access_unavailable' } });
-    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it('does not use Machine login or an unrelated Gateway when the host cannot resolve a selected account', async () => {
+    const fixture = createRuntimeContext({ connectedAccounts: {
+      getBinding: async () => null,
+      resolveSelection: async () => { throw new PluginError({ code: 'plugin_connected_account_binding_unavailable',
+        message: 'Selected account unavailable' }); },
+      materialize: async () => { throw new Error('No credential acquisition is authorized'); },
+    } });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'plugin_connected_account_binding_unavailable' } });
     expect(fixture.run).not.toHaveBeenCalled();
   });
 
@@ -944,17 +988,6 @@ describe('activate', () => {
     await opened.dispose();
     expect(events.at(-1)?.kind).toBe('run-complete');
     expect(fixture.run.mock.calls[0]?.[0].args).toEqual(expect.arrayContaining(['--thinking-level', 'xhigh']));
-  });
-
-  it('does not borrow a Machine login when no model-access route was admitted', async () => {
-    const fixture = createRuntimeContext();
-    const { runtime } = await createNativeDeepSecRuntime();
-    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(), launchEnvironment: undefined }, fixture.context);
-    if (!opened) throw new Error('Expected DeepSec execution');
-    const events = await watchToTerminal(opened);
-    await opened.dispose();
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_model_access_unavailable' } });
-    expect(fixture.run).not.toHaveBeenCalled();
   });
 
   it.each([

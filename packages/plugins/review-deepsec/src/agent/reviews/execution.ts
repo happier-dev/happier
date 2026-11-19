@@ -28,7 +28,7 @@ import {
 import { createDeepSecTempFiles } from './tempFiles.js';
 import { buildDeepSecLaunchEnvironment, readDeepSecProviderLaunch, type DeepSecProviderRoute } from '../providerBinding.js';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
-import { prepareDeepSecClaudeAccount } from '../connectedAccount.js';
+import { DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, prepareDeepSecClaudeAccount } from '../connectedAccount.js';
 
 type NormalizedDeepSecStart = Readonly<{
   mode: DeepSecReviewMode;
@@ -419,6 +419,7 @@ type DeepSecModelAccess = Readonly<{
   provider?: DeepSecProviderRoute;
   claudeSubscription: boolean;
   gateway?: true;
+  machineLogin?: true;
 }>;
 
 async function prepareDeepSecModelAccess(
@@ -434,13 +435,21 @@ async function prepareDeepSecModelAccess(
     return { environment: provider.environment, agentCli: provider.route.agent,
       provider: provider.route, claudeSubscription: false };
   }
-  const claudeAccount = await prepareDeepSecClaudeAccount(context, agentCli);
-  if (claudeAccount) return { environment: claudeAccount, agentCli: 'claude', claudeSubscription: true };
+  const accounts = context.services.connectedAccounts;
+  const selection = await accounts.resolveSelection?.(DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, { signal: context.signal });
+  // Older hosts can supply an explicit binding, but a null legacy read does
+  // not authorize borrowing the Machine's login.
+  const binding = selection?.credentialSource === 'connectedAccount' ? selection.binding
+    : selection ? null : await accounts.getBinding(DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, { signal: context.signal });
+  if (binding) return { environment: await prepareDeepSecClaudeAccount(context, agentCli, binding),
+    agentCli: 'claude', claudeSubscription: true };
   const gatewayKey = readGatewayKey(request);
   if (gatewayKey) return { environment: buildDeepSecLaunchEnvironment({ AI_GATEWAY_API_KEY: gatewayKey }),
     agentCli: agentCli ?? null, claudeSubscription: false, gateway: true };
-  // An absent Connected Account is not authority to borrow the Machine's login.
-  // Native login requires the host's selected credential-source projection.
+  if (selection?.credentialSource === 'machineLogin') return {
+    environment: buildDeepSecLaunchEnvironment(), agentCli: agentCli ?? null,
+    claudeSubscription: false, machineLogin: true,
+  };
   throw new PluginError({ code: 'deepsec_model_access_unavailable',
     message: 'Select a Provider or Connected Account for DeepSec model access.' });
 }
@@ -520,6 +529,7 @@ function createRuntime(
         provider: modelAccess.provider,
         claudeSubscription: modelAccess.claudeSubscription,
         gateway: modelAccess.gateway,
+        machineLogin: modelAccess.machineLogin,
         model: request.modelSelection?.modelId,
         readiness: {
           agentCli,
