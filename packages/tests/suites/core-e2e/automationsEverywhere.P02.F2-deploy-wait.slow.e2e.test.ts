@@ -39,6 +39,7 @@ describe('AE.P02.F2-deploy-wait', () => {
 
     async function attachCheck(exitCode: number) {
       const saved = WorkflowTriggerWriteResultV1Schema.parse(await invoke('workflow.trigger.add', {
+        actionApproval: 'automatic',
         project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
         target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'check',
           actionId: 'machines.command.run', input: { command: { kind: 'literal', value: `exit ${exitCode}` } } }] } },
