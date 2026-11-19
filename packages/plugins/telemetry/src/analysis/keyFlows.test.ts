@@ -12,6 +12,14 @@ function request(id: string, durationMs: number, outcome = 'ok'): CaptureSummary
 }
 
 describe('authored key-flow measured health', () => {
+    it('keeps retained spans with no emitted service identity without publishing a null producer name', () => {
+        const measured = analyzeKeyFlow({ window, points: [],
+            spans: [{ ...request('unnamed', 20), serviceName: null }],
+            measure: { kind: 'http', statistic: 'requests' } });
+        expect(measured).toMatchObject({ value: 1, requestCount: 1 });
+        expect(measured.producers).toEqual([{}]);
+    });
+
     it('recovers measured error rate when retained cumulative error counts stop increasing', () => {
         const histogram = (status: number, count: string, at: string): NormalizedMetricPoint => ({ metricType: 'histogram',
             name: 'http.server.request.duration', unit: 's', temporality: 'cumulative', serviceName: 'checkout', serviceInstanceId: 'one',

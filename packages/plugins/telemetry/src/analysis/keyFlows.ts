@@ -31,7 +31,7 @@ function selectKeyFlowHttpEvidence(input: KeyFlowWindowInput) {
         ? new Set(histogram.map(point => point.serviceName)) : undefined;
     const spans = input.spans.filter(span => span.kind === 'span' && span.spanKind === 2
         && (input.serviceName === undefined || span.serviceName === input.serviceName)
-        && !measuredServices?.has(span.serviceName)
+        && !measuredServices?.has(span.serviceName ?? undefined)
         && span.at >= input.window.since && span.at < input.window.until
         && emittedRoute(span.endpointMethod, span.endpointRoute) && typeof span.durationMs === 'number');
     return { histogram, spans };
@@ -99,12 +99,15 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
     const percentile = (quantile: number) => durations[Math.max(0, Math.ceil(durations.length * quantile) - 1)]!;
     const p50Ms = percentile(0.5), p95Ms = percentile(0.95);
     const errorRate = spans.filter(span => span.outcome === 'error' || (span.httpStatusCode ?? 0) >= 500).length / spans.length;
+    const producers = new Map(spans.map(span => {
+        const serviceName = span.serviceName ?? undefined;
+        return [serviceName, serviceName === undefined ? {} : { serviceName }] as const;
+    }));
     return { measure: measure.statistic, value: measure.statistic === 'requests' ? spans.length
         : measure.statistic === 'errorRate' ? errorRate : measure.statistic === 'p50' ? p50Ms : p95Ms,
         unit: measure.statistic === 'requests' ? '{request}' : measure.statistic === 'errorRate' ? '1' : 'ms',
         p50Ms, p95Ms, errorRate, requestCount: spans.length,
-        basis: 'sampled_spans', producers: [...new Map(spans.map(span => [span.serviceName,
-            span.serviceName === undefined ? {} : { serviceName: span.serviceName }])).values()], window: input.window,
+        basis: 'sampled_spans', producers: [...producers.values()], window: input.window,
         completeness: 'partial', reasons: ['sampled_traffic'] };
 }
 
