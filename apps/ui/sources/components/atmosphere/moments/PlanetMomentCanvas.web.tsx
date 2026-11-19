@@ -2,7 +2,7 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { planetAssemblyFrame } from '@happier-dev/brand/planet';
 import { getMonoFont } from '@/constants/Typography';
-import { planetCanvasFonts } from '../PlanetCanvas.web';
+import { planetCanvasFonts } from '../glyph/glyphAtlas.web';
 import { snapCanvasBox } from '../planetCanvasScene';
 import type { PlanetMomentCanvasProps } from './planetMomentCanvas.types';
 import { useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';

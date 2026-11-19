@@ -10,7 +10,7 @@ import {
   type MonoFontWeight,
 } from '@/constants/Typography';
 import { paintPlanetScene } from './planetCanvasPaint.web';
-import { planetCanvasFonts } from './PlanetCanvas.web';
+import { planetCanvasFonts } from './glyph/glyphAtlas.web';
 import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 
 /**

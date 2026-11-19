@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
-import { getMonoFont, getHappierFontFamily, themeFontFamilyVariableName } from '@/constants/Typography';
+import { getMonoFont } from '@/constants/Typography';
 import { createPlanetCanvasSceneCache, snapCanvasBox } from './planetCanvasScene';
 import { paintPlanetScene } from './planetCanvasPaint.web';
 import { orderedFadeMask } from './orderedFadeMask';
@@ -8,14 +8,7 @@ import type { PlanetCanvasProps } from './planetCanvas.types';
 import { usePlanetDigits } from './usePlanetDigits';
 import { releaseCanvasBackingStore, useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
 
-// Canvas text does not resolve CSS var() itself, so read the typography owner's variable.
-export function planetCanvasFonts() {
-    const family = (weight: 'regular' | 'semiBold') => {
-        const value = typeof document === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(themeFontFamilyVariableName('mono', weight)).trim();
-        return value || `"${getHappierFontFamily('mono', weight)}", "IBM Plex Mono", ui-monospace, monospace`;
-    };
-    return { regular: family('regular'), semiBold: family('semiBold') };
-}
+import { planetCanvasFonts } from './glyph/glyphAtlas.web';
 
 export const PlanetCanvas = React.memo(function PlanetCanvas(props: PlanetCanvasProps) {
     return <PlanetDigits {...props} />;

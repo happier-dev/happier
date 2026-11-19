@@ -7,8 +7,9 @@ type CanvasSurface = { width: number; height: number };
  * WebKit (desktop) that buffer is a GPU-process surface the JS heap never feels, so the collection does not
  * come: every remount left its full-size buffers behind. Zero size is the platform's own release.
  */
-export function releaseCanvasBackingStore(canvas: CanvasSurface | null | undefined): void {
+export function releaseCanvasBackingStore(canvas: CanvasSurface | null | undefined, gl?: WebGL2RenderingContext | null): void {
     if (!canvas) return;
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
     canvas.width = 0;
     canvas.height = 0;
 }
