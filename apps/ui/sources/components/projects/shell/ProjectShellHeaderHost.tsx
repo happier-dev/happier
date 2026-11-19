@@ -14,8 +14,6 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useProjectNewSessionAction } from '@/components/projects/useProjectNewSessionAction';
-import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { type ProjectPageV1, type ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { ProjectPageCatalogProvider, useOptionalProjectPageCatalog, useProjectPageCatalog } from '../navigation/useProjectPageCatalog';
 import { ProjectPageChromeCounts } from '../navigation/ProjectPageChromeCounts';
@@ -366,14 +364,11 @@ export function ProjectPhoneHeadView(props: Readonly<{
       {...props.launchers}
       {...(props.onNewSession ? { onNewSession: props.onNewSession } : {})}
       // The bar's right side is capped; the chip gives up its width there (its name ellipsizes) and Back stays.
-      // Activity follows the chip, as the wide title strip carries it: it shows only while background work runs.
-      leading={<>
-        <View style={PHONE_HEAD_CHIP_SLOT}>
-          <ProjectCheckoutChip checkout={props.checkout} compact={false} testID="project-phone-checkout" />
-        </View>
-        <ActionOperationActivityButton testID="project-phone-head.activity"
-          buttonSize={HAPPIER_PAGE_METRICS.controlHeightPx} iconSize={ICON_SIZE.sm} />
-      </>}
+      // A pushed head carries no Activity: that stands on the destination heads' tab line (`PhoneMainTabLine`), so
+      // the chip keeps the Machine's name (UI refinements decision 1, LABPARITY-ACCEPT-G4-1118).
+      leading={<View style={PHONE_HEAD_CHIP_SLOT}>
+        <ProjectCheckoutChip checkout={props.checkout} compact={false} testID="project-phone-checkout" />
+      </View>}
       trailing={<View ref={lookAnchorRef} collapsable={false}>
         <PageHeaderMenu actions={menuActions} testID="project-phone-head.menu" />
         {lookOpen ? <ProjectLookPopover project={props.project} anchorRef={lookAnchorRef} onRequestClose={closeLook} /> : null}

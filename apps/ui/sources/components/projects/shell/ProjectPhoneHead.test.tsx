@@ -101,7 +101,9 @@ describe('Project phone head (owner P1 11-15)', () => {
     }
   });
 
-  it('carries Activity on the bar while background work is running, as the wide title strip does', async () => {
+  // UI refinements decision 1 (LABPARITY-ACCEPT-G4-1118): Activity stands in destination heads only (the phone main tab
+  // line: Projects, Store, Home). A pushed detail head draws none, so its Machine chip keeps its name.
+  it('draws no Activity on the pushed Project head, even while background work runs', async () => {
     actionOperationStore.mergeSnapshots({
       serverId: 'server-1',
       snapshots: [{
@@ -125,7 +127,8 @@ describe('Project phone head (owner P1 11-15)', () => {
       />,
     );
     try {
-      expect(screen.findHostByTestId('project-phone-head.activity')).not.toBeNull();
+      expect(screen.findHostByTestId('project-phone-head.activity')).toBeNull();
+      expect(screen.findHostByTestId('project-phone-checkout')?.props.accessibilityLabel).toBe('NLDW3-5-36-33 · 58f6');
     } finally {
       await screen.unmount();
     }
