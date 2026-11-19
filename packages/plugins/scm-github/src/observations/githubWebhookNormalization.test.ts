@@ -36,13 +36,13 @@ describe('GitHub webhook normalization', () => {
     }, 'opened');
     expect(pullRequest).toMatchObject({ authorAssociation: expected });
   });
-  it.each(['opened', 'reopened', 'synchronize', 'closed', 'merged'] as const)(
-    'projects %s with exact head and neutral repository identities without using the sender as author', action => {
+  it.each([['opened', 33], ['reopened', 33], ['synchronize', 34], ['closed', 33], ['merged', 33]] as const)(
+    'projects %s PR %s with its exact target and head without using the sender as author', (action, number) => {
       const delivery = normalizeGithubWebhookDelivery({ eventType: 'pull_request', providerDeliveryId: `pr-${action}`, receivedAtMs: defaultReceivedAtMs,
         rawBody: new TextEncoder().encode(JSON.stringify({ action: action === 'merged' ? 'closed' : action,
           repository: { id: 77, full_name: 'acme/widgets' },
           sender: { id: 999, login: 'other-person', type: 'User' },
-          pull_request: { id: 455, number: 33, title: 'Preview', merged: action === 'merged',
+          pull_request: { id: 455, number, title: 'Preview', merged: action === 'merged',
             created_at: '2026-08-10T12:04:05Z', updated_at: '2026-08-10T12:05:06Z',
             closed_at: '2026-08-10T12:05:06Z', merged_at: '2026-08-10T12:05:06Z', merge_commit_sha: 'c'.repeat(40),
             user: { id: 99, login: 'octocat', type: 'User' },
@@ -52,12 +52,16 @@ describe('GitHub webhook normalization', () => {
       expect(delivery.automationEvents).toContainEqual(expect.objectContaining({
         eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-lifecycle-v1' },
         payload: { repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' }, pullRequest: {
-          id: '455', number: 33, action, headSha: 'a'.repeat(40), headRef: 'preview', baseRef: 'main',
+          id: '455', number, action, headSha: 'a'.repeat(40), headRef: 'preview', baseRef: 'main',
           baseRepository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
           headRepository: { kind: 'github', deployment: 'https://github.com', repository: 'octocat/widgets' },
           author: { id: '99', login: 'octocat', kind: 'human' },
           authorAssociation: 'unknown',
-        } },
+        }, reviewTarget: { entryRef: { source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
+          kindId: 'pull-request', collisionScope: 'github:77', entryId: String(number) },
+          lastKnownLocator: { v: 1, routingToken: 'acme/widgets', displayPath: `acme/widgets#${number}` },
+          comparisonSource: { kind: 'pullRequest', locator: { providerId: 'github', repository: 'acme/widgets',
+            number, headOid: 'a'.repeat(40) } } } },
       }));
     },
   );

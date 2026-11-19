@@ -1,9 +1,14 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { ScmHostingPullRequestLifecycleActionV1ProtocolSchema, ScmHostingPullRequestLifecycleV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
+import { TriagePullRequestReviewTargetV1Schema, type TriagePullRequestReviewTargetV1 } from '@happier-dev/triage-protocol/v1';
 
 import { GITHUB_PLUGIN_ID } from './observations/githubProviderContracts.js';
 import type { GithubChecksConditionSnapshotV1 } from './triage/checksCondition.js';
 import { GithubDeploymentReviewEventV1Schema } from './actions/deploymentReviewProtocol.js';
+import { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } from './triage/contribution.js';
+import { buildGithubEntryLocalRef } from './triage/identity.js';
+import { buildGithubEntryLocator, parseGithubRoutingToken } from './triage/locator.js';
+import { toTriageLocator } from './triage/mapping/protocol.js';
 
 export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
   issueOpened: 'automation/issue-opened-v1',
@@ -36,7 +41,7 @@ export const GithubPullRequestLifecycleV1Schema = ScmHostingPullRequestLifecycle
 export type GithubPullRequestLifecycleV1 = ReturnType<typeof GithubPullRequestLifecycleV1Schema.parse>;
 
 export type GithubAutomationEventPayloadV1 =
-  | Readonly<{ repository: GithubAutomationEventRepositoryV1; pullRequest: GithubPullRequestLifecycleV1 }>
+  | Readonly<{ repository: GithubAutomationEventRepositoryV1; pullRequest: GithubPullRequestLifecycleV1; reviewTarget: TriagePullRequestReviewTargetV1 }>
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; deploymentReview: ReturnType<typeof GithubDeploymentReviewEventV1Schema.parse> }>
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; checks: GithubChecksConditionSnapshotV1 }>
   | Readonly<{
@@ -159,7 +164,8 @@ export const GITHUB_CHECKS_SNAPSHOT_SCHEMA = {
 export const GITHUB_AUTOMATION_EVENT_CATALOG = Object.freeze([
   Object.freeze({ kind: 'pullRequestLifecycle' as const, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle,
     title: 'GitHub pull request lifecycle changed', description: 'A pull request opened, reopened, synchronized, closed or merged. Synchronize requires webhook delivery.',
-    payloadSchema: payloadSchema({ pullRequest: GithubPullRequestLifecycleV1Schema.jsonSchema }, ['pullRequest']),
+    payloadSchema: payloadSchema({ pullRequest: GithubPullRequestLifecycleV1Schema.jsonSchema,
+      reviewTarget: TriagePullRequestReviewTargetV1Schema.jsonSchema }, ['pullRequest', 'reviewTarget']),
   }),
   Object.freeze({ kind: 'deploymentReview' as const, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.deploymentReview,
     title: 'GitHub deployment review changed', description: 'A monitored deployment environment needs review or has resolved.',
@@ -249,11 +255,24 @@ export function normalizeGithubAutomationEvent(input: GithubAutomationEventFacts
         eventRef,
         payload: Object.freeze({ repository: input.repository, pullRequest: input.pullRequest }),
       });
-    case 'pullRequestLifecycle':
+    case 'pullRequestLifecycle': {
+      const entry = buildGithubEntryLocalRef({ kindId: 'pull-request', repositoryId: input.repository.repositoryId,
+        nativeItemId: input.pullRequest.number });
+      const repository = parseGithubRoutingToken(input.repository.nameWithOwner);
+      const locator = repository === null ? null : buildGithubEntryLocator({ ...repository,
+        entryNumber: String(input.pullRequest.number), webUrl: undefined });
+      if (entry === null || locator === null) throw new TypeError('GitHub lifecycle occurrence has no representable Review target');
+      const reviewTarget = TriagePullRequestReviewTargetV1Schema.parse({
+        entryRef: { source: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 }, ...entry },
+        lastKnownLocator: toTriageLocator(locator),
+        comparisonSource: { kind: 'pullRequest', locator: { providerId: 'github',
+          repository: input.repository.nameWithOwner, number: input.pullRequest.number, headOid: input.pullRequest.headSha } },
+      });
       return Object.freeze({
         eventRef,
-        payload: Object.freeze({ repository: input.repository, pullRequest: input.pullRequest }),
+        payload: Object.freeze({ repository: input.repository, pullRequest: input.pullRequest, reviewTarget }),
       });
+    }
     case 'pullRequestMerged':
       return Object.freeze({
         eventRef,
