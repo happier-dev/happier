@@ -2210,11 +2210,15 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
-    it('never publishes an in-flight append after the completed-since acquisition scope changes', async () => {
+    it('cancels the superseded append and never publishes its late partial window', async () => {
         const harness = createHarness({ configureSourceB: false });
         harness.state.sourceANeverFinishes = true;
+        let appendSignal: AbortSignal | undefined;
         const store = createTriageListWindowStore({
-            readEntries: harness.readEntries,
+            readEntries: (input, options) => {
+                if (input.resume !== undefined) appendSignal = options?.signal;
+                return harness.readEntries(input);
+            },
             nowMs: () => harness.clock.nowMs,
         });
         await store.refresh('view');
@@ -2231,31 +2235,26 @@ describe('the mounted PRs & Issues window store', () => {
         });
 
         const append = store.loadMore();
-        await vi.waitFor(() => {
-            const providerReads = harness.actionInputs.filter(
-                (input) => input.sources.kind === 'selected' && input.sources.sourceInstances.length > 0,
-            );
-            expect(providerReads).toHaveLength(2);
-            expect(providerReads.at(-1)?.resume).toHaveLength(1);
-        });
+        try {
+            await vi.waitFor(() => expect(appendSignal?.aborted).toBe(false));
+            lensChanged = true;
+            store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, tasks: { completedSinceMs: 123 } });
+            expect(appendSignal?.aborted).toBe(true);
+            // The transport can still return rows after cancellation. They must never be published.
+            release();
+            await append;
+            await vi.waitFor(() => expect(store.getSnapshot().pending).toBe('idle'));
 
-        lensChanged = true;
-        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, tasks: { completedSinceMs: 123 } });
-        release();
-        await append;
-        await vi.waitFor(() => expect(store.getSnapshot().pending).toBe('idle'));
-
-        // `p0-*` is produced only by the old continuation that was already in
-        // flight. The replacement lens may keep the retained first page and may
-        // publish its own first-page reacquisition, but the late append must
-        // never become an observable window between those two states.
-        expect(publishedAfterLensChange.some((ids) => ids.some((id) => id.startsWith('p0-'))))
-            .toBe(false);
-        expect(store.getSnapshot().window?.rows.every((row) => row.entryRef.entryId.startsWith('p1-')))
-            .toBe(true);
-
-        unsubscribe();
-        store.dispose();
+            expect(publishedAfterLensChange.flat().some((id) => id.startsWith('p0-'))).toBe(false);
+            const replacementRows = store.getSnapshot().window?.rows ?? [];
+            expect(replacementRows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+            expect(replacementRows.every((row) => row.entryRef.entryId.startsWith('p1-'))).toBe(true);
+        } finally {
+            release();
+            await append;
+            unsubscribe();
+            store.dispose();
+        }
     });
 
     it('never publishes an in-flight append after the mounted read transport is replaced', async () => {
