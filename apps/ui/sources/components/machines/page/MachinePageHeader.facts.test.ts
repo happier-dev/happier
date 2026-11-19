@@ -8,7 +8,7 @@ import { t } from '@/text';
 import { english } from '@/text/translations/machineDetailPageTranslations.shared';
 import { MACHINE_DEPLOYMENT_ROLES } from '@/components/machines/services/machineServicesPresentation';
 
-import { composeMachinePageHeaderFacts } from './MachinePageHeader';
+import { composeMachinePageHeaderFacts, composeMachineShareSubtitle } from './MachinePageHeader';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -85,5 +85,14 @@ describe('machine page header facts', () => {
     const none = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined, encryptionMode: null,
       replacedByMachineLabel: null, roleEnvironments: [env('e4', 'Shop', ['runtime', 'data'])] });
     expect(none.some(fact => fact.key.startsWith('role-'))).toBe(false);
+  });
+  it('gives the share sheet the short identity line: kind, OS and encryption, without presence, size or CLI (lab m-share S)', () => {
+    const base = createMachineFixture();
+    const machine = createMachineFixture({ metadata: { ...base.metadata!, platform: 'linux', arch: 'x64' },
+      daemonState: { ...(base.daemonState as object), cliVersion: '0.3.0' } });
+    const subtitle = (managedMeta: readonly { key: string; text: string }[] | undefined) => composeMachineShareSubtitle({ machine, encryptionMode: 'e2ee',
+      managedMeta });
+    expect(subtitle([{ key: 'managed-kind', text: 'Lima machine' }])).toBe(['Lima machine', 'Linux', t('settingsAccount.endToEndEncrypted')].join(' · '));
+    expect(subtitle(undefined)).toBe([t('machines.sharing.kind'), 'Linux', t('settingsAccount.endToEndEncrypted')].join(' · '));
   });
 });

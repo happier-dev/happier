@@ -126,6 +126,9 @@ export function createMachineShareAdapter(input: Readonly<{
             }] });
             // Status lines sit on the grant rows' edge as one quiet state each, with their own next step.
             const notices: SelectionListOption[] = [];
+            // The machine's own state (asleep, starting, offline) is the sheet's one notice and leads it (lab m-share S):
+            // it says what an access change means right now, before the trust fact and who has access.
+            const stateNotices: SelectionListOption[] = [];
             const notice = (id: string, kind: SurfaceStateKind, title: string, action?: Readonly<{ label: string; onPress: () => void }>): SelectionListOption => ({
                 id, label: title, disabled: true,
                 content: <SurfaceStateCard testID={`${context.idPrefix}machine-share-${id}`} kind={kind} size="line" title={title}
@@ -135,9 +138,9 @@ export function createMachineShareAdapter(input: Readonly<{
             if (controller.issue && !refusal) notices.push(notice('read-error', 'error', controller.issue.message,
                 controller.issue.retryable ? { label: t('common.retry'), onPress: () => { void controller.retryContent(); } } : undefined));
             // Only someone who can change access is told that changes are saved while it is offline.
-            if (input.nativeWord) notices.push(notice('native', 'unavailable', input.nativeAsleep ? t(controller.response?.canManage === false
+            if (input.nativeWord) stateNotices.push(notice('native', 'unavailable', input.nativeAsleep ? t(controller.response?.canManage === false
                 ? 'machines.sharing.asleepRecipient' : 'machines.sharing.asleep', { machine }) : input.nativeWord));
-            else if (input.online === false) notices.push(notice('offline', 'unavailable', t(controller.response?.canManage === false
+            else if (input.online === false) stateNotices.push(notice('offline', 'unavailable', t(controller.response?.canManage === false
                 ? 'machines.sharing.offlineRecipient' : 'machines.sharing.offline', { machine })));
             if (controller.notice) notices.push(notice('notice', 'warning', controller.notice.message,
                 controller.notice.code === 'outcome_unknown'
@@ -148,6 +151,7 @@ export function createMachineShareAdapter(input: Readonly<{
                 notices.push(notice('approval', 'warning', t('machines.sharing.approvalPending'),
                     { label: t('approvals.details'), onPress: () => input.openApproval?.(id) }));
             }
+            if (stateNotices.length) leading.unshift({ kind: 'static', id: 'machine-state', options: stateNotices });
             return { leading, ...(notices.length ? { trailing: [{ kind: 'static', id: 'machine-status', options: notices }] } : {}) };
         },
     };

@@ -24,6 +24,11 @@ export const VitalsSheet = React.memo(function VitalsSheet(
     testID?: string;
     /** Tiles side by side where there is room (the Processes tab's three vitals sit in one row, lab `rp` H). */
     columns?: 2 | 3;
+    /**
+     * What a machine that isn't running last reported (asleep or offline, lab m-life W 1): the figures read as
+     * last-known in secondary ink, so they never pass for the machine's present.
+     */
+    held?: boolean;
   }>,
 ) {
   const phone = useDeviceType() === 'phone';
@@ -40,6 +45,7 @@ export const VitalsSheet = React.memo(function VitalsSheet(
     rows.push(tiles.slice(index, index + columns));
   return (
     <ItemGroup header="none">
+      <VitalsHeldContext.Provider value={props.held === true}>
       <VitalsSheetStackedContext.Provider value={stacked}>
       <View testID={props.testID} onLayout={phone ? undefined : onLayout}>
         {rows.map((row, rowIndex) => (
@@ -62,6 +68,7 @@ export const VitalsSheet = React.memo(function VitalsSheet(
         ))}
       </View>
       </VitalsSheetStackedContext.Provider>
+      </VitalsHeldContext.Provider>
     </ItemGroup>
   );
 });
@@ -72,6 +79,12 @@ export const VitalsSheet = React.memo(function VitalsSheet(
  * a few figures does not take a screen.
  */
 const VitalsSheetStackedContext = React.createContext(false);
+/** The sheet holds last-known figures of a machine that isn't running; see {@link VitalsSheet}'s `held`. */
+const VitalsHeldContext = React.createContext(false);
+/** Whether the enclosing sheet holds last-known figures; instruments stand their state colours down with it. */
+export function useVitalsHeld(): boolean {
+  return React.useContext(VitalsHeldContext);
+}
 /** A figure drawn as a row's value rather than a tile's headline. */
 const VitalsValueInRowContext = React.createContext(false);
 
@@ -256,12 +269,13 @@ export function VitalsValue(
   }>,
 ) {
   const inRow = React.useContext(VitalsValueInRowContext);
+  const held = React.useContext(VitalsHeldContext);
   return (
     <>
       {props.leading}
       <Text
         numberOfLines={1}
-        style={[inRow ? styles.rowValueText : styles.value, props.color ? { color: props.color } : null]}
+        style={[inRow ? styles.rowValueText : styles.value, held ? styles.heldText : props.color ? { color: props.color } : null]}
       >
         {props.value}
       </Text>
@@ -293,8 +307,9 @@ export function VitalsSubLine(
 export function VitalsStrong(
   props: Readonly<{ children: React.ReactNode; color?: string }>,
 ) {
+  const held = React.useContext(VitalsHeldContext);
   return (
-    <Text style={[styles.strong, props.color ? { color: props.color } : null]}>
+    <Text style={[styles.strong, held ? styles.heldText : props.color ? { color: props.color } : null]}>
       {props.children}
     </Text>
   );
@@ -389,6 +404,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s4,
     minHeight: HAPPIER_DATA_METRICS.statValue.lineHeight,
     minWidth: 0,
+  },
+  // A last-known figure: still read, never mistaken for now; state colours stand down with it.
+  heldText: {
+    color: theme.colors.text.secondary,
   },
   value: {
     ...Typography.default('semiBold'),

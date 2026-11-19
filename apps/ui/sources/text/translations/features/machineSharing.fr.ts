@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Seules les personnes pouvant gérer {machine} peuvent modifier le partage.', use: 'Peut utiliser', manage: 'Peut gérer', allMembers: 'Tous les membres actuels, y compris ceux qui rejoignent plus tard',
     pending: 'En attente d’une personne autorisée possédant la clé pour préparer l’accès à {machine}.', incompatible: '{machine} est chiffrée de bout en bout, mais le compte de {person} ne l’est pas. {person} ne peut donc pas l’ouvrir.',
     incompatibleHelp: 'Partage une machine non chiffrée ou demande à {person} d’activer le chiffrement de bout en bout dans les paramètres du compte.',
-    plain: 'Ses données ne sont pas chiffrées de bout en bout et sont lisibles par le Home.', saved: 'Partage mis à jour', yourAccess: 'Ton accès',
+    plain: 'Ses données ne sont pas chiffrées de bout en bout et sont lisibles par le Home.', saved: 'Partage mis à jour', yourAccess: 'Ton accès', kind: 'Machine',
     ownHistory: "Les sessions que tu démarres ici restent les tiennes dans Happier, même après la fin de ton accès.", through: "Via {audience}",
     leave: 'Quitter ce partage', inherited: 'Tu conserves l’accès via {audience}. Demande à son responsable de modifier ton accès.', unavailable: 'Impossible de vérifier l’accès à {machine}.',
     saveFailed: 'Impossible d’enregistrer « {draft} » pour {person}. L’accès reste « {current} ».',

@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: '只有可以管理 {machine} 的人才能變更共享設定。', use: '可以使用', manage: '可以管理', allMembers: '所有目前成員，包括之後加入的成員',
     pending: '正在等候有權限的金鑰持有者為 {machine} 準備存取權。', incompatible: '{machine} 已啟用端對端加密，但 {person} 的帳戶尚未啟用，因此 {person} 無法開啟它。',
     incompatibleHelp: '共享未加密的機器，或請 {person} 在帳戶設定中啟用端對端加密。',
-    plain: '其資料未使用端對端加密，因此 Home 可以讀取。', saved: '共享已更新', yourAccess: '你的存取權',
+    plain: '其資料未使用端對端加密，因此 Home 可以讀取。', saved: '共享已更新', yourAccess: '你的存取權', kind: '機器',
     ownHistory: "你在這裡啟動的工作階段在 Happier 中仍歸你所有，即使存取權限結束。", through: "透過 {audience}",
     leave: '退出此共享', inherited: '你仍透過 {audience} 擁有存取權。請聯絡管理者變更權限。', unavailable: '無法檢查 {machine} 的存取權。',
     saveFailed: '無法為 {person} 儲存「{draft}」。目前仍為「{current}」。',

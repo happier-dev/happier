@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: '{machine} を管理できる人だけが共有を変更できます。', use: '使用可能', manage: '管理可能', allMembers: '現在の全メンバー（後から参加する人も含む）',
     pending: '権限のあるキー保有者が {machine} のアクセスを準備するのを待っています。', incompatible: '{machine} はエンドツーエンド暗号化されていますが、{person} のアカウントは暗号化されていないため、{person} は開けません。',
     incompatibleHelp: '暗号化されていないマシンを共有するか、{person} にアカウント設定でエンドツーエンド暗号化を有効にするよう依頼してください。',
-    plain: 'データはエンドツーエンド暗号化されていないため、Home が読み取れます。', saved: '共有を更新しました', yourAccess: '自分のアクセス権',
+    plain: 'データはエンドツーエンド暗号化されていないため、Home が読み取れます。', saved: '共有を更新しました', yourAccess: '自分のアクセス権', kind: 'マシン',
     ownHistory: "ここで開始したセッションは、アクセスが終わった後も Happier であなたのものです。", through: "{audience} 経由",
     leave: 'この共有から退出', inherited: '{audience} 経由のアクセス権が残っています。管理者に変更を依頼してください。', unavailable: '{machine} のアクセス権を確認できませんでした。',
     saveFailed: '{person} の「{draft}」を保存できませんでした。現在も「{current}」のままです。',

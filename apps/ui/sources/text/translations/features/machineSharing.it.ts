@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Solo chi può gestire {machine} può modificare la condivisione.', use: 'Può usare', manage: 'Può gestire', allMembers: 'Tutti i membri attuali, comprese le persone che si uniranno in seguito',
     pending: 'In attesa che un titolare autorizzato della chiave prepari l’accesso a {machine}.', incompatible: '{machine} usa la cifratura end-to-end, ma l’account di {person} no. {person} non può quindi aprirla.',
     incompatibleHelp: 'Condividi una macchina non cifrata o chiedi a {person} di attivare la cifratura end-to-end nelle impostazioni dell’account.',
-    plain: 'I dati non sono cifrati end-to-end e possono essere letti dal Home.', saved: 'Condivisione aggiornata', yourAccess: 'Il tuo accesso',
+    plain: 'I dati non sono cifrati end-to-end e possono essere letti dal Home.', saved: 'Condivisione aggiornata', yourAccess: 'Il tuo accesso', kind: 'Macchina',
     ownHistory: "Le sessioni che avvii qui restano tue in Happier, anche quando il tuo accesso termina.", through: "Tramite {audience}",
     leave: 'Lascia la condivisione', inherited: 'Hai ancora accesso tramite {audience}. Chiedi al responsabile di modificare il tuo accesso.', unavailable: 'Impossibile verificare l’accesso a {machine}.',
     saveFailed: 'Impossibile salvare «{draft}» per {person}. Ha ancora «{current}».',

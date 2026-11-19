@@ -312,6 +312,11 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             // Asleep says what it means for an access change (saved, applies when it wakes), not the bare word.
             await vi.waitFor(() => expect(screen!.getTextContent()).toContain(state === 'asleep'
                 ? t('machines.sharing.asleep', { machine: 'Devbox' }) : t('managedWake.starting', { machine: 'Devbox' })));
+            // The machine's state is the sheet's one notice and leads it (lab m-share S), before who has access.
+            const text = screen.getTextContent();
+            const stateLine = text.indexOf(state === 'asleep'
+                ? t('machines.sharing.asleep', { machine: 'Devbox' }) : t('managedWake.starting', { machine: 'Devbox' }));
+            expect(stateLine).toBeLessThan(text.indexOf(t('shareSheet.whoHasAccess')));
             expect(screen.findByTestId('machine-share-offline')).toBeNull();
             await act(async () => getStorage().getState().applyMachines([
                 { ...machine, managedInputRuntime: { nativeReady: false, wakeState: null, state: null } },

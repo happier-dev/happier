@@ -6,7 +6,9 @@ export type MachineSharingCopy = Readonly<{
     recipientTrustLead: string; recipientTrustDetail: string; manageHelp: string; recipientEncryptionIncompatible: string;
     loading: string; readError: string; offline: string; offlineRecipient: string; asleep: string; asleepRecipient: string; approvalPending: string; denied: string; use: string; manage: string;
     allMembers: string; pending: string; incompatible: string; incompatibleHelp: string; plain: string;
-    saved: string; yourAccess: string; ownHistory: string; through: string; leave: string; inherited: string; unavailable: string; saveFailed: string;
+    saved: string; yourAccess: string;
+    /** What a machine is, as the share sheet's identity line names it ("Machine · Linux · End-to-end encrypted"). */
+    kind: string; ownHistory: string; through: string; leave: string; inherited: string; unavailable: string; saveFailed: string;
     unsupportedOperation: string; outcomeUnknown: string;
     effectiveLoss: string; removalWork: string; leaveLoss: string; overlap: string; custodianProtected: string; revoked: string;
     unpublished: string; custodianOnly: string; upgradeRequired: string; unpublishedTag: string; unpublishedMember: string;
@@ -38,7 +40,7 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         use: copy.use, manage: copy.manage, allMembers: copy.allMembers, pending: machine(copy.pending),
         incompatible: (parameters: Readonly<{ machine: string; person: string }>) => format(copy.incompatible, parameters),
         incompatibleHelp: (parameters: Readonly<{ person: string }>) => format(copy.incompatibleHelp, parameters),
-        plain: copy.plain, saved: copy.saved, yourAccess: copy.yourAccess, ownHistory: machine(copy.ownHistory),
+        plain: copy.plain, saved: copy.saved, yourAccess: copy.yourAccess, kind: copy.kind, ownHistory: machine(copy.ownHistory),
         through: (parameters: Readonly<{ audience: string }>) => format(copy.through, parameters),
         leave: copy.leave, inherited: (parameters: Readonly<{ audience: string }>) => format(copy.inherited, parameters),
         unavailable: machine(copy.unavailable),

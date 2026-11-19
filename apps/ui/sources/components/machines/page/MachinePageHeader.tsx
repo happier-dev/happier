@@ -179,6 +179,22 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
 }
 
 /**
+ * The share sheet's subtitle (lab m-share S "Machine · Linux · end-to-end encrypted"): what the machine is, in one short
+ * line, never the page's whole facts line (presence, size and CLI version belong to the page, not to who has access).
+ */
+export function composeMachineShareSubtitle(input: Readonly<{
+    machine: Machine;
+    managedMeta: readonly Pick<PageHeaderMetaFact, 'key' | 'text'>[] | undefined;
+    encryptionMode: 'e2ee' | 'plain' | null;
+}>): string {
+    const kind = input.managedMeta?.find(fact => fact.key === 'managed-kind')?.text ?? t('machines.sharing.kind');
+    const platform = formatOSPlatform(input.machine.metadata?.platform);
+    const encryption = input.encryptionMode === 'e2ee' ? t('settingsAccount.endToEndEncrypted')
+        : input.encryptionMode === 'plain' ? t('settingsAccount.notEndToEndEncrypted') : null;
+    return [kind, platform, encryption].filter(Boolean).join(' · ');
+}
+
+/**
  * The machine page's one header, the same for every tab and in both doors (R2): the machine's mark
  * and name, what it is, its facts, then Start session and the machine's `⋯` (Rename, Apply
  * environment, Replace / Undo replacement).
@@ -303,16 +319,17 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             testID: 'machine-detail-menu-share',
             title: t('shareSheet.documents.shareMenu'),
             // The sheet's sentences name the machine as copy does ("this machine" while locked), like its Sharing page.
-            onSelect: (intent) => showMachineShareSheet({ machineId: machine.id, machineName: target.machineSentenceName,
+            // Centred, not hung from the ⋯: hung from the title row it covered the facts it shares (lab m-share S).
+            onSelect: () => showMachineShareSheet({ machineId: machine.id, machineName: target.machineSentenceName,
                 scope: activeAccountScope, shared: machine.isShared === true,
-                subtitle: meta.map(fact => fact.text).join(' · ') || undefined, anchor: intent?.anchor }),
+                subtitle: composeMachineShareSubtitle({ machine, managedMeta: props.managedIdentity?.meta, encryptionMode }) }),
         }] : [];
         // A leading needs-you action takes the third button's place, so the row keeps its size and the title never wraps.
         const terminal: PageHeaderMenuAction[] = terminalInMenu ? [{ id: 'open-terminal', testID: 'machine-detail-menu-open-terminal',
             title: t('machineDetailPage.openTerminalAction'), onSelect: handleOpenTerminal }] : [];
         if (!canManageMachine(machine)) return [...terminal, ...share];
         return [...terminal, rename, ...share, ...environmentApply, ...replacement.menuActions];
-    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, router, target.serverId]);
+    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, encryptionMode, props.managedIdentity?.meta, onRename, renaming, replacement.menuActions, router, target.serverId]);
 
     const fallbackDescription = props.managedIdentity?.description ?? t('machineDetailPage.description');
     return (

@@ -12,6 +12,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
+import { useVitalsHeld } from './VitalsSheet';
+
 /**
  * One labelled meter inside a tile (a volume, swap): the name at the left, "412 GB free of 994" at the
  * right in one tabular run, then the shared capacity bar filling by what is used (R9). Calm fills are ink;
@@ -40,11 +42,13 @@ export const VitalsMeterRow = React.memo(function VitalsMeterRow(
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
   const pluginTheme = usePluginUiTheme(theme);
-  const toned = props.tone !== 'calm';
+  // A last-known reading of a machine that isn't running speaks no state: its tone waits for the next live sample.
+  const held = useVitalsHeld();
+  const toned = !held && props.tone !== 'calm';
   const fill = toned
     ? resolveMachineResourceToneColor(props.tone, theme.colors)
     : theme.colors.text.tertiary;
-  const valueColor = toned ? fill : theme.colors.text.primary;
+  const valueColor = toned ? fill : held ? theme.colors.text.secondary : theme.colors.text.primary;
   return (
     <View
       testID={props.testID}

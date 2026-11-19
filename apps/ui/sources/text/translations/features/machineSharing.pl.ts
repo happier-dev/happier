@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Tylko osoby zarządzające {machine} mogą zmieniać udostępnianie.', use: 'Może używać', manage: 'Może zarządzać', allMembers: 'Wszyscy obecni członkowie, również osoby dołączające później',
     pending: 'Oczekiwanie na uprawnionego posiadacza klucza, który przygotuje dostęp do {machine}.', incompatible: '{machine} jest szyfrowana kompleksowo, ale konto {person} nie. Dlatego {person} nie może jej otworzyć.',
     incompatibleHelp: 'Udostępnij nieszyfrowaną maszynę lub poproś {person} o włączenie szyfrowania kompleksowego w ustawieniach konta.',
-    plain: 'Dane nie są szyfrowane kompleksowo, więc Home może je odczytać.', saved: 'Zaktualizowano udostępnianie', yourAccess: 'Twój dostęp',
+    plain: 'Dane nie są szyfrowane kompleksowo, więc Home może je odczytać.', saved: 'Zaktualizowano udostępnianie', yourAccess: 'Twój dostęp', kind: 'Maszyna',
     ownHistory: "Uruchomione tu sesje pozostają Twoje w Happier, nawet gdy dostęp się skończy.", through: "Przez {audience}",
     leave: 'Opuść udostępnianie', inherited: 'Nadal masz dostęp przez {audience}. Poproś administratora o zmianę dostępu.', unavailable: 'Nie udało się sprawdzić dostępu do {machine}.',
     saveFailed: 'Nie udało się zapisać „{draft}” dla {person}. Nadal obowiązuje „{current}”.',

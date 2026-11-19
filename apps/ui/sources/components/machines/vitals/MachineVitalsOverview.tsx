@@ -75,6 +75,7 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     offlineRetry?: Readonly<{ onPress: () => void; loading: boolean }>;
     /** The page already says why it is offline (a created machine that is stopped); no second banner. */
     offlineExplained?: boolean;
+    nativePresenceWord?: string | null;
   }>,
 ) {
   const { machine } = props;
@@ -180,7 +181,8 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
         <VitalsLoadingSheet />
       ) : (
         <ArrivalFade enabled={startedLoading}>
-          <VitalsSheet testID="machine-vitals-sheet">
+          {/* Asleep or offline, these are what it last reported: last-known ink, not its present (lab m-life W 1). */}
+          <VitalsSheet testID="machine-vitals-sheet" held={view.freshness === 'offline'}>
             <CpuTile
               sample={view.sample}
               host={published?.host ?? null}
@@ -223,6 +225,7 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
           machineId={machine.id}
           machineName={props.machineName}
           offline={props.online === false}
+          nativePresenceWord={props.nativePresenceWord}
           sample={view.sample}
           cpuCapacityCores={published?.host ? resolveMachineCpuCapacityCores(published.host) : null}
           onOpenProcesses={props.onOpenProcesses}

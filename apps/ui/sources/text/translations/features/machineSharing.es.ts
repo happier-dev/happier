@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Solo quienes pueden administrar {machine} pueden cambiar el acceso compartido.', use: 'Puede usar', manage: 'Puede administrar', allMembers: 'Todos los miembros actuales, incluidos quienes se incorporen después',
     pending: 'Esperando a que una persona autorizada con la clave prepare el acceso a {machine}.', incompatible: '{machine} tiene cifrado de extremo a extremo y la cuenta de {person} no, por lo que {person} no puede abrirla.',
     incompatibleHelp: 'Comparte una máquina sin cifrado o pide a {person} que active el cifrado de extremo a extremo en los ajustes de la cuenta.',
-    plain: 'Sus datos no tienen cifrado de extremo a extremo, por lo que el Home puede leerlos.', saved: 'Acceso compartido actualizado', yourAccess: 'Tu acceso',
+    plain: 'Sus datos no tienen cifrado de extremo a extremo, por lo que el Home puede leerlos.', saved: 'Acceso compartido actualizado', yourAccess: 'Tu acceso', kind: 'Máquina',
     ownHistory: "Las sesiones que inicias aquí siguen siendo tuyas en Happier, incluso cuando pierdes el acceso.", through: "A través de {audience}",
     leave: 'Salir de este acceso', inherited: 'Aún tienes acceso a través de {audience}. Pide a su administrador que cambie tu acceso.', unavailable: 'No se pudo comprobar el acceso a {machine}.',
     saveFailed: 'No se pudo guardar «{draft}» para {person}. Sigue teniendo «{current}».',

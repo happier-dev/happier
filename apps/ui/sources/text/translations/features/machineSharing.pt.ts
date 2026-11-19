@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Somente quem pode gerenciar {machine} pode alterar o compartilhamento.', use: 'Pode usar', manage: 'Pode gerenciar', allMembers: 'Todos os membros atuais, incluindo quem entrar depois',
     pending: 'Aguardando um titular autorizado da chave preparar o acesso a {machine}.', incompatible: '{machine} tem criptografia de ponta a ponta e a conta de {person} não, por isso {person} não pode abri-la.',
     incompatibleHelp: 'Compartilhe uma máquina sem criptografia ou peça a {person} para ativar a criptografia de ponta a ponta nas configurações da conta.',
-    plain: 'Os dados não são criptografados de ponta a ponta e podem ser lidos pelo Home.', saved: 'Compartilhamento atualizado', yourAccess: 'Seu acesso',
+    plain: 'Os dados não são criptografados de ponta a ponta e podem ser lidos pelo Home.', saved: 'Compartilhamento atualizado', yourAccess: 'Seu acesso', kind: 'Máquina',
     ownHistory: "As sessões que você inicia aqui continuam suas no Happier, mesmo depois que seu acesso termina.", through: "Por meio de {audience}",
     leave: 'Sair do compartilhamento', inherited: 'Você ainda tem acesso por {audience}. Peça ao responsável para alterar seu acesso.', unavailable: 'Não foi possível verificar o acesso a {machine}.',
     saveFailed: 'Não foi possível guardar «{draft}» para {person}. Continua com «{current}».',

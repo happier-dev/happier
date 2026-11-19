@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: '只有可以管理 {machine} 的人才能更改共享设置。', use: '可以使用', manage: '可以管理', allMembers: '所有当前成员，包括以后加入的成员',
     pending: '正在等待有权限的密钥持有者为 {machine} 准备访问权限。', incompatible: '{machine} 已启用端到端加密，但 {person} 的账户没有启用，因此 {person} 无法打开它。',
     incompatibleHelp: '共享未加密的机器，或请 {person} 在账户设置中启用端到端加密。',
-    plain: '其数据没有端到端加密，因此 Home 可以读取。', saved: '共享已更新', yourAccess: '你的访问权限',
+    plain: '其数据没有端到端加密，因此 Home 可以读取。', saved: '共享已更新', yourAccess: '你的访问权限', kind: '机器',
     ownHistory: "你在这里启动的会话在 Happier 中仍归你所有，即使访问权限结束。", through: "通过 {audience}",
     leave: '退出此共享', inherited: '你仍通过 {audience} 拥有访问权限。请联系管理员更改权限。', unavailable: '无法检查 {machine} 的访问权限。',
     saveFailed: '无法为 {person} 保存“{draft}”。当前仍为“{current}”。',

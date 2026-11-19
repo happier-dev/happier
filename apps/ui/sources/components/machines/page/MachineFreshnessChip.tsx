@@ -73,12 +73,12 @@ export function MachineFreshnessChip(
         />
       );
     case 'offline':
+      // Nothing is reading: the time alone says when it last reported; a dot would read as a live signal.
       return (
         <SurfaceFreshnessLine
           testID={testID}
           presentation="chip"
           lead={props.lead}
-          signal="quiet"
           asOf={freshness.at}
           reason=""
         />

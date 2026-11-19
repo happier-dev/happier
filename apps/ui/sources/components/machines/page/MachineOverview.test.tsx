@@ -191,6 +191,10 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     // checks for a machine that is online but cannot start sessions.
     expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();
     expect(screen.findByTestId('machine-vitals-offline')).not.toBeNull();
+    const vitalsOrder = () => screen.findAll(node => node.type === MachineProjectWorkSection || node.type === vitalsType)
+        .map(node => node.type === vitalsType ? 'vitals' : 'work');
+    // The offline banner is the cause, so the vitals body that carries it leads the page.
+    expect(vitalsOrder()).toEqual(['vitals', 'work']);
     // A created machine still running whose Happier went quiet says so once, on its recovery row (TH D6): the vitals
     // body adds no second offline banner.
     const { ManagedMachineFullV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
@@ -202,4 +206,7 @@ it('uses the page Home credential scope rather than treating a reachable Machine
         desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
     await screen.update(frame({ ...state, managedEnrolled: { ...state.managedEnrolled, machine: runningGuest } }, false));
     expect(screen.findByTestId('machine-vitals-offline')).toBeNull();
+    // Its own state row explains it (Asleep and what starts it, or the recovery), so that leads and what the
+    // machine last reported follows the work, as last-known detail (lab m-life W 1).
+    expect(vitalsOrder()).toEqual(['work', 'vitals']);
 });

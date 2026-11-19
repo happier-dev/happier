@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Només qui pot gestionar {machine} pot canviar la compartició.', use: 'Pot utilitzar', manage: 'Pot gestionar', allMembers: 'Tots els membres actuals, incloent-hi qui s’hi uneixi més endavant',
     pending: 'S’espera que una persona autoritzada amb la clau prepari l’accés a {machine}.', incompatible: '{machine} està xifrada d’extrem a extrem, però el compte de {person} no. Per tant, {person} no la pot obrir.',
     incompatibleHelp: 'Comparteix una màquina sense xifrar o demana a {person} que activi el xifratge d’extrem a extrem a la configuració del compte.',
-    plain: 'Les dades no estan xifrades d’extrem a extrem i el Home les pot llegir.', saved: 'Compartició actualitzada', yourAccess: 'El teu accés',
+    plain: 'Les dades no estan xifrades d’extrem a extrem i el Home les pot llegir.', saved: 'Compartició actualitzada', yourAccess: 'El teu accés', kind: 'Màquina',
     ownHistory: "Les sessions que inicies aquí continuen sent teves a Happier, fins i tot quan perds l'accés.", through: "A través de {audience}",
     leave: 'Deixa aquesta compartició', inherited: 'Encara tens accés a través de {audience}. Demana al seu gestor que canviï el teu accés.', unavailable: 'No s’ha pogut comprovar l’accés a {machine}.',
     saveFailed: 'No s’ha pogut desar «{draft}» per a {person}. Encara té «{current}».',

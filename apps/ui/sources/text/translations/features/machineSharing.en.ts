@@ -24,7 +24,7 @@ export const machineSharing = createMachineSharingTranslations({
     pending: 'Waiting for an authorized key holder to prepare access to {machine}.',
     incompatible: "{machine} is end-to-end encrypted and {person}'s account is not, so {person} cannot open it.",
     incompatibleHelp: 'Share a machine that is not encrypted, or ask {person} to turn on end-to-end encryption in Account settings.',
-    plain: 'Its data is not end-to-end encrypted, so the Home can read it.', saved: 'Sharing updated', yourAccess: 'Your access',
+    plain: 'Its data is not end-to-end encrypted, so the Home can read it.', saved: 'Sharing updated', yourAccess: 'Your access', kind: 'Machine',
     ownHistory: "Sessions you start here stay yours in Happier, even after your access ends.", through: "Through {audience}",
     leave: 'Leave this share', inherited: 'You still have access through {audience}. Ask its manager to change your access.', unavailable: 'Access to {machine} could not be checked.',
     saveFailed: 'Couldn’t save “{draft}” for {person}. They still have “{current}”.',

@@ -22,7 +22,7 @@ export const machineSharing = createMachineSharingTranslations({
     denied: 'Nur Personen, die {machine} verwalten können, dürfen die Freigabe ändern.', use: 'Kann nutzen', manage: 'Kann verwalten', allMembers: 'Alle aktuellen Mitglieder, auch später beitretende Personen',
     pending: 'Eine berechtigte Person mit Schlüssel muss den Zugriff auf {machine} vorbereiten.', incompatible: '{machine} ist Ende-zu-Ende verschlüsselt, das Konto von {person} jedoch nicht. {person} kann den Rechner nicht öffnen.',
     incompatibleHelp: 'Teile einen unverschlüsselten Rechner oder bitte {person}, Ende-zu-Ende-Verschlüsselung in den Kontoeinstellungen zu aktivieren.',
-    plain: 'Die Daten sind nicht Ende-zu-Ende verschlüsselt und können vom Home gelesen werden.', saved: 'Freigabe aktualisiert', yourAccess: 'Dein Zugriff',
+    plain: 'Die Daten sind nicht Ende-zu-Ende verschlüsselt und können vom Home gelesen werden.', saved: 'Freigabe aktualisiert', yourAccess: 'Dein Zugriff', kind: 'Rechner',
     ownHistory: "Hier gestartete Sitzungen bleiben in Happier deine, auch wenn dein Zugriff endet.", through: "Über {audience}",
     leave: 'Freigabe verlassen', inherited: 'Du hast weiterhin Zugriff über {audience}. Bitte die Verwaltung, deinen Zugriff zu ändern.', unavailable: 'Zugriff auf {machine} konnte nicht geprüft werden.',
     saveFailed: '„{draft}“ konnte für {person} nicht gespeichert werden. Es gilt weiterhin „{current}“.',

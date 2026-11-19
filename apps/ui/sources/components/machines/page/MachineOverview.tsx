@@ -80,13 +80,18 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
         && resolveManagedInstallationRecovery(managedMachine, null, { guestOnline: false }) === 'restartDaemon';
     // Plan 20's vitals body: live while this tab is shown, its history and Alerts row. Offline, it opens with the one
     // banner that says what being offline means, so it leads the page: the cause before the work it blocks (TH D-I).
+    const offlineExplained = runtimePresence.nextAction !== 'retry' || managedRecoveryExplains;
     const vitals = (
         <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
             onOpenProcesses={openProcesses}
+            nativePresenceWord={runtimePresence.nativeWord}
             offlineRetry={runtimePresence.nextAction === 'retry' && !managedRecoveryExplains ? offlineRetry : undefined}
-            offlineExplained={runtimePresence.nextAction !== 'retry' || managedRecoveryExplains} />
+            offlineExplained={offlineExplained} />
     );
-    const vitalsLead = props.online === false;
+    // The vitals lead only while they carry the offline banner, the cause. A created machine that is asleep (or whose
+    // Happier went quiet) is explained by its own state row ("Asleep · your next message or run starts it", lab m-life
+    // W 1), so that leads and what it last reported follows the work, as last-known detail.
+    const vitalsLead = props.online === false && !offlineExplained;
     return (
         // The vitals banner says once that the machine is offline; the sections below inherit it, never repeat it.
         <CheckoutReachabilityScope scope={reachabilityScope}>
