@@ -1380,7 +1380,7 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     transcriptToolCallsGroupShowBackground: accountPreference(z.boolean(), false, 'transcript presentation'),
     transcriptMessageTimestampDisplayMode: accountPreference(z.enum(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES), 'hover_web_hidden_mobile', 'transcript presentation'),
     /** "Worked for 1m 12s" / "Stopped after 40s" at the end of each settled turn, from the turn's recorded start and end. */
-    transcriptShowTurnDuration: accountPreference(z.boolean(), true, 'transcript presentation'),
+    transcriptShowTurnDuration: accountPreference(z.boolean(), false, 'transcript presentation'),
     transcriptMessageSelectionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptMessageCopyActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptMessageForkActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
