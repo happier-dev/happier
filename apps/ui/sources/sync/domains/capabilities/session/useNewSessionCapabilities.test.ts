@@ -112,6 +112,33 @@ describe('useNewSessionCapabilities', () => {
         expect(SpawnCapabilitiesPreviewOutputV1Schema.safeParse(hook.getCurrent().preview).success).toBe(true);
         expect(transport.mock.calls.some(([input]) => isPreviewRequest(input))).toBe(false);
     });
+    it('offers only capabilities common to the draft policy contexts on their owning Machines', async () => {
+        const policyContexts = [
+            { machineId: 'first', directory: '/repo', agentId: 'muse', targetServerId: serverId },
+            { machineId: 'second', directory: '/repo', agentId: 'muse', targetServerId: serverId },
+        ];
+        const skill = (id: string) => ({ kind: 'skill', id, name: id, state: 'off', selected: false,
+            reachEnabled: false, selectable: true, reason: 'no_rule', decidedBy: null, sessionOverride: null });
+        transport.mockImplementation(async (request) => {
+            if (!isPreviewRequest(request)) throw Error('Unexpected Machine request');
+            const target = DaemonMcpServersPreviewRequestSchema.parse(request.payload);
+            return { ...previewResponse, skills: { ...previewResponse.skills,
+                items: [skill('shared'), skill(`only-${target.machineId}`)] } };
+        });
+        const { useNewSessionCapabilities } = await import('./useNewSessionCapabilities');
+        const hook = await renderHook(() => {
+            const [selection, setSelection] = React.useState<SessionCapabilitySelectionV1>({});
+            const draft = { ...policyContexts[0]!, selection, setSelection, policyContexts: [...policyContexts, policyContexts[0]!] };
+            return useNewSessionCapabilities(draft);
+        });
+        await act(async () => hook.getCurrent().demandPreview());
+        await vi.waitFor(() => expect(hook.getCurrent().previewStatus, hook.getCurrent().error ?? '').toBe('ready'));
+        expect(hook.getCurrent().preview?.skills.items.map(item => item.id)).toEqual(['shared']);
+        expect(transport.mock.calls).toContainEqual([expect.objectContaining({ method: RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW,
+            machineId: 'second', payload: expect.objectContaining({ agentId: 'muse', directory: '/repo' }) })]);
+        expect(transport.mock.calls.filter(([request]) => isPreviewRequest(request))).toHaveLength(2);
+    });
+
     it('rechecks the Account catalog on draft reopen and admits a newly created Off skill for this Session', async () => {
         await seedPortableCatalogs();
         const { useNewSessionCapabilities } = await import('./useNewSessionCapabilities');
@@ -295,7 +322,8 @@ describe('useNewSessionCapabilities', () => {
         const result = await createDefaultActionExecutor().execute('sessions.spawn.capabilities.preview', {
             machineId: 'machine-1', agentId: 'codex', directory: '/repo',
         }, { serverId, surface: 'ui', authority: 'present_user' });
-        expect(result).toMatchObject({ ok: true, result: { ok: false, reason: failure === 'unreachable' ? 'machine_unreachable' : 'invalid_input' } });
+        const reason = failure === 'unreachable' ? 'machine_unreachable' : 'invalid_input';
+        expect(result).toMatchObject({ ok: false, errorCode: reason, details: { ok: false, reason } });
     });
 
     it.each(['throw', 'result'] as const)('preserves missing-method truth and retry through the real preview Action (%s)', async carrier => {
@@ -329,7 +357,7 @@ describe('useNewSessionCapabilities', () => {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         expect(await createDefaultActionExecutor().execute('sessions.spawn.capabilities.preview', { machineId: 'machine-1', agentId: 'codex' },
             { serverId, surface: 'ui', authority: 'present_user' }))
-            .toMatchObject({ ok: true, result: { ok: false, reason: 'invalid_input' } });
+            .toMatchObject({ ok: false, errorCode: 'invalid_input', details: { ok: false, reason: 'invalid_input' } });
     });
 
     it.each(['missing', 'unreadable', 'home_failure', 'ambiguous404'] as const)('refuses %s Session snapshots with a typed get/set result before mutation', async availability => {
@@ -348,9 +376,10 @@ describe('useNewSessionCapabilities', () => {
         const executor = createDefaultActionExecutor();
         const context = { serverId, surface: 'ui' as const, authority: 'present_user' as const };
         const code = availability === 'missing' ? 'not_found' : 'session_unavailable';
-        expect(await executor.execute('session.capabilities.get', { sessionId }, context)).toMatchObject({ ok: true, result: { ok: false, code } });
+        const refusal = { ok: false, errorCode: code, details: { ok: false, code } };
+        expect(await executor.execute('session.capabilities.get', { sessionId }, context)).toMatchObject(refusal);
         expect(await executor.execute('session.capabilities.set', { sessionId, kind: 'native_skill', id: 'lint', state: 'off' }, context))
-            .toMatchObject({ ok: true, result: { ok: false, code } });
+            .toMatchObject(refusal);
         expect(homes.requests.some(request => request.path.includes('/sessions/') && request.input !== null)).toBe(false);
         expect(transport.mock.calls.some(([input]) => isPreviewRequest(input))).toBe(false);
     });

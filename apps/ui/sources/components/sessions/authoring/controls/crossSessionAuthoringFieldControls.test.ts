@@ -172,7 +172,7 @@ describe('Session-specific field intersection', () => {
         if (model.kind !== 'options') throw new Error('expected mode options');
         expect(model.options.some(option => option.id === model.selectedOptionId)).toBe(false);
     });
-    it('offers Skills/MCP for one Machine scope even when selections differ, and says when Machines differ', () => {
+    it('passes each Skills/MCP policy context with the effective Agent and Session directory', () => {
         const scoped = (machineId: string, directory: string, skills: string[] = []) => ({ ...target(),
             facts: { agentTargets, agentPickerContext: { machineId, serverId: 'home', directory: null }, machineName: 'devbox' },
             directory, values: { agentTarget: claude, capabilitySelection: skills.length
@@ -191,7 +191,10 @@ describe('Session-specific field intersection', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
             targets: [switching[0]!, { ...switching[1]!, facts: scoped('m2', '/repo/a').facts }],
             selection: { agentTarget: claude } }))
-            .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });
+            .toMatchObject({ kind: 'mcp', policyContexts: [
+                { machineId: 'm1', directory: '/repo/a', targetServerId: 'home', agentId: 'claude' },
+                { machineId: 'm2', directory: '/repo/b', targetServerId: 'home', agentId: 'claude' },
+            ] });
     });
     it('preserves owner refusals and refuses new-session fields and empty intersections', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'profileId' })).toMatchObject({ kind: 'unavailable', reason: 'not_supported_on_target' });

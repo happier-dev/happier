@@ -9,6 +9,7 @@ import { AgentInputContentPopover } from '@/components/sessions/agentInput/compo
 import { SessionAuthoringChipDescriptorTrigger } from './SessionAuthoringFieldSelectTrigger';
 import { useNewSessionCapabilitiesChip } from '@/components/sessions/capabilities/useSessionCapabilitiesChip';
 import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/createCapabilitiesActionChip';
+import type { CapabilityPreviewContext } from '@/sync/domains/capabilities/session/useNewSessionCapabilities';
 
 import type { SessionAuthoringMcpContext } from './sessionAuthoringFieldControls';
 
@@ -35,6 +36,7 @@ export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
     | Readonly<{ value: SessionCapabilitySelectionV1 | null | undefined; onChange: (value: SessionCapabilitySelectionV1) => void; itemEditing?: never }>
     | Readonly<{ value?: never; onChange?: never; itemEditing: Readonly<{
         selections: readonly (SessionCapabilitySelectionV1 | null | undefined)[];
+        policyContexts?: readonly CapabilityPreviewContext[];
         deltas?: readonly ExistingSessionCapabilityDelta[];
         onChange: (delta: ExistingSessionCapabilityDelta) => void;
     }> }>
@@ -67,6 +69,7 @@ export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
             directory: props.context.directory,
             agentId: props.agentId,
             targetServerId: props.context.serverId,
+            policyContexts: itemEditing?.policyContexts,
             selection,
             setSelection,
             itemEditing: items,

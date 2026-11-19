@@ -39,6 +39,17 @@ describe('the session capability sheet data owner', () => {
             id: 'review', mixedLabel: t('session.participants.bulk.onInSessions', { count: 1, total: 2 }), action: { kind: 'turn_on', state: 'on' }, removalState: 'off',
         });
     });
+    it('shows mixed capability reach when recipients share a Skill but their Machine defaults differ', () => {
+        const input = fixture();
+        const secondView = { ...input.view, skills: { ...input.view.skills, items: input.view.skills.items.map(item => ({
+            ...item, selected: false, reachEnabled: false,
+        })) } };
+        const model = buildSessionCapabilitiesModel({ ...input, selection: {},
+            bulk: { selections: [{}, {}], policyPreviews: [input.view, secondView] } });
+        expect(model.groups[0]?.rows[0]).toMatchObject({
+            id: 'review', mixedLabel: t('session.participants.bulk.onInSessions', { count: 1, total: 2 }),
+        });
+    });
     it('keeps the chip and open sheet on the same machine-resolved selection while Account rules refresh', () => {
         const input = fixture();
         const selection = setSessionCapabilitySelectionItemV1(input.selection, 'skill', 'review', 'inherit');

@@ -25,6 +25,7 @@ import {
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { resolveUnavailableNativeSignInServiceIds } from '@/components/sessions/connectedServices/unavailableNativeSignInServiceIds';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import type { CapabilityPreviewContext } from '@/sync/domains/capabilities/session/useNewSessionCapabilities';
 import type { SessionConfigOptionControl } from '@/sync/domains/sessionControl/configOptionsControl';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 import { t } from '@/text';
@@ -158,6 +159,7 @@ export type SessionAuthoringFieldControlModel =
         kind: 'mcp';
         agentId: string;
         context: SessionAuthoringMcpContext;
+        policyContexts?: readonly CapabilityPreviewContext[];
     }>
     /**
      * The Connected Service bindings, edited through the incumbent New Session

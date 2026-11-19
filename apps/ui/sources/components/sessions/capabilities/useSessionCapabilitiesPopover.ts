@@ -88,7 +88,9 @@ export function useExistingSessionCapabilitiesPopover(target: Extract<SessionCap
 /** Draft/Workflow/Trigger edits reuse the same P2 draft owner and never write an existing Session. */
 export function useNewSessionCapabilitiesPopover(draft: NewSessionCapabilitiesDraft, presentation: SessionCapabilitiesPresentation) {
     const state = useNewSessionCapabilities(draft);
-    const bulk = draft.itemEditing?.bulk;
+    const selections = draft.itemEditing?.bulk.selections;
+    const bulk = React.useMemo(() => selections ? { selections, policyPreviews: state.policyPreviews, sharedNativeSource: state.sharedNativeSource } : undefined,
+        [selections, state.policyPreviews, state.sharedNativeSource]);
     const modelInput = React.useMemo(() => ({ view: state.preview, selection: state.selection,
         ...(bulk ? { bulk } : {}),
         // REACH's presence decides "offline" too: a failed check against a machine that is away is not a failure.

@@ -48,7 +48,11 @@ export type SessionCapabilitiesModelInput = Readonly<{
     view: SessionCapabilitiesViewInput | null; state: SessionCapabilitiesModel['state'];
     selection?: SessionCapabilitySelectionV1; context?: ReachContextV1;
     /** Several Sessions edited at once: an item that differs between them reads "On in 2 of 6 sessions". */
-    bulk?: Readonly<{ selections: readonly SessionCapabilitySelectionV1[] }>;
+    bulk?: Readonly<{
+        selections: readonly SessionCapabilitySelectionV1[];
+        policyPreviews?: readonly SessionCapabilitiesViewInput[];
+        sharedNativeSource?: boolean;
+    }>;
     skillPlan?: SessionSkillPlanV1 | null;
     mcpStatus(serverId: string): readonly CapabilityStatus[];
     skillStatus(skillId: string): readonly CapabilityStatus[];
@@ -74,6 +78,10 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
     const skills: SessionCapabilityRowModel[] = [], mcp: SessionCapabilityRowModel[] = [], addItems: SessionCapabilityAddItem[] = [];
     let attention = false, skillCount = 0, mcpCount = 0, perTurn = 0, costKnown = input.view !== null;
     const plan = input.skillPlan ?? input.view?.skills.plan;
+    const policyItems = new Map<SessionCapabilitiesViewInput, ReadonlyMap<string, SessionCapabilitiesViewInput['skills']['items'][number] | SessionCapabilitiesViewInput['mcp']['items'][number]>>();
+    for (const policy of input.bulk?.policyPreviews ?? []) {
+        if (!policyItems.has(policy)) policyItems.set(policy, new Map([...policy.skills.items, ...policy.mcp.items].map(item => [`${item.kind}:${item.id}`, item])));
+    }
     for (const item of [...input.view?.skills.items ?? [], ...input.view?.mcp.items ?? []]) {
         const rules = input.rules(item.kind, item.id);
         const override = input.selection ? readSessionCapabilityOverrideV1(input.selection, item.kind, item.id)
@@ -82,15 +90,19 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
         // chip and sheet overlay the same optimistic Session selection on that fact.
         const selected = input.selection ? resolveSessionCapabilityItemSelected(item, override,
             item.kind !== 'mcp_server' || input.selection.mcp?.managedServersEnabled !== false) : item.selected;
-        const onIn = input.bulk?.selections.filter(selection => resolveSessionCapabilityItemSelected(item,
-            readSessionCapabilityOverrideV1(selection, item.kind, item.id),
-            item.kind !== 'mcp_server' || selection.mcp?.managedServersEnabled !== false)).length;
-        const mixed = input.bulk?.selections.some(selection => resolveSessionCapabilityItemSelected(item,
-            readSessionCapabilityOverrideV1(selection, item.kind, item.id),
-            item.kind !== 'mcp_server' || selection.mcp?.managedServersEnabled !== false) !== selected) ?? false;
+        const itemKey = `${item.kind}:${item.id}`;
+        const onIn = input.bulk?.selections.reduce((count, selection, index) => {
+            const policy = input.bulk?.policyPreviews?.[index];
+            const policyItem = (policy && policyItems.get(policy)?.get(itemKey)) ?? item;
+            return count + Number(resolveSessionCapabilityItemSelected(policyItem,
+                readSessionCapabilityOverrideV1(selection, item.kind, item.id),
+                item.kind !== 'mcp_server' || selection.mcp?.managedServersEnabled !== false));
+        }, 0);
+        const mixed = onIn !== undefined && onIn > 0 && onIn < input.bulk!.selections.length;
         const timing = input.view?.applyTiming[item.kind === 'mcp_server' ? 'mcp' : 'skills'];
         const masked = item.kind === 'skill' && plan?.items.some(fact => fact.skillId === item.id && fact.state === 'masked_by_native') === true;
-        const readOnlyReason = input.readOnly ? 'viewer' : masked ? 'masked' : timing?.t === 'new_sessions_only' ? 'new_sessions_only' : null;
+        const readOnlyReason = input.readOnly || (input.bulk?.policyPreviews && !item.selectable) ? 'viewer'
+            : masked ? 'masked' : timing?.t === 'new_sessions_only' ? 'new_sessions_only' : null;
         if (!mixed && !selected && override !== 'off') {
             addItems.push({ kind: item.kind, id: item.id, title: item.title ?? item.name,
                 readOnlyReason: !item.selectable ? 'viewer' : readOnlyReason });
@@ -108,7 +120,7 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
         const change = override === 'on' ? 'added' : override === 'off' ? 'turned_off' : null;
         const decidedBy = item.decidedBy;
         const decidingRule = decidedBy ? rules?.find(rule => rule.id === decidedBy.ruleId) : null;
-        const row: SessionCapabilityRowModel = { key: `${item.kind}:${item.id}`, id: item.id, kind: item.kind, title: item.title ?? item.name,
+        const row: SessionCapabilityRowModel = { key: itemKey, id: item.id, kind: item.kind, title: item.title ?? item.name,
             mark: item.kind === 'mcp_server' ? { mcpServerId: item.id } : 'none',
             line2: status ? { kind: 'status', status } : change ? { kind: 'change', change } : cost ? { kind: 'cost', cost } : null,
             scope: override === 'on' ? t('capabilities.session.thisSession') : rules === null || (decidedBy && !decidingRule) ? ''

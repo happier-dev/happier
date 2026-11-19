@@ -579,10 +579,7 @@ function useBulkAccountChip(
   }, [available, chip, reason]);
 }
 
-/**
- * Skills/MCP: the existing draft sheet, previewed on the targets' one Machine. Offered only while every target
- * holds the same selection there (the cross-session owner decides); otherwise the + menu says why.
- */
+/** Skills/MCP uses the draft sheet with the effective policy contexts of the recipients. */
 function useBulkCapabilitiesChip(
   input: Omit<BulkChipInput, 'setSelection'> & Readonly<{ setCapabilityItem: (delta: ExistingSessionCapabilityDelta) => void }>,
 ) {
@@ -606,6 +603,7 @@ function useBulkCapabilitiesChip(
     context: available?.context ?? INERT_MCP_CONTEXT,
     itemEditing: {
       selections,
+      policyContexts: available?.policyContexts,
       deltas: selection.capabilityDeltas,
       onChange: setCapabilityItem,
     },

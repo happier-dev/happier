@@ -106,15 +106,12 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
         });
         return groups.length ? { ...first, groups } : unavailable('not_supported_on_target');
     }
-    // The sheet previews a single Home, Machine and Agent; its item edits reach every target and keep each
-    // target's other overrides, so differing selections read Mixed rather than refusing.
     if (first.kind === 'mcp') {
         const mcpModels = models.filter(model => model.kind === 'mcp');
         if (mcpModels.length !== models.length) return unavailable('not_supported_on_target');
-        if (mcpModels.some(model => model.agentId !== first.agentId)) return unavailable('requires_agent_target');
-        const oneScope = mcpModels.every(model => model.context.machineId === first.context.machineId
-            && model.context.serverId === first.context.serverId);
-        return oneScope ? first : unavailable('differs_between_targets');
+        return { ...first, policyContexts: mcpModels.map(({ agentId, context }) => ({
+            agentId, machineId: context.machineId, directory: context.directory, targetServerId: context.serverId,
+        })) };
     }
     // Connected Services retain the canonical account picker; the host supplies its exact Home context.
     if (first.kind !== 'connectedServices') return unavailable('not_supported_on_target');

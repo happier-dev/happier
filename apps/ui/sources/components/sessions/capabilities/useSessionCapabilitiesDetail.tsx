@@ -93,7 +93,7 @@ export function useSessionCapabilitiesDetail(
   const library = useSkillsLibrary(scope, demand);
   // The open detail leaf observes the actual Account inputs; callback identity is not a fact.
   const factsKey = JSON.stringify([scope?.serverId, scope?.accountId, skillRules, mcpCatalog, machineId, agentId,
-    metadata?.path, metadata?.workspaceId, metadata?.projectId, modelInput.selection,
+    metadata?.path, metadata?.workspaceId, metadata?.projectId, target.draft ? null : modelInput.selection,
     demand ? null : library.items.map(item => [item.skillId, item.revision])]);
   const observedFacts = React.useRef(factsKey);
   const factsChanged = React.useRef(onFactsChanged);
@@ -116,10 +116,11 @@ export function useSessionCapabilitiesDetail(
     return { machineId, machinePlatform: modelInput.view && 'machinePlatform' in modelInput.view ? modelInput.view.machinePlatform : machine?.platform ?? null,
       directory: directory || null, projectKey, agentId };
   }, [machineId, target.draft?.directory, target.draft?.projectKey, metadata, scope, workspaceRefs, modelInput.view, machine?.platform, agentId]);
-  const ids = React.useMemo(() => machineId ? [machineId] : [], [machineId]);
+  const sharedNativeSource = modelInput.bulk?.sharedNativeSource !== false;
+  const ids = React.useMemo(() => machineId && sharedNativeSource ? [machineId] : [], [machineId, sharedNativeSource]);
   const found = useFoundSkillsCache(ids, scope);
   const nativeSkills = React.useMemo(() => {
-    if (!machineId || !agentId) return undefined;
+    if (!machineId || !agentId || !sharedNativeSource) return undefined;
     const catalog = SessionSkillCatalogListResponseV1Schema.safeParse(nativeCatalogInput);
     const items = new Map<string, Readonly<{ name: string; path: string }>>();
     // A Session's published catalog takes precedence over last-known Machine Found facts.
@@ -137,7 +138,7 @@ export function useSessionCapabilitiesDetail(
     const bundled = !machine?.agentDeclarationsById && isBundledAgentId(agentId) ? getAgentCore(agentId)?.skills : null;
     return { items: [...items.values()], canDisable: (declaration ?? bundled)?.nativeDisable === 'supported',
       machineName, agentName: names.agentName(agentId), applyTiming: modelInput.applyState?.applyTiming?.mcp ?? modelInput.view?.applyTiming.mcp ?? { t: 'session_not_running' as const } };
-  }, [machineId, agentId, nativeCatalogInput, found, modelInput.view?.skills.plan, modelInput.view?.applyTiming.mcp,
+  }, [machineId, agentId, sharedNativeSource, nativeCatalogInput, found, modelInput.view?.skills.plan, modelInput.view?.applyTiming.mcp,
     modelInput.applyState?.applyTiming?.mcp, machine?.agentDeclarationsById, machineName, names]);
   const messages = getStorage()(state => target.sessionId && areServerAccountScopesEqual(scope, state.sessionLocalStateScope)
     ? state.sessionMessages[target.sessionId]?.messagesById ?? EMPTY_MESSAGES : EMPTY_MESSAGES);
