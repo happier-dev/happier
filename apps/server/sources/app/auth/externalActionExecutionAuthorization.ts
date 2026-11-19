@@ -27,7 +27,7 @@ import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_GET_ACTION_ID_V1,
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
-import { WORKFLOW_RUN_START_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_START_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
@@ -1489,6 +1489,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         archiveStop: isSessionArchiveStopEffect(binding.actionId, effectActionId),
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
         projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
+        reviewWorkflowStart: binding.actionId === REVIEW_START_ACTION_ID_V1 && effectActionId === WORKFLOW_RUN_START_ACTION_ID_V1,
         projectSessionDefaults: isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, effectActionId),
         registryRead: isRegistryAppUpdateReadEffect(binding, effectActionId),
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
@@ -1512,7 +1513,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = configureBindings || telemetryBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowStart;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -1520,7 +1521,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowStart;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
@@ -3863,8 +3864,12 @@ function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
         'workflow.run.invocations.publish_draft': [...invocationReads, 'invocations.publish_draft'],
         'workflow.run.invocations.complete_review': [...invocationReads, 'invocations.complete_review'],
     };
-    const allowed = Object.hasOwn(purposes, verified.binding.actionId) ? purposes[verified.binding.actionId] : undefined;
-    if (!allowed || verified.effectActionId !== verified.binding.actionId || verified.target.kind !== 'machine') return false;
+    // A Review's declared child keeps the root credential and original target;
+    // its storage purposes are exactly those of the child Workflow start.
+    const actionId = verified.signedChildPurpose.sibling.reviewWorkflowStart ? verified.effectActionId : verified.binding.actionId;
+    const allowed = Object.hasOwn(purposes, actionId) ? purposes[actionId] : undefined;
+    if (!allowed || verified.effectActionId !== actionId
+        || !verified.signedChildPurpose.sibling.reviewWorkflowStart && verified.target.kind !== 'machine') return false;
     if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
     if (proof.method.toUpperCase() !== 'POST' || proof.path !== '/v3/automations/runs/workflow-storage'
         || !proof.body || typeof proof.body !== 'object' || Array.isArray(proof.body)) return false;
@@ -4185,7 +4190,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         if ('grant' in verified.principal && !evaluateApiTokenGrantV1({ grant: verified.principal.grant,
             actionId: verified.binding.actionId, automationId, target: verified.target,
             targetMachineId: verified.binding.machineId }).ok) return refuse('automation_run_now_grant');
-    } else if (verified.binding.actionId.startsWith('workflow.run.') && !admittedReadRootRequesterGet) {
+    } else if ((verified.binding.actionId.startsWith('workflow.run.') || verified.signedChildPurpose.sibling.reviewWorkflowStart)
+        && !admittedReadRootRequesterGet) {
         if (!isWorkflowRunActionHttpPurpose(verified, proof)) return refuse('workflow_run_purpose');
         // Direct and Session-origin Runs use the same requester storage port.
         // Automation workers retain their separate installed-publisher path.

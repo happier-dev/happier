@@ -198,9 +198,9 @@ function deriveExactInvocationRecoveryAvailability(params: Readonly<{
 }
 
 function workflowProjectTarget(context: RunArgs['context']): WorkflowMachineTarget['project'] {
-  return context.externalActionTarget?.kind === 'machine'
+  return context.workflowStartProject ?? (context.externalActionTarget?.kind === 'machine'
     ? context.externalActionTarget.project
-    : undefined;
+    : undefined);
 }
 
 function normalizeProjectTargetForComparison(target: NonNullable<WorkflowMachineTarget['project']>, normalizeAbsolutePath: WorkflowAccountRunActionDeps['normalizeAbsolutePath']) {
@@ -1084,9 +1084,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     // A new Workflow admits its own leaves; the caller's leaf stamp belongs
     // only to dispatch of the original admitted Action.
     const { agentStartWorkDepth: _parentStartDepth, agentStartWorkspaceWrites: _parentWorkspaceWrites,
-      reviewReviewerLaunchInputs: _parentReviewLaunchInputs, ...caller } = args.context;
-    args = { ...args, context: caller };
+      reviewReviewerLaunchInputs: _parentReviewLaunchInputs, workflowStartProject: _workflowStartProject, ...caller } = args.context;
     const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
+    args = { ...args, context: caller };
     if (combined) {
       const reviewedHost = combined.parent.input.machineId;
       if (reviewedHost !== admittedTarget?.machineId) throw workflowError('target_unavailable');

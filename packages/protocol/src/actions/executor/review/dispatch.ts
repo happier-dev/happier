@@ -284,13 +284,16 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         let reviewInput = data as ReviewStartInput;
+        const workflowComposition = requiresReviewWorkflowCompositionV1(reviewInput);
+        const needsWorkflowProject = workflowComposition && reviewReviewerIdsForStartV1(reviewInput).length > 0;
         let initialComparison: ScmComparison | undefined;
         let selectedSource = reviewInput.reviewRound ? undefined : resolveReviewComparisonSourceV1(reviewInput);
         const needsComparison = !reviewInput.reviewRound && Boolean(selectedSource || reviewInput.comparisonId);
         let comparisonCwd = reviewInput.cwd ?? (sessionId && sessionId !== ctx.defaultSessionId ? undefined : ctx.agentStartContext?.baseline.directory);
-        const comparisonTarget = needsComparison
+        const comparisonTarget = needsComparison || needsWorkflowProject
           ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId, executeHostChild) : undefined;
-        if (needsComparison && !comparisonCwd) {
+        comparisonCwd ??= ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.project?.directory : undefined;
+        if ((needsComparison || needsWorkflowProject) && !comparisonCwd) {
           const response = await executeHostChild('scm.status.snapshot', { ...(sessionId ? { sessionId } : {}), detail: 'facts' }, ctx);
           if (!response.ok) return response;
           const status = ScmStatusSnapshotResponseSchema.safeParse(response.result);
@@ -320,7 +323,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const comparisonCapture = reviewInput.comparisonId && selectedSource && comparisonCwd && comparisonTarget
           ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource,
             comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
-        const workflowComposition = requiresReviewWorkflowCompositionV1(reviewInput);
         const reviewers = reviewInput.steps?.flatMap(step => step.reviewers) ?? reviewInput.reviewers;
         const transcriptReviewers = reviewers.filter(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true);
         const profileSelections = reviewers.flatMap((selection, index) => {
@@ -386,8 +388,15 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
           const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, initialComparison, comparisonCapture?.input, transcript?.ok ? transcript.instructions : undefined);
+          // The child Workflow consumes the same resolved Machine/workspace as
+          // this Review; retain the original signed target for every effect.
+          const workflowContext = comparisonTarget && comparisonCwd ? { ...ctx,
+            workflowStartProject: comparisonTarget.project ?? {
+              machineId: comparisonTarget.machineId, directory: comparisonCwd,
+            },
+          } : ctx;
           const started = await executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
-            source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, ctx);
+            source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, workflowContext);
           if (!started.ok) {
             if (!isActionOutcomeUnknownErrorCodeV1(started.errorCode)) {
               await records.settle({ ...reviewRound, outcome: ctx.signal?.aborted ? 'cancelled' : 'failed',

@@ -1,8 +1,14 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import nacl from 'tweetnacl';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { createCliWorkflowRunStorage } from '../../../../../../cli/src/session/actions/workflowRunStorage';
+import { resolveExternalActionServerRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import * as currentMachineInstallation from '../../../../../../cli/src/daemon/identity/currentMachineInstallation';
 import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -23,7 +29,7 @@ describe('installed Session signed lifecycle scope', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true) {
+    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'review.start' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true, sessionTarget = false) {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
@@ -46,20 +52,25 @@ describe('installed Session signed lifecycle scope', () => {
         let publisherCurrent = true;
         const resolveCurrentSessionMachine = async () => publisherCurrent ? machine.id : null;
         const requestId = crypto.randomUUID();
+        const target = sessionTarget ? { kind: 'session' as const, sessionId: root.id }
+            : { kind: 'machine' as const, machineId: machine.id };
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
-            target: { kind: 'machine', machineId: machine.id },
+            target,
             input: actionId === 'discussion.second_opinion.start' ? {
                 intent: 'preview', source: { kind: 'session', message: { kind: 'session',
                     session: { serverId: 'home-1', sessionId: root.id }, messageId: 'answer-1' } },
                 title: 'Review', question: 'Please check', reviewers: [],
                 retry: { creationLocalId: 'create-opinion', quoteLocalId: 'quote-opinion', questionLocalId: 'ask-opinion' },
-            } : { sessionId: grandchild.id, ...(actionId === 'session.open' ? { intent: 'resume' } : {}) } });
+            } : actionId === 'review.start' ? { sessionId: root.id, cwd: '/repo',
+                reviewers: [{ kind: 'session', session: { serverId: 'home-1', sessionId: root.id } }],
+                instructions: 'Review source claims.' }
+                : { sessionId: grandchild.id, ...(actionId === 'session.open' ? { intent: 'resume' } : {}) } });
         // The production issuer and strict signed consumer use a disposable real
         // database. Only live publisher discovery is a process boundary fixture.
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(await auth.mintExternalActionExecutionAuthorization({
             serverIdentityId: await getOrCreateServerIdentityId(), accountId: account.id,
             authentication: { kind: 'account', tokenEpoch: account.tokenEpoch }, actionId,
-            machineId: machine.id, target: { kind: 'machine', machineId: machine.id }, requestId,
+            machineId: machine.id, target, requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             ...(installed ? { sessionActionOrigin: { v: 1 as const,
                 caller: { kind: 'session' as const, sessionId: root.id, starterDepth: 0, turnDepth: 0 },
@@ -91,7 +102,7 @@ describe('installed Session signed lifecycle scope', () => {
                     method, requestId, params, privateKey: keys.secretKey }),
             }, { method, requestId, params, resolveCurrentSessionMachine });
         };
-        return { account, machine, root, child, grandchild, otherRoot, createSession, attach, verify, observe, verifyRequest, verifyStopRpc,
+        return { account, machine, root, child, grandchild, otherRoot, createSession, attach, verify, observe, verifyRequest, verifyStopRpc, authorization, keys,
             retirePublisher: () => { publisherCurrent = false; } };
     }
 
@@ -176,6 +187,52 @@ describe('installed Session signed lifecycle scope', () => {
             f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).not.toBeNull();
         expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}/messages/replies/pending`, undefined,
             f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).toBeNull();
+    });
+
+    it('admits the real Review child Workflow storage adapter under its original Session proof', async () => {
+        const f = await fixture('review.start', false, true);
+        // Replace HTTP and the local installation lookup; retain storage, signing and server admission.
+        const post = vi.spyOn(axios, 'post').mockResolvedValue({ data: null });
+        const installation = vi.spyOn(currentMachineInstallation, 'readCurrentMachineInstallation').mockResolvedValue(null);
+        try {
+            const storage = createCliWorkflowRunStorage({ token: 'unused-daemon-token', serverHttpBaseUrl: 'https://home.test' },
+                async () => null, (context, effectActionId, request) => {
+                    const resolved = resolveExternalActionServerRequestHeaders({ context, effectActionId, ...request,
+                        daemonToken: 'unused-daemon-token', serverIdentityId: f.authorization.binding.serverIdentityId,
+                        installationId: f.machine.installationId!, privateKey: f.keys.secretKey });
+                    if (!resolved.ok) throw new Error(resolved.reason);
+                    return resolved.headers;
+                }, value => typeof value === 'string' && value.trim() ? value.trim() : null);
+            const execute = async (sessionId: string) => {
+                // workflowFamily passes the actual child Action and unchanged context to this factory.
+                await storage.createWorkflowRunStorage({ actionId: 'workflow.run.start', context: {
+                    surface: 'ui', authority: 'present_user', externalActionExecutionAuthorization: f.authorization,
+                    externalActionTarget: { kind: 'session', sessionId },
+                } }).execute({ operation: 'get', runId: crypto.randomUUID() }, { publisherMachineId: f.machine.id });
+                const call = post.mock.calls.at(-1)!;
+                const header = (name: string) => {
+                    const value: unknown = call[2]?.headers?.[name];
+                    if (typeof value !== 'string') throw new Error(`Missing signed header ${name}`);
+                    return value;
+                };
+                expect(header(EXTERNAL_ACTION_EFFECT_ACTION_HEADER)).toBe('workflow.run.start');
+                expect(header(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER)).toBe(encodeExternalActionResolvedTargetV1({ kind: 'session', sessionId }));
+                const refusals: string[] = [];
+                const verified = await verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: header(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER),
+                    effectActionId: header(EXTERNAL_ACTION_EFFECT_ACTION_HEADER),
+                    encodedTarget: header(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER),
+                    machineSignature: header(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER),
+                    method: 'POST', path: new URL(call[0]).pathname, body: call[1],
+                    resolveCurrentSessionMachine: async () => f.machine.id,
+                    onRefusal: phase => refusals.push(phase),
+                });
+                expect(refusals).toEqual(sessionId === f.root.id ? [] : ['resolved_target']);
+                return verified;
+            };
+            expect.soft(await execute(f.root.id)).not.toBeNull();
+            expect(await execute(f.otherRoot.id)).toBeNull();
+        } finally { post.mockRestore(); installation.mockRestore(); }
     });
 
     it('retains the Archive root while admitting only its led Stop preparation effect', async () => {

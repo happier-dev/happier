@@ -16,6 +16,7 @@ export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, is
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const REVIEW_START_ACTION_ID_V1 = 'review.start' as const;
 export const REVIEW_PREPARE_ROUND_ACTION_ID_V1 = 'review.prepare_round' as const;
 export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
 export const REVIEW_NEW_ROUND_ACTION_ID_V1 = 'review.new_round' as const;

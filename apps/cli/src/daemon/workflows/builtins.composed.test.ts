@@ -25,7 +25,7 @@ import { materializeWorkflowSessionReview } from './reviewSessionStep';
 import { buildWorkflowActionContext } from './workflowActionContext';
 import { createWorkflowDetachedExecutionRunStepExecutor, createWorkflowStepExecutorDispatcher } from './executionRunStepExecutor';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
-import { createCoordinatorWorkspaceResolver, verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
+import { createCoordinatorWorkspaceResolver, prepareWorkflowAcceptedWorkspaceTarget, verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
 import { AgentProfile } from '@/agent/executionRuns/profiles/agent/AgentProfile';
 import { ExecutionRunResultContractV1Schema } from '@happier-dev/protocol/execution/runs/resultContractV1';
 import { routeSessionGoalControl } from '@/session/goalControls/sessionGoalControlRouter';
@@ -134,6 +134,7 @@ type Fixtures = {
   commentWrite?: (actionId: string, input: unknown) => Promise<unknown>;
   actionsSettings?: ActionsSettingsV1;
   workflowAction?: ActionExecutorDeps['workflowAction'];
+  prepareWorkspace?: Parameters<typeof createWorkflowAccountRunActionOwner>[0]['prepareWorkspace'];
   reviewSessionAccess?: (observation: number) => boolean;
   freshSessionId?: string;
 };
@@ -183,7 +184,7 @@ function harness(fixtures: Fixtures = {}) {
   const runOwner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account',
     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     normalizeAbsolutePath: path => path.startsWith('/') ? path : null,
-    prepareWorkspace: async ({ projectTarget }) => ({ ok: true, workspaceTarget: { project: { ...projectTarget, checkoutRootPath: projectTarget.directory } } }),
+    prepareWorkspace: fixtures.prepareWorkspace ?? (async ({ projectTarget }) => ({ ok: true, workspaceTarget: { project: { ...projectTarget, checkoutRootPath: projectTarget.directory } } })),
     randomBytes: () => { throw new Error('plain_account_needs_no_keys'); },
     definitions: { get: async () => { throw new Error('unexpected_definition_read'); } },
     resolveRunReportPolicy: async () => ({ preset: 'important' }),
@@ -546,6 +547,26 @@ function harness(fixtures: Fixtures = {}) {
 }
 
 describe('built-ins through accepted materialization and native leaf adapters', () => {
+  it('admits a Session-bound Review Workflow on its resolved workspace without starting a reviewer', async () => {
+    const h = harness({ prepareWorkspace: input => prepareWorkflowAcceptedWorkspaceTarget({ ...input,
+      // Substitute filesystem and SCM inspection only; retain workspace admission.
+      pathIsDirectory: async () => true,
+      inspectLocation: async () => ({ inspection: { rootPath: workspace.directory } }),
+    }) });
+    const result = await h.executeAction('review.start', {
+      sessionId: 'origin', cwd: workspace.directory, scope: 'repository', instructions: 'Review this repository read-only.',
+      reviewers: [{ kind: 'session', session: { serverId: 'home', sessionId: 'origin' } }],
+    }, { surface: 'ui', serverId: 'home', authority: 'present_user', callerPermissionMode: 'read-only',
+      defaultSessionId: 'origin', defaultSessionMachineId: workspace.machineId,
+      externalActionTarget: { kind: 'session', sessionId: 'origin' },
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+      admission: 'created', run: { machineId: workspace.machineId, state: 'running' },
+      reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 },
+    } });
+    expect(h.launches).toEqual([]);
+  });
+
   it('retains the declared Review storage failure without replaying an uncertain Hunt write', async () => {
     const failure: ActionExecuteFailure = { ok: false, errorCode: 'action_failed', error: 'action_failed',
       details: { reasonCode: 'review_record_write_unavailable' }, failureCause: {

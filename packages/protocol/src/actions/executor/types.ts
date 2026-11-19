@@ -937,6 +937,9 @@ export type ActionExecutorContext = Readonly<{
    */
   externalActionTarget?: ExternalActionTargetV1;
 
+  /** Host-resolved placement for an internal Workflow start; the signed Action target remains unchanged. */
+  workflowStartProject?: import('../../workflows/workflowWorkspaceV1.js').WorkflowProjectTargetV1;
+
   /**
    * Disables interception for the one action execution nested directly inside
    * a hook handler. This advisory depth-one bypass is host-owned.
