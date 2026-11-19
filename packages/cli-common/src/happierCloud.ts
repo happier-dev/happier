@@ -9,8 +9,18 @@ export class BuildDefaultProfileError extends Error {
   }
 }
 
+/**
+ * The distributor's profile from the environment. A browser realm without Node's `process` (the hosted
+ * HTML guest bootstrap bundles this module) has none and reads only the baked profile; the literal
+ * `process.env.EXPO_PUBLIC_*` read stays for Expo's inlining.
+ */
+function readBuildDefaultProfileEnv(): string | undefined {
+  if (typeof process === 'undefined') return undefined;
+  return process.env.EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON ?? process.env.HAPPIER_BUILD_DEFAULT_PROFILE_JSON;
+}
+
 export function resolveBuildDefaultProfile(raw: string | undefined =
-  process.env.EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON ?? process.env.HAPPIER_BUILD_DEFAULT_PROFILE_JSON ?? BAKED_BUILD_DEFAULT_PROFILE_JSON,
+  readBuildDefaultProfileEnv() ?? BAKED_BUILD_DEFAULT_PROFILE_JSON,
 ): BuildDefaultProfile {
   if (!raw?.trim()) return {};
   let value: unknown;
