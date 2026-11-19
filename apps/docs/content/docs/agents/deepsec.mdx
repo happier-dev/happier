@@ -86,6 +86,11 @@ invalid export fails visibly; only an explicit valid empty result establishes
 zero findings. Standard investigation does not produce the direct-review Markdown
 report.
 
+DeepSec 2.3.12 receives selected files as a line-separated list and trims each
+entry. Happier refuses filenames containing line breaks or leading or trailing
+whitespace before launching it, so the review cannot silently select a different
+file. Embedded spaces and Unicode filenames remain supported.
+
 ## What Happier can drive
 
 - **Provider model selection** is available for development review Runs under the restrictions above, not as a general DeepSec Session model picker.
