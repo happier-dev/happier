@@ -74,11 +74,14 @@ describe('PostHog manual confirmation over HTTP', () => {
         };
     }
 
-    it.each([401, 403])('classifies HTTP %s as credential refusal without staging', async code => {
+    it.each([[401, 'provider_401'], [403, 'provider_403']] as const)('classifies HTTP %s as credential refusal without staging', async (code, kind) => {
         status = code;
         body = { detail: 'Synthetic credential refused' };
         const f = fixture();
-        expect(await f.submit()).toMatchObject({ status: 'rejected', diagnostic: { code: POSTHOG_ACCOUNT_DIAGNOSTIC_CODES.credentialRejected } });
+        expect(await f.submit()).toMatchObject({ status: 'rejected', diagnostic: {
+            code: POSTHOG_ACCOUNT_DIAGNOSTIC_CODES.credentialRejected,
+            details: { credentialRefreshFailureKind: kind, providerHttpStatus: code },
+        } });
         expect(f.staged.size).toBe(0);
         expect(received).toEqual(['/api/organizations/?limit=1']);
     });

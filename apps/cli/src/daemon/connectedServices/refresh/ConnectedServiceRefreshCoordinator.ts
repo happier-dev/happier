@@ -1,5 +1,6 @@
 import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialRefreshFailureKindV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
@@ -428,12 +429,14 @@ function buildCredentialHealthFromPluginStatus(
       reconnectRequired: false,
     };
   }
-  const details = result.diagnostic?.details;
-  const failureKind = ConnectedServiceCredentialRefreshFailureKindV1Schema.safeParse(
-    details !== null && typeof details === 'object' && !Array.isArray(details)
-      && 'credentialRefreshFailureKind' in details ? details.credentialRefreshFailureKind : undefined,
-  );
-  const failureHealth = failureKind.success ? { lastRefreshFailureKind: failureKind.data } : {};
+  const rawDetails = result.diagnostic?.details;
+  const details = isJsonObject(rawDetails) ? rawDetails : undefined;
+  const failureKind = ConnectedServiceCredentialRefreshFailureKindV1Schema.safeParse(details?.credentialRefreshFailureKind);
+  const providerHttpStatus = ConnectedServiceCredentialHealthV1Schema.shape.providerHttpStatus.safeParse(details?.providerHttpStatus);
+  const diagnosticHealth = {
+    ...(providerHttpStatus.success && providerHttpStatus.data !== undefined ? { providerHttpStatus: providerHttpStatus.data } : {}),
+    ...(providerErrorCode ? { providerErrorCode } : {}),
+  };
   if (
     result.status === 'reconnectRequired'
     || result.status === 'rejected'
@@ -442,8 +445,8 @@ function buildCredentialHealthFromPluginStatus(
       v: 1,
       status: 'needs_reauth',
       reconnectRequired: true,
-      ...failureHealth,
-      ...(providerErrorCode ? { providerErrorCode } : {}),
+      lastRefreshFailureKind: failureKind.success ? failureKind.data : 'unknown',
+      ...diagnosticHealth,
     };
   }
   // Local expiry is recoverable by refresh; it is not a provider rejection.
@@ -451,8 +454,8 @@ function buildCredentialHealthFromPluginStatus(
     v: 1,
     status: 'refresh_failed_retryable',
     reconnectRequired: false,
-    ...failureHealth,
-    ...(providerErrorCode ? { providerErrorCode } : {}),
+    ...(failureKind.success ? { lastRefreshFailureKind: failureKind.data } : {}),
+    ...diagnosticHealth,
   };
 }
 
@@ -462,19 +465,12 @@ function buildCredentialHealthFromPluginRefresh(
 ): ConnectedServiceCredentialHealthV1 {
   const health = buildCredentialHealthFromPluginStatus(settlement.result);
   if (settlement.status === 'unchanged') return health;
-  const details = settlement.result.diagnostic?.details;
-  const providerHttpStatus = ConnectedServiceCredentialHealthV1Schema.shape.providerHttpStatus.safeParse(
-    details !== null && typeof details === 'object' && !Array.isArray(details)
-      && 'providerHttpStatus' in details ? details.providerHttpStatus : undefined,
-  );
   return {
     ...health,
     lastRefreshAttemptAt: now,
     ...(settlement.status === 'refreshed'
       ? { lastRefreshSuccessAt: now }
       : { lastRefreshFailureAt: now }),
-    ...(providerHttpStatus.success && providerHttpStatus.data !== undefined
-      ? { providerHttpStatus: providerHttpStatus.data } : {}),
   };
 }
 

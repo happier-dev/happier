@@ -286,6 +286,19 @@ describe('ConnectedServiceRefreshCoordinator qualified status integration', () =
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it('persists an unknown reason when a plugin requires reconnection without a typed reason', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"message":"Bad credentials"}', { status: 401 })));
+    const harness = await createHarness({ github: true });
+    await harness.coordinator.tickOnce();
+
+    const { health } = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(
+      harness.mutateCredentialHealth.mock.lastCall?.[0].patch,
+    );
+    expect(health.status).toBe('needs_reauth');
+    expect(health.lastRefreshFailureKind).toBe('unknown');
+    expect(health.providerHttpStatus).toBeUndefined();
+  });
+
   it.each([200, 403])('checks a changed GitHub credential once and makes zero idle /user requests after %s', async status => {
     let clock = now;
     let revision = credentialRevision;

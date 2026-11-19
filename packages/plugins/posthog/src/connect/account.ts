@@ -88,7 +88,7 @@ type PosthogConfirmation =
     | Readonly<{ status: 'confirmed'; origin: string }>
     | Readonly<{
         status: 'rejected';
-        diagnostic: ReturnType<typeof diagnostic>;
+        diagnostic: NonNullable<PluginConnectedAccountHealthResult['diagnostic']>;
     }>
     | Readonly<{
         status: 'unavailable';
@@ -138,10 +138,16 @@ async function confirmPosthogCredential(
     if (response.status === 401 || response.status === 403) {
         return {
             status: 'rejected',
-            diagnostic: diagnostic(
-                POSTHOG_ACCOUNT_DIAGNOSTIC_CODES.credentialRejected,
-                'PostHog rejected this personal API key for the requested read scopes.',
-            ),
+            diagnostic: {
+                ...diagnostic(
+                    POSTHOG_ACCOUNT_DIAGNOSTIC_CODES.credentialRejected,
+                    'PostHog rejected this personal API key for the requested read scopes.',
+                ),
+                details: {
+                    credentialRefreshFailureKind: response.status === 401 ? 'provider_401' : 'provider_403',
+                    providerHttpStatus: response.status,
+                },
+            },
         };
     }
     if (response.status !== 200 || !hasEnumerableOrganization(response.body)) {

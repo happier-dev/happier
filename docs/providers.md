@@ -2508,9 +2508,11 @@ is `needs_reauth`. The server list owner supplies the same field to account list
 and the Account profile; consumers do not classify provider errors themselves.
 The field reuses the Protocol refresh-failure enum. Current reauthentication
 producers emit `invalid_grant`, `invalid_client`, `provider_401`, `provider_403`
-and `missing_refresh_token`; unclassified token-endpoint rejections emit `unknown`.
-Absence means no observed cause, including legacy
-authentication modes requiring reconnection. A connected account does not expose
+and `missing_refresh_token`. An explicit plugin reconnect result without a typed
+cause uses `unknown`. PostHog status checks record `provider_401` or `provider_403`
+and the corresponding HTTP status when the provider refuses the credential.
+Unsupported legacy authentication modes and unrecognized legacy metadata can
+require reconnection without an observed failure reason. A connected account does not expose
 a retained historical failure as `statusReason`. These categories do not establish whether a token
 expired, was revoked, or was signed out elsewhere. Pool exclusions and individual
 authentication-attempt errors remain separate facts, not account sign-out causes.
