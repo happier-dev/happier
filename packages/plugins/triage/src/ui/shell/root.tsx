@@ -1832,15 +1832,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * The destination's two views (owner ruling Q1): Tasks and PRs & Issues are one lens apart. The page's switch and
    * the agent's commands apply the same mounted operation, so a view chosen either way settles the same location.
    */
-  const pageViewOperations = React.useMemo(() => {
+  const pageViewOperations = React.useMemo<Record<'tasks' | 'prs', Extract<TriageMountedUiOperationV1, { kind: 'setLens' }>>>(() => {
     const { tasks: _tasks, ...prsFilters } = surface.filters;
     return {
       tasks: { kind: 'setLens', query: surface.search.query, filters: { ...surface.filters, tasks: taskAudience ?? 'mine' },
         order: surface.order, ...(surface.sort === undefined ? {} : { sort: surface.sort }),
-        smartPolicy: surface.smartPolicy } satisfies TriageMountedUiOperationV1,
+        smartPolicy: surface.smartPolicy },
       prs: { kind: 'setLens', query: surface.search.query, filters: prsFilters, order: surface.order,
         ...(surface.sort === undefined ? {} : { sort: surface.sort }),
-        smartPolicy: surface.smartPolicy } satisfies TriageMountedUiOperationV1,
+        smartPolicy: surface.smartPolicy },
     };
   }, [surface.filters, surface.order, surface.sort, surface.search.query, surface.smartPolicy, taskAudience]);
   const mountedCommands = React.useMemo(() => {

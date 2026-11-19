@@ -18,7 +18,7 @@ import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
  * row is stored under and there is one owner of it.
  */
 export function indexTriageAdmittedSourcesV1<T extends {
-    contributor: { pluginId: string; contributionId: string }; descriptor: unknown;
+    contributor: { pluginId: string; contributionId: string }; descriptor?: unknown;
 }>(admitted: readonly T[]): ReadonlyMap<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }> {
     const byQualifiedId = new Map<string, Omit<T, 'descriptor'> & { descriptor: TriageSourceDescriptorV1 }>();
     for (const contribution of admitted) {

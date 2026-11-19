@@ -500,9 +500,10 @@ export function createTriageRouteWriteQueueV1(
   let pending: PendingTriageRouteWriteV1 | null = null;
   let running = false;
   let disposed = false;
-  let activeWrite: Readonly<{ controller: AbortController; lens: TriageRouteLensV1 }> | null = null;
+  type ActiveWrite = Readonly<{ controller: AbortController; lens: TriageRouteLensV1 }>;
+  let activeWrite: ActiveWrite | null = null;
   /** The in-flight write an outside move overtook; it finishes, but no longer speaks for this mount. */
-  let retiredWrite: typeof activeWrite = null;
+  let retiredWrite: ActiveWrite | null = null;
   let settlers: Array<() => void> = [];
   /**
    * The locations this queue asked the host for, oldest first, since the host last moved on its own. The host can
