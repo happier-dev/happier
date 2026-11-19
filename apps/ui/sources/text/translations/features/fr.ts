@@ -1286,7 +1286,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: 'Retour à vos comptes connectés…',
         pasteBody: 'Collez-le sur l’écran de connexion où vous avez commencé. Il ne fonctionne qu’à cet endroit, une seule fois.',
         invalidBody: 'Recommencez depuis l’écran de connexion.',
-        unfinishedBody: 'Revenez à l’écran de connexion pour continuer ou collez-y cette réponse.',
+        unfinishedBody: 'Revenez à l’écran de connexion pour continuer ou collez-y ce code.',
         openConnections: 'Ouvrir les comptes connectés',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "fr">;

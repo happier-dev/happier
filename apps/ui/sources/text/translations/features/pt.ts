@@ -1282,7 +1282,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: 'A voltar às suas contas ligadas…',
         pasteBody: 'Cole-o no ecrã de ligação onde iniciou a sessão. Só funciona ali, uma vez.',
         invalidBody: 'Inicie a sessão novamente a partir do ecrã de ligação.',
-        unfinishedBody: 'Volte ao ecrã de ligação para continuar a iniciar a sessão ou cole esta resposta ali.',
+        unfinishedBody: 'Volte ao ecrã de ligação para continuar a iniciar a sessão ou cole este código ali.',
         openConnections: 'Abrir contas ligadas',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "pt">;

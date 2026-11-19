@@ -1284,7 +1284,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: 'Tornant als teus comptes connectats…',
         pasteBody: 'Enganxa’l a la pantalla de connexió on has començat a iniciar la sessió. Només funciona allà, una vegada.',
         invalidBody: 'Torna a iniciar la sessió des de la pantalla de connexió.',
-        unfinishedBody: 'Torna a la pantalla de connexió per continuar iniciant la sessió o enganxa-hi aquest retorn.',
+        unfinishedBody: 'Torna a la pantalla de connexió per continuar iniciant la sessió o enganxa-hi aquest codi.',
         openConnections: 'Obre els comptes connectats',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "ca">;

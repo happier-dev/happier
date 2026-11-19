@@ -1282,7 +1282,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: 'Zurück zu deinen verbundenen Konten…',
         pasteBody: 'Füge ihn auf der Verbindungsseite ein, auf der du die Anmeldung gestartet hast. Er funktioniert nur dort, einmal.',
         invalidBody: 'Starte die Anmeldung erneut auf der Verbindungsseite.',
-        unfinishedBody: 'Kehre zur Verbindungsseite zurück, um die Anmeldung fortzusetzen, oder füge dort diese Rückgabe ein.',
+        unfinishedBody: 'Kehre zur Verbindungsseite zurück, um die Anmeldung fortzusetzen, oder füge dort diesen Code ein.',
         openConnections: 'Verbundene Konten öffnen',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "de">;

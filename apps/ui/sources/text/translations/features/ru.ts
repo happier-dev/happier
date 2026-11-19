@@ -1265,7 +1265,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: 'Возвращаемся к подключённым аккаунтам…',
         pasteBody: 'Вставьте его на экране подключения, где вы начали вход. Он работает только там и только один раз.',
         invalidBody: 'Начните вход заново на экране подключения.',
-        unfinishedBody: 'Вернитесь на экран подключения, чтобы продолжить вход, или вставьте там этот ответ.',
+        unfinishedBody: 'Вернитесь на экран подключения, чтобы продолжить вход, или вставьте там этот код.',
         openConnections: 'Открыть подключённые аккаунты',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "ru">;

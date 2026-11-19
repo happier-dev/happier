@@ -6,6 +6,7 @@ import type { NavigationProp } from '@react-navigation/native';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -104,7 +105,7 @@ function readBrowser(): ConnectedAccountOAuthCallbackInput['browser'] {
   };
 }
 
-type CallbackView = Readonly<{ kind: 'working' }> | ConnectedAccountOAuthCallbackOutcome;
+export type ConnectedAccountOAuthCallbackView = Readonly<{ kind: 'working' }> | ConnectedAccountOAuthCallbackOutcome;
 
 export type ConnectedAccountOAuthCallbackCopy = Readonly<{
   finishing: string;
@@ -123,7 +124,7 @@ export type ConnectedAccountOAuthCallbackCopy = Readonly<{
   openConnections: string;
 }>;
 
-function readDefaultCopy(): ConnectedAccountOAuthCallbackCopy {
+export function readConnectedAccountOAuthCallbackCopy(): ConnectedAccountOAuthCallbackCopy {
   return {
     finishing: t('capabilities.connectedAccountCallback.finishing'),
     closeTitle: t('capabilities.connectedAccountCallback.closeTitle'),
@@ -145,7 +146,7 @@ function readDefaultCopy(): ConnectedAccountOAuthCallbackCopy {
 /** One relay/recovery page for both public callback protocols. */
 export function ConnectedAccountOAuthCallbackPage({
   protocol = CONNECTED_ACCOUNT_OAUTH_CALLBACK_PROTOCOL,
-  copy = readDefaultCopy(),
+  copy = readConnectedAccountOAuthCallbackCopy(),
   testIdPrefix = 'connected-account-oauth-callback',
   openConnectionsPath = '/settings/connected-services',
   invalidClientCopy,
@@ -163,7 +164,7 @@ export function ConnectedAccountOAuthCallbackPage({
   const settingsScope = useAccountSettingsScope();
   const scope = auth.isAuthenticated && settingsScope ? settingsScope : null;
   const execution = useMountedActionExecution(scope);
-  const [view, setView] = React.useState<CallbackView>({ kind: 'working' });
+  const [view, setView] = React.useState<ConnectedAccountOAuthCallbackView>({ kind: 'working' });
   const writeClipboard = useClipboardWrite(scope, { enabled: view.kind === 'paste' || view.kind === 'unfinished' });
   const [copied, setCopied] = React.useState(false);
   const started = React.useRef(false);
@@ -214,18 +215,49 @@ export function ConnectedAccountOAuthCallbackPage({
           router.replace(outcome.returnTo as never);
       })
       // Anything that stops the completion here leaves the answer with the person, to paste.
-      .catch(() => setView({ kind: 'paste', callbackUrl }));
+      .catch(() => setView({ kind: 'paste', answer: callbackUrl }));
   }, [callbackUrl, execution, router, scope, protocol]);
 
   const openConnections = React.useCallback(
     () => router.replace(openConnectionsPath as never),
     [router, openConnectionsPath],
   );
-  const copyCallback = React.useCallback(async () => {
+  const copyAnswer = React.useCallback(async () => {
     if (view.kind !== 'paste' && view.kind !== 'unfinished') return;
-    setCopied(await writeClipboard(view.callbackUrl));
+    setCopied(await writeClipboard(view.answer));
   }, [view, writeClipboard]);
 
+  return (
+    <ConnectedAccountOAuthCallbackStateView
+      view={view}
+      copy={copy}
+      testIdPrefix={testIdPrefix}
+      invalidClientCopy={invalidClientCopy}
+      copied={copied}
+      onCopy={copyAnswer}
+      onOpenConnections={openConnections}
+      canOpenConnectionsWhenInvalid={auth.isAuthenticated}
+    />
+  );
+}
+
+/**
+ * What the callback page shows for each outcome. Where the answer goes back by hand, the answer itself is
+ * on the page (the value Copy writes), so the person sees what they carry, as on a provider's own
+ * sign-in code page.
+ */
+export function ConnectedAccountOAuthCallbackStateView(props: Readonly<{
+  view: ConnectedAccountOAuthCallbackView;
+  copy: ConnectedAccountOAuthCallbackCopy;
+  testIdPrefix: string;
+  invalidClientCopy?: Readonly<{ title: string; body: string }>;
+  copied: boolean;
+  onCopy: () => unknown;
+  onOpenConnections: () => unknown;
+  canOpenConnectionsWhenInvalid: boolean;
+}>) {
+  const { view, copy, testIdPrefix, invalidClientCopy } = props;
+  const copyLabel = props.copied ? copy.copied : copy.copyCode;
   let content: React.ReactNode;
   switch (view.kind) {
     case 'working':
@@ -265,12 +297,11 @@ export function ConnectedAccountOAuthCallbackPage({
           kind="empty"
           title={copy.pasteTitle}
           reason={copy.pasteBody}
+          body={<CallbackAnswer testID={testIdPrefix + ':answer'} answer={view.answer} />}
           action={{
             testID: testIdPrefix + ':copy',
-            label: copied
-              ? copy.copied
-              : copy.copyCode,
-            onPress: copyCallback,
+            label: copyLabel,
+            onPress: props.onCopy,
           }}
         />
       );
@@ -283,10 +314,10 @@ export function ConnectedAccountOAuthCallbackPage({
           title={copy.invalidTitle}
           reason={copy.invalidBody}
           action={
-            auth.isAuthenticated
+            props.canOpenConnectionsWhenInvalid
               ? {
                   label: copy.openConnections,
-                  onPress: openConnections,
+                  onPress: props.onOpenConnections,
                 }
               : undefined
           }
@@ -301,14 +332,15 @@ export function ConnectedAccountOAuthCallbackPage({
           kind="warning"
           title={invalidClient ? invalidClientCopy!.title : copy.unfinishedTitle}
           reason={invalidClient ? invalidClientCopy!.body : copy.unfinishedBody}
+          body={<CallbackAnswer testID={testIdPrefix + ':answer'} answer={view.answer} />}
           action={{
             label: copy.openConnections,
-            onPress: openConnections,
+            onPress: props.onOpenConnections,
           }}
           secondaryAction={{
             testID: testIdPrefix + ':copy',
-            label: copied ? copy.copied : copy.copyCode,
-            onPress: copyCallback,
+            label: copyLabel,
+            onPress: props.onCopy,
           }}
         />
       );
@@ -316,6 +348,15 @@ export function ConnectedAccountOAuthCallbackPage({
     }
   }
   return <View style={styles.page}>{content}</View>;
+}
+
+/** The answer in the code face, wrapping at any width; it is selectable, and Copy writes exactly this. */
+function CallbackAnswer(props: Readonly<{ answer: string; testID: string }>) {
+  return (
+    <View testID={props.testID}>
+      <CodeBlockView code={props.answer} showHeaderRow={false} wrap />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({

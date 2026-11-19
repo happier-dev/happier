@@ -25,7 +25,7 @@ describe('MCP OAuth callback controller', () => {
     it('returns the full callback, not a raw code, to signed-out paste presentation', async () => {
         const replaceUrl = vi.fn();
         expect(await completeMcpOAuthCallback({ callbackUrl, browser: { replaceUrl, close() {} } }))
-            .toEqual({ kind: 'paste', callbackUrl });
+            .toEqual({ kind: 'paste', answer: callbackUrl });
         expect(replaceUrl).toHaveBeenCalledWith('/oauth/mcp/callback');
     });
 

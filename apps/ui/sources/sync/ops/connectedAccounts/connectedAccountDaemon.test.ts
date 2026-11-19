@@ -240,7 +240,7 @@ describe('connected-account daemon machine RPC', () => {
         expect(readRequestId).toEqual(expect.any(String));
         expect(outcome).toEqual(result === 'connected' || result === 'alreadyConnected'
             ? { kind: 'connected', returnTo: '/settings/connected-services' }
-            : { kind: 'unfinished', callbackUrl, response: result === 'stale'
+            : { kind: 'unfinished', answer: callbackUrl, response: result === 'stale'
                 ? { requestId: readRequestId, status: 'rejected', attemptId: 'attempt.with.dots', code: 'attempt_expired' }
                 : { requestId: readRequestId, status: 'awaitingOAuth', attemptId: 'attempt.with.dots', callbackUrl: 'https://other.example/callback' } });
         const issued = outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)

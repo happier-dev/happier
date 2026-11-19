@@ -12,7 +12,7 @@ import { renderUsageFrame } from './usageFrames';
 /**
  * Dev-only preview of the Connected services surfaces (lab `csvc`) fed by fixtures through the real
  * components and model owners, for fidelity pairs of states a dev Home without connected accounts
- * cannot show. `?frame=<id>`: collection (C1, C2, C1v, D1, D2, MT), pool, usage, set-up and Provider usage (PU1–PU5) and add-account (AA1–AA3) and Connect-a-service (CS1, CS2) frames live in their
+ * cannot show. `?frame=<id>`: collection (C1, C2, C1v, D1, D2, MT), pool, usage, set-up (incl. the OAuth callback CB1–CB3) and Provider usage (PU1–PU5) and add-account (AA1–AA3) and Connect-a-service (CS1, CS2) frames live in their
  * slices' files. Never linked from product surfaces.
  */
 export function ConnectedServicesSpecimen(props: Readonly<{ frame: string | null }>) {

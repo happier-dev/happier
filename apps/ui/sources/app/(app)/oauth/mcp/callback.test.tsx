@@ -447,6 +447,17 @@ describe('/oauth/connected-account/callback', () => {
     expect(isPublicRouteForUnauthenticated(['(app)', 'oauth', 'mcp', 'callback'])).toBe(true);
   });
 
+  it('shows the code it copies: code#state when the callback carries no issuer', async () => {
+    install();
+    browser.location = { search: '?code=code-1&state=attempt-1.nonce' };
+    const screen = await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
+    await settle(screen, 'connected-account-oauth-callback:answer');
+    expect(screen.getTextContent()).toContain('code-1#attempt-1.nonce');
+    expect(screen.getTextContent()).not.toContain(genericCallbackUrl);
+    await screen.pressByTestIdAsync('connected-account-oauth-callback:copy');
+    expect(boundary.clipboard).toHaveBeenCalledWith('code-1#attempt-1.nonce');
+  });
+
   it('strips the generic query before waiting for an Action binding', async () => {
     install();
     signIn();

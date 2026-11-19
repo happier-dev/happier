@@ -43,9 +43,10 @@ export type ConnectedAccountOAuthCallbackInput = Readonly<{
 export type ConnectedAccountOAuthCallbackOutcome =
     | Readonly<{ kind: 'invalid' }>
     | Readonly<{ kind: 'opener' }>
-    | Readonly<{ kind: 'paste'; callbackUrl: string }>
+    /** `answer`: what the person carries to the sign-in that started this, shown and copied as is. */
+    | Readonly<{ kind: 'paste'; answer: string }>
     | Readonly<{ kind: 'connected'; returnTo: string }>
-    | Readonly<{ kind: 'unfinished'; callbackUrl: string; response: ConnectedAccountAttemptResponse }>;
+    | Readonly<{ kind: 'unfinished'; answer: string; response: ConnectedAccountAttemptResponse }>;
 
 export type ConnectedAccountOAuthCallbackController = Readonly<{
     complete(account?: ConnectedAccountOAuthCallbackInput['account']): Promise<ConnectedAccountOAuthCallbackOutcome>;
@@ -68,6 +69,18 @@ export function completeConnectedAccountOAuthCallback(input: ConnectedAccountOAu
     return createConnectedAccountOAuthCallbackController(input, protocol).complete(input.account);
 }
 
+/**
+ * The answer as the Connect sheet's paste field reads it: the shared parser's `code#state` when that holds
+ * the whole answer (it reads back to the same code and state, and there is no issuer to carry), otherwise
+ * the complete callback.
+ */
+function readPasteableAnswer(callbackUrl: string, response: ReturnType<typeof parseOauthAuthorizationResponse>): string {
+    if (response.kind !== 'callback' || !response.code || !response.state || response.error || response.iss !== undefined) return callbackUrl;
+    const compact = `${response.code}#${response.state}`;
+    const reread = parseOauthAuthorizationResponse({ input: compact });
+    return reread.kind === 'codeState' && reread.code === response.code && reread.state === response.state ? compact : callbackUrl;
+}
+
 async function completeCapturedCallback(
     input: Omit<ConnectedAccountOAuthCallbackInput, 'account'>,
     protocol: ConnectedAccountOAuthCallbackProtocol,
@@ -80,7 +93,8 @@ async function completeCapturedCallback(
     const separator = response.state.lastIndexOf('.');
     if (separator <= 0 || separator === response.state.length - 1) return { kind: 'invalid' };
     const attemptId = response.state.slice(0, separator);
-    const paste = { kind: 'paste' as const, callbackUrl: input.callbackUrl };
+    const answer = readPasteableAnswer(input.callbackUrl, response);
+    const paste = { kind: 'paste' as const, answer };
     const origin = new URL(protocol.callbackUrl).origin;
     if (input.browser?.opener) {
         if (input.browser.opener.origin !== origin) return paste;
@@ -111,7 +125,7 @@ async function completeCapturedCallback(
     assertCurrent();
     if (settled.status !== 'connected' || settled.attemptId !== attemptId || (protocol.service
         && (settled.account.service.pluginId !== protocol.service.pluginId || settled.account.service.localId !== protocol.service.localId))) {
-        return { kind: 'unfinished', callbackUrl: input.callbackUrl, response: settled };
+        return { kind: 'unfinished', answer, response: settled };
     }
     const { normalizeInternalReturnPath } = await import('@/utils/path/routeUtils');
     assertCurrent();

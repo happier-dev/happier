@@ -19,6 +19,11 @@ import type {
     ConnectedServiceSetupTarget,
 } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupPanel';
 import { ConnectedServicesConnectMore } from '@/components/settings/connectedServices/setup/ConnectedServicesConnectMore';
+import {
+    ConnectedAccountOAuthCallbackStateView,
+    readConnectedAccountOAuthCallbackCopy,
+    type ConnectedAccountOAuthCallbackView,
+} from '@/components/settings/connectedServices/setup/ConnectedAccountOAuthCallbackPage';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -67,6 +72,10 @@ export function renderSetupFrame(frame: string): React.ReactNode | null {
         case 'H2': return <HomeFrame stage="rest" />;
         case 'H2c': return <HomeFrame stage="open" />;
         case 'H2b': return <HomeFrame stage="after" />;
+        case 'CB1': return <CallbackFrame view={{ kind: 'paste', answer: `${CALLBACK_CODE}#${CALLBACK_STATE}` }} />;
+        case 'CB2': return <CallbackFrame view={{ kind: 'paste', answer: `${CALLBACK_URL}?code=${CALLBACK_CODE}&state=${CALLBACK_STATE}&iss=https%3A%2F%2Fvercel.com` }} />;
+        case 'CB3': return <CallbackFrame view={{ kind: 'unfinished', answer: `${CALLBACK_CODE}#${CALLBACK_STATE}`,
+            response: { status: 'rejected', attemptId: CALLBACK_ATTEMPT, code: 'attempt_expired' } }} />;
         default: return null;
     }
 }
@@ -238,6 +247,21 @@ function SetupStatesFrame() {
                 </View>
             </ItemGroup>
         </ItemList>
+    );
+}
+
+const CALLBACK_ATTEMPT = '8f3c2a91-4b7e-4d2a-9c1f-6e5b3a7d0c42';
+const CALLBACK_CODE = 'Ab9xQ7mK2pLs4V8nT3wR';
+const CALLBACK_STATE = `${CALLBACK_ATTEMPT}.kq3V9xLm2pR7sT1wY4zA8bC6dE0fG5hJ1kN3mP9qS2u`;
+const CALLBACK_URL = 'https://app.happier.dev/oauth/connected-account/callback';
+
+/** CB1–CB3: the OAuth callback page when the answer goes back by hand (code#state, the whole callback, unfinished). */
+function CallbackFrame(props: Readonly<{ view: ConnectedAccountOAuthCallbackView }>) {
+    const [copied, setCopied] = React.useState(false);
+    return (
+        <ConnectedAccountOAuthCallbackStateView view={props.view} copy={readConnectedAccountOAuthCallbackCopy()}
+            testIdPrefix="connected-account-oauth-callback" copied={copied} onCopy={() => setCopied(true)}
+            onOpenConnections={noop} canOpenConnectionsWhenInvalid />
     );
 }
 

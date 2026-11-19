@@ -14,7 +14,7 @@ export const connectedAccountCallbackTranslations = {
         connectedBody: 'Taking you back to your connected accounts…',
         pasteBody: 'Paste it on the connection screen where you started signing in. It only works there, once.',
         invalidBody: 'Start signing in again from the connection screen.',
-        unfinishedBody: 'Return to the connection screen to continue signing in, or paste this callback there.',
+        unfinishedBody: 'Return to the connection screen to continue signing in, or paste this code there.',
         openConnections: 'Open connected accounts',
     }),
 } satisfies Pick<Record<Locale, CallbackCopy>, 'en'>;

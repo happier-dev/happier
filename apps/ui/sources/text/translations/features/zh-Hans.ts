@@ -1243,7 +1243,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: '正在返回已连接的账户…',
         pasteBody: '请粘贴到开始登录的连接页面。只能在那里使用一次。',
         invalidBody: '请从连接页面重新开始登录。',
-        unfinishedBody: '返回连接页面继续登录，或在那里粘贴此回调。',
+        unfinishedBody: '返回连接页面继续登录，或在那里粘贴此代码。',
         openConnections: '打开已连接的账户',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "zhHans">;

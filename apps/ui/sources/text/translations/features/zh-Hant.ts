@@ -1244,7 +1244,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: '正在返回已連接的帳戶…',
         pasteBody: '請貼到開始登入的連接頁面。只能在那裡使用一次。',
         invalidBody: '請從連接頁面重新開始登入。',
-        unfinishedBody: '返回連接頁面繼續登入，或在那裡貼上此回呼。',
+        unfinishedBody: '返回連接頁面繼續登入，或在那裡貼上此代碼。',
         openConnections: '開啟已連接的帳戶',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "zhHant">;

@@ -1260,7 +1260,7 @@ const connectedAccountCallbackTranslations = {
         connectedBody: '接続済みアカウントに戻っています…',
         pasteBody: 'サインインを開始した接続画面に貼り付けてください。その画面で一度だけ使用できます。',
         invalidBody: '接続画面からサインインをやり直してください。',
-        unfinishedBody: '接続画面に戻ってサインインを続けるか、この応答を貼り付けてください。',
+        unfinishedBody: '接続画面に戻ってサインインを続けるか、このコードを貼り付けてください。',
         openConnections: '接続済みアカウントを開く',
     }),
 } as const satisfies Pick<Record<Shared_connectedAccountCallbackTranslations.Locale, Shared_connectedAccountCallbackTranslations.CallbackCopy>, "ja">;
