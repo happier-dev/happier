@@ -215,6 +215,25 @@ it('says nothing is shared yet and that no first task is suggested', async () =>
   ).not.toBeNull();
 });
 
+it('commits the Team header and observed repository on the first return to New members', async () => {
+  const { screen, serverId, team } = await renderNewMembers([web], true);
+  const repository = 'team-new-members-repository:source-web';
+  await waitForHomeGovernance(() => expect(screen.findByTestId(repository)).not.toBeNull());
+  await screen.update(<ModalProvider />);
+
+  const committed: { text: string; repository: boolean }[] = [];
+  await screen.update(<ModalProvider>
+    <React.Profiler id="new-members-return" onRender={() => committed.push({
+      text: screen.getTextContent(),
+      repository: screen.findHostByTestId(repository) !== null,
+    })}>
+      <TeamNewMembersScreen serverId={serverId} teamId="team-1" />
+    </React.Profiler>
+  </ModalProvider>);
+  expect(committed[0]).toMatchObject({ text: expect.stringContaining(team.name), repository: true });
+  await screen.unmount();
+});
+
 it('keeps hydrated empty sections visible while the Sources refetch after a Team change', async () => {
   const { screen, serverId } = await renderNewMembers([], true);
   await waitForHomeGovernance(() => expect(screen.findByTestId('team-new-members-repositories-empty')).not.toBeNull());

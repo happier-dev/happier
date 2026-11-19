@@ -7,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { readCurrentServerCredentialAccountScopeLifetime } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 
@@ -27,13 +28,14 @@ export function TeamNewMembersSources(
   const { binding, resolution } = useServerCredentialAccountScopeBinding(
     scope.serverId,
   );
-  // Only the exact Account this page was opened for may read; another Account on the Home waits.
+  const owner = binding ?? (resolution.kind === 'resolving'
+    ? readCurrentServerCredentialAccountScopeLifetime(scope.serverId) : null);
   const lifetime =
-    binding && areServerAccountScopesEqual(binding.scope, scope)
-      ? binding
+    owner?.isCurrent() && areServerAccountScopesEqual(owner.scope, scope)
+      ? owner
       : null;
   const references = useTeamSetupAuthoringReferences(scope, team.id, {
-    enabled: lifetime !== null,
+    enabled: lifetime !== null && lifetime === binding,
     lifetime,
   });
   const { rows, controller } = references;

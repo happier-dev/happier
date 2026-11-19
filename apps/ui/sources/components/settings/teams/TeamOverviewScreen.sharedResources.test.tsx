@@ -86,6 +86,26 @@ afterEach(() => {
 });
 
 describe('Team overview: Shared with this Team', () => {
+  it('commits the Team header and observed shared rows on the first return from Team Settings', async () => {
+    const serverId = await addHome([{ kind: 'machines', status: 'available', count: 2 }]);
+    const { TeamSettingsScreen } = await import('./TeamSettingsScreen');
+    const overview = () => <TeamOverviewScreen serverId={serverId} teamId="team-1" />;
+    const screen = await renderScreen(overview());
+    const sharedRow = 'team-overview-shared:machines';
+    await vi.waitFor(() => expect(ids(screen)).toContain(sharedRow));
+
+    await screen.update(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-settings-name-fact'));
+
+    const committedIds: string[][] = [];
+    await screen.update(<React.Profiler id="teams-return" onRender={() => committedIds.push(ids(screen))}>
+      {overview()}
+    </React.Profiler>);
+    expect(committedIds[0]).toEqual(expect.arrayContaining(['team-overview-identity', sharedRow]));
+    expect(committedIds.flat()).not.toContain('team-loading');
+    await screen.unmount();
+  });
+
   it('lists each shared kind once with its count, opens each kind list, and reads no resource pages', async () => {
     const serverId = await addHome([
       { kind: 'credentials', status: 'available', count: 4 },

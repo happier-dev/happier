@@ -45,7 +45,7 @@ export type TeamViewState =
 const UNOBSERVED: TeamViewState = Object.freeze({ kind: 'unobserved' as const });
 const LOADING: TeamViewState = Object.freeze({ kind: 'loading' as const });
 
-export function resolveTeamViewState(snapshot: TeamSnapshot | null | undefined): TeamViewState {
+export function resolveTeamViewState(snapshot: TeamSnapshot | null | undefined, credentialBound = true): TeamViewState {
     if (!snapshot) return UNOBSERVED;
 
     if (!snapshot.data) {
@@ -69,7 +69,7 @@ export function resolveTeamViewState(snapshot: TeamSnapshot | null | undefined):
         // read. Only an actual failed refresh warrants the last-known-data warning.
         stale: snapshot.stale && snapshot.error !== null,
         lastObservedAt: snapshot.lastObservedAt,
-        mutationsAvailable: !snapshot.stale && snapshot.reachability === 'reachable',
+        mutationsAvailable: credentialBound && !snapshot.stale && snapshot.reachability === 'reachable',
         archived: snapshot.data.archivedAt !== null,
         error: snapshot.error,
     });

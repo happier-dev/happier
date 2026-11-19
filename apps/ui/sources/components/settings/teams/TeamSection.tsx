@@ -149,8 +149,9 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const binding = useTeamBinding(props.serverId, props.teamId);
-    const scopeKey = binding.kind === 'bound'
-        ? serverAccountScopedTeamKey(binding.scope, binding.address)
+    const projection = binding.kind === 'bound' ? binding : binding.kind === 'resolving' ? binding.retained : undefined;
+    const scopeKey = projection
+        ? serverAccountScopedTeamKey(projection.scope, projection.address)
         : `unbound:${props.serverId}:${props.teamId}`;
     const mounted = useMountedRef();
     const currentScopeKey = React.useRef(scopeKey);
@@ -176,7 +177,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         onExecuted: approvalRefresh,
     });
 
-    const readyTeamName = binding.kind === 'bound' && binding.state.kind === 'ready' ? binding.state.team.name : null;
+    const readyTeamName = projection?.state.kind === 'ready' ? projection.state.team.name : null;
     const resolvedTitle = props.title ?? readyTeamName ?? t('teams.title');
 
     // An entity page (the Team, a member, a Group) names itself in its own header, and the
@@ -196,7 +197,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
             actions={actions}
             alwaysShowTitle={headsItself}
             teamName={readyTeamName}
-            homeName={'homeName' in binding ? binding.homeName : undefined}
+            homeName={projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined)}
         />
     );
     const plainHeader = renderPlainHeader();
@@ -209,33 +210,20 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         </ItemList>
     );
 
-    if (binding.kind === 'resolving') {
-        return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-resolving" />);
+    if (!projection) {
+        switch (binding.kind) {
+            case 'resolving':
+                return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-resolving" />);
+            case 'signed_out':
+                return conditionPage(<TeamStateCard kind="unavailable" title={t('homeGovernance.signedOutTitle')} testID="team-signed-out" />);
+            case 'credential_unreadable':
+                return conditionPage(<HomeCredentialUnreadableCard serverId={binding.serverId} testID="team-credential-unreadable" />);
+            default:
+                return conditionPage(<TeamStateCard kind="unavailable" title={t('teams.errors.notFound')} testID="team-unknown-home" />);
+        }
     }
 
-    if (binding.kind === 'invalid_address' || binding.kind === 'unknown_home') {
-        return conditionPage(
-            <TeamStateCard kind="unavailable" title={t('teams.errors.notFound')} testID="team-unknown-home" />,
-        );
-    }
-
-    if (binding.kind === 'signed_out') {
-        return conditionPage(
-            <TeamStateCard
-                kind="unavailable"
-                title={t('homeGovernance.signedOutTitle')}
-                testID="team-signed-out"
-            />,
-        );
-    }
-
-    if (binding.kind === 'credential_unreadable') {
-        return conditionPage(
-            <HomeCredentialUnreadableCard serverId={binding.serverId} testID="team-credential-unreadable" />,
-        );
-    }
-
-    const { state, homeName, address, refresh } = binding;
+    const { state, homeName, address, refresh } = projection;
 
     if (state.kind === 'unobserved' || state.kind === 'loading') {
         return conditionPage(props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID="team-loading" />);

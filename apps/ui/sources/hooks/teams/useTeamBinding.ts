@@ -6,6 +6,7 @@ import {
 } from '@/components/settings/teams/teamViewState';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { readCurrentServerCredentialAccountScopeLifetime } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -26,27 +27,23 @@ import {
  * Home itself reports. `credential_unreadable` is settled: this device failed
  * to read its saved credential, and only a re-read helps.
  */
+type TeamBindingProjection = Readonly<{
+    scope: ServerAccountScope;
+    address: TeamAddress;
+    homeName: string;
+    state: TeamViewState;
+    /** Raw data for a surface that needs a fact the view state does not project. */
+    snapshot: TeamSnapshot | null;
+    refresh: () => void;
+}>;
+
 export type TeamBinding =
-    | Readonly<{ kind: 'resolving' }>
+    | Readonly<{ kind: 'resolving'; retained?: TeamBindingProjection }>
     | Readonly<{ kind: 'invalid_address' }>
     | Readonly<{ kind: 'unknown_home' }>
     | Readonly<{ kind: 'signed_out'; homeName: string }>
     | Readonly<{ kind: 'credential_unreadable'; serverId: string }>
-    | Readonly<{
-        kind: 'bound';
-        scope: ServerAccountScope;
-        address: TeamAddress;
-        homeName: string;
-        state: TeamViewState;
-        /**
-         * The raw snapshot the state was derived from, for a surface that needs
-         * a fact the view state deliberately does not project. Readiness and
-         * continuity decisions still come from `state`, so a consumer cannot
-         * become a second interpreter of staleness or reachability.
-         */
-        snapshot: TeamSnapshot | null;
-        refresh: () => void;
-    }>;
+    | Readonly<{ kind: 'bound' } & TeamBindingProjection>;
 
 const RESOLVING: TeamBinding = Object.freeze({ kind: 'resolving' as const });
 const INVALID_ADDRESS: TeamBinding = Object.freeze({ kind: 'invalid_address' as const });
@@ -75,6 +72,9 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
 
     const resolution = useServerCredentialAccountScopeResolution(address?.serverId ?? null);
     const scope = resolution.kind === 'bound' ? resolution.scope : null;
+    const retainedOwner = resolution.kind === 'resolving' && address
+        ? readCurrentServerCredentialAccountScopeLifetime(address.serverId) : null;
+    const displayScope = scope ?? retainedOwner?.scope ?? null;
 
     const scopeServerId = scope?.serverId ?? '';
     const scopeAccountId = scope?.accountId ?? '';
@@ -90,11 +90,10 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
     }, [scopeServerId, scopeAccountId, teamId]);
 
     const getSnapshot = React.useCallback(
-        () => getTeamSnapshot(
-            createServerAccountScope(scopeServerId, scopeAccountId),
-            createTeamAddress(scopeServerId, teamId),
+        () => retainedOwner && !retainedOwner.isCurrent() ? null : getTeamSnapshot(
+            displayScope, createTeamAddress(displayScope?.serverId, teamId),
         ),
-        [scopeServerId, scopeAccountId, teamId],
+        [displayScope, retainedOwner, teamId],
     );
 
     const snapshot = React.useSyncExternalStore(subscribeTeamsSnapshots, getSnapshot, getSnapshot);
@@ -110,32 +109,29 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
     return React.useMemo<TeamBinding>(() => {
         if (!address) return INVALID_ADDRESS;
         switch (resolution.kind) {
-            case 'resolving':
-                return RESOLVING;
             case 'unavailable':
                 return Object.freeze({ kind: 'credential_unreadable' as const, serverId: address.serverId });
             case 'unknown_home':
                 return UNKNOWN_HOME;
             case 'signed_out':
                 return Object.freeze({ kind: 'signed_out' as const, homeName });
-            case 'bound': {
-                const resolvedAddress = retainShallow(resolvedAddressRef.current, {
-                    serverId: resolution.scope.serverId,
-                    teamId: address.teamId,
-                });
-                resolvedAddressRef.current = resolvedAddress;
-                return Object.freeze({
-                    kind: 'bound' as const,
-                    scope: resolution.scope,
-                    // A route may retain a URL alias after credential restoration promotes
-                    // the Home identity. Writes must address the same snapshot as its reads.
-                    address: resolvedAddress,
-                    homeName,
-                    state: resolveTeamViewState(snapshot),
-                    snapshot,
-                    refresh,
-                });
-            }
         }
-    }, [address, resolution, homeName, snapshot, refresh]);
+        const bound = resolution.kind === 'bound';
+        if (!displayScope || (!bound && !snapshot?.data)) return RESOLVING;
+        const resolvedAddress = retainShallow(resolvedAddressRef.current, {
+            serverId: displayScope.serverId,
+            teamId: address.teamId,
+        });
+        resolvedAddressRef.current = resolvedAddress;
+        const projection = Object.freeze({
+            scope: displayScope,
+            address: resolvedAddress,
+            homeName,
+            state: resolveTeamViewState(snapshot, bound),
+            snapshot,
+            refresh,
+        });
+        return bound ? Object.freeze({ kind: 'bound', ...projection })
+            : Object.freeze({ kind: 'resolving', retained: projection });
+    }, [address, resolution, displayScope, homeName, snapshot, refresh]);
 }
