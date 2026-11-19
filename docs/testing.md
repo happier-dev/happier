@@ -973,28 +973,24 @@ In current 0.3 development, successful sampled peaks are rounded up to whole GiB
 
 Admission resource metadata is defined once in `apps/stack/scripts/utils/dev_targets/command_resources.mjs` and re-exported by the command-policy owner, `remote_commands.mjs`. Both its generated native memory policy and the disk owner consume this catalog; every resource class declares its disk shape. The lightweight catalog keeps placement disk checks independent of dependency bootstrap. Controller and worker admission use the same class floor, with no additional controller minimum. Existing queued requests keep the floor supplied when they were created; policy changes do not bypass queue fairness or resize admitted work.
 
-The broker reserves a recorded job identity at its maximum kernel-observed peak,
-rounded up to 0.5 GiB, even when that exceeds the class floor. The identity is the
-resource class, the component (working directory relative to the repository), the
-entry (program plus package-manager script, or `--test`) and the sorted project
-set, never the argument list. When the payload ends, the outermost admission client
-reads its dispatch scope's cgroup `memory.peak` in `happier-jobs.slice` and sends it
-on the slot socket; every payload phase runs inside that scope, so the value is
-never below the payload's true peak (it can include preparation and page cache).
-A local client takes its own `happier-jobs-*.scope` unless it already runs in one
-(`exec_in_jobs_scope`); a shared jobs-slice scope such as an agent's tmux session
-does not count, because its peak is not the payload's. Before 2026-11-15 local
-clients stayed in that shared scope, so the controller recorded no local
-compilation identity and every one kept the 38 GiB class floor (sampled peaks that
-day: median 1.5 GiB, p90 17.9 GiB, max 35.9 GiB over 270 completions). The commit
-compiler names the owner programs it will compile (changed files plus importers)
-as its project set, so each program set is sized by its own recorded peak.
-Event-sampled RSS peaks never size a reservation. An unrecorded identity starts
-from related records in its class: the smallest recorded peak of the same command
-over a superset of its projects, else that command's maximum, else the maximum over
-runs of its exact project set. Only with no related record does it reserve the
-class's maximum kernel peak. Its first completion records its own peak, which sizes
-every later run. A routed dispatch admits its `bash -c` wrapper on the worker, so the
+The broker reserves a recorded job identity at the nearest-rank p95 of its last
+20 completed working-set samples, rounded up to 0.5 GiB. The resource class,
+repository-relative component, command entry, and sorted project set identify a
+job independently of its argument list. On Linux, the broker samples a dedicated
+`happier-jobs-*.scope` during existing resource observations, and the outermost
+admission client sends a final sample on the slot socket. The largest observed
+sum of cgroup `memory.stat` anon, shmem and kernel charges describes that run.
+Reclaimable file cache is excluded. Samples can miss spikes between observations.
+A shared scope does not provide an attributable measurement. Sampled tree RSS
+remains diagnostic.
+
+A new identity uses a median of related identities' typical working sets. Matching
+command entries with a containing project set come first, followed by the command
+family, the same project set, and the resource class. Each identity contributes
+one median regardless of how often it ran. The caller's requested floor or
+dynamic export options apply when the class has no history.
+
+A routed dispatch admits its `bash -c` wrapper on the worker, so the
 dispatcher forwards the command's own argv and cwd (`--identity-arg=`/`--identity-cwd=`)
 and the identity is the command's, not the wrapper text, which embedded the file list
 and never repeated (2026-11-17: routed validation reserved 3.5-6.5 GiB p50 against
@@ -1002,12 +998,15 @@ recorded peaks of 1.1-1.7 GiB). The identity names the program that runs: `env
 NAME=value …` and `pnpm|npm|yarn exec`/`npx` launchers are peeled; a package manager
 keeps its script (`pnpm run test`), a script runner (`node`, `tsx`, `bash`) its file,
 and any other program is identified by its name alone, so `pnpm exec vitest run
-<files>` is `apps/ui` + `vitest` whatever the file list. A class
-without kernel history keeps the client's floor, as do dynamic export floors. Maxima live in the broker root's
-`identity-kernel-peaks.json`. At succession each recovered slot reserves
-max(its job scope's `memory.current`, its identity kernel peak) instead of its old
-floor; the identity peak applies when the live client re-advertises its identity on
-the slot socket. Brokers adopt this on succession.
+<files>` is `apps/ui` + `vitest` whatever the file list.
+
+Working-set sample windows live in the broker root's
+`identity-kernel-peaks.json`. Old scalar lifetime peaks are ignored. The host
+operator can archive that reconstructible file beside the original when migrating
+to this policy. On broker succession, an attributable scope's current working
+set replaces the old reservation, rounded to 0.5 GiB. The live client re-advertises
+its identity so the successor can also apply the recorded estimate when it is
+higher. A slot without an attributable current reading retains its old floor.
 
 Load policy and broker catalog changes together when adding a class: an already-running broker caches its disk owner and can refuse an unfamiliar class before payload start. Use the identity-checked broker reload owner, which preserves active slots. Changing only a numeric memory floor does not need that reload because each admission request supplies its floor.
 
