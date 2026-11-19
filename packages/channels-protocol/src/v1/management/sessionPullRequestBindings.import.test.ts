@@ -1,14 +1,14 @@
 import { expect, it } from 'vitest';
 
-// Keep the real cold import order at collection, where source transformation
-// belongs, rather than charging that work to the assertion timeout.
-// This order previously reached a copied accessor before its receiver had an
-// admitted Protocol lifetime. No schema projection is warmed here.
-await import('@happier-dev/plugin-sdk/protocol');
-await import('@happier-dev/plugin-sdk/sessions');
-await import('@happier-dev/plugin-sdk/automations');
-const { ConversationPullRequestV1Schema, SessionPullRequestBindingInputV1Schema } =
-    await import('./sessionPullRequestBindings.js');
+// Preserve the SDK-first dependency evaluation order without warming any schema.
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
+import { AutomationIdV1Schema } from '@happier-dev/plugin-sdk/automations';
+import { ConversationPullRequestV1Schema, SessionPullRequestBindingInputV1Schema } from './sessionPullRequestBindings.js';
+
+void defineProtocolObject;
+void SessionIdSchema;
+void AutomationIdV1Schema;
 
 it('loads pull-request bindings after the SDK leaf consumers without prewarming schema projections', () => {
     const input = { repository: 'owner/repo', number: 1 };

@@ -134,6 +134,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     defineTriageCompositeIdentifierStringV1: 'feature-protocol',
     defineTriageSingleLineStringV1: 'feature-protocol',
     PluginJsonSchema: 'feature-protocol',
+    PluginUiResourceIntentV1Schema: 'feature-protocol',
     ProtocolArrayOptions: 'feature-protocol',
     ProtocolCollectionOpaqueCursorV1: 'feature-protocol',
     ProtocolCollectionOpaqueCursorV1Schema: 'feature-protocol',
@@ -215,6 +216,7 @@ const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set(
         .flatMap(([symbol, audience]) => (
             audience === 'feature-protocol'
             && (symbol === 'PluginJsonSchema'
+                || symbol === 'PluginUiResourceIntentV1Schema'
                 || symbol === 'createProtocolStoredReadSchema'
                 || symbol === 'encodeBase64'
                 || symbol === 'decodeBase64'
@@ -318,6 +320,10 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'AutomationConversationAdmitInputV1Schema',
         'AutomationConversationAdmitResultV1',
         'AutomationConversationAdmitResultV1Schema',
+        // Canonical portable target-selection schemas, projected without
+        // exposing Automation execution or service access.
+        'AutomationConversationTargetsListInputV1Schema',
+        'AutomationConversationTargetsListResultV1Schema',
         'AutomationConversationResultDeliveryV1',
         'AutomationConversationResultDeliveryV1Schema',
         'AutomationResultDeliveryInputV1',
@@ -497,7 +503,7 @@ const featureProtocolFixture = {
             "import { parsePluginManifest, PluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';",
             "import { PluginWebhookEndpointIdV1JsonSchema, PluginWebhookEndpointIdV1Schema, PluginWebhookEndpointSetupV1Schema } from '@happier-dev/plugin-sdk/webhooks';",
             "import { AgentPermissionIntentV1Schema, SessionAuthoringCheckoutCreationDraftV1Schema, SessionIdSchema, SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';",
-            "import { AutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1Schema } from '@happier-dev/plugin-sdk/automations';",
+            "import { AutomationConversationTargetsListInputV1Schema, AutomationConversationTargetsListResultV1Schema, AutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1Schema } from '@happier-dev/plugin-sdk/automations';",
             "import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';",
             "import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';",
             "import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';",
