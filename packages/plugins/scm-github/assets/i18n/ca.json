@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Obre com a esborrany",
   "plugins.github.ui.administration.revertSubmit": "Obre una PR de reversió",
   "plugins.github.ui.review.start": "Inicia una revisió",
+  "plugins.github.ui.review.draftStorageUnavailable": "Aquest dispositiu no ha pogut desar l’esborrany. Mantén aquesta pàgina oberta per conservar el text.",
   "plugins.github.ui.review.startReview": "Inicia la revisió",
   "plugins.github.ui.parity.user": "Usuari de GitHub",
   "plugins.github.ui.preview.removing": "Eliminant la previsualització",

@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "以草稿形式建立",
   "plugins.github.ui.administration.revertSubmit": "建立還原 PR",
   "plugins.github.ui.review.start": "開始審查",
+  "plugins.github.ui.review.draftStorageUnavailable": "此裝置未能儲存草稿。請保持此頁面開啟，以保留已輸入的文字。",
   "plugins.github.ui.review.startReview": "開始審查",
   "plugins.github.ui.parity.user": "GitHub 使用者",
   "plugins.github.ui.preview.removing": "正在移除預覽",

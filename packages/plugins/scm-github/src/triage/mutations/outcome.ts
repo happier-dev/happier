@@ -1,3 +1,4 @@
+import type { PluginUiActionFailureV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1, TriageSourceOperationOutcomeV1 } from '@happier-dev/triage-protocol/v1';
 import { describeTriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type {
@@ -64,10 +65,11 @@ export type GithubLegacyMutationOutcomeV1 =
     failure: TriageSourceFailureV1 | null;
   }>
   | Readonly<{ kind: 'pending' }>
+  | Readonly<{ kind: 'approval' }>
   | Readonly<{ kind: 'refused'; reason: GithubMutationRefusalReasonV1; unmetRequirements?: readonly GithubSkippedRequirementV1[] }>
   | Readonly<{ kind: 'uncertain'; failure: TriageSourceFailureV1 | null }>
   | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>
-  | Readonly<{ kind: 'rejected'; code: string; message: string }>
+  | Readonly<{ kind: 'rejected'; failure: PluginUiActionFailureV1 }>
   | Readonly<{ kind: 'unreadable' }>;
 
 export type GithubMutationResultV1 =

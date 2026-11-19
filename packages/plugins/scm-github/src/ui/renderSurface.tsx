@@ -38,7 +38,7 @@
 
 import * as React from 'react';
 import { formatUsageDurationCompact } from '@happier-dev/plugin-ui/components';
-import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { presentActionFailure, type RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   createReviewCommentLinkedIssueIdV1,
 } from '@happier-dev/plugin-sdk/reviews';
@@ -72,6 +72,7 @@ import {
   defineUiSurface,
   formatHappierDiffStat,
   usePluginHostApi,
+  usePluginHostReadiness,
   usePluginTheme,
   usePluginTranslation,
   useExecutePluginAction,
@@ -149,6 +150,7 @@ import {
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
   type TriagePullRequestOperationOfferV1,
+  type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { GithubFilesList } from './detail/filesList.js';
@@ -383,13 +385,43 @@ function RefreshRow({
  */
 
 /** The settled answer one write owes the reader who pressed it. */
+function describeGithubWriteFailure(
+  failure: TriageSourceFailureV1,
+  text: PluginTranslate,
+  locale: string,
+): string {
+  if (failure.class === 'rateLimit') {
+    const title = text('plugins.github.releases.state.rate.title', 'GitHub is limiting requests');
+    if (failure.retryNotBeforeMs === undefined) return title;
+    const time = formatTimestamp(locale, failure.retryNotBeforeMs, 'absolute', failure.retryNotBeforeMs);
+    return `${title}. ${text('plugins.github.releases.state.rate.body', 'GitHub resets the limit at {time}.', { time })}`;
+  }
+  return failureDescription(failure, text('plugins.github.ui.mutations.writeFailed', 'GitHub could not complete this change.'), text);
+}
+
 function WriteOutcome({
   outcome,
 }: Readonly<{ outcome: GithubMutationOutcomeV1 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const { locale } = useSurfaceContext();
+  const host = usePluginHostApi();
+  const rejection = outcome.kind === 'rejected' ? outcome : null;
+  const [presented, setPresented] = React.useState<Readonly<{ outcome: typeof rejection; reason: string }> | null>(null);
+  React.useEffect(() => {
+    if (rejection === null) return;
+    let active = true;
+    void presentActionFailure(host, rejection.failure).then(result => {
+      if (active && result.reason !== rejection.failure.errorCode) {
+        setPresented({ outcome: rejection, reason: result.reason });
+      }
+    }, () => {});
+    return () => { active = false; };
+  }, [host, rejection]);
   if ('presentation' in outcome) {
     const presentation = outcome.presentation;
-    const description = presentation.descriptionKey === undefined
+    const description = outcome.kind === 'failed' && outcome.failure.class === 'rateLimit'
+      ? describeGithubWriteFailure(outcome.failure, text, locale)
+      : presentation.descriptionKey === undefined
       ? presentation.description : text(presentation.descriptionKey, presentation.description);
     return <Banner tone={presentation.tone}
       title={presentation.titleKey === undefined ? presentation.title : text(presentation.titleKey, presentation.title)}
@@ -460,6 +492,9 @@ function WriteOutcome({
         />
       );
   }
+  if (outcome.kind === 'approval') {
+    return <Banner tone="neutral" title={text('plugins.triage.sourceWrite.approval', 'Waiting for approval')} />;
+  }
   if (outcome.kind === 'pending') {
     return (
       <Banner
@@ -509,13 +544,7 @@ function WriteOutcome({
         tone="danger"
         title="Not carried out"
         titleKey="plugins.github.ui.mutations.notCarriedOut"
-        description={failureDescription(
-          outcome.failure,
-          text(
-            'plugins.github.ui.mutations.writeFailed',
-            'GitHub could not complete this change.',
-          ), text,
-        )}
+        description={describeGithubWriteFailure(outcome.failure, text, locale)}
       />
     );
   }
@@ -525,11 +554,8 @@ function WriteOutcome({
         tone="danger"
         title="Not carried out"
         titleKey="plugins.github.ui.mutations.notCarriedOut"
-        description={text(
-          'plugins.github.ui.mutations.rejected.description',
-          'Nothing was changed on GitHub ({code}).',
-          { code: outcome.code },
-        )}
+        description={presented?.outcome === outcome ? presented.reason
+          : text('plugins.github.ui.mutations.writeFailed', 'GitHub could not complete this change.')}
       />
     );
   }
@@ -3138,25 +3164,60 @@ function parseReviewMutationResult(value: unknown): GithubMutationResultV1 | nul
   return parsed.success ? parsed.data : null;
 }
 
-/** A summary stays in this open form until the confirmed Action creates GitHub's pending review. */
-function GithubPendingReviewCreateWrite({ context }: Readonly<{
+function githubPendingReviewDraftKey(input: TriageDetailSurfaceInputV1): string {
+  const { collisionScope, entryId } = input.observation.entryRef;
+  // The device namespace JSON-escapes its key. Encode this tuple so the
+  // assembled storage key does not contain backslashes on web.
+  return encodeURIComponent(JSON.stringify(['pending-review-summary', input.instance.instance.sourceInstanceId, collisionScope, entryId]));
+}
+
+/** The host holds the unsent summary on this device until GitHub confirms creation. */
+function GithubPendingReviewCreateWrite({ context, draftKey }: Readonly<{
   context: GithubFeedbackWriteContextV1;
+  draftKey: string;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const [summary, setSummary] = React.useState('');
+  const host = usePluginHostApi();
+  const { ready, revision } = usePluginHostReadiness(false);
+  const [summary, setSummary] = React.useState<string | null>(null);
+  const [storageUnavailable, setStorageUnavailable] = React.useState(false);
+  React.useEffect(() => {
+    if (ready === false) return;
+    let active = true;
+    void host.deviceState({ operation: 'read', key: draftKey }).then(result => {
+      if (!active) return;
+      setStorageUnavailable(result.status === 'unavailable');
+      setSummary(result.status === 'ready' && typeof result.value === 'string' ? result.value : '');
+    }, () => {
+      if (!active) return;
+      setStorageUnavailable(true);
+      setSummary('');
+    });
+    return () => { active = false; };
+  }, [host, draftKey, ready, revision]);
+  const persist = (value: string) => {
+    void host.deviceState(value === '' ? { operation: 'remove', key: draftKey }
+      : { operation: 'write', key: draftKey, value }).then(
+      result => setStorageUnavailable(result.status === 'unavailable'),
+      () => setStorageUnavailable(true),
+    );
+  };
   const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate,
     parseReviewMutationResult, context.onObserved);
   const title = text('plugins.github.ui.review.start', 'Start a review');
   const reason = githubOperationCapabilityReason(text, context.capabilities, 'pendingReviewCreate');
   if (reason !== null) return <UnavailableOperationWrite title={title} reason={reason} />;
   if (write.outcome?.kind === 'applied') return <WriteOutcome outcome={write.outcome} />;
-  const payload = buildGithubPendingReviewCreateInputV1(context.input, summary);
+  const payload = summary === null ? null : buildGithubPendingReviewCreateInputV1(context.input, summary);
   return <GithubPropertyRow title={title}>
     <Form.Field label={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}>
       <MarkdownEditor accessibilityLabel={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
-        value={summary} onChange={setSummary} disabled={write.pending} />
+        value={summary ?? ''} onChange={value => { setSummary(value); persist(value); }}
+        disabled={summary === null || write.pending} />
     </Form.Field>
-    <Action.Control action={write.action} controller={write.controllerFor(payload)}
+    {storageUnavailable ? <Banner tone="warning"
+      title={text('plugins.github.ui.review.draftStorageUnavailable', 'This device could not save your draft. Keep this page open to keep your text.')} /> : null}
+    <Action.Control action={write.action} controller={write.controllerFor(payload, () => persist(''))}
       title={text('plugins.github.ui.review.startReview', 'Start review')} variant="secondary"
       disabled={payload === null || write.pending} />
     {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
@@ -3911,6 +3972,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
     && threads.state.kind === 'ready' && reviews.state.kind === 'ready'
     && requests.state.kind === 'ready' && checks.state.kind === 'ready';
   const commentsIncomplete = incompleteDescription(text, conversation.state.incomplete, null);
+  const pendingReviewDraftKey = githubPendingReviewDraftKey(context.input);
   const checksIncompleteDescription = text(
     'plugins.github.ui.feedbackChecksIncomplete',
     'GitHub did not list this pull request\'s whole check suite, so nothing here says its checks'
@@ -3929,7 +3991,7 @@ function useGithubFeedbackStream(context: GithubFeedbackWriteContextV1): GithubA
         {reviews.state.kind === 'ready'
           && !reviews.state.canLoadMore && reviews.state.incomplete === null && reviews.state.omittedRowCount === 0
           && !reviews.state.rows.some(review => review.state.trim().toUpperCase() === 'PENDING')
-          ? <GithubPendingReviewCreateWrite context={context} /> : null}
+          ? <GithubPendingReviewCreateWrite key={pendingReviewDraftKey} draftKey={pendingReviewDraftKey} context={context} /> : null}
         {view.review.kind === 'decided'
           ? (
             <Row gap="small">

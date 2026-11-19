@@ -600,6 +600,17 @@ describe('web shell Docked composer', () => {
     await act(async () => screen.unmount());
   });
 
+  it('names the draft by the first line of its prompt in the delete confirmation', async () => {
+    const { screen, state } = await openDockedDraft('Review happier-dev/triage-qa-sandbox#4\nCheck the tests.');
+    const { presentActionApproval } = await import('@/components/approvals/actionApprovalPresentation');
+    const draftId = state().draftId;
+    const confirmation = presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId }, kind: 'confirmation' });
+    expect(confirmation.title).toContain('Review happier-dev/triage-qa-sandbox#4');
+    expect(confirmation.title).not.toContain('Check the tests.');
+    expect(JSON.stringify(confirmation)).not.toContain(draftId);
+    await screen.unmount();
+  });
+
   it('names a Bot draft in both the open instrument strip and its folded dock', async () => {
     const { screen, state } = await openDockedDraft('Make a helpful Bot');
     const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');

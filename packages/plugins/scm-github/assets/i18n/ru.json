@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Открыть как черновик",
   "plugins.github.ui.administration.revertSubmit": "Открыть PR отмены",
   "plugins.github.ui.review.start": "Начать проверку",
+  "plugins.github.ui.review.draftStorageUnavailable": "Не удалось сохранить черновик на этом устройстве. Оставьте страницу открытой, чтобы не потерять текст.",
   "plugins.github.ui.review.startReview": "Начать проверку",
   "plugins.github.ui.parity.user": "Пользователь GitHub",
   "plugins.github.ui.preview.removing": "Превью удаляется",

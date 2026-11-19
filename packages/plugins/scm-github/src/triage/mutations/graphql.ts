@@ -3,6 +3,7 @@ import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runti
 
 import {
   decodeGithubJsonResponse,
+  readGithubRetryAfterMs,
   type GithubApiClientV1,
 } from '../../observations/githubApiClient.js';
 
@@ -174,9 +175,12 @@ export async function sendGithubGraphqlRequest(
   // and treating a populated `errors` array as success is the whole failure mode
   // this module exists to prevent.
   if (Array.isArray(body.errors) && body.errors.length > 0) {
+    const failure = classifyGithubGraphqlError(body.errors);
+    const nowMs = dependencies.now();
+    const retryAfterMs = failure.class === 'rateLimit' ? readGithubRetryAfterMs(response.headers, nowMs) : null;
     return Object.freeze({
       ok: false as const,
-      failure: classifyGithubGraphqlError(body.errors),
+      failure: retryAfterMs === null ? failure : { ...failure, retryNotBeforeMs: nowMs + retryAfterMs },
       // A null data root is GitHub's definite mutation rejection. A populated
       // root can contain a partially resolved mutation field, which must be
       // reconciled by the caller that issued the write.

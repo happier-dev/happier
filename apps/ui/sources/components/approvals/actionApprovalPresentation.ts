@@ -17,7 +17,7 @@ import { DiscussionPostInputV1Schema } from '@happier-dev/protocol/discussions/a
 import { isDiscussionPostActionIdV1, type DiscussionExternalSourceV1 } from '@happier-dev/protocol/discussions';
 import { SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { getNewSessionDraftIdentity } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
+import { getNewSessionDraftActionIdentity } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
 
 export type ActionApprovalPresentationInput = Readonly<{
     actionId: string;
@@ -124,7 +124,7 @@ function readNewSessionDraftActionIdentity(actionId: string, actionArgs: unknown
     const args = actionArgs as { draftId?: unknown; ref?: { kind?: unknown; draftId?: unknown } };
     const draftId = typeof args.draftId === 'string' ? args.draftId
         : args.ref?.kind === 'newSession' && typeof args.ref.draftId === 'string' ? args.ref.draftId : null;
-    return draftId ? getNewSessionDraftIdentity(getActiveServerAccountScope(), draftId) : null;
+    return draftId ? getNewSessionDraftActionIdentity(getActiveServerAccountScope(), draftId, actionId === 'session.draft.delete') : null;
 }
 
 /** One UI copy boundary for confirmation, Inbox, page and preview; authored plugin copy stays authored. */
@@ -218,6 +218,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     // A draft Action names its draft by the draft's own identity: a Bot draft reads as one, a named draft by its
     // name (QA-RERUN-1113 F5; COPY-NOUN-HUNT-1113 open, folder and model).
     const draft = readNewSessionDraftActionIdentity(spec.id, input.actionArgs);
+    const draftSubject = draft?.subject;
     const botDraftTitle = draft?.isBot ? resolveBotDraftActionTitle(spec.id) : null;
     const titleSource = botDraftTitle ?? (roleIdentity || !english ? resolveActionTitle(spec.id, spec) : spec.title);
     const widgetPresentation = readWidgetApprovalPresentationV1(input.preview);
@@ -247,7 +248,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;
     const title = t('actionPresentation.title', { actionId: spec.id, source: titleSource,
-        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : subject ?? draft?.name ?? null });
+        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}` : subject ?? draftSubject ?? null });
     return {
         confirmLabel,
         title,

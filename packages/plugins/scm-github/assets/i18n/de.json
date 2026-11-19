@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Als Entwurf öffnen",
   "plugins.github.ui.administration.revertSubmit": "Revert-PR öffnen",
   "plugins.github.ui.review.start": "Eine Review beginnen",
+  "plugins.github.ui.review.draftStorageUnavailable": "Dieser Entwurf konnte auf dem Gerät nicht gespeichert werden. Lass die Seite geöffnet, um deinen Text zu behalten.",
   "plugins.github.ui.review.startReview": "Review starten",
   "plugins.github.ui.parity.user": "GitHub-Benutzer",
   "plugins.github.ui.preview.removing": "Vorschau wird entfernt",

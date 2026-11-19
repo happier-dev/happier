@@ -24,7 +24,7 @@ export type NewSessionDraftAvailabilitySummary = Readonly<{
     attachmentNeedsAttention: boolean;
 }>;
 
-function readAuthoringValue(draft: NewSessionDraftProjection, fieldId: string): unknown {
+function readAuthoringValue(draft: Pick<NewSessionDraftProjection, 'document'>, fieldId: string): unknown {
     return getSessionDraftDocumentFieldValue(draft.document, { kind: 'authoring', fieldId });
 }
 
@@ -62,7 +62,7 @@ function firstPromptLine(value: string): string | null {
     return null;
 }
 
-function readAutomationName(draft: NewSessionDraftProjection): string | null {
+function readAutomationName(draft: Pick<NewSessionDraftProjection, 'document'>): string | null {
     const value = readAuthoringValue(draft, 'automation');
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return readNonblankString((value as Readonly<Record<string, unknown>>).name);
@@ -121,16 +121,20 @@ function resolveStatusKey(
     return null;
 }
 
+export function buildNewSessionDraftTitle(
+    draft: Pick<NewSessionDraftProjection, 'document'>,
+    prompt: string,
+): string {
+    return readNewSessionDraftIdentity(draft.document).name ?? firstPromptLine(prompt) ?? readAutomationName(draft)
+        ?? safeFinalPathSegment(readAuthoringValue(draft, 'directory')) ?? t('sessionDrafts.untitled');
+}
+
 export function buildNewSessionDraftRowPresentation(
     draft: NewSessionDraftProjection,
     availability?: NewSessionDraftAvailabilitySummary,
 ): NewSessionDraftRowPresentation {
-    const promptLine = firstPromptLine(draft.readView?.composer.text.value ?? '');
-    const automationName = readAutomationName(draft);
-    const folderName = safeFinalPathSegment(readAuthoringValue(draft, 'directory'));
-    const title = readNewSessionDraftIdentity(draft.document).name ?? promptLine ?? automationName ?? folderName ?? t('sessionDrafts.untitled');
     return {
-        title,
+        title: buildNewSessionDraftTitle(draft, draft.readView?.composer.text.value ?? ''),
         statusKey: resolveStatusKey(draft, availability),
     };
 }

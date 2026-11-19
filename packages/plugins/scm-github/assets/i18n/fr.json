@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Ouvrir comme brouillon",
   "plugins.github.ui.administration.revertSubmit": "Ouvrir une PR d’annulation",
   "plugins.github.ui.review.start": "Commencer une revue",
+  "plugins.github.ui.review.draftStorageUnavailable": "Cet appareil n’a pas pu enregistrer le brouillon. Garde cette page ouverte pour conserver ton texte.",
   "plugins.github.ui.review.startReview": "Commencer la revue",
   "plugins.github.ui.parity.user": "Utilisateur GitHub",
   "plugins.github.ui.preview.removing": "Suppression de l’aperçu",

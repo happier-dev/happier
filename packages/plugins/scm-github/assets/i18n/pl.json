@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Otwórz jako szkic",
   "plugins.github.ui.administration.revertSubmit": "Otwórz PR wycofujący",
   "plugins.github.ui.review.start": "Rozpocznij recenzję",
+  "plugins.github.ui.review.draftStorageUnavailable": "To urządzenie nie mogło zapisać szkicu. Pozostaw tę stronę otwartą, aby zachować tekst.",
   "plugins.github.ui.review.startReview": "Rozpocznij recenzję",
   "plugins.github.ui.parity.user": "Użytkownik GitHub",
   "plugins.github.ui.preview.removing": "Usuwanie podglądu",

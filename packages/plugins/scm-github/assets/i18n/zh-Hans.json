@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "以草稿形式创建",
   "plugins.github.ui.administration.revertSubmit": "创建撤销 PR",
   "plugins.github.ui.review.start": "开始审查",
+  "plugins.github.ui.review.draftStorageUnavailable": "此设备未能保存草稿。请保持此页面打开，以保留已输入的文字。",
   "plugins.github.ui.review.startReview": "开始审查",
   "plugins.github.ui.parity.user": "GitHub 用户",
   "plugins.github.ui.preview.removing": "正在移除预览",

@@ -170,6 +170,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
     const prerequisite = describeActionExecutionPrerequisite(code);
     if (prerequisite) return prerequisite.message;
+    if (code === 'contributed_action_unavailable') return t('pluginRuntime.actionUnavailable');
     if (code === 'client_required') return t('errors.clientRequired');
     if (code === 'secret_save_client_required') return t('errors.secretSaveClientRequired');
     if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');

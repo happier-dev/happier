@@ -20,6 +20,7 @@ import {
 } from '../../triage/contribution.js';
 
 import { renderSurface } from '../renderSurface.js';
+import { sendGithubGraphqlRequest } from '../../triage/mutations/graphql.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -118,6 +119,9 @@ const publishControls = new WeakMap<PluginUiTestkit, () => {
   publish(event: PluginUiActionControlEventV1): void;
   presentation: { title: string; disabled?: boolean };
 } | undefined>();
+const deviceDrafts = new Map<string, JsonValue>();
+let reviewRefusal = false;
+let subscriptionFailure: JsonValue | null = null;
 let nextChecksGate: Promise<JsonValue> | null = null;
 
 function withFeedbackPageEvidence(value: JsonValue): JsonValue {
@@ -213,7 +217,8 @@ async function mountFeedback(
             if (answer.kind !== 'checks') return answer as JsonValue;
             const { kind: _kind, ...checks } = answer;
             return { kind: 'overview', kindId: 'pull-request', observedAtMs: 1_760_000_800_000,
-              headRevision: checks.headRevision, branchUpdateEligibility: 'not-behind', checks } as JsonValue;
+              headRevision: checks.headRevision, branchUpdateEligibility: 'not-behind', checks,
+              ...(subscriptionFailure === null ? {} : { viewerSubscription: 'SUBSCRIBED' }) } as JsonValue;
           }
           if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution) {
             mutationInputs.push(actionInput);
@@ -223,6 +228,9 @@ async function mountFeedback(
             mutationInputs.push(actionInput);
             const edit = actionInput as { target: { id: string }; body: string };
             return { kind: 'applied', effect: 'changed', comment: { id: edit.target.id, body: edit.body } };
+          }
+          if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnsubscribe && subscriptionFailure !== null) {
+            return subscriptionFailure;
           }
           if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate) {
             mutationInputs.push({ localId, input: actionInput });
@@ -255,7 +263,13 @@ async function mountFeedback(
           }
           throw new Error(`unexpected action ${localId}`);
   };
-  const githubHost = createPluginUiActionControlTestHost(async request => ({ ok: true, result: await executeBoundary(request) }));
+  const githubHost = createPluginUiActionControlTestHost(async request => {
+    if (reviewRefusal && typeof request.action !== 'string'
+      && request.action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate) {
+      return { ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable' };
+    }
+    return { ok: true, result: await executeBoundary(request) };
+  });
   const githubSlots = new Set<string>();
   const suggestionHost = createPluginUiActionControlTestHost(async ({ action, input }) => {
     if (declineSuggestion) { declineSuggestion = false; return { ok: false, errorCode: 'approval_rejected', error: 'Declined' }; }
@@ -302,6 +316,19 @@ async function mountFeedback(
           } } });
         },
         executeAction: executeBoundary,
+        presentActionFailure({ failure }) {
+          expect(failure.errorCode).toBe('contributed_action_unavailable');
+          return { reason: 'This action is unavailable. Check the plugin and machine connection.', nextStep: null, technicalDetails: [] };
+        },
+        deviceState(request) {
+          // The web device adapter rejects backslashes in its namespaced key.
+          if (JSON.stringify([request.key]).includes('\\')) {
+            return { status: 'unavailable', reason: 'storage_unavailable' };
+          }
+          if (request.operation === 'write') deviceDrafts.set(request.key, request.value);
+          if (request.operation === 'remove') deviceDrafts.delete(request.key);
+          return { status: 'ready', value: deviceDrafts.get(request.key) ?? null };
+        },
       },
     }) as PluginUiTestkit;
   });
@@ -352,6 +379,9 @@ afterEach(async () => {
   mutationInputs.splice(0);
   nextChecksGate = null;
   resetAnswers();
+  reviewRefusal = false;
+  subscriptionFailure = null;
+  deviceDrafts.clear();
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -557,17 +587,27 @@ describe('the mounted GitHub Feedback plane', () => {
     const launch = TriageDetailSurfaceInputV1Schema.parse(launchInput('pull-request'));
     const input = { ...launch, observation: { ...launch.observation, snapshot: { ...launch.observation.snapshot,
       reviewRevision: { baseSha: 'a'.repeat(40), headSha: HEAD_REVISION, nativeRevision: HEAD_REVISION } } } };
-    const detail = await mountFeedback(input as unknown as JsonValue);
-    await openFeedback(detail);
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Start a review' })); });
-    const field = [...document.querySelectorAll('textarea')]
+    const openDraft = async () => {
+      const detail = await mountFeedback(input as unknown as JsonValue);
+      await openFeedback(detail);
+      await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Start a review' })); });
+      return detail;
+    };
+    let detail = await openDraft();
+    const summaryField = () => [...document.querySelectorAll('textarea')]
       .find((area) => area.getAttribute('aria-label') === 'Summary (optional)')!;
+    const field = summaryField();
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
     await act(async () => {
       setter.call(field, 'The lifecycle needs one correction.');
       field.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    await act(async () => { await detail.dispose(); });
+    mounted.splice(mounted.indexOf(detail), 1);
+    detail = await openDraft();
+    expect(summaryField().value).toBe('The lifecycle needs one correction.');
     await act(async () => { await githubControls.get(detail)!.press('Start review'); });
+    expect(deviceDrafts.size).toBe(0);
     expect(mutationInputs).toEqual([{ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate,
       input: expect.objectContaining({ headRevision: HEAD_REVISION, body: 'The lifecycle needs one correction.' }) }]);
     // The containing Triage page publishes its ordinary post-mutation refresh signal.
@@ -575,6 +615,43 @@ describe('the mounted GitHub Feedback plane', () => {
     expect(await detail.queryByRole('button', { name: 'Start a review' })).toBeUndefined();
     expect(githubControls.get(detail)!.presentation('Delete draft review')).toMatchObject({ disabled: false });
     expect(await detail.getByRole('button', { name: 'Submit me · Not submitted yet' })).toMatchObject({ role: 'button' });
+  });
+
+  it('describes an unavailable Start review Action in words', async () => {
+    reviewRefusal = true;
+    const launch = TriageDetailSurfaceInputV1Schema.parse(launchInput('pull-request'));
+    const input = { ...launch, observation: { ...launch.observation, snapshot: { ...launch.observation.snapshot,
+      reviewRevision: { baseSha: 'a'.repeat(40), headSha: HEAD_REVISION, nativeRevision: HEAD_REVISION } } } };
+    const detail = await mountFeedback(input as unknown as JsonValue);
+    await openFeedback(detail);
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Start a review' })); });
+    await act(async () => { await githubControls.get(detail)!.press('Start review'); });
+    expect(document.body.textContent).toContain('Check the plugin and machine connection.');
+    expect(document.body.textContent).not.toContain('contributed_action_unavailable');
+  });
+
+  it('keeps the retry instruction from a GraphQL rate limit carried in an HTTP 200', async () => {
+    const payload = { data: null, errors: [{ type: 'RATE_LIMITED' }] };
+    const result = await sendGithubGraphqlRequest({ query: 'mutation Subscription { __typename }', variables: {} }, {
+      now: () => OBSERVED_AT_MS,
+      client: { request: async () => ({ status: 200, headers: { 'retry-after': '120' },
+        body: new TextEncoder().encode(JSON.stringify(payload)) }) },
+    });
+    expect(result).toMatchObject({ ok: false, mayHaveChanged: false,
+      failure: { class: 'rateLimit', retryNotBeforeMs: OBSERVED_AT_MS + 120_000 } });
+  });
+
+  it('explains a rate-limited unsubscribe with the provider retry time and keeps the subscription', async () => {
+    const retryNotBeforeMs = OBSERVED_AT_MS + 120_000;
+    subscriptionFailure = { kind: 'failed', failure: { class: 'rateLimit', code: 'github_rate_limited', retryNotBeforeMs } };
+    const detail = await mountFeedback(launchInput('pull-request'));
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Re-read this overview from GitHub' })); });
+    const toggle = await detail.getByRole('switch', { name: 'Subscribed' });
+    expect(toggle.state?.checked).toBe(true);
+    await act(async () => { await detail.press(toggle); });
+    expect((await detail.getByRole('switch', { name: 'Subscribed' })).state?.checked).toBe(true);
+    expect(document.body.textContent).toContain('GitHub is limiting requests');
+    expect(document.body.textContent).toContain(formatTriageTimestampV1(SURFACE_LOCALE, retryNotBeforeMs, 'absolute', retryNotBeforeMs));
   });
 
   it.each([

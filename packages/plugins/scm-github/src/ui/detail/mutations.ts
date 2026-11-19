@@ -29,9 +29,8 @@
 
 import { isPluginActionConfirmationDeclined, type PluginActionExecution } from '@happier-dev/plugin-ui';
 import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
-import type {
-  TriageDetailSurfaceInputV1,
-} from '@happier-dev/triage-protocol/v1';
+import { readTriageSourceOperationOutcomeV1, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
+import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 
 import {
   GithubIssueAssigneeAddInputV1Schema,
@@ -561,8 +560,21 @@ export function projectGithubMutationOutcomeV1(
 ): GithubMutationOutcomeV1 | GithubSecurityAlertMutationOutcomeV1 | null {
   if (execution.status === 'idle' || execution.status === 'pending' || isPluginActionConfirmationDeclined(execution)) return null;
   if (execution.status === 'outcomeUnknown') return Object.freeze({ kind: 'uncertain', failure: null });
-  if (execution.status === 'error') return Object.freeze({ kind: 'rejected', code: execution.code, message: execution.message });
+  if (execution.status === 'error') {
+    const { code, message, requestId, remediation, failureCause, details, effectAttempted } = execution;
+    return Object.freeze({ kind: 'rejected', failure: {
+      ok: false as const, errorCode: code,
+      ...(message === code ? {} : { message }),
+      ...(requestId === undefined ? {} : { requestId }),
+      ...(remediation === undefined ? {} : { remediation }),
+      ...(failureCause === undefined ? {} : { failureCause }),
+      ...(details === undefined ? {} : { details }),
+      ...(effectAttempted === undefined ? {} : { effectAttempted }),
+    } });
+  }
+  if (isPluginActionApprovalRequestCreated(execution.result)) return Object.freeze({ kind: 'approval' });
   if (parsed === null) return Object.freeze({ kind: 'unreadable' });
-  if ('outcome' in parsed) return parsed.outcome;
+  const outcome = readTriageSourceOperationOutcomeV1(execution.result);
+  if (outcome !== null) return outcome;
   return projectNativeOutcome(parsed);
 }

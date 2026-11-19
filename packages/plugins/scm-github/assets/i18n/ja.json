@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "下書きとして作成",
   "plugins.github.ui.administration.revertSubmit": "取り消し PR を作成",
   "plugins.github.ui.review.start": "レビューを開始",
+  "plugins.github.ui.review.draftStorageUnavailable": "このデバイスに下書きを保存できませんでした。入力した内容を残すには、このページを開いたままにしてください。",
   "plugins.github.ui.review.startReview": "レビューを開始",
   "plugins.github.ui.parity.user": "GitHubユーザー",
   "plugins.github.ui.preview.removing": "プレビューを削除中",

@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Open as draft",
   "plugins.github.ui.administration.revertSubmit": "Open revert PR",
   "plugins.github.ui.review.start": "Start a review",
+  "plugins.github.ui.review.draftStorageUnavailable": "This device could not save your draft. Keep this page open to keep your text.",
   "plugins.github.ui.review.startReview": "Start review",
   "plugins.github.ui.parity.user": "GitHub user",
   "plugins.github.ui.preview.removing": "Removing the preview",

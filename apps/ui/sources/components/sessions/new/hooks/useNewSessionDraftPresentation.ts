@@ -4,7 +4,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { getSessionDraftSnapshot, subscribeSessionDraft, type SessionDraftSnapshot, type SessionDraftStatus } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { selectSessionDraftSyncBadgeStatus } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
 import { getSessionDraftDocumentFieldValue } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
-import { readNewSessionDraftIdentity, type NewSessionDraftIdentity } from '@/components/sessions/drafts/newSessionDraftPresentation';
+import { buildNewSessionDraftTitle, readNewSessionDraftIdentity, type NewSessionDraftIdentity } from '@/components/sessions/drafts/newSessionDraftPresentation';
 
 type NewSessionDraftPresentation = Readonly<Pick<SessionDraftSnapshot, 'materialized' | 'conflict'> & {
     intro?: NonNullable<SessionDraftSnapshot['localSupplement']['newSessionLocalState']>['intro'];
@@ -59,9 +59,19 @@ export function useNewSessionDraftPresentation(scope: ServerAccountScope | null,
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** The identity of a draft at one moment, for a surface that is not subscribed to it (a confirmation). */
-export function getNewSessionDraftIdentity(scope: ServerAccountScope | null, draftId: string): NewSessionDraftIdentity {
-    return readNewSessionDraftIdentity(scope ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document : null);
+/** Read the draft once to present an Action targeting it. Deletion uses the same title as the row. */
+export function getNewSessionDraftActionIdentity(
+    scope: ServerAccountScope | null,
+    draftId: string,
+    useRowTitle: boolean,
+): NewSessionDraftIdentity & Readonly<{ subject: string | null }> {
+    const snapshot = scope ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null;
+    const identity = readNewSessionDraftIdentity(snapshot?.document);
+    if (!useRowTitle || !snapshot) return { ...identity, subject: identity.name };
+    const prompt = getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'composer', field: 'text' });
+    const title = buildNewSessionDraftTitle(snapshot, typeof prompt === 'string' ? prompt : '');
+    const entry = readSubjectLabel(snapshot);
+    return { ...identity, subject: entry && !title.includes(entry) ? `${entry} · ${title}` : title };
 }
 
 /** The folded composer's identity and text marker, without subscribing it to every draft edit. */

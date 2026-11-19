@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Apri come bozza",
   "plugins.github.ui.administration.revertSubmit": "Apri PR di annullamento",
   "plugins.github.ui.review.start": "Avvia una revisione",
+  "plugins.github.ui.review.draftStorageUnavailable": "Il dispositivo non ha potuto salvare la bozza. Tieni aperta questa pagina per conservare il testo.",
   "plugins.github.ui.review.startReview": "Avvia revisione",
   "plugins.github.ui.parity.user": "Utente GitHub",
   "plugins.github.ui.preview.removing": "Rimozione dell’anteprima",

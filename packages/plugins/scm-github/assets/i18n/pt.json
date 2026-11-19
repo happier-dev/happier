@@ -1141,6 +1141,7 @@
   "plugins.github.ui.administration.draft": "Abrir como rascunho",
   "plugins.github.ui.administration.revertSubmit": "Abrir PR de reversão",
   "plugins.github.ui.review.start": "Iniciar uma revisão",
+  "plugins.github.ui.review.draftStorageUnavailable": "Este dispositivo não conseguiu guardar o rascunho. Mantenha esta página aberta para conservar o texto.",
   "plugins.github.ui.review.startReview": "Iniciar revisão",
   "plugins.github.ui.parity.user": "Usuário do GitHub",
   "plugins.github.ui.preview.removing": "Removendo a pré-visualização",

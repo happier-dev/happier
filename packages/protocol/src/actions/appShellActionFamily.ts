@@ -306,6 +306,7 @@ function createAppShellActionSpecs() {
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'draft', 'delete'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: AppShellActionInputSchemas['session.draft.delete'], outputSchema: AppShellActionOutputSchemas['session.draft.delete'],
+    approvalPresentation: { technicalInputPaths: ['draftId'] },
     inputHints: { fields: [{ path: 'draftId', title: 'Draft id', widget: 'text', required: true }] },
   },
   {
