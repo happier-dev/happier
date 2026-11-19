@@ -13,6 +13,11 @@ import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReaso
 import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1 } from '@happier-dev/protocol/changes';
+import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import {
     publishPluginAccountSettingsWatchInvalidation,
@@ -340,10 +345,16 @@ export async function runSessionChangesSyncOnConnect(params: {
     } else if (params.reason === 'reconnect' || pageFull) {
         await params.refreshAccountSettingsForMinimumVersion?.(null);
     }
-    if (params.reason === 'reconnect' || highestAccountSettingsVersion !== null || pageFull
+    // A new Session can reuse this Account's host slot after the daemon advanced
+    // its cursor while no Session was connected. Converge retained demand here too.
+    if (params.reason !== 'live' || highestAccountSettingsVersion !== null || pageFull
         || changes.some(change => change.kind === 'account' && (change.entityId === MCP_SERVER_CATALOG_ACCOUNT_KEY_V1
             || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
-            || parsePromptLibraryPhysicalKeyV1(change.entityId) !== null))) {
+            || change.entityId === PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1
+            || isProfileCatalogAccountChangeEntityIdV1(change.entityId)
+            || parsePromptLibraryPhysicalKeyV1(change.entityId) !== null)
+            || change.kind === 'artifact' && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint),
+                [launchProfileArtifactSharingAdapterV1.kind, APPROVAL_PROFILE_ARTIFACT_KIND_V1]))) {
         await refreshDemandedAccountCatalogs();
     }
     if (pageFull) {

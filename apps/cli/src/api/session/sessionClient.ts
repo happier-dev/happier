@@ -237,6 +237,8 @@ import { accountSettingsKeysChanged, getActiveAccountSettingsSnapshot, getActive
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { refreshActivePromptLibraryCatalogAfterChange } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { refreshDemandedActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
+import { refreshDemandedActiveProfileCatalog, refreshDemandedActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { refreshDemandedActiveProviderConnectionsCatalog } from '@/providers/settings/hydrate';
 import { refreshDemandedActiveNotificationChannelCatalog } from '@/settings/notifications/hydrateNotificationChannelCatalog';
 import {
     supportsRuntimeActivityV2,
@@ -2394,6 +2396,9 @@ export class ApiSessionClient extends EventEmitter {
                             scopeKey: account.scopeKey, lifetimeToken }),
                         refreshDemandedActiveMcpServerCatalog({ token: this.token }),
                         refreshDemandedActiveNotificationChannelCatalog({ token: this.token }),
+                        refreshDemandedActiveProfileCatalog({ token: this.token }),
+                        refreshDemandedActiveApprovalProfileCatalog({ token: this.token }),
+                        refreshDemandedActiveProviderConnectionsCatalog({ token: this.token }),
                     ]);
                 })(),
             ]);
