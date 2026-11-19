@@ -1303,6 +1303,7 @@ export const ru: TranslationStructure = {
     send: "Отправить",
     attach: "Прикрепить",
     addImage: "Добавить изображение",
+    takePhoto: "Сделать фото",
     addFile: "Добавить файл",
     linkFile: "Связать файл",
     files: "Файлы",
@@ -3258,6 +3259,8 @@ export const ru: TranslationStructure = {
         `Пропущено ${count} ${plural({ count, one: "файл", few: "файла", many: "файлов" })}, превышающих максимальный размер вложений.`,
       noClipboardImageTitle: "В буфере нет изображения",
       noClipboardImageBody: "Скопируйте изображение, затем вставьте его как вложение.",
+      cameraPermissionDeniedTitle: "Нужен доступ к камере",
+      cameraPermissionDeniedBody: "Разрешите доступ к камере в настройках устройства, чтобы сделать фото.",
     },
   },
 
@@ -5516,6 +5519,7 @@ export const ru: TranslationStructure = {
   sessionDrafts: {
     sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой', startedOpen: "Сессия запущена · Открыть",
     status: { offline: 'Не в сети', syncing: 'Синхронизация', conflict: 'Конфликт', machineUnavailable: 'Компьютер недоступен', attachmentNeedsAttention: 'Вложение требует внимания', startInterrupted: 'Запуск прерван' },
+    error: { title: 'Ошибка черновика', storageDescription: 'Не удалось сохранить этот черновик на этом устройстве. Скопируйте текст в надёжное место, прежде чем уйти; сохранение повторится при следующем изменении.', encryptionDescription: "Не удалось синхронизировать черновик на этом устройстве.", showDetailsHint: 'Показывает, почему в черновике ошибка' },
     new: { action: 'Новый черновик' }, delete: { action: 'Удалить черновик', confirmTitle: 'Удалить черновик?', confirmDescription: 'Этот черновик будет удалён с ваших устройств.' },
     conflict: { title: 'Конфликт черновика', description: 'Это поле изменено на другом устройстве.', mine: 'На этом устройстве', synced: 'Синхронизировано', useSynced: 'Использовать синхронизированное', keepDevice: 'Оставить с устройства', copyMine: 'Скопировать моё', copied: 'Скопировано', copyFailed: 'Не удалось скопировать', field: { text: 'Текст', mentions: 'Упоминания', attachments: 'Вложения', recipient: 'Получатель', agentContinuation: 'Продолжение агента', executionRunDelivery: 'Доставка запуска' } },
   },

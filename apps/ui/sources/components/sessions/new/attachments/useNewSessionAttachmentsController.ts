@@ -7,7 +7,7 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import type { AgentInputSendOptions } from '@/components/sessions/agentInput/agentInputSendOptions';
 import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { openAttachmentFilePickerCamera, openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { attachRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
@@ -186,6 +186,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                 onPickFile: () => openAttachmentFilePickerFiles(filePickerRef.current),
                 onPickImage: () => openAttachmentFilePickerImages(filePickerRef.current),
                 onPasteImage: pasteAttachmentImage,
+                onTakePhoto: () => openAttachmentFilePickerCamera(filePickerRef.current),
                 disabled: params.isCreating,
             }));
         }

@@ -1117,6 +1117,7 @@ export const fr: TranslationStructure = {
         send: 'Envoyer',
         attach: 'Joindre',
         addImage: 'Ajouter une image',
+        takePhoto: 'Prendre une photo',
         addFile: 'Ajouter un fichier',
         linkFile: 'Lier un fichier',
         files: 'Fichiers',
@@ -3070,6 +3071,8 @@ export const fr: TranslationStructure = {
                 `Ignorés : ${count} ${plural({ count, singular: 'fichier', plural: 'fichiers' })} au-delà de la taille max des pièces jointes.`,
             noClipboardImageTitle: 'Aucune image dans le presse-papiers',
             noClipboardImageBody: 'Copie une image, puis colle-la comme pièce jointe.',
+            cameraPermissionDeniedTitle: 'Accès à l\'appareil photo requis',
+            cameraPermissionDeniedBody: 'Autorise l\'accès à l\'appareil photo dans les réglages de l\'appareil pour prendre une photo.',
         },
     },
 
@@ -6199,6 +6202,7 @@ export const fr: TranslationStructure = {
     sessionDrafts: {
         sectionTitle: 'Brouillons', badge: 'Brouillon', untitled: 'Brouillon sans titre', continueEditing: 'Continuer la modification', startAnother: 'En commencer un autre', startedOpen: "Session démarrée · Ouvrir",
         status: { offline: 'Hors ligne', syncing: 'Synchronisation', conflict: 'Conflit', machineUnavailable: 'Machine indisponible', attachmentNeedsAttention: 'Pièce jointe à vérifier', startInterrupted: 'Démarrage interrompu' },
+        error: { title: 'Erreur du brouillon', storageDescription: 'Ce brouillon n\'a pas pu être enregistré sur cet appareil. Copie ton texte en lieu sûr avant de partir ; l\'enregistrement sera retenté à ta prochaine modification.', encryptionDescription: "Cet appareil n’a pas pu synchroniser le brouillon.", showDetailsHint: 'Indique pourquoi ce brouillon est en erreur' },
         new: { action: 'Nouveau brouillon' }, delete: { action: 'Supprimer le brouillon', confirmTitle: 'Supprimer le brouillon ?', confirmDescription: 'Ce brouillon sera supprimé de vos appareils.' },
         conflict: { title: 'Conflit de brouillon', description: 'Ce champ a changé sur un autre appareil.', mine: 'Sur cet appareil', synced: 'Synchronisé', useSynced: 'Utiliser la version synchronisée', keepDevice: 'Garder cette version', copyMine: 'Copier ma version', copied: 'Copié', copyFailed: 'Copie impossible', field: { text: 'Texte', mentions: 'Références', attachments: 'Pièces jointes', recipient: 'Destinataire', agentContinuation: 'Suite de l’agent', executionRunDelivery: 'Livraison de l’exécution' } },
     },

@@ -1,3 +1,4 @@
+import { AgentInputProviderQuotaLabel } from './components/AgentInputProviderQuotaLabel';
 import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
@@ -596,7 +597,12 @@ function AgentInputHiddenUsageOverflow(props: AgentInputHiddenUsageOverflowProps
                                     {t('agentInput.providerUsage.title')}
                                 </Text>
                                 <Text style={styles.hiddenUsageOverflowDetail}>
-                                    {providerUsageGauge.detailRightLabel}
+                                    <AgentInputProviderQuotaLabel
+                                        resetAtMs={providerUsageGauge.effectiveMeter.resetAtMs ?? providerUsageGauge.effectiveMeter.resetsAt}
+                                        remainingPct={providerUsageGauge.remainingPct}
+                                        detailLabel={providerUsageGauge.detailRightLabel}
+                                        presented={open}
+                                    />
                                 </Text>
                                 {providerUsageGauge.usedLimitLabel ? (
                                     <Text style={styles.hiddenUsageOverflowSubdetail}>
@@ -2284,21 +2290,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
+    // The picker retains the running provider's row while the outbound chip follows the armed one.
+    const currentAgentMarkAgentId = props.sessionId && !sessionAgentId
+        ? null : sessionAgentId ?? props.agentType ?? null;
+    const currentAgentPickerLabel = armedComposerTarget
+        ? currentAgentMarkAgentId ? t(getAgentCore(currentAgentMarkAgentId).displayNameKey) : t('status.unknown')
+        : displayedAgentLabel ?? (props.agentType ? t(getAgentCore(props.agentType).displayNameKey) : t('status.unknown'));
     const currentAgentPickerRow = React.useMemo<AgentInputChipPickerOption | null>(() => (
         props.agentType
             ? {
                 id: `engine:${props.agentType}`,
-                label: displayedAgentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+                label: currentAgentPickerLabel,
                 icon: (
                     <AgentIcon
-                        agentId={engineChipMarkAgentId}
+                        agentId={currentAgentMarkAgentId}
                         size={12}
-                        style={{ transform: [{ scale: engineChipMarkAgentId ? getAgentPickerIconScale(engineChipMarkAgentId) : 1 }] }}
+                        style={{ transform: [{ scale: currentAgentMarkAgentId ? getAgentPickerIconScale(currentAgentMarkAgentId) : 1 }] }}
                     />
                 ),
             }
             : null
-    ), [displayedAgentLabel, engineChipMarkAgentId, props.agentType]);
+    ), [currentAgentMarkAgentId, currentAgentPickerLabel, props.agentType]);
 
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!hasInternalAgentPickerOptions || !props.agentType || !currentAgentPickerRow) return [];

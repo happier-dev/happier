@@ -10,6 +10,26 @@ import { installPanelCommonModuleMocks } from './panelTestHelpers';
 installPanelCommonModuleMocks();
 
 describe('ResizableDockedPane (web pointer drag)', () => {
+    it.each(['left', 'right'] as const)('keeps the %s divider target outside the scrolling pane', async (edge) => {
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+        const { tree } = await renderScreen(
+            <ResizableDockedPane
+                widthPx={320}
+                minWidthPx={200}
+                maxWidthPx={480}
+                resizeEdge={edge}
+                onCommitWidthPx={vi.fn()}
+            >
+                <ViewStub />
+            </ResizableDockedPane>,
+        );
+        const handle = findFirstByType(tree, 'Pressable');
+        expect(handle).toBeTruthy();
+        const { width, [edge]: inset } = handle!.props.style;
+        expect(width).toBeGreaterThan(2);
+        expect(inset + width).toBeLessThanOrEqual(0);
+    });
+
     it('commits width as the user drags (resizeEdge=right)', async () => {
         const events: string[] = [];
         const onCommitWidthPx = vi.fn(() => {

@@ -23,6 +23,7 @@ import {
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { Icon } from '@/components/ui/icons/Icon';
+import { PromptCardLayout } from '@/components/tools/shell/presentation/PromptCardLayout';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -38,6 +39,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     chrome?: 'card' | 'inline';
+    maxHeightPx?: number;
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -126,84 +128,88 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
 
     return (
         <View testID="permission-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
-            <View style={styles.header}>
-                <View style={styles.icon}>
-                    <Icon name="lock" size={16} color={theme.colors.state.neutral.foreground} />
-                </View>
-                <View style={styles.headerText}>
-                    <Text style={styles.title} numberOfLines={1}>
-                        {headerText.title}
-                    </Text>
-                    {effectiveSubtitle ? (
-                        <Text style={styles.subtitle} numberOfLines={2}>
-                            {effectiveSubtitle}
+            <PromptCardLayout
+                maxHeightPx={props.maxHeightPx}
+                bodyTestID="permission-prompt-scroll-body"
+                footer={showRuntimeModeContext ? null : (
+                    <View style={styles.actions}>
+                        <PermissionFooter
+                            embedded={true}
+                            alignFirstButtonToStart={true}
+                            permission={{
+                                id: props.request.id,
+                                status: 'pending',
+                                ...(typeof props.request.permissionSuggestions !== 'undefined'
+                                    ? { suggestions: props.request.permissionSuggestions }
+                                    : {}),
+                            }}
+                            sessionId={props.sessionId}
+                            toolName={props.request.tool}
+                            toolInput={props.request.arguments}
+                            metadata={props.metadata || null}
+                            canApprovePermissions={props.canApprovePermissions}
+                            disabledReason={props.disabledReason}
+                        />
+                    </View>
+                )}
+            >
+                <View style={styles.header}>
+                    <View style={styles.icon}>
+                        <Icon name="lock" size={16} color={theme.colors.state.neutral.foreground} />
+                    </View>
+                    <View style={styles.headerText}>
+                        <Text style={styles.title} numberOfLines={1}>
+                            {headerText.title}
                         </Text>
+                        {effectiveSubtitle ? (
+                            <Text style={styles.subtitle} numberOfLines={2}>
+                                {effectiveSubtitle}
+                            </Text>
+                        ) : null}
+                    </View>
+                    {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
+                    {canOpenToolRoute ? (
+                        <Pressable
+                            testID="permission-prompt-view-tool"
+                            onPress={onViewTool}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('toolView.open')}
+                            style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
+                        >
+                            <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
+                        </Pressable>
                     ) : null}
                 </View>
-                {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
-                {canOpenToolRoute ? (
-                    <Pressable
-                        testID="permission-prompt-view-tool"
-                        onPress={onViewTool}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('toolView.open')}
-                        style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
-                    >
-                        <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
-                    </Pressable>
+
+                {showRuntimeModeContext ? (
+                    <View testID="permission-prompt-runtime-mode-context" style={styles.runtimeModeContext}>
+                        <Text style={styles.runtimeModeContextText}>
+                            {t('session.resuming')}
+                        </Text>
+                    </View>
                 ) : null}
-            </View>
 
-            {showRuntimeModeContext ? (
-                <View testID="permission-prompt-runtime-mode-context" style={styles.runtimeModeContext}>
-                    <Text style={styles.runtimeModeContextText}>
-                        {t('session.resuming')}
-                    </Text>
-                </View>
-            ) : null}
-
-            {isPreviewVisible ? (
-                <View style={styles.preview}>
-                    <ToolInlineBody
-                        mode="timeline"
-                        tool={model.tool}
-                        normalizedToolName={headerText.normalizedToolName}
-                        metadata={props.metadata}
-                        messages={[]}
-                        sessionId={props.sessionId}
-                        interaction={{
-                            canSendMessages: false,
-                            canApprovePermissions: props.canApprovePermissions,
-                            permissionDisabledReason: props.disabledReason,
-                        }}
-                        detailLevel={inlineDetailLevel === 'full' ? 'full' : 'summary'}
-                        sectionSpacing="compact"
-                        setHeaderActions={setHeaderActions}
-                    />
-                </View>
-            ) : null}
-
-            {showRuntimeModeContext ? null : (
-                <View style={styles.actions}>
-                    <PermissionFooter
-                        embedded={true}
-                        alignFirstButtonToStart={true}
-                        permission={{
-                            id: props.request.id,
-                            status: 'pending',
-                            ...(typeof props.request.permissionSuggestions !== 'undefined'
-                                ? { suggestions: props.request.permissionSuggestions }
-                                : {}),
-                        }}
-                        sessionId={props.sessionId}
-                        toolName={props.request.tool}
-                        toolInput={props.request.arguments}
-                        metadata={props.metadata || null}
-                        canApprovePermissions={props.canApprovePermissions}
-                        disabledReason={props.disabledReason}
-                    />
-                </View>
-            )}
+                {isPreviewVisible ? (
+                    <View style={styles.preview}>
+                        <ToolInlineBody
+                            mode="timeline"
+                            tool={model.tool}
+                            normalizedToolName={headerText.normalizedToolName}
+                            metadata={props.metadata}
+                            messages={[]}
+                            sessionId={props.sessionId}
+                            interaction={{
+                                canSendMessages: false,
+                                canApprovePermissions: props.canApprovePermissions,
+                                permissionDisabledReason: props.disabledReason,
+                            }}
+                            detailLevel={inlineDetailLevel === 'full' ? 'full' : 'summary'}
+                            sectionSpacing="compact"
+                            setHeaderActions={setHeaderActions}
+                        />
+                    </View>
+                ) : null}
+            </PromptCardLayout>
         </View>
     );
 });

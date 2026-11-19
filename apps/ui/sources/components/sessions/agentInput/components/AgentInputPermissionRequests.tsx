@@ -123,6 +123,7 @@ export const AgentInputAttentionRequests = React.memo(function AgentInputAttenti
                                     {entry.kind === 'provider_permission' ? (
                                         <PermissionPromptCard
                                             chrome="inline"
+                                            maxHeightPx={Math.max(0, props.maxHeightPx - 2)}
                                             request={entry.request}
                                             location={props.permissionLocationsById.get(entry.request.id) ?? null}
                                             sessionId={props.sessionId}
@@ -133,6 +134,7 @@ export const AgentInputAttentionRequests = React.memo(function AgentInputAttenti
                                     ) : (
                                         <ApprovalPromptCard
                                             chrome="inline"
+                                            maxHeightPx={Math.max(0, props.maxHeightPx - 2)}
                                             artifact={entry.request.artifact}
                                             approval={entry.request.approval}
                                             location={props.approvalLocationsByArtifactId?.get(entry.request.artifact.id) ?? null}

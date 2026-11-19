@@ -33,6 +33,13 @@ function operation(
 }
 
 describe('action operation presentation', () => {
+    it('surfaces the failure reason only for failed operations', () => {
+        expect(resolveActionOperationPresentation(operation('failed', 'failed'), 'available', NOW).failureReason)
+            .toBe('Could not finish');
+        expect(resolveActionOperationPresentation(operation('done', 'succeeded'), 'available', NOW).failureReason)
+            .toBeNull();
+    });
+
     it.each(['running', 'cancelled', 'failed', 'succeeded'] as const)('opens the imported session from Activity when %s', (state) => {
         const snapshot = operation('import-session', state, {
             actionId: 'session.direct.takeover_persist',

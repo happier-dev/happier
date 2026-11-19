@@ -27,11 +27,22 @@ describe('sessionDebugInformation', () => {
         });
 
         expect(result.text).toBe([
+            'Session name: unknown',
             'Happier session ID: happy-session-1',
             'Claude session ID: claude-session-1',
             'Happier logs: /tmp/happier/session.log',
         ].join('\n'));
         expect(result.providerSessionArtifactPath).toBeNull();
+    });
+
+    it('includes the displayed session name in copied debug details', () => {
+        const result = buildSessionDebugInformation({
+            session: { id: 'happy-session-named', metadata: { name: 'Friendly project name' } },
+            providerDisplayName: null,
+            providerSessionId: null,
+        });
+
+        expect(result.text).toContain('Session name: Friendly project name');
     });
 
     it('omits unavailable values instead of writing placeholder lines', () => {
@@ -47,7 +58,7 @@ describe('sessionDebugInformation', () => {
             providerSessionId: null,
         });
 
-        expect(result.text).toBe('Happier session ID: happy-session-2');
+        expect(result.text).toBe('Session name: unknown\nHappier session ID: happy-session-2');
         expect(result.text).not.toContain('Not available');
         expect(result.text).not.toContain('Claude session ID');
         expect(result.text).not.toContain('Happier logs');
@@ -130,6 +141,7 @@ describe('sessionDebugInformation', () => {
         });
 
         expect(withArtifact.text).toBe([
+            'Session name: unknown',
             'Happier session ID: happy-session-3',
             'Claude session ID: claude-session-3',
             'Claude session logs: /tmp/claude/session.jsonl',
@@ -147,6 +159,7 @@ describe('sessionDebugInformation', () => {
         });
 
         expect(withoutArtifact.text).toBe([
+            'Session name: unknown',
             'Happier session ID: happy-session-4',
             'Codex session ID: codex-session-4',
         ].join('\n'));

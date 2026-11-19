@@ -32,7 +32,7 @@ const requireForTest = createRequire(import.meta.url);
 const { Drawer: CjsDrawer } = requireForTest('vaul') as typeof import('vaul');
 
 describe('PopoverPortalTargetProvider (web dom)', () => {
-    it('layers the screen-local portal host above later composer siblings', async () => {
+    it('lets a sidebar popover escape its stacking context above a later session pane', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -41,15 +41,20 @@ describe('PopoverPortalTargetProvider (web dom)', () => {
         try {
             await act(async () => {
                 root.render(
-                    <PopoverPortalTargetProvider>
-                        <div data-testid="screen-content" />
-                        <div data-testid="composer" style={{ position: 'relative', zIndex: 1 }} />
-                    </PopoverPortalTargetProvider>,
+                    <>
+                        <div data-testid="sidebar" style={{ isolation: 'isolate' }}>
+                            <PopoverPortalTargetProvider>
+                                <div data-testid="screen-content" />
+                            </PopoverPortalTargetProvider>
+                        </div>
+                        <div data-testid="session-pane" style={{ position: 'relative', zIndex: 1 }} />
+                    </>,
                 );
             });
 
             const host = document.querySelector('[data-happy-popover-portal-host]') as HTMLElement | null;
             expect(host).not.toBeNull();
+            expect(host?.parentElement).toBe(document.body);
             expect(Number(host?.style.zIndex)).toBeGreaterThan(1);
         } finally {
             await act(async () => {

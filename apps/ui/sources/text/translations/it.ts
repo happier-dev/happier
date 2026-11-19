@@ -1274,6 +1274,7 @@ export const it: TranslationStructure = {
     send: "Invia",
     attach: "Allega",
     addImage: "Aggiungi immagine",
+    takePhoto: "Scatta foto",
     addFile: "Aggiungi file",
     linkFile: "Collega file",
     files: "File",
@@ -3657,6 +3658,8 @@ export const it: TranslationStructure = {
         `Saltati ${count} ${plural({ count, singular: "file", plural: "file" })} che superano la dimensione massima dell’allegato.`,
       noClipboardImageTitle: "Nessuna immagine negli appunti",
       noClipboardImageBody: "Copia un'immagine e incollala come allegato.",
+      cameraPermissionDeniedTitle: "Accesso alla fotocamera necessario",
+      cameraPermissionDeniedBody: "Consenti l'accesso alla fotocamera nelle impostazioni del dispositivo per scattare una foto.",
     },
   },
 
@@ -6926,6 +6929,7 @@ export const it: TranslationStructure = {
   sessionDrafts: {
     sectionTitle: 'Bozze', badge: 'Bozza', untitled: 'Bozza senza titolo', continueEditing: 'Continua a modificare', startAnother: 'Iniziane un’altra', startedOpen: "Sessione avviata · Apri",
     status: { offline: 'Non in linea', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', startInterrupted: 'Avvio interrotto' },
+    error: { title: 'Errore della bozza', storageDescription: 'Non è stato possibile salvare questa bozza su questo dispositivo. Copia il testo in un posto sicuro prima di uscire; il salvataggio verrà ritentato alla prossima modifica.', encryptionDescription: "Questo dispositivo non è riuscito a sincronizzare la bozza.", showDetailsHint: 'Mostra perché questa bozza ha un errore' },
     new: { action: 'Nuova bozza' }, delete: { action: 'Elimina bozza', confirmTitle: 'Eliminare la bozza?', confirmDescription: 'Questa bozza verrà rimossa dai tuoi dispositivi.' },
     conflict: { title: 'Conflitto della bozza', description: 'Questo campo è cambiato su un altro dispositivo.', mine: 'Su questo dispositivo', synced: 'Sincronizzato', useSynced: 'Usa sincronizzato', keepDevice: 'Mantieni dispositivo', copyMine: 'Copia il mio', copied: 'Copiato', copyFailed: 'Impossibile copiare', field: { text: 'Testo', mentions: 'Menzioni', attachments: 'Allegati', recipient: 'Destinatario', agentContinuation: 'Continuazione agente', executionRunDelivery: 'Consegna esecuzione' } },
   },

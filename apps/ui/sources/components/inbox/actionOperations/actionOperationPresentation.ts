@@ -20,6 +20,7 @@ export type ActionOperationPresentation = Readonly<{
     iconName: IconName;
     progressLabel: string | null;
     progressValue: string | null;
+    failureReason: string | null;
     timeValue: string;
     openSessionId: string | null;
 }>;
@@ -169,6 +170,7 @@ export function resolveActionOperationPresentation(
         iconName: detail.iconName,
         progressLabel,
         progressValue,
+        failureReason: operation.state === 'failed' ? operation.error?.error ?? null : null,
         timeValue: formatShortRelativeTimeAt(timeAnchor ?? operation.createdAt, nowMs),
         openSessionId: detail.openSessionId,
     };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { t } from '@/text';
 
@@ -27,5 +27,18 @@ describe('sessionDraftStatusPresentation', () => {
         expect(buildSessionDraftSyncStatusBadge('clean')).toBeNull();
         expect(buildSessionDraftSyncStatusBadge('conflict')).toBeNull();
         expect(resolveSessionDraftStatusKey('conflict')).toBe('sessionDrafts.status.conflict');
+    });
+
+    it('reads the repository reason only when the error badge opens', () => {
+        const readErrorReason = vi.fn(() => 'storage' as const);
+        const badge = buildSessionDraftSyncStatusBadge('error', { readErrorReason });
+        const context = { anchorRef: { current: null }, onRequestClose: vi.fn() };
+
+        expect(badge?.renderPopover?.({ ...context, open: false })).toBeNull();
+        expect(readErrorReason).not.toHaveBeenCalled();
+        expect(badge?.renderPopover?.({ ...context, open: true })).toBeTruthy();
+        expect(readErrorReason).toHaveBeenCalledOnce();
+        expect(buildSessionDraftSyncStatusBadge('error')?.renderPopover).toBeUndefined();
+        expect(buildSessionDraftSyncStatusBadge('offline', { readErrorReason })?.renderPopover).toBeUndefined();
     });
 });

@@ -27,7 +27,7 @@ import { createGoalActionChip } from '@/components/sessions/agentInput/definitio
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { openAttachmentFilePickerCamera, openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
@@ -84,6 +84,7 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import {
     areSessionDraftCurrentnessCapturesEqual,
+    getSessionDraftErrorReason,
     type SessionDraftCurrentness,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
@@ -4331,8 +4332,13 @@ function SessionViewLoaded({
     } = useDraft(sessionId, composerTextStore, { active: surfaceFocused });
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftConflict);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(draftStatus ?? 'clean'),
-        [draftStatus],
+        () => buildSessionDraftSyncStatusBadge(
+            draftStatus ?? 'clean',
+            draftScope
+                ? { readErrorReason: () => getSessionDraftErrorReason(draftScope, { kind: 'session', sessionId }) }
+                : undefined,
+        ),
+        [draftScope, draftStatus, sessionId],
     );
     const [pendingMessageEdit, setPendingMessageEdit] = React.useState<PendingMessageComposerEditState | null>(null);
     const pendingMessageEditRef = React.useRef(pendingMessageEdit);
@@ -5148,6 +5154,9 @@ function SessionViewLoaded({
         const handlePickAttachmentImage = React.useCallback(() => {
             openAttachmentFilePickerImages(filePickerRef.current);
         }, [filePickerRef]);
+        const handleTakeAttachmentPhoto = React.useCallback(() => {
+            openAttachmentFilePickerCamera(filePickerRef.current);
+        }, [filePickerRef]);
         const handleAppendLinkedPath = React.useCallback((path: string) => {
             setDraftValue((prev) => {
                 const base = prev ?? '';
@@ -5170,6 +5179,7 @@ function SessionViewLoaded({
             onPickAttachmentFile: handlePickAttachmentFile,
             onPickAttachmentImage: handlePickAttachmentImage,
             onPasteAttachmentImage: pasteAttachmentImage,
+            onTakeAttachmentPhoto: handleTakeAttachmentPhoto,
             onAppendLinkedPath: handleAppendLinkedPath,
             reviewCommentsEnabled,
             reviewScope,

@@ -1297,6 +1297,7 @@ export const pl: TranslationStructure = {
     send: "Wyślij",
     attach: "Dołącz",
     addImage: "Dodaj obraz",
+    takePhoto: "Zrób zdjęcie",
     addFile: "Dodaj plik",
     linkFile: "Połącz plik",
     files: "Pliki",
@@ -3335,6 +3336,8 @@ export const pl: TranslationStructure = {
         `Pominięto ${count} ${plural({ count, one: "plik", few: "pliki", many: "plików" })}, które przekraczają maksymalny rozmiar załącznika.`,
       noClipboardImageTitle: "Brak obrazu w schowku",
       noClipboardImageBody: "Skopiuj obraz, a potem wklej go jako załącznik.",
+      cameraPermissionDeniedTitle: "Wymagany dostęp do aparatu",
+      cameraPermissionDeniedBody: "Zezwól na dostęp do aparatu w ustawieniach urządzenia, aby zrobić zdjęcie.",
     },
   },
 
@@ -6592,6 +6595,7 @@ export const pl: TranslationStructure = {
   sessionDrafts: {
     sectionTitle: 'Wersje robocze', badge: 'Wersja robocza', untitled: 'Wersja bez tytułu', continueEditing: 'Kontynuuj edycję', startAnother: 'Rozpocznij nową', startedOpen: "Sesja rozpoczęta · Otwórz",
     status: { offline: 'Poza siecią', syncing: 'Synchronizowanie', conflict: 'Konflikt', machineUnavailable: 'Maszyna niedostępna', attachmentNeedsAttention: 'Załącznik wymaga uwagi', startInterrupted: 'Uruchamianie przerwane' },
+    error: { title: 'Błąd szkicu', storageDescription: 'Nie udało się zapisać tego szkicu na tym urządzeniu. Skopiuj tekst w bezpieczne miejsce, zanim wyjdziesz; zapis zostanie ponowiony przy następnej edycji.', encryptionDescription: "To urządzenie nie mogło zsynchronizować szkicu.", showDetailsHint: 'Pokazuje, dlaczego ten szkic ma błąd' },
     new: { action: 'Nowa wersja robocza' }, delete: { action: 'Usuń wersję roboczą', confirmTitle: 'Usunąć wersję roboczą?', confirmDescription: 'Ta wersja robocza zostanie usunięta z Twoich urządzeń.' },
     conflict: { title: 'Konflikt wersji roboczej', description: 'To pole zmieniono na innym urządzeniu.', mine: 'Na tym urządzeniu', synced: 'Zsynchronizowane', useSynced: 'Użyj zsynchronizowanej', keepDevice: 'Zachowaj z urządzenia', copyMine: 'Kopiuj moją', copied: 'Skopiowano', copyFailed: 'Nie udało się skopiować', field: { text: 'Tekst', mentions: 'Wzmianki', attachments: 'Załączniki', recipient: 'Odbiorca', agentContinuation: 'Kontynuacja agenta', executionRunDelivery: 'Dostarczenie wykonania' } },
   },

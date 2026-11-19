@@ -1117,6 +1117,7 @@ export const de: TranslationStructure = {
         send: 'Senden',
         attach: 'Anhängen',
         addImage: 'Bild hinzufügen',
+        takePhoto: 'Foto aufnehmen',
         addFile: 'Datei hinzufügen',
         linkFile: 'Datei verknüpfen',
         files: 'Dateien',
@@ -3070,6 +3071,8 @@ export const de: TranslationStructure = {
                 `Übersprungen: ${count} ${plural({ count, singular: 'Datei', plural: 'Dateien' })} die die maximale Anhanggröße überschreiten.`,
             noClipboardImageTitle: 'Kein Bild in der Zwischenablage',
             noClipboardImageBody: 'Kopier ein Bild und füg es dann als Anhang ein.',
+            cameraPermissionDeniedTitle: 'Kamerazugriff erforderlich',
+            cameraPermissionDeniedBody: 'Erlaube den Kamerazugriff in den Geräteeinstellungen, um ein Foto aufzunehmen.',
         },
     },
 
@@ -6212,6 +6215,7 @@ export const de: TranslationStructure = {
     sessionDrafts: {
         sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen', startedOpen: "Sitzung gestartet · Öffnen",
         status: { offline: 'Nicht verbunden', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', startInterrupted: 'Start unterbrochen' },
+        error: { title: 'Entwurfsfehler', storageDescription: 'Dieser Entwurf konnte auf diesem Gerät nicht gespeichert werden. Kopier deinen Text an einen sicheren Ort, bevor du gehst; beim nächsten Bearbeiten wird erneut gespeichert.', encryptionDescription: "Dieses Gerät konnte den Entwurf nicht synchronisieren.", showDetailsHint: 'Zeigt, warum dieser Entwurf einen Fehler hat' },
         new: { action: 'Neuer Entwurf' }, delete: { action: 'Entwurf löschen', confirmTitle: 'Entwurf löschen?', confirmDescription: 'Dieser Entwurf wird von deinen Geräten entfernt.' },
         conflict: { title: 'Entwurfskonflikt', description: 'Dieses Feld wurde auf einem anderen Gerät geändert.', mine: 'Auf diesem Gerät', synced: 'Synchronisiert', useSynced: 'Synchronisierte Version verwenden', keepDevice: 'Geräteversion behalten', copyMine: 'Meine Version kopieren', copied: 'Kopiert', copyFailed: 'Kopieren fehlgeschlagen', field: { text: 'Textinhalt', mentions: 'Erwähnungen', attachments: 'Anhänge', recipient: 'Empfänger', agentContinuation: 'Agentenfortsetzung', executionRunDelivery: 'Laufzustellung' } },
     },

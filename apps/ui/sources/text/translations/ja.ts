@@ -1257,6 +1257,7 @@ export const ja: TranslationStructure = {
     send: "送信",
     attach: "添付",
     addImage: "画像を追加",
+    takePhoto: "写真を撮る",
     addFile: "ファイルを追加",
     linkFile: "ファイルをリンク",
     files: "ファイル",
@@ -3614,6 +3615,8 @@ localTailscale: {
         `最大添付サイズを超えるため、${count} 件のファイルをスキップしました。`,
       noClipboardImageTitle: "クリップボードに画像がありません",
       noClipboardImageBody: "画像をコピーしてから、添付ファイルとして貼り付けてください。",
+      cameraPermissionDeniedTitle: "カメラへのアクセスが必要です",
+      cameraPermissionDeniedBody: "写真を撮るには、デバイスの設定でカメラへのアクセスを許可してください。",
     },
   },
 
@@ -6847,6 +6850,7 @@ localTailscale: {
   sessionDrafts: {
     sectionTitle: '下書き', badge: '下書き', untitled: '無題の下書き', continueEditing: '編集を続ける', startAnother: '別の下書きを開始', startedOpen: "セッションを開始しました · 開く",
     status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', startInterrupted: '開始が中断されました' },
+    error: { title: '下書きのエラー', storageDescription: 'この下書きをこのデバイスに保存できませんでした。離れる前にテキストを安全な場所にコピーしてください。次に編集したときに保存を再試行します。', encryptionDescription: "このデバイスで下書きを同期できませんでした。", showDetailsHint: 'この下書きにエラーがある理由を表示します' },
     new: { action: '新しい下書き' }, delete: { action: '下書きを削除', confirmTitle: '下書きを削除しますか？', confirmDescription: 'この下書きはデバイスから削除されます。' },
     conflict: { title: '下書きの競合', description: 'このフィールドは別のデバイスで変更されました。', mine: 'このデバイス', synced: '同期済み', useSynced: '同期版を使用', keepDevice: 'デバイス版を保持', copyMine: '自分の版をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした', field: { text: 'テキスト', mentions: 'メンション', attachments: '添付ファイル', recipient: '受信者', agentContinuation: 'エージェント継続', executionRunDelivery: '実行配信' } },
   },

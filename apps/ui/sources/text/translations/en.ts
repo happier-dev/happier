@@ -1115,6 +1115,7 @@ export const en = {
         send: 'Send',
         attach: 'Attach',
         addImage: 'Add image',
+        takePhoto: 'Take photo',
         addFile: 'Add file',
         linkFile: 'Link file',
         files: 'Files',
@@ -3071,6 +3072,8 @@ export const en = {
                 `Skipped ${count} ${plural({ count, singular: 'file', plural: 'files' })} that exceed the max attachment size.`,
             noClipboardImageTitle: 'No clipboard image',
             noClipboardImageBody: 'Copy an image, then paste it as an attachment.',
+            cameraPermissionDeniedTitle: 'Camera access needed',
+            cameraPermissionDeniedBody: 'Allow camera access in your device settings to take a photo.',
         },
     },
 
@@ -6233,6 +6236,7 @@ export const en = {
     sessionDrafts: {
         sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another', startedOpen: "Session started · Open",
         status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', startInterrupted: 'Start interrupted' },
+        error: { title: 'Draft error', storageDescription: 'This draft couldn\'t be saved on this device. Copy your text somewhere safe before leaving; saving is retried on your next edit.', encryptionDescription: "This device couldn’t sync the draft.", showDetailsHint: 'Shows why this draft has an error' },
         new: { action: 'New draft' },
         delete: { action: 'Delete draft', confirmTitle: 'Delete draft?', confirmDescription: 'This draft will be removed from your devices.' },
         conflict: {

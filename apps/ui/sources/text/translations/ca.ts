@@ -1216,6 +1216,7 @@ export const ca: TranslationStructure = {
         send: 'Envia',
         attach: 'Adjunta',
         addImage: 'Afegeix imatge',
+        takePhoto: 'Fes una foto',
         addFile: 'Afegeix fitxer',
         linkFile: 'Enllaça fitxer',
         files: 'Fitxers',
@@ -3156,6 +3157,8 @@ export const ca: TranslationStructure = {
                 `S\'han omès ${count} ${plural({ count, singular: 'fitxer', plural: 'fitxers' })} que superen la mida màxima d\'adjunt.`,
             noClipboardImageTitle: 'No hi ha cap imatge al porta-retalls',
             noClipboardImageBody: 'Copia una imatge i enganxa-la com a adjunt.',
+            cameraPermissionDeniedTitle: 'Cal accés a la càmera',
+            cameraPermissionDeniedBody: 'Permet l\'accés a la càmera a la configuració del dispositiu per fer una foto.',
         },
     },
 
@@ -6213,6 +6216,7 @@ deps: {
     sessionDrafts: {
         sectionTitle: 'Esborranys', badge: 'Esborrany', untitled: 'Esborrany sense títol', continueEditing: 'Continua editant', startAnother: 'Comença’n un altre', startedOpen: "Sessió iniciada · Obre",
         status: { offline: 'Sense connexió', syncing: 'Sincronitzant', conflict: 'Conflicte', machineUnavailable: 'Màquina no disponible', attachmentNeedsAttention: 'Cal revisar l’adjunt', startInterrupted: 'Inici interromput' },
+        error: { title: 'Error de l\'esborrany', storageDescription: 'Aquest esborrany no s\'ha pogut desar en aquest dispositiu. Copia el text en un lloc segur abans de sortir; es tornarà a intentar desar en la propera edició.', encryptionDescription: "Aquest dispositiu no ha pogut sincronitzar l’esborrany.", showDetailsHint: 'Mostra per què aquest esborrany té un error' },
         new: { action: 'Esborrany nou' }, delete: { action: 'Suprimeix l’esborrany', confirmTitle: 'Vols suprimir l’esborrany?', confirmDescription: 'Aquest esborrany se suprimirà dels teus dispositius.' },
         conflict: { title: 'Conflicte d’esborrany', description: 'Aquest camp ha canviat en un altre dispositiu.', mine: 'En aquest dispositiu', synced: 'Sincronitzat', useSynced: 'Utilitza el sincronitzat', keepDevice: 'Conserva el del dispositiu', copyMine: 'Copia el meu', copied: 'Copiat', copyFailed: 'No s’ha pogut copiar', field: { text: 'Contingut de text', mentions: 'Mencions', attachments: 'Adjunts', recipient: 'Destinatari', agentContinuation: 'Continuació de l’agent', executionRunDelivery: 'Lliurament de l’execució' } },
     },

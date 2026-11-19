@@ -32,6 +32,7 @@ export function createAttachmentActionChip(params: Readonly<{
     onPickFile: () => void;
     onPickImage: () => void;
     onPasteImage?: () => void;
+    onTakePhoto?: () => void;
     disabled?: boolean;
 }>): AgentInputExtraActionChip {
     const showChooser = Platform.OS === 'ios' || Platform.OS === 'android';
@@ -72,6 +73,7 @@ export function createAttachmentActionChip(params: Readonly<{
                     normalizeNodeForView(<Icon name="paperclip" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
                 renderContent: ({ requestClose }) => {
                     const pasteImage = params.onPasteImage;
+                    const takePhoto = params.onTakePhoto;
                     return (
                         <ActionListSection
                             actions={[
@@ -82,6 +84,15 @@ export function createAttachmentActionChip(params: Readonly<{
                                     onPress: () => {
                                         requestClose();
                                         runAfterNativePopoverDismiss(pasteImage);
+                                    },
+                                }] : []),
+                                ...(takePhoto ? [{
+                                    id: 'take-photo',
+                                    testID: 'attachments-action-take-photo',
+                                    label: t('common.takePhoto'),
+                                    onPress: () => {
+                                        requestClose();
+                                        runAfterNativePopoverDismiss(takePhoto);
                                     },
                                 }] : []),
                                 {
