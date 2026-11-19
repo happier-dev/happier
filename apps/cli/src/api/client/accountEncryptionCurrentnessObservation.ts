@@ -192,6 +192,8 @@ export function sameRequesterAccountEncryptionCurrentness(a: AccountEncryptionId
 type RequesterCurrentnessReadScope = Readonly<{
     accountId?: string; token: string; serverBaseUrl?: string; signal?: AbortSignal;
     authorizationHeaders?: Readonly<Record<string, string>>;
+    /** This finite operation independently authenticated and admitted the exact credential. */
+    retainCredentialReference?: true;
 }>;
 
 /** Encryption identity only; exact Account cursor/Settings witnesses still use fresh HTTP. */
@@ -216,7 +218,14 @@ export async function readRequesterAccountEncryptionCurrentness<T>(scope: Reques
         if (observed && !observed.isCurrent(currentness)) throw new AccountEncryptionCurrentnessUnavailableError();
         return result;
     };
-    return observed ? await readAdmittedObservation(observed, { ...scope, serverBaseUrl }, read) : await read();
+    if (!observed) return await read();
+    const retained = scope.retainCredentialReference
+        ? acquireRequesterAccountEncryptionCurrentness({ ...observed.scope, token: scope.token }) : undefined;
+    try {
+        return await readAdmittedObservation(observed, { ...scope, serverBaseUrl }, read);
+    } finally {
+        await retained?.dispose();
+    }
 }
 
 /** A synchronous fence after distinct Machine/Home awaits, without another HTTP read. */

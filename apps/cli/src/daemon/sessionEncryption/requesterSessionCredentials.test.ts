@@ -29,6 +29,7 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/
 import { PRIVATE_SPAWN_SESSION_RPC_METHODS } from '@/rpc/handlers/spawnSessionOptionsContract';
 import type { RpcHandler } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createDeferred } from '@/testkit/async/deferred';
 import { captureRequesterCurrentnessRefusal } from './requesterCurrentness';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -1265,6 +1266,49 @@ describe('requester Session lifecycle custody', () => {
       } finally { host.setUnavailablePath(null); vi.restoreAllMocks(); await prepared.cleanupOnFailure(); }
     },
   );
+
+  it('recovers protected Session custody when a peer with its exact credential disposes during admission', async () => {
+    const secret = new Uint8Array(32).fill(23);
+    const host = await home({ encryptionSecret: secret });
+    const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+    await createRequesterSessionCredentialCustody({ ...binding, homeServerIdentityId: 'srv_original_home',
+      credentials: { ...credentials, encryption: { type: 'legacy', secret } } });
+    const recover = () => resolveRequesterSessionBootstrap({ ...binding, serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: host.boundary });
+
+    // A separate admitted bearer keeps the shared Account channel alive.
+    const peer = acquireRequesterAccountEncryptionCurrentness({ accountId: attribution.accountId, serverBaseUrl: origin,
+      token: 'other-admitted-credential' });
+    try {
+      await peer.read();
+      const first = await recover();
+      if (!first) throw new Error('Missing initial requester recovery');
+      const entered = createDeferred();
+      const release = createDeferred();
+      const get = axios.get.bind(axios);
+      const read = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+        if (String(url).endsWith('/v2/sessions/session')) {
+          entered.resolve();
+          await release.promise;
+        }
+        return get(url, config);
+      });
+      const pending = recover();
+      try {
+        await Promise.race([entered.promise, pending.then(() => { throw new Error('Recovery finished before Session binding'); })]);
+        await first.dispose();
+        release.resolve();
+        const recovered = await pending;
+        expect(recovered?.getBoundSessionId()).toBe(binding.sessionId);
+        expect(await recovered?.isCurrent()).toBe(true);
+      } finally {
+        release.resolve();
+        read.mockRestore();
+        await first.dispose();
+        await pending.then(recovered => recovered?.dispose(), () => {});
+      }
+    } finally { await peer.dispose(); }
+  });
 
   it('keeps the exact requester custody refusal cause when a retained Session cannot resume', async () => {
     const host = await home();

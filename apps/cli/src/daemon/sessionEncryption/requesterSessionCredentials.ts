@@ -697,32 +697,31 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
   onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>;
 }>): Promise<AdmittedRequesterSessionBootstrap | null> {
   try {
-    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
-    if (!stored?.homeServerIdentityId || input.machineAdmissionBoundary.getObservedServerIdentityId
-      && stored.homeServerIdentityId !== await input.machineAdmissionBoundary.getObservedServerIdentityId()) {
-      recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
-      return null;
-    }
     let machineAdmission: NonNullable<RpcHandlerContext['machineAdmission']> | undefined;
+    let refusalCredentials: StoredCredentials | undefined;
     let refused = false;
-    const read = (credentials: StoredCredentials) => async (signal?: AbortSignal) => {
-      const current = await readRequesterSessionMachineAdmissionCurrent({ credentials, sessionId: input.sessionId,
-        attribution: input.attribution, serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: input.machineAdmissionBoundary, signal });
-      machineAdmission = current ?? undefined;
-      if (current === null) refused = true;
-      return current;
-    };
+    const stored = await resolveRequesterSessionCustody({ ...input, onSessionReadRefused: () => { refused = true; } },
+      async (candidate, signal) => {
+        if (!candidate.homeServerIdentityId) {
+          recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+          return undefined;
+        }
+        refusalCredentials = candidate.credentials;
+        const current = await readRequesterSessionMachineAdmissionCurrent({ credentials: candidate.credentials, sessionId: input.sessionId,
+          attribution: input.attribution, serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: input.machineAdmissionBoundary, signal });
+        machineAdmission = current ?? undefined;
+        if (current === null) refused = true;
+        return current;
+      });
     const reportRefusal = async () => {
       const signal = input.signal && input.machineAdmissionBoundary.signal
         ? AbortSignal.any([input.signal, input.machineAdmissionBoundary.signal]) : input.signal ?? input.machineAdmissionBoundary.signal;
-      if (refused && !signal?.aborted) await input.onRecoveryRefused?.({ sessionId: input.sessionId,
-        attribution: input.attribution, credentials: stored.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
+      if (refused && refusalCredentials && !signal?.aborted) await input.onRecoveryRefused?.({ sessionId: input.sessionId,
+        attribution: input.attribution, credentials: refusalCredentials, serverHttpBaseUrl: input.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
     };
-    const credentials = (await resolveRequesterSessionCustody({ ...input,
-      onSessionReadRefused: () => { refused = true; } }, read(stored.credentials)))?.credentials ?? null;
-    if (!credentials) { await reportRefusal(); return null; }
-    const result = await prepareRequesterSessionBootstrap({ credentials, attribution: input.attribution, machineAdmission,
-      ...(stored.homeServerIdentityId ? { homeServerIdentityId: stored.homeServerIdentityId } : {}),
+    if (!stored?.homeServerIdentityId) { await reportRefusal(); return null; }
+    const result = await prepareRequesterSessionBootstrap({ credentials: stored.credentials, attribution: input.attribution, machineAdmission,
+      homeServerIdentityId: stored.homeServerIdentityId,
       boundary: { serverId: input.attribution.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl, happyHomeDir: input.happyHomeDir },
       // Recovery already admitted this exact Machine above. Bootstrap consumes
       // that decision; later runtime admissions use the ordinary owner below.
@@ -983,12 +982,12 @@ async function readRequesterSessionCredentialBinding(
               : observe('session', () => fetchSessionById({ reason: 'requester-binding', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl, sessionId: input.sessionId,
                 ...(input.signal ? { signal: input.signal } : {}) })),
           ]);
-          // The observation owner retains only a borrowed fact's lifetime.
-          // Fresh HTTP for this credential does not borrow another holder's fact.
+          // The signed recovery admits this exact credential for its own finite read.
           const [, current] = await Promise.all([
             correspondenceRead,
             observe('encryption', () => readRequesterAccountEncryptionCurrentness({ accountId: input.attribution.accountId,
               token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
+              retainCredentialReference: before === true ? undefined : true,
               ...(input.signal ? { signal: input.signal } : {}) }, async (currentness): Promise<true | null | undefined> => {
               const [profile, session] = await correspondenceRead;
               const owner = input.expectedSessionCreationTag !== undefined && session ? tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
@@ -1101,7 +1100,8 @@ type RequesterCustodyRecoveryCurrentness =
 async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyBinding
   & Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], keyof RequesterSessionCredentialBinding | 'verifyMachineAdmissionCurrent'>
   & RequesterCustodyRecoveryCurrentness,
-  readMachineAdmissionCurrent?: (signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
+  readMachineAdmissionCurrent?: (custody: NonNullable<Awaited<ReturnType<typeof readBoundCustody>>>,
+    signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
 ) {
   try {
     if (input.signal?.aborted) return null;
@@ -1132,7 +1132,7 @@ async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyB
         credentials: stored.credentials, sessionId: input.sessionId, attribution: input.attribution,
         serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: boundary!, signal }));
     const current = await readRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials,
-      verifyMachineAdmissionCurrent }, readMachineAdmissionCurrent, 'custody_recovery');
+      verifyMachineAdmissionCurrent }, readMachineAdmissionCurrent && (signal => readMachineAdmissionCurrent(stored, signal)), 'custody_recovery');
     if (current === true) return stored;
     // Missing live Home evidence is not missing private custody. Preserve the
     // worker's existing retry/parking disposition instead of failing the Run.
