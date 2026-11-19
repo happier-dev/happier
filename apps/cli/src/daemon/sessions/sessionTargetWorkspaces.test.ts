@@ -85,7 +85,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         expect(result).toMatchObject({ kind: 'opened', workspace: { kind: 'managed', v: 2, serverId,
             controller, managedId: 'managed-machine', rootPath: guestRoot }, directory: guestRoot });
         if (result.kind !== 'opened' || result.workspace.kind !== 'managed') throw Error('managed workspace unavailable');
-        const source = resolveSessionTargetWorkspace({ workspace: result.workspace });
+        const source = resolveSessionTargetWorkspace({ workspace: result.workspace, requesterAccountId: 'owner' });
         await expect(runWithWorkspaceSourceDemand(source!, () => source!.readFile(join(guestRoot, 'a.txt'))))
             .resolves.toEqual(Buffer.from('in the target\n'));
         expect(opened).toBe(2);
@@ -100,7 +100,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         const exits: Promise<number | null>[] = [];
         let openChannels = 0;
         try {
-            registerManagedWorkspaceTarget({ workspace, target: {
+            registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: {
                 lifetime: lifetime.signal, holderPath: holderExecutable!, helperPath: helperExecutable!,
                 openChannel(argv) {
                     openChannels += 1;
@@ -113,11 +113,11 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
                 },
             } });
             expect(openChannels).toBe(0);
-            const source = resolveSessionTargetWorkspace({ workspace });
+            const source = resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner' });
             expect(source?.kind).toBe('target');
-            expect(resolveSessionTargetWorkspace({ workspace: { ...workspace, controller: { ...workspace.controller,
+            expect(resolveSessionTargetWorkspace({ requesterAccountId: 'owner', workspace: { ...workspace, controller: { ...workspace.controller,
                 installationId: 'other-install' } } })).toBeNull();
-            expect(resolveSessionTargetWorkspace({ workspace, sessionId: 'unrelated-session' })).toBeNull();
+            expect(resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner', sessionId: 'unrelated-session' })).toBeNull();
             expect(openChannels).toBe(0);
 
             const request = () => runWithWorkspaceSourceDemand(source!, () => source!.readFile(join(guestRoot, 'a.txt')));
@@ -129,7 +129,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             expect(openChannels).toBe(2);
             await expect(exits[1]).resolves.toBe(0);
             lifetime.abort();
-            expect(resolveSessionTargetWorkspace({ workspace })).toBeNull();
+            expect(resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner' })).toBeNull();
         } finally { lifetime.abort(); }
     });
 
@@ -155,11 +155,11 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             // host identity check decides; the directory match serves only requests without a Session scope.
             const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
             const otherSession: FilesystemEffectSessionContext = { authorization: { kind: 'session.write', sessionId: 'unplaced-session' } };
-            expect(admission.selectWorkspaceSource(otherSession, { cwd: child }).kind).toBe('local');
-            expect(admission.selectWorkspaceSource(otherSession, { rootPath: join(alias, 'nested') }).kind).toBe('local');
+            expect((await admission.selectWorkspaceSource(otherSession, { cwd: child })).kind).toBe('local');
+            expect((await admission.selectWorkspaceSource(otherSession, { rootPath: join(alias, 'nested') })).kind).toBe('local');
             const ownSession: FilesystemEffectSessionContext = { authorization: { kind: 'session.write', sessionId: 'path-session' } };
-            expect(admission.selectWorkspaceSource(ownSession, { cwd: child })).toBe(source);
-            expect(admission.selectWorkspaceSource(undefined, { cwd: child })).toBe(source);
+            expect(await admission.selectWorkspaceSource(ownSession, { cwd: child })).toBe(source);
+            expect(await admission.selectWorkspaceSource(undefined, { cwd: child })).toBe(source);
             lifetime.abort();
             expect(resolveSessionTargetWorkspace({ rootPath: child })).toBeNull();
         } finally { lifetime.abort(); }

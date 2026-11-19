@@ -125,6 +125,8 @@ export type WorkspaceSourcePlacement = Readonly<{
   sessionId?: string;
   rootPath?: string;
   workspace?: Extract<WorkspaceAddressV2, { kind: 'managed' }>;
+  /** Host-private Account custody for a managed Project target. */
+  requesterAccountId?: string;
 }>;
 
 /**

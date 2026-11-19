@@ -72,7 +72,15 @@ function exitEvent(code: number | null, signal: NodeJS.Signals | null): PtyExitE
 export async function spawnHolderPtyProcess(holder: SessionHolderChild, request: Readonly<{
   argv: readonly string[]; cwd?: string; env?: Readonly<Record<string, string>>; cols: number; rows: number;
 }>, releaseHolder?: () => void): Promise<PtyProcess> {
-  const stream = holder.spawnStream({ op: 'pty', ...request });
+  const release = () => {
+    const dispose = releaseHolder;
+    releaseHolder = undefined;
+    dispose?.();
+  };
+  let stream: ReturnType<SessionHolderChild['spawnStream']>;
+  try { stream = holder.spawnStream({ op: 'pty', ...request }); }
+  catch (error) { release(); throw error; }
+  stream.once('close', release);
   stream.stderr.resume();
   // A channel failure must settle startup and never become an unhandled stream error.
   stream.stdin.on('error', () => {});
@@ -81,7 +89,7 @@ export async function spawnHolderPtyProcess(holder: SessionHolderChild, request:
     output: stream.stdout,
     onEnd: listener => stream.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
       listener(exitEvent(code, signal));
-      releaseHolder?.();
+      release();
     }),
     write: data => { stream.stdin.write(data); },
     resize: (cols, rows) => { stream.resize(cols, rows); },
@@ -91,7 +99,7 @@ export async function spawnHolderPtyProcess(holder: SessionHolderChild, request:
   try {
     await new Promise<void>((resolve, reject) => { stream.once('spawn', resolve); stream.on('error', reject); });
   } catch (error) {
-    releaseHolder?.();
+    release();
     throw error;
   }
   return pty;

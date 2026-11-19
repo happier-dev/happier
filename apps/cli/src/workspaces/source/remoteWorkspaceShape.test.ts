@@ -112,7 +112,7 @@ describe('remote workspace shape contracts', () => {
       const lifetime = new AbortController();
       const roles: string[] = [];
       try {
-        registerManagedWorkspaceTarget({ workspace: managedWorkspace, target: {
+        registerManagedWorkspaceTarget({ workspace: managedWorkspace, requesterAccountId: 'owner', target: {
           lifetime: lifetime.signal, holderPath: '/fixture/holder', helperPath: '/fixture/helper',
           openChannel: (argv, signal) => openManagedNativeChannel({ resource: {
             contributionRef: { pluginId: 'fixture.coder', localId: 'coder' }, schemaVersion: 1, value: { id: 'guest' },
@@ -199,21 +199,42 @@ describe('remote workspace shape contracts', () => {
         resolveWorkspaceTarget: resolveSessionTargetWorkspace,
         restoreManagedWorkspaceTarget: async address => {
           restored.push(address);
-          registerManagedWorkspaceTarget({ workspace: address, target: {
+          registerManagedWorkspaceTarget({ workspace: address, requesterAccountId: 'owner', target: {
             lifetime: lifetime.signal, holderPath: '/fixture/holder', helperPath: '/fixture/helper',
             openChannel: () => { throw new Error('No holder operation was requested'); },
           } });
-          return resolveSessionTargetWorkspace({ workspace: address });
+          return resolveSessionTargetWorkspace({ workspace: address, requesterAccountId: 'owner' });
         },
       });
-      expect(resolveSessionTargetWorkspace({ workspace })).toBeNull();
+      expect(resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner' })).toBeNull();
       const input = { workspace, rootPath: workspace.rootPath };
-      const source = await admission.selectWorkspaceSource(undefined, input);
+      const owner = { machineAdmission: { ...workspace.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
+        role: 'manage', encryptionMode: 'plain' } } as const;
+      const source = await admission.selectWorkspaceSource(owner, input);
       expect(source.kind).toBe('target');
-      expect(await admission.selectWorkspaceSource(undefined, input)).toBe(source);
+      expect(await admission.selectWorkspaceSource(owner, input)).toBe(source);
       await expect(admission.selectWorkspaceSource({ authorization: { kind: 'session.write', sessionId: 'other' } }, input))
         .rejects.toMatchObject({ code: 'workspace_target_unavailable' });
       expect(restored).toEqual([workspace]);
+    } finally { lifetime.abort(); }
+  });
+
+  it('refuses Files access to a warm managed Project from a different requester Account', async () => {
+    const workspace = { ...managedWorkspace, workspaceId: 'warm-account-project' };
+    const lifetime = new AbortController();
+    try {
+      const owner = { machineAdmission: { ...workspace.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
+        role: 'manage', encryptionMode: 'plain' } } as const;
+      const foreign = { machineAdmission: { ...owner.machineAdmission, actorAccountId: 'other', role: 'use' } } as const;
+      registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: {
+        lifetime: lifetime.signal, holderPath: '/fixture/holder', helperPath: '/fixture/helper',
+        openChannel: () => { throw new Error('No holder operation was requested'); },
+      } });
+      const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+      await expect(admission.selectWorkspaceSource(owner, { workspace })).resolves.toMatchObject({ kind: 'target' });
+      const denied = await admission.selectWorkspaceSource(foreign, { workspace })
+        .then(source => ({ kind: source.kind }), (error: unknown) => error);
+      expect(denied).toMatchObject({ code: 'workspace_target_unavailable' });
     } finally { lifetime.abort(); }
   });
 });

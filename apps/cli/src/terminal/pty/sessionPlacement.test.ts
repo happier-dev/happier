@@ -7,7 +7,7 @@ import { Duplex } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 
-import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { registerManagedWorkspaceTarget, registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { spawnSessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { serveSessionTargetRelay, SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
@@ -23,6 +23,57 @@ describe.skipIf(process.platform !== 'linux' || !holderPath)('placed Session PTY
   let directory: string;
   beforeAll(async () => { directory = await mkdtemp('/tmp/session-pty-'); });
   afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
+
+  it('opens a managed Project PTY without a Session and releases its holder when the shell exits', async () => {
+    const root = join(directory, 'managed-project');
+    await mkdir(root);
+    const lifetime = new AbortController();
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'project-workspace', managedId: 'guest',
+      controller: { machineId: 'machine', installationId: 'installation' }, rootPath: root } as const;
+    const exits: Promise<number | null>[] = [];
+    const openChannel = vi.fn((argv: readonly string[]) => {
+      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+      exits.push(new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }));
+      const channel = Duplex.from({ readable: child.stdout!, writable: child.stdin! });
+      child.once('close', () => channel.destroy());
+      return channel;
+    });
+    registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'member', target: { lifetime: lifetime.signal, holderPath: holderPath!,
+      helperPath: '/unused', openChannel } });
+    const localSpawn = vi.fn(() => { throw new Error('Managed Projects cannot spawn a local PTY'); });
+    const manager = createTerminalPtySessionManager({ ptyProvider: { spawn: localSpawn },
+      config: readDaemonTerminalPtyConfig({}).sessionManager, env: { SHELL: '/bin/sh' }, platform: 'linux' });
+    try {
+      expect(openChannel).not.toHaveBeenCalled();
+      const custody = { serverId: workspace.serverId, machineId: workspace.controller.machineId,
+        installationId: workspace.controller.installationId, requesterAccountId: 'member', projectKey: 'project',
+        workspaceRefId: workspace.workspaceId, rootPath: root, workspace };
+      const input = { terminalKey: 'managed-project', custody, cwd: root, launchProcess: {
+        file: '/bin/sh', args: ['-c', 'printf "MANAGED:%s\\n" "$PWD"; read answer; printf "INPUT:%s\\n" "$answer"'],
+      } };
+      const result = await manager.ensure(input);
+      expect(result).toMatchObject({ ok: true });
+      if (!result.ok) throw new Error(result.errorCode);
+      const output = () => {
+        const read = manager.read({ terminalId: result.terminalId, cursor: 0, maxBytes: 10000, maxEvents: 100 });
+        return read.ok ? read.events.flatMap(event => event.t === 'data' ? [event.data] : []).join('') : '';
+      };
+      await expect.poll(output).toContain(`MANAGED:${root}`);
+      expect(await manager.input({ terminalId: result.terminalId, data: 'guest-input\r' })).toMatchObject({ ok: true });
+      await expect.poll(output).toContain('INPUT:guest-input');
+      expect(openChannel).toHaveBeenCalledTimes(1);
+      await expect(exits[0]).resolves.toBe(0);
+      const controller = { ...workspace.controller, installationId: 'other' };
+      const mismatched = { ...input, terminalKey: 'another-installation',
+        custody: { ...custody, installationId: controller.installationId, workspace: { ...workspace, controller } } };
+      await expect(manager.ensure(mismatched)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_unavailable' });
+      expect(localSpawn).not.toHaveBeenCalled();
+      expect(openChannel).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.dispose();
+      lifetime.abort();
+    }
+  });
 
   it.each(['daemon', 'native-host', 'native-host-target-cwd'] as const)('routes a %s Session terminal through its target without local fallback', async mode => {
     const root = join(directory, `workspace-${mode}`);

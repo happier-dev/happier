@@ -6,6 +6,7 @@ import { workspaceTargetUnavailable, type WorkspaceSourcePlacement, type Workspa
 import { openSessionHolderWorkspaceChannel, openSessionHolderWorkspaceClient, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
 
 /**
  * The daemon's Files/Git view of Sessions placed on a target (no daemon inside):
@@ -38,24 +39,27 @@ type SessionEntry = {
 };
 
 type ManagedWorkspace = NonNullable<WorkspaceSourcePlacement['workspace']>;
-type ManagedEntry = Readonly<{ kind: 'managed'; source: WorkspaceSource }>;
+type ManagedEntry = Readonly<{
+    kind: 'managed'; source: WorkspaceSource; hold(): () => void; openHolder(): SessionHolderChild;
+}>;
 type WorkspaceEntry = SessionEntry | ManagedEntry;
 const entries = new Map<string, WorkspaceEntry>();
 const sessionWorkspaces = new Map<string, string>();
 
-function managedWorkspaceKey(workspace: ManagedWorkspace): string {
-    return JSON.stringify(['managed', workspace.serverId, workspace.controller.machineId,
+function managedWorkspaceKey(workspace: ManagedWorkspace, requesterAccountId: string): string {
+    return JSON.stringify(['managed', requesterAccountId, workspace.serverId, workspace.controller.machineId,
         workspace.controller.installationId, workspace.managedId, workspace.workspaceId, workspace.rootPath]);
 }
 
 /** The target lifetime comes from managed custody. Only provider channels follow panel demand. */
 export function registerManagedWorkspaceTarget(input: Readonly<{
     workspace: ManagedWorkspace;
+    requesterAccountId: string;
     target: Readonly<{ lifetime: AbortSignal; holderPath: string; helperPath: string;
         openChannel(argv: readonly string[], signal: AbortSignal): Duplex }>;
 }>): boolean {
     const { target, workspace } = input;
-    const key = managedWorkspaceKey(workspace);
+    const key = managedWorkspaceKey(workspace, input.requesterAccountId);
     if (target.lifetime.aborted || entries.has(key)) return false;
     let demands = 0;
     let active: { channel: Duplex; holder: SessionHolderChild } | undefined;
@@ -64,23 +68,21 @@ export function registerManagedWorkspaceTarget(input: Readonly<{
         active = undefined;
         previous?.channel.end();
     };
-    const entry: ManagedEntry = { kind: 'managed', source: createHolderWorkspaceSource({
-        id: key, rootPath: workspace.rootPath, helperPath: target.helperPath,
-        hold: () => {
-            demands += 1;
-            return () => { if (--demands === 0) close(); };
-        },
-        holder: () => {
-            if (target.lifetime.aborted || demands === 0) {
-                throw workspaceTargetUnavailable();
-            }
-            if (!active || active.channel.destroyed || active.holder.holderConnectionFailed) {
-                close();
-                const channel = target.openChannel([target.holderPath, 'workspace', '--root', workspace.rootPath], target.lifetime);
-                active = { channel, holder: openSessionHolderWorkspaceChannel(channel) };
-            }
-            return active.holder;
-        },
+    const hold = () => {
+        demands += 1;
+        return () => { if (--demands === 0) close(); };
+    };
+    const openHolder = () => {
+        if (target.lifetime.aborted || demands === 0) throw workspaceTargetUnavailable();
+        if (!active || active.channel.destroyed || active.holder.holderConnectionFailed) {
+            close();
+            const channel = target.openChannel([target.holderPath, 'workspace', '--root', workspace.rootPath], target.lifetime);
+            active = { channel, holder: openSessionHolderWorkspaceChannel(channel) };
+        }
+        return active.holder;
+    };
+    const entry: ManagedEntry = { kind: 'managed', hold, openHolder, source: createHolderWorkspaceSource({
+        id: key, rootPath: workspace.rootPath, helperPath: target.helperPath, hold, holder: openHolder,
     }) };
     entries.set(key, entry);
     target.lifetime.addEventListener('abort', () => {
@@ -88,6 +90,33 @@ export function registerManagedWorkspaceTarget(input: Readonly<{
         close();
     }, { once: true });
     return true;
+}
+
+/** Restore an already admitted Project target. Its lifetime transfers to the registry. */
+export async function ensureAcceptedManagedWorkspaceTarget(input: Readonly<{
+    workspace: ManagedWorkspace;
+    requesterAccountId: string;
+    openTarget: NonNullable<ProjectOpenRuntime['openManagedProjectWorkspace']>;
+    signal?: AbortSignal;
+}>): Promise<WorkspaceSource | null> {
+    const { workspace, requesterAccountId, openTarget, signal } = input;
+    signal?.throwIfAborted();
+    const placement = { workspace, requesterAccountId };
+    const existing = managedWorkspaceEntry(placement);
+    if (existing) return existing.source;
+    const lifetime = new AbortController();
+    const cancel = () => lifetime.abort(signal?.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
+    let retained = false;
+    try {
+        const target = await openTarget({ workspace, requesterAccountId, lifetime: lifetime.signal });
+        lifetime.signal.throwIfAborted();
+        retained = registerManagedWorkspaceTarget({ ...placement, target });
+        return managedWorkspaceEntry(placement)?.source ?? null;
+    } finally {
+        signal?.removeEventListener('abort', cancel);
+        if (!retained) lifetime.abort();
+    }
 }
 
 function sessionWorkspaceEntry(sessionId: string): SessionEntry | undefined {
@@ -133,9 +162,23 @@ function workspaceClient(entry: SessionEntry): SessionHolderChild {
     return entry.client;
 }
 
-/** Terminals consume the same live Session placement as Files/Git; the Session owns this shared client. */
-export function resolveSessionTargetPtyTarget(sessionId: string): Readonly<{ rootPath: string; openHolder(): SessionHolderChild }> | null {
-    const entry = sessionWorkspaceEntry(sessionId);
+function managedWorkspaceEntry(placement: WorkspaceSourcePlacement): ManagedEntry | undefined {
+    if (!placement.workspace || !placement.requesterAccountId) return undefined;
+    const key = managedWorkspaceKey(placement.workspace, placement.requesterAccountId);
+    if (placement.sessionId && sessionWorkspaces.get(placement.sessionId) !== key) return undefined;
+    const entry = entries.get(key);
+    return entry?.kind === 'managed' ? entry : undefined;
+}
+
+/** Terminal demand uses the same admitted workspace registration as Files and Git. */
+export function resolveWorkspacePtyTarget(placement: WorkspaceSourcePlacement): Readonly<{
+    rootPath: string; openHolder(): SessionHolderChild; hold?: () => () => void;
+}> | null {
+    if (placement.workspace) {
+        const entry = managedWorkspaceEntry(placement);
+        return entry ? { rootPath: placement.workspace.rootPath, openHolder: entry.openHolder, hold: entry.hold } : null;
+    }
+    const entry = placement.sessionId ? sessionWorkspaceEntry(placement.sessionId) : undefined;
     return entry ? { rootPath: entry.workspace.hostRoot, openHolder: () => workspaceClient(entry) } : null;
 }
 
@@ -168,12 +211,7 @@ function findWorkspaceByDirectory(path: string): SessionEntry | undefined {
 /** `resolveWorkspaceTarget` for filesystem admission, including directory-only Git panel requests. */
 export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
     // An exact managed address can only resolve by its workspace identity.
-    if (placement.workspace) {
-        const key = managedWorkspaceKey(placement.workspace);
-        if (placement.sessionId && sessionWorkspaces.get(placement.sessionId) !== key) return null;
-        const entry = entries.get(key);
-        return entry?.kind === 'managed' ? entry.source : null;
-    }
+    if (placement.workspace) return managedWorkspaceEntry(placement)?.source ?? null;
     // Explicit Session scope selects its own placement, including a revoked target.
     const entry = placement.sessionId ? sessionWorkspaceEntry(placement.sessionId)
         : placement.rootPath ? findWorkspaceByDirectory(placement.rootPath) : undefined;

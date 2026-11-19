@@ -42,7 +42,7 @@ it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
             git('init', '-q', '--initial-branch=main');
             git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'initial');
             git('remote', 'add', 'origin', 'https://github.com/example/checkout.git');
-            registerManagedWorkspaceTarget({ workspace, target: { lifetime: lifetime.signal,
+            registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: { lifetime: lifetime.signal,
                 holderPath: holderPath!, helperPath: helperPath!, openChannel(argv) {
                     const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
                     holderExits.push(new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }));
@@ -111,13 +111,13 @@ it('refuses an unadmitted SCM requester before opening a registered managed work
     const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
     let channels = 0;
     try {
-        registerManagedWorkspaceTarget({ workspace, target: { lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
+        registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: { lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
             openChannel() { channels += 1; throw new Error('Unexpected guest channel'); } } });
         registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler as RpcHandler); } }, process.cwd(),
             { machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc });
-        const response = await handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ v: 1, kind: 'targeted_action_rpc',
-            input: { cwd: process.cwd() }, target: workspace }, { signal: lifetime.signal });
-        expect(response).toMatchObject({ success: false, actionErrorCode: 'filesystem_identity_custody_unavailable' });
+        await expect(handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ v: 1, kind: 'targeted_action_rpc',
+            input: { cwd: process.cwd() }, target: workspace }, { signal: lifetime.signal }))
+            .rejects.toMatchObject({ code: 'workspace_target_unavailable' });
         expect(channels).toBe(0);
     } finally { lifetime.abort(); }
 });
@@ -134,9 +134,9 @@ it('F2: a managed Project watch cannot observe a same-path fallback or bypass re
     try {
         await expect(observe()).resolves.toMatchObject({ status: 'unavailable', reason: { code: 'workspace_target_unavailable' } });
         let channels = 0;
-        registerManagedWorkspaceTarget({ workspace, target: { lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
+        registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: { lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
             openChannel() { channels += 1; throw new Error('An unadmitted watch opened a guest channel'); } } });
-        await expect(observe()).resolves.toMatchObject({ status: 'unavailable', reason: { code: 'filesystem_identity_custody_unavailable' } });
+        await expect(observe()).resolves.toMatchObject({ status: 'unavailable', reason: { code: 'workspace_target_unavailable' } });
         expect(channels).toBe(0);
     } finally { lifetime.abort(); }
 });
@@ -157,7 +157,7 @@ it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
             git('init', '-q');
             git('add', 'notes.txt');
             git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'initial');
-            registerManagedWorkspaceTarget({ workspace, target: { lifetime: guestLifetime.signal,
+            registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: { lifetime: guestLifetime.signal,
                 holderPath: holderPath!, helperPath: helperPath!, openChannel(argv) {
                     const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
                     holderExits.push(new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }));
@@ -268,7 +268,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 await chmod(hook, 0o755);
             }
             if (managed) {
-                registerManagedWorkspaceTarget({ workspace: managed, target: { lifetime: lifetime.signal,
+                registerManagedWorkspaceTarget({ workspace: managed, requesterAccountId: 'owner', target: { lifetime: lifetime.signal,
                     holderPath: holderPath!, helperPath: helperPath!, openChannel(argv) {
                         const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'],
                             env: { ...process.env, HAPPIER_TEST_SCM_LOCATION: 'target' } });

@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { DaemonTerminalEnsureRequestSchema, DaemonTerminalEnsureResponseSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema } from './terminal';
 import { MachineTerminalOpenInputSchema } from '../actions/specs/machineTerminal';
 
+it('routes an exact V2 managed Project shell through both terminal front doors', () => {
+  const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'remote-checkout', managedId: 'guest',
+    controller: { machineId: 'controller', installationId: 'accepted-installation' }, rootPath: '/guest/project' };
+  const request = { terminalKey: 'project', workspace };
+  expect(DaemonTerminalEnsureRequestSchema.parse(request)).toEqual(request);
+  expect(MachineTerminalOpenInputSchema.parse({ ...request, serverId: 'home', machineId: workspace.controller.machineId }).workspace)
+    .toEqual(workspace);
+  expect(DaemonTerminalEnsureRequestSchema.safeParse({ ...request, sessionId: 'other-session' }).success).toBe(false);
+});
+
 describe('daemon terminal listing V1', () => {
   it('preserves the owning credential refusal and its reason at terminal receivers', () => {
     const refusal = { ok: false, errorCode: 'github_cli_team_brokered_unavailable', error: 'Direct credentials are unavailable',

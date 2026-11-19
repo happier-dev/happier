@@ -9,7 +9,7 @@ import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamA
 import type { DaemonTerminalError, DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { StoredCredentials } from '@/persistence';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { requireAgentIsolationMaterialNativeIdentity, type AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
@@ -25,6 +25,8 @@ import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/e
 import { resolveLocalServiceRunTargetScriptName } from '@/daemon/local/services/launch/runTargets';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
+import { readAcceptedManagedWorkspaceRef } from '@/workspaces/acceptedManagedWorkspace';
+import { ensureAcceptedManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
 import { createProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
@@ -61,7 +63,8 @@ function sameTerminalCustody(left: TerminalPtyCustody | null, right: TerminalPty
     && left.machineId === right.machineId && left.installationId === right.installationId && left.rootPath === right.rootPath
     && (right.kind === 'session' ? left.kind === 'session' && left.sessionId === right.sessionId
       : right.kind === 'machine' ? left.kind === 'machine'
-      : left.kind === undefined && left.workspaceRefId === right.workspaceRefId && left.projectKey === right.projectKey);
+      : left.kind === undefined && left.workspaceRefId === right.workspaceRefId && left.projectKey === right.projectKey
+        && left.workspace?.managedId === right.workspace?.managedId);
 }
 
 type TerminalByteStreamBridge = Readonly<{
@@ -110,6 +113,7 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   projectFiniteRuntime?: (ingress: RpcHandlerContext) => ProjectTerminalRuntime | null | Promise<ProjectTerminalRuntime | null>;
   /** Requester Account reads for Session and accepted Project custody. */
   accountReadRuntime?: (ingress: RpcHandlerContext) => MachineTerminalOwnSessionReadRuntime | null | Promise<MachineTerminalOwnSessionReadRuntime | null>;
+  openManagedProjectWorkspace?: Parameters<typeof ensureAcceptedManagedWorkspaceTarget>[0]['openTarget'];
   /** The real receiving Action executor owns invocation policy, consent and finite launch. */
   projectScriptExecutor?: (runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) => RpcActionExecutor | Promise<RpcActionExecutor>;
   /**
@@ -339,7 +343,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
   };
 
-  const resolveTerminalCustody = async (input: Readonly<{ workspace?: WorkspaceAddressV1; cwd?: string; sessionId?: string; launch?: import('@happier-dev/protocol').DaemonTerminalLaunchIntent }>, context?: RpcHandlerContext,
+  const resolveTerminalCustody = async (input: Readonly<{ workspace?: WorkspaceAddressV2; cwd?: string; sessionId?: string; launch?: import('@happier-dev/protocol').DaemonTerminalLaunchIntent }>, context?: RpcHandlerContext,
     requesterIdentity?: HostRequesterExecutionIdentity)
     : Promise<Readonly<{ ok: true; cwd: string; custody?: TerminalPtyCustody }> | ReturnType<typeof err> | DaemonTerminalError> => {
     if (hasRequiredSessionAuthority(context)) {
@@ -347,6 +351,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (context?.machineAdmission && context.signal.aborted) return err('terminal_forbidden');
       return resolveCwd(input.cwd);
     }
+    if (params.deps?.requiredSessionId && input.workspace) return err('terminal_forbidden');
     if (!context?.machineAdmission) {
       if (input.workspace) return err('terminal_forbidden');
       return resolveCwd(input.cwd);
@@ -378,10 +383,30 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     // authorizes reading the custodian's private accepted-workspace catalog.
     if (!runtime || runtime.accountId !== admission.actorAccountId) return err('terminal_unavailable');
     if (runtime.machineId !== admission.machineId || params.deps?.serverId !== undefined && runtime.serverId !== params.deps.serverId) return err('terminal_forbidden');
-    if (input.workspace && (!await isServerProfileHomeIdentity(runtime.serverId, input.workspace.serverId)
-      || input.workspace.machineId !== runtime.machineId)) return err('terminal_cwd_denied');
     try {
       if (runtime.isCurrent && !await runtime.isCurrent()) return err('terminal_forbidden');
+      if (isManagedWorkspaceRefV2(input.workspace)) {
+        const workspace = input.workspace;
+        const home = params.deps?.resolveHostHomeServerIdentityId
+          ? await params.deps.resolveHostHomeServerIdentityId(context.signal)
+          : await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
+        if (workspace.serverId !== home || workspace.controller.machineId !== admission.machineId
+          || workspace.controller.installationId !== admission.installationId
+          || input.cwd !== undefined && normalizeWorkspaceRootPathV1(input.cwd) !== normalizeWorkspaceRootPathV1(workspace.rootPath)) {
+          return err('terminal_cwd_denied');
+        }
+        const accepted = await readAcceptedManagedWorkspaceRef(runtime, workspace, context.signal);
+        if (!accepted) return err('terminal_cwd_denied');
+        if (context.signal.aborted) return err('terminal_forbidden');
+        return { ok: true, cwd: workspace.rootPath, custody: {
+          serverId: runtime.serverId, requesterAccountId: admission.actorAccountId, machineId: admission.machineId,
+          installationId: admission.installationId, homeServerIdentityId: home,
+          workspaceRefId: accepted.ref.id, projectKey: projectWorkspaceRefV1(accepted.ref).projectKey,
+          rootPath: workspace.rootPath, workspace,
+        } };
+      }
+      if (!await isServerProfileHomeIdentity(runtime.serverId, input.workspace.serverId)
+        || input.workspace.machineId !== runtime.machineId) return err('terminal_cwd_denied');
       const selectedHomeServerId = await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal: context.signal,
@@ -414,12 +439,13 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const authorizeTerminal = async (terminalId: string, context?: RpcHandlerContext, purpose: 'control' | 'census' | 'retire' | 'finite_output' = 'control',
     admittedCensusCustody?: TerminalPtyCustody): Promise<boolean> => {
-    // The canonical selector establishes the requester. Native material and
-    // retained custody below decide whether it can control this terminal.
-    const requesterIdentity = purpose === 'control' ? (await resolveRequesterIdentity(context)).identity : undefined;
-    if (requesterIdentity?.kind === 'unknown') return false;
     const manager = getSessionManager();
     const custody = manager.getCustody(terminalId);
+    // A managed Project retains guest execution custody. Controller-native
+    // isolation applies only to shells that launched on this Machine.
+    const managedProject = custody?.kind === undefined && custody?.workspace !== undefined;
+    const requesterIdentity = purpose === 'control' && !managedProject ? (await resolveRequesterIdentity(context)).identity : undefined;
+    if (requesterIdentity?.kind === 'unknown') return false;
     const terminal = manager.list().find(candidate => candidate.terminalId === terminalId);
     // Removal ends terminal custody. A still-admitted reader must reach the
     // manager's not-found result; only a live owner can require custody checks.
@@ -471,6 +497,36 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (settled.kind !== 'exited') return err('terminal_busy');
     }
     return manager.close({ terminalId });
+  };
+
+  const openManagedProjectShell = async (request: Readonly<{
+    workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>; cwd?: string; terminalKey: string; cols?: number; rows?: number;
+  }>, context: RpcHandlerContext | undefined, restart: boolean) => {
+    const admitted = await resolveTerminalCustody(request, context);
+    if (!admitted.ok) return admitted;
+    if (!context || !admitted.custody) return err('terminal_forbidden');
+    const { custody, cwd } = admitted;
+    const manager = getSessionManager();
+    const existing = manager.list().find(terminal => !terminal.ended && terminal.terminalKey === request.terminalKey
+      && sameTerminalCustody(manager.getCustody(terminal.terminalId), custody));
+    if ((restart || !existing) && params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
+    if (restart && existing) {
+      const settled = await settleTerminalClose(existing.terminalId, context.signal);
+      if (!settled.ok) return settled;
+    }
+    const openTarget = params.deps?.openManagedProjectWorkspace;
+    if (!openTarget) return err('terminal_unavailable');
+    try {
+      const source = await ensureAcceptedManagedWorkspaceTarget({
+        workspace: request.workspace, requesterAccountId: custody.requesterAccountId, openTarget, signal: context.signal,
+      });
+      if (!source) return err('terminal_unavailable');
+      return await manager.ensure({ cwd, custody, signal: context.signal,
+        terminalKey: request.terminalKey, cols: request.cols, rows: request.rows, admissionDrain: params.deps?.admissionDrain,
+      });
+    } catch {
+      return err(context.signal.aborted ? 'terminal_forbidden' : 'terminal_unavailable');
+    }
   };
 
   const projectActionContext = (context: RpcHandlerContext) => ({ ...context.localActionContext,
@@ -749,6 +805,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!config.enabled) return err('terminal_disabled');
     const parsed = DaemonTerminalEnsureRequestSchema.safeParse(raw);
     if (!parsed.success) return err('terminal_invalid_request');
+    if (parsed.data.workspace && isManagedWorkspaceRefV2(parsed.data.workspace)) {
+      return openManagedProjectShell({ ...parsed.data, workspace: parsed.data.workspace }, context, false);
+    }
     if (
       params.deps?.requiredSessionId
       && (
@@ -948,6 +1007,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!config.enabled) return err('terminal_disabled');
     const parsed = DaemonTerminalRestartRequestSchema.safeParse(raw);
     if (!parsed.success) return err('terminal_invalid_request');
+    if (parsed.data.workspace && isManagedWorkspaceRefV2(parsed.data.workspace)) {
+      return openManagedProjectShell({ ...parsed.data, workspace: parsed.data.workspace }, context, true);
+    }
     if (
       params.deps?.requiredSessionId
       && (

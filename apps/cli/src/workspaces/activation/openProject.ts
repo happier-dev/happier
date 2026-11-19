@@ -250,7 +250,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           if (!ref || !isManagedWorkspaceRefV2(ref)) return outcomeUnknown('Managed Workspace row was absent from accepted Account rows');
           const workspace = workspaceAddressFromRefV2(ref);
           if (workspace.kind !== 'managed') return outcomeUnknown('Managed Workspace address was unavailable');
-          managedTargetRetained = registerManagedWorkspaceTarget({ workspace, target });
+          managedTargetRetained = registerManagedWorkspaceTarget({ workspace, requesterAccountId: admission.actorAccountId, target });
           await listOpenedProject(requester, ref, signal);
           return { kind: 'opened', workspace, directory, setup: 'notRequired', facts: { projectKey: ref.projectKey ?? ref.id } };
         });

@@ -50,9 +50,16 @@ function readSessionActionOrigin(context: FilesystemEffectSessionContext | undef
     ?? context?.externalActionExecutionAuthorization?.binding.sessionActionOrigin;
 }
 
+export function readFilesystemEffectRequesterAccountId(context: FilesystemEffectSessionContext | undefined): string | undefined {
+  return context?.machineAdmission?.actorAccountId ?? context?.externalActionExecutionAuthorization?.binding.accountId
+    ?? context?.callerInputAuthorization?.binding.accountId;
+}
+
 /** Placement of an admitted request: its Session (through the one origin reader) and addressed root. */
 function readFilesystemEffectPlacement(context: FilesystemEffectSessionContext | undefined, input: unknown): WorkspaceSourcePlacement {
-  return readWorkspaceSourcePlacement({ sessionActionOrigin: readSessionActionOrigin(context), authorization: context?.authorization }, input);
+  const placement = readWorkspaceSourcePlacement({ sessionActionOrigin: readSessionActionOrigin(context), authorization: context?.authorization }, input);
+  if (!placement.workspace) return placement;
+  return { ...placement, requesterAccountId: readFilesystemEffectRequesterAccountId(context) };
 }
 
 /** Host-private effect prerequisite; never a caller-selected path or OS user. */

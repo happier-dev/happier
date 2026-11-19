@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
+import { WorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
 import { TerminalGuardStateV1Schema } from '../machines/guard/terminalGuardStateV1.js';
 import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
@@ -36,7 +36,7 @@ export const DaemonTerminalErrorSchema = lazyZodSchema(() => z.union([
 export type DaemonTerminalError = z.infer<typeof DaemonTerminalErrorSchema>;
 
 export const DaemonTerminalListRequestV1Schema = lazyZodSchema(() => z.strictObject({
-  workspace: z.optional(WorkspaceAddressV1Schema),
+  workspace: z.optional(WorkspaceAddressV2Schema),
   machineShell: z.optional(z.literal(true)),
 }));
 export type DaemonTerminalListRequestV1 = z.infer<typeof DaemonTerminalListRequestV1Schema>;
@@ -106,7 +106,7 @@ export type DaemonTerminalLaunchIntent = z.infer<typeof DaemonTerminalLaunchInte
 export const DaemonTerminalEnsureRequestSchema = lazyZodSchema(() => z.strictObject({
   terminalKey: z.string().check(z.minLength(1), z.maxLength(2000)),
   cwd: z.optional(z.string().check(z.minLength(1), z.maxLength(10_000))),
-  workspace: z.optional(WorkspaceAddressV1Schema),
+  workspace: z.optional(WorkspaceAddressV2Schema),
   cols: z.optional(z.number().check(z.int(), z.minimum(2), z.maximum(500))),
   rows: z.optional(z.number().check(z.int(), z.minimum(2), z.maximum(500))),
   launch: z.optional(DaemonTerminalLaunchIntentSchema),
@@ -118,6 +118,9 @@ export const DaemonTerminalEnsureRequestSchema = lazyZodSchema(() => z.strictObj
 }).check(
   z.refine(value => value.initialCommand === undefined || value.launch === undefined,
     { path: ['initialCommand'], message: 'initialCommand cannot be combined with launch' }),
+  z.refine(value => value.workspace?.kind !== 'managed'
+    || value.sessionId === undefined && value.launch === undefined && value.initialCommand === undefined,
+    { path: ['workspace'], message: 'A managed Project terminal opens its workspace shell' }),
   z.refine(value => value.launch?.kind === 'service_shell'
     ? value.cwd === undefined && value.workspace === undefined && value.sessionId === undefined
     : value.launch?.kind !== 'agent_login' || value.workspace === undefined && value.sessionId === undefined,

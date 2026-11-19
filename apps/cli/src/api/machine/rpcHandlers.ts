@@ -821,6 +821,8 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       accessPolicy: params.deps?.filesystemAccessPolicy,
       ...(params.deps?.managedActivity ? { admissionDrain: params.deps.managedActivity.admissionDrain } : {}),
       ...(params.deps?.accountReadRuntime ? { accountReadRuntime: params.deps.accountReadRuntime } : {}),
+      ...(params.deps?.projectOpen?.openManagedProjectWorkspace
+        ? { openManagedProjectWorkspace: params.deps.projectOpen.openManagedProjectWorkspace } : {}),
       ...(params.deps?.terminalRegistry ? { terminalRegistry: params.deps.terminalRegistry } : {}),
       ...(resolveProjectFiniteRuntime ? {
         projectFiniteRuntime: resolveProjectFiniteRuntime,

@@ -43,7 +43,8 @@ import { createTerminalNativeLaunch } from './nativeLaunch';
 import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { createTerminalUrlDetector, type DetectedTerminalUrl } from './urlDetection';
 import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
-import { resolveSessionTargetPtyTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { resolveWorkspacePtyTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
+import type { WorkspaceSourcePlacement } from '@/workspaces/source/workspaceSource';
 import { resolveSessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
 import { spawnHolderPtyProcess, type HeldAgentPtyProcess, type HeldAgentPtyRequest } from './holderProcess';
@@ -87,6 +88,7 @@ export type TerminalPtyProjectCustody = TerminalPtyCustodyBase & Readonly<{
   sessionId?: never;
   workspaceRefId: string;
   projectKey: string;
+  workspace?: WorkspaceSourcePlacement['workspace'];
 }>;
 export type TerminalPtySessionCustody = TerminalPtyCustodyBase & Readonly<{
   kind: 'session'; sessionId: string; requiresManagedTarget?: true; workspaceRefId?: never; projectKey?: never;
@@ -150,7 +152,7 @@ export type TerminalPtyAgentLaunch = Readonly<{
 function terminalStorageKey(input: TerminalPtyEnsureInput): string {
   const custody = input.custody;
   return custody ? JSON.stringify([custody.kind ?? 'project', custody.serverId, custody.requesterAccountId, custody.machineId, custody.installationId,
-    custody.kind === 'session' ? ['session', custody.sessionId] : custody.kind === 'machine' ? ['machine'] : [custody.workspaceRefId, custody.projectKey],
+    custody.kind === 'session' ? ['session', custody.sessionId] : custody.kind === 'machine' ? ['machine'] : [custody.workspaceRefId, custody.projectKey, ...(custody.workspace ? [custody.workspace.managedId] : [])],
     custody.rootPath, input.sessionId ?? null, input.terminalKey])
     : input.sessionId ? JSON.stringify(['session', input.sessionId, input.terminalKey]) : input.terminalKey;
 }
@@ -708,9 +710,10 @@ export function createTerminalPtySessionManager(params: Readonly<{
     const terminalId = randomUUID();
     const cols = typeof input.cols === 'number' && Number.isFinite(input.cols) ? Math.max(2, Math.trunc(input.cols)) : config.defaultCols;
     const rows = typeof input.rows === 'number' && Number.isFinite(input.rows) ? Math.max(2, Math.trunc(input.rows)) : config.defaultRows;
-    const byteCapablePlatform = isByteCapablePlatform(platform);
+    const workspace = input.custody && input.custody.kind === undefined ? input.custody.workspace : undefined;
+    const byteCapablePlatform = isByteCapablePlatform(workspace ? 'linux' : platform);
 
-    const shell = resolveTerminalShell(env, platform);
+    const shell = workspace ? resolveTerminalShell({}, 'linux') : resolveTerminalShell(env, platform);
     const authorizedProjectLaunch = input.authorizedNativeLaunch ?? input.authorizedProjectLaunch;
     const process: TerminalLaunchProcess = authorizedProjectLaunch
       ? { ...input.launchProcess, file: authorizedProjectLaunch.command, args: authorizedProjectLaunch.args,
@@ -724,7 +727,10 @@ export function createTerminalPtySessionManager(params: Readonly<{
       // Removing a prior terminal publishes an owner edge; recheck the same
       // admission decision at the actual native effect boundary.
       if (input.admissionDrain?.isQuiescing()) return okDisabled('terminal_busy');
-      const daemonTarget = input.sessionId && !input.agent ? resolveSessionTargetPtyTarget(input.sessionId) : null;
+      const daemonTarget = !input.agent ? resolveWorkspacePtyTarget({
+        sessionId: input.sessionId, workspace, requesterAccountId: input.custody?.requesterAccountId,
+      }) : null;
+      if (workspace && !daemonTarget) return okDisabled('terminal_unavailable');
       const scopedTarget = daemonTarget || input.agent ? null : resolveSessionProcessPtyTarget();
       const target = daemonTarget ?? scopedTarget;
       if (input.agent?.startHeld) {
@@ -735,10 +741,12 @@ export function createTerminalPtySessionManager(params: Readonly<{
       } else if (target) {
         const launch = resolveHolderWorkspaceCommand(target.rootPath, { command: process.file, args: process.args, cwd,
           env: process.env });
-        const holder = target.openHolder();
-        pty = await spawnHolderPtyProcess(holder, {
-          ...launch, cols, rows,
-        }, scopedTarget ? () => holder.detach() : undefined);
+        const release = daemonTarget?.hold?.();
+        let holder: ReturnType<typeof target.openHolder>;
+        try { holder = target.openHolder(); }
+        catch (error) { release?.(); throw error; }
+        pty = await spawnHolderPtyProcess(holder, { ...launch, cols, rows },
+          scopedTarget ? () => holder.detach() : release);
       } else {
         if (input.custody?.kind === 'session' && input.custody.requiresManagedTarget) return okDisabled('terminal_unavailable');
         if (!params.ptyProvider) throw new Error('This terminal owner spawns no local terminals');

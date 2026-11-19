@@ -3,7 +3,8 @@ import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accou
 import { readMachinePresenceAutomationOccurrenceV1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
 import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1, refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
-import { registerManagedWorkspaceTarget, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { ensureAcceptedManagedWorkspaceTarget, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { readAcceptedManagedWorkspaceRef } from '@/workspaces/acceptedManagedWorkspace';
 import { z } from 'zod/mini';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { acquireDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
@@ -167,8 +168,8 @@ import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actio
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import type { WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { decodeBase64 } from './encryption';
 import { resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
@@ -386,7 +387,7 @@ import {
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
-import { isAgentInventoryRead, assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { isAgentInventoryRead, assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, readFilesystemEffectRequesterAccountId } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { Socket } from 'socket.io-client';
@@ -764,27 +765,12 @@ export class ApiMachineClient {
         resolveWorkspaceTarget: resolveSessionTargetWorkspace,
         restoreManagedWorkspaceTarget: async (workspace, context) => {
             const openTarget = this.lifecycleDependencies.openManagedProjectWorkspace;
-            const accountId = context?.machineAdmission?.actorAccountId
-                ?? context?.externalActionExecutionAuthorization?.binding.accountId
-                ?? context?.callerInputAuthorization?.binding.accountId;
+            const accountId = readFilesystemEffectRequesterAccountId(context);
             if (!openTarget || !accountId) return null;
-            const lifetime = new AbortController();
-            const cancel = () => lifetime.abort(context?.signal?.reason);
-            context?.signal?.addEventListener('abort', cancel, { once: true });
-            let retained = false;
-            try {
-                context?.signal?.throwIfAborted();
-                const runtime = await this.resolveInstalledAccountRuntime(lifetime.signal, accountId);
-                if (!runtime) return null;
-                if (!(await this.readAcceptedManagedWorkspaceRef(runtime, workspace, lifetime.signal))) return null;
-                const target = await openTarget({ workspace, requesterAccountId: runtime.accountId, lifetime: lifetime.signal });
-                lifetime.signal.throwIfAborted();
-                retained = registerManagedWorkspaceTarget({ workspace, target });
-                return resolveSessionTargetWorkspace({ workspace });
-            } finally {
-                context?.signal?.removeEventListener('abort', cancel);
-                if (!retained) lifetime.abort();
-            }
+            const signal = context?.signal ?? new AbortController().signal;
+            const runtime = await this.resolveInstalledAccountRuntime(signal, accountId);
+            if (!runtime || !await readAcceptedManagedWorkspaceRef(runtime, workspace, signal)) return null;
+            return ensureAcceptedManagedWorkspaceTarget({ workspace, requesterAccountId: accountId, openTarget, signal });
         },
         readRetainedSessionWorkspace: async (sessionId, signal) => {
             const runtime = await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal);
@@ -964,24 +950,6 @@ export class ApiMachineClient {
             // local lifetime without re-reading Home admission.
             return runtime;
         } catch { return unavailable('exception'); }
-    }
-
-    private async readAcceptedManagedWorkspaceRef(
-        runtime: MachineTerminalAccountReadRuntime,
-        workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>,
-        signal: AbortSignal,
-        scope: 'workspace' | 'project' = 'workspace',
-    ) {
-        const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
-        const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
-        const { workspaceRefs } = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
-            credentials: runtime.credentials, serverId: runtime.serverId, signal,
-            selection: scope === 'project'
-                ? { kinds: ['workspace-ref'], serverId: workspace.serverId }
-                : { key: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.workspaceId } },
-        }));
-        const ref = workspaceRefs.find(candidate => candidate.id === workspace.workspaceId);
-        return ref && isDeepStrictEqual(workspaceAddressFromRefV2(ref), workspace) ? { ref, workspaceRefs } : null;
     }
 
     private async resolveInstalledAccountRuntime(signal: AbortSignal, expectedAccountId?: string,
@@ -2214,7 +2182,7 @@ export class ApiMachineClient {
                 if (!accountId) return { kind: 'unavailable' };
                 const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, accountId);
                 if (!runtime) return { kind: 'unavailable' };
-                const accepted = await this.readAcceptedManagedWorkspaceRef(runtime, workspace, ingress.signal, 'project').catch(() => null);
+                const accepted = await readAcceptedManagedWorkspaceRef(runtime, workspace, ingress.signal, 'project').catch(() => null);
                 if (!accepted) return { kind: 'unavailable' };
                 const { projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
                 const { resolveProjectContextSourceV1 } = await import('@happier-dev/protocol/projects/projectListProjectionV1');
