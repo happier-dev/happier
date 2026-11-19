@@ -36,7 +36,7 @@ function createRuntime(
       });
       const scopeFacts = readCodeRabbitReviewScopeFacts(reviewInput[REVIEW_SCM_SCOPE_INPUT_KEY]);
       const preflight = await preflightCodeRabbitReviewScope({
-        cwd: request.cwd, intentInput: request.input.structuredInput ?? {}, scope: scopeFacts,
+        cwd: request.cwd, reviewInput, scope: scopeFacts,
       });
       if (!preflight.ok) {
         return { status: 'failed', diagnostic: { code: 'coderabbit_scope_unsupported', severity: 'error', message: preflight.error } };

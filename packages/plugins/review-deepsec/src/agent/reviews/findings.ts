@@ -3,8 +3,7 @@ import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 import type { ParsedDeepSecCommentOutEntry } from './commentOut.js';
 
 function firstLine(text: string): string {
-  const line = text.trim().split('\n')[0]?.trim() || 'DeepSec security finding';
-  return line.length > 100 ? `${line.slice(0, 97)}...` : line;
+  return text.trim().split('\n')[0]?.trim() || 'DeepSec security finding';
 }
 
 function mapSeverity(severity: string | undefined): ReviewFinding['severity'] {
@@ -53,7 +52,6 @@ export function normalizeDeepSecFindings(entries: readonly ParsedDeepSecCommentO
       ...(filePath ? { filePath } : {}),
       ...(startLine && endLine ? { startLine, endLine } : {}),
       summary: entry.body,
-      confidence: entry.confidence === 'high' ? 0.9 : 0.55,
       ...(ruleId ? { ruleId } : {}),
       ...(entry.category ? { deepsecCategory: entry.category } : {}),
       ...(taxonomy ? { taxonomy: { family: taxonomyFamily(ruleId, entry.category) ?? 'security', id: taxonomy } } : {}),

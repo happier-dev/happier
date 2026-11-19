@@ -62,7 +62,7 @@ export type DeepSecReviewRunResult =
     }>
   | Readonly<{
       status: 'readiness_failed';
-      readiness: Extract<DeepSecReadiness, { status: 'missing' | 'blocked' }>;
+      readiness: Extract<DeepSecReadiness, { status: 'missing' }>;
       commentOutMarkdown: '';
     }>
   | Readonly<{
@@ -103,9 +103,6 @@ export type RunDeepSecReviewParams = Readonly<{
     agentCli?: 'claude' | 'codex' | 'both' | null;
   }>;
   signal?: AbortSignal;
-  timeoutMs?: number;
-  maxStdoutBytes?: number;
-  maxStderrBytes?: number;
 }>;
 
 function normalizeSelectedFiles(selectedFiles: readonly string[] | undefined): readonly string[] {
@@ -292,9 +289,6 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       args,
       cwd: { root: 'workspace', relativePath: '' },
       ...(environment ? { env: environment } : {}),
-      ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
-      ...(params.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: params.maxStdoutBytes }),
-      ...(params.maxStderrBytes === undefined ? {} : { maxStderrBytes: params.maxStderrBytes }),
     }, { signal: params.signal });
     const result = await run(commandArgs);
     if (params.mode === 'repository_security_audit' && !commandFailed(result)) {

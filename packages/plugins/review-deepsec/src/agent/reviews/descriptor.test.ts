@@ -26,11 +26,13 @@ describe('DeepSec review descriptor', () => {
       id: 'review',
       intent: 'review',
       promptAsset: 'review-prompt',
+      metadata: { reviewInstructionsInput: 'unsupported' },
     });
     expect(createDeepSecReviewExecutionProfile('repository_security_audit')).toMatchObject({
       id: 'repository-security-audit',
       intent: 'review',
       promptAsset: 'repository-security-audit-prompt',
+      metadata: { reviewInstructionsInput: 'unsupported' },
     });
   });
 

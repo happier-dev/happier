@@ -1,9 +1,17 @@
-import { ingestPluginManifestV2 } from '@happier-dev/protocol';
+import { ingestPluginManifestV2, resolveAgentSetupInstall } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('CodeRabbit strict plugin manifest', () => {
+  it.each(['linux', 'darwin', 'win32'])('offers the native vendor install on %s', (platform) => {
+    expect(resolveAgentSetupInstall({
+      cli: PLUGIN_MANIFEST.contributes.agents[0]?.cli,
+      platform,
+      arch: 'x64',
+    })).toMatchObject({ available: true, mode: 'vendor_recipe' });
+  });
+
   it('owns an execution-run profile through declared prompt/resource/action references', () => {
     const ingestion = ingestPluginManifestV2(PLUGIN_MANIFEST);
     expect(ingestion.ok, JSON.stringify(ingestion)).toBe(true);

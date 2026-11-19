@@ -22,7 +22,7 @@ export type DeepSecReadiness =
       agentCli?: 'claude' | 'codex' | 'both';
     }>
   | Readonly<{
-      status: 'missing' | 'blocked';
+      status: 'missing';
       missing: readonly DeepSecPrerequisite[];
       toolRuntime: DeepSecToolRuntime;
       installUrl?: string;

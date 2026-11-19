@@ -18,7 +18,7 @@ export function createDeepSecReviewExecutionProfile(kind: DeepSecReviewProfileKi
     actions: [{ kind: 'hostAction' as const, actionId: 'reviews.comments.create' as const }],
     defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
     compatibleAgents: ['deepsec'],
-    metadata: { reviewCostConsentOption: 'confirmedCostWarning' },
+    metadata: { reviewCostConsentOption: 'confirmedCostWarning', reviewInstructionsInput: 'unsupported' },
     optionsSchema: {
       type: 'object' as const,
       additionalProperties: false as const,

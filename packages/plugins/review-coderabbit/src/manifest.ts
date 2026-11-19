@@ -47,14 +47,22 @@ export const CODERABBIT_PLUGIN = definePlugin({
         cli: {
           executable: {
             binaryName: 'coderabbit',
-            knownUserBinDirSuffixes: null,
+            knownUserBinDirSuffixes: ['.local/bin'],
+            knownEnvironmentBinDirs: [{ envVar: 'LOCALAPPDATA', relativeDir: 'Programs/coderabbit' }],
             sourcePreference: 'system-first',
           },
           install: {
             managed: null,
-            manual: { kind: 'command' },
-            guideUrl: null,
-            docsUrl: null,
+            manual: {
+              kind: 'vendor_recipe',
+              recipes: {
+                darwin: [{ cmd: 'sh', args: ['-c', 'curl -fsSL https://cli.coderabbit.ai/install.sh | CR_CLI_SKIP_LOGIN=1 sh'] }],
+                linux: [{ cmd: 'sh', args: ['-c', 'curl -fsSL https://cli.coderabbit.ai/install.sh | CR_CLI_SKIP_LOGIN=1 sh'] }],
+                win32: [{ cmd: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "$env:CR_CLI_SKIP_LOGIN = '1'; irm https://cli.coderabbit.ai/install.ps1 | iex"] }],
+              },
+            },
+            guideUrl: 'https://docs.coderabbit.ai/cli',
+            docsUrl: 'https://docs.coderabbit.ai/cli',
           },
           auth: {
             support: 'login_terminal',

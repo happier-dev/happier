@@ -18,6 +18,6 @@ export function createCodeRabbitReviewExecutionProfile() {
         gate: { type: 'string' as const, title: 'Severity gate', description: 'Request a fresh review and report findings at or above this severity as a blocked gate.', enum: ['critical', 'major', 'minor', 'trivial', 'info'] },
       },
     },
-    metadata: { reviewScopes: CODERABBIT_REVIEW_SCOPES },
+    metadata: { reviewScopes: CODERABBIT_REVIEW_SCOPES, reviewInstructionsInput: 'unsupported' },
   };
 }

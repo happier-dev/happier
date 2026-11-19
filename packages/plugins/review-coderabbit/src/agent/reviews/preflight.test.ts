@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { preflightCodeRabbitReviewScope } from './scopePreflight.js';
-import { runCodeRabbitReviewStartPreflight } from './startPreflight.js';
+import { preflightCodeRabbitReviewScope, type CodeRabbitReviewScopeFacts } from './scopePreflight.js';
+import { normalizeCodeRabbitReviewStartInput } from './startInput.js';
 
-function createSupportedScmReviewScope(paths: readonly string[] = ['a.txt']): unknown {
-  const changedPaths = paths.map((path) => ({
+function reviewInput(intentInput: unknown) {
+  return normalizeCodeRabbitReviewStartInput({ intentInput, fallbackInstructions: 'Review.' });
+}
+
+function createSupportedScmReviewScope(paths: readonly string[] = ['a.txt']): CodeRabbitReviewScopeFacts {
+  const changedPaths: CodeRabbitReviewScopeFacts['changedPaths'] = paths.map((path) => ({
     path,
     previousPath: null,
     kind: 'modified',
@@ -24,7 +28,7 @@ function createSupportedScmReviewScope(paths: readonly string[] = ['a.txt']): un
     repositoryRoot: '/workspace',
     worktreeRoot: '/workspace',
     baseRef: { source: 'branch_upstream', ref: 'origin/main' },
-    selectedPaths: paths,
+    selectedPaths: [...paths],
     committedPaths: changedPaths,
     uncommittedPaths: [],
     changedPaths,
@@ -35,58 +39,53 @@ function createSupportedScmReviewScope(paths: readonly string[] = ['a.txt']): un
 
 describe('CodeRabbit review preflight', () => {
   it('leaves native login and API-key readiness with the canonical Agent auth owner', async () => {
-    await expect(runCodeRabbitReviewStartPreflight({
+    await expect(preflightCodeRabbitReviewScope({
       cwd: '/workspace',
-      env: {},
-      intentInput: {
+      reviewInput: reviewInput({
         reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
         instructions: 'Review this change.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
-      },
+      }),
       scope: createSupportedScmReviewScope(),
     })).resolves.toEqual({
-      ok: true,
+      ok: true, eligibleFileCount: 1,
     });
   });
 
   it('accepts committed scope from host-resolved review facts without probing git locally', async () => {
     await expect(preflightCodeRabbitReviewScope({
       cwd: '/not-a-local-git-worktree',
-      intentInput: {
+      reviewInput: reviewInput({
         changeType: 'committed',
         base: { kind: 'none' },
-      },
+      }),
       scope: createSupportedScmReviewScope(['a.txt']),
     })).resolves.toEqual({ ok: true, eligibleFileCount: 1 });
   });
 
   it('does not impose a local file ceiling before the vendor evaluates the scope (U3)', async () => {
-    await expect(runCodeRabbitReviewStartPreflight({
+    await expect(preflightCodeRabbitReviewScope({
       cwd: '/not-a-local-git-worktree',
-      env: {
-        CODERABBIT_API_KEY: 'test-key',
-        HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES: '1',
-      },
-      intentInput: {
+      reviewInput: reviewInput({
         reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
         instructions: 'Review this change.',
         changeType: 'committed',
         base: { kind: 'none' },
-      },
+      }),
       scope: createSupportedScmReviewScope(['a.txt', 'b.txt']),
-    })).resolves.toEqual({ ok: true });
+    })).resolves.toEqual({ ok: true, eligibleFileCount: 2 });
   });
 
   it('rejects empty host-resolved session scopes without local fallback probing', async () => {
     await expect(preflightCodeRabbitReviewScope({
       cwd: '/not-a-local-git-worktree',
-      intentInput: {
+      reviewInput: reviewInput({
         reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
         instructions: 'Review nested scope.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
-      },
+      }),
       scope: createSupportedScmReviewScope([]),
     })).resolves.toMatchObject({
       ok: false,
@@ -97,11 +96,11 @@ describe('CodeRabbit review preflight', () => {
   it('refuses an explicit file selection that CodeRabbit cannot pass to its CLI', async () => {
     await expect(preflightCodeRabbitReviewScope({
       cwd: '/workspace',
-      intentInput: {
+      reviewInput: reviewInput({
         changeType: 'committed',
         base: { kind: 'none' },
         selectedPaths: ['a.txt'],
-      },
+      }),
       scope: createSupportedScmReviewScope(['a.txt']),
     })).resolves.toMatchObject({
       ok: false,

@@ -22,6 +22,7 @@ describe('CodeRabbit review descriptor', () => {
       id: 'review',
       intent: 'review',
       promptAsset: 'review-prompt',
+      metadata: { reviewInstructionsInput: 'unsupported' },
       defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
     });
   });

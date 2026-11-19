@@ -4,7 +4,6 @@ import {
   type ReviewStartInput,
 } from '@happier-dev/plugin-sdk/reviews';
 
-import { normalizeCodeRabbitReviewStartInput } from './startInput.js';
 import { CODERABBIT_REVIEW_SCOPES } from './profile.js';
 
 export type CodeRabbitReviewScopePreflightResult =
@@ -40,7 +39,7 @@ function selectedPathsForInput(params: Readonly<{
 
 export async function preflightCodeRabbitReviewScope(params: Readonly<{
   cwd: string;
-  intentInput: unknown;
+  reviewInput: ReviewStartInput;
   scope?: CodeRabbitReviewScopeFacts | null;
 }>): Promise<CodeRabbitReviewScopePreflightResult> {
   const cwd = String(params.cwd ?? '').trim();
@@ -60,22 +59,11 @@ export async function preflightCodeRabbitReviewScope(params: Readonly<{
     return { ok: false, error: 'CodeRabbit cannot review these exact captured endpoints. Choose an engine that supports the captured comparison.' };
   }
 
-  let reviewInput: ReviewStartInput;
-  try {
-    reviewInput = normalizeCodeRabbitReviewStartInput({
-      intentInput: params.intentInput ?? {},
-      fallbackInstructions: 'Review.',
-    });
-  } catch {
-      return { ok: false, error: 'Invalid CodeRabbit review input.' };
-  }
+  const reviewInput = params.reviewInput;
 
   if (
     !CODERABBIT_REVIEW_SCOPES.includes('paths')
-    && params.intentInput !== null
-    && typeof params.intentInput === 'object'
-    && !Array.isArray(params.intentInput)
-    && ('selectedPaths' in params.intentInput || 'selectedFiles' in params.intentInput)
+    && ('selectedPaths' in reviewInput || 'selectedFiles' in reviewInput)
   ) {
     return { ok: false, error: 'CodeRabbit cannot review exact file paths; choose a worktree scope or another engine.' };
   }

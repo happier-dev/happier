@@ -4,6 +4,19 @@ import { parseDeepSecCommentOutMarkdown } from './commentOut.js';
 import { normalizeDeepSecFindings } from './findings.js';
 
 describe('parseDeepSecCommentOutMarkdown', () => {
+  it('preserves complete native finding titles', () => {
+    const title = 'Missing authorization on the administrative account recovery endpoint permits any signed-in user to replace another account recovery credential';
+    const entries = parseDeepSecCommentOutMarkdown(`### src/auth.ts:42\n\n${title}\n\nRequire authorization.\n\n### src/fallback.ts\n\nCheck access.`);
+    const findings = normalizeDeepSecFindings(entries);
+    expect(findings[0]?.title).toBe(title);
+    expect(findings[0]?.summary).toContain('Require authorization.');
+  });
+
+  it('does not invent issue confidence from anchor certainty', () => {
+    const entries = parseDeepSecCommentOutMarkdown('### src/auth.ts:42\n\nRequire authorization.\n\n### src/fallback.ts\n\nCheck access.');
+    expect(normalizeDeepSecFindings(entries).map((finding) => finding.confidence)).toEqual([undefined, undefined]);
+  });
+
   it('preserves native HIGH BUG severity through finding normalization', () => {
     const entries = parseDeepSecCommentOutMarkdown('## 🔎 deepsec found 1 finding\n\n### 🟣 HIGH BUG · `src/auth.ts:L2`\n\n**Role bypass**\n\nRequire authorization.');
     expect(normalizeDeepSecFindings(entries)).toEqual([expect.objectContaining({ severity: 'high', filePath: 'src/auth.ts', startLine: 2 })]);
