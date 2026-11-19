@@ -265,7 +265,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
         ...configured, defaults: { ...configured.defaults, destination: { ...configured.defaults.destination,
           spawn: { ...spawn, initialInput: { text: 'F8_DUPLICATE_MUST_NOT_START' } } } },
       });
-      expect(duplicateInput).toMatchObject({ ok: false, errorCode: 'invalid_input' });
+      expect(duplicateInput).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
       expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Session"')).toBe(sessionsBeforeInvalid);
       const configuredArrival = await fixture.owner.execute(ActionIdSchema.parse('session.input.handoff'),
         SessionInputHandoffInputV1Schema.parse(configured));

@@ -36,7 +36,7 @@ export const SessionInputHandoffCompositionResultV1Schema: ProtocolComposableSch
 
 export type SessionInputHandoffNewDestinationV1 = Readonly<{
     kind: 'new'; seed: Extract<PluginActionInputById['session.authoring.open'], { seed: unknown }>['seed'];
-    spawn?: PluginActionInputById['session.spawn_new'];
+    spawn?: PluginActionInputById['session.spawn_new'] & { initialInput?: never };
 }>;
 export type SessionInputHandoffContentV1 = Readonly<{
     text: string; attachments?: NonNullable<Extract<PluginActionInputById['session.message.send'], { message: string }>['attachments']>;

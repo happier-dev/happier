@@ -1,11 +1,12 @@
 import type { ActionSessionAddressV1 } from '../../actions/sessionAddressV1.js';
 import type { ActionExecuteFailure, ActionApprovalRequestCreatedResult } from '../../actions/actionExecutionResult.js';
 import type { SessionAuthoringOpenResultV1 } from '../../plugins/ui/hostApiRequests.js';
+import type { SessionSpawnNewActionAuthoringInputV2 } from '../creation/sessionSpawnNewInputV2.js';
 import type { SessionSpawnNewActionResultV1 } from '../creation/sessionSpawnNewResultV1.js';
 import type { SessionMessageSendActionResultV1 } from './sessionInputAdmission.js';
 import type { SessionInputHandoffInputV1, SessionInputHandoffContentV1, SessionInputHandoffResultV1, SessionInputHandoffNewDestinationV1 } from './sessionInputHandoffV1.js';
 
-type SessionInputHandoffSpawnV1 = NonNullable<SessionInputHandoffNewDestinationV1['spawn']>;
+type SessionInputHandoffSpawnV1 = SessionSpawnNewActionAuthoringInputV2;
 
 export type SessionInputHandoffEffectV1<T> = Readonly<{ ok: true; result: T | ActionApprovalRequestCreatedResult }> | ActionExecuteFailure;
 export type SessionInputHandoffDepsV1 = Readonly<{

@@ -48,8 +48,12 @@ export const SessionInputHandoffSessionChoiceV1ProtocolSchema = projectZodProtoc
 export const SessionInputHandoffDeliveryChoiceV1ProtocolSchema = projectZodProtocolSchema(SessionInputHandoffDeliveryChoiceV1Schema);
 export const SessionInputHandoffCompositionResultV1ProtocolSchema = projectZodProtocolSchema(SessionInputHandoffCompositionResultV1Schema);
 
+const handoffSpawn = lazyZodSchema(() => z.safeExtend(SessionSpawnNewActionInputV2Schema, {
+    // The handoff admits its content separately after Session creation.
+    initialInput: z.optional(z.never()),
+}));
 export type SessionInputHandoffNewDestinationV1 = Readonly<{
-    kind: 'new'; seed: z.input<typeof PluginUiNewSessionSeedV1Schema>; spawn?: z.input<typeof SessionSpawnNewActionInputV2Schema>;
+    kind: 'new'; seed: z.input<typeof PluginUiNewSessionSeedV1Schema>; spawn?: z.input<typeof handoffSpawn>;
 }>;
 export type SessionInputHandoffContentV1 = Readonly<{
     text: string; attachments?: PluginSessionInputAttachmentAuthoringV1[]; forgeEvidence?: SessionInputForgeEvidenceV1;
@@ -70,7 +74,7 @@ export type SessionInputHandoffResultV1 = SessionInputHandoffSendResultV1 | Sess
     | Readonly<{ kind: 'unavailable'; reason: 'composerUnavailable' | 'configuredDestinationUnavailable' }>;
 
 const newDestination = lazyZodSchema(() => z.strictObject({
-    kind: z.literal('new'), seed: PluginUiNewSessionSeedV1Schema, spawn: z.optional(SessionSpawnNewActionInputV2Schema),
+    kind: z.literal('new'), seed: PluginUiNewSessionSeedV1Schema, spawn: z.optional(handoffSpawn),
 }));
 export const SessionInputHandoffInputV1Schema: z.ZodMiniType<SessionInputHandoffInputV1, SessionInputHandoffInputV1> = lazyZodSchema(() => z.strictObject({
     v: z.literal(1), sessionChoice: SessionInputHandoffSessionChoiceV1Schema, delivery: SessionInputHandoffDeliveryChoiceV1Schema,
