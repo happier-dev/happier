@@ -47,6 +47,7 @@
     // These composed tests import both UI and CLI source, whose importer-relative `@/*`
     // aliases cannot share one TypeScript program. Their owner projects typecheck the
     // production sources; the composed contract remains covered by its Vitest lane.
+    "src/testkit/vitest/settingsRenderer.test.ts",
     "suites/core-e2e/simulatorRelay.productPath.l6LiveQa.slow.e2e.test.ts",
     "suites/core-e2e/plugins.voicePackedInstalledArtifact.e2e.test.ts",
     "suites/core-e2e/voice.agentTranscriptPersistence.e2e.test.ts",

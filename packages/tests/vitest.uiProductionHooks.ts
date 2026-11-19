@@ -162,6 +162,7 @@ const expoNodeModuleStubsPlugin: Plugin = {
 };
 
 export function createUiProductionHooksVitestConfig(): UserConfig {
+  const zustandRequire = createRequire(requireUiDependency.resolve('zustand/package.json'));
   return {
     esbuild: { jsx: 'automatic' },
     define: {
@@ -178,7 +179,9 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
           // entrypoints. Inline them so the node-safe aliases above see their Flow sources.
           inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@react-navigation\/bottom-tabs/,
             /@legendapp\/list/, /react-native-svg/, /react-native-enriched-markdown/,
-            /expo-secure-store/, /expo-crypto/, /react-native-quick-base64/],
+            /expo-secure-store/, /expo-crypto/, /react-native-quick-base64/,
+            // Vite must apply the renderer's React alias to Zustand's hook imports.
+            /zustand/],
         },
       },
       env: {
@@ -207,6 +210,11 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
         {
           find: /^react-test-renderer$/,
           replacement: requireUiDependency.resolve('react-test-renderer'),
+        },
+        {
+          // This CommonJS peer requires React itself, so keep its own resolution with the renderer.
+          find: /^use-sync-external-store\/shim\/with-selector(?:\.js)?$/,
+          replacement: zustandRequire.resolve('use-sync-external-store/shim/with-selector'),
         },
         { find: /^react-native-reanimated(?:\/.*)?$/, replacement: uiDev('reactNativeReanimatedStub.ts') },
         { find: /(?:^|[\\/])node_modules[\\/]react-native-reanimated[\\/].*$/, replacement: uiDev('reactNativeReanimatedStub.ts') },
