@@ -872,7 +872,10 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           const virtualCode = /^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0)
             : /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key) ? 111 + Number(key.slice(1)) : CDP_NAMED_KEY_CODES[key];
           const keyParams = { key, ...modifiers, ...(virtualCode === undefined ? {} : { windowsVirtualKeyCode: virtualCode }) };
-          await send('Input.dispatchKeyEvent', { type: 'keyDown', ...keyParams });
+          // CDP needs the character on keyDown to run the keypress/default-action
+          // path (Enter activation/submission and Space activation/editing).
+          const text = mask & ~8 ? '' : key === 'Enter' ? '\r' : key.length === 1 ? key : '';
+          await send('Input.dispatchKeyEvent', { type: 'keyDown', ...keyParams, ...(text ? { text } : {}) });
           await send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyParams });
           return { ok: true };
         }
