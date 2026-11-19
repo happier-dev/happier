@@ -1066,7 +1066,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             context, ...(signal ? { signal } : {}),
           });
         }
-        const projectFilesChoice = acquired?.projectFiles ?? projectFiles?.projectFiles ?? effectiveProjectFiles;
+        const projectFilesChoice = acquired?.projectFiles ?? projectFiles?.projectFiles ?? effectiveProjectFiles
+          ?? (acquired ? { kind: 'copy_once' as const } : undefined);
         const resolvedProjectFiles = projectFilesChoice ? await resolveSessionProjectFiles({
           projectFiles: projectFilesChoice, placement: sessionPlacement,
           invokeReviewedChild: context?.hostReviewedChild?.invoke, ...(signal ? { signal } : {}),

@@ -15,7 +15,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
 import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
-import { persistSessionProjectFilesOrigin } from '@/daemon/sessions/sessionProjectFilesOrigin';
+import { persistSessionProjectFilesOrigin, retainImplicitManagedProjectFilesOrigin } from '@/daemon/sessions/sessionProjectFilesOrigin';
 import type { SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -1548,7 +1548,7 @@ export async function executeSpawnSessionRequest(
                     const retainedOrigin = launchSessionAttachPayload?.snapshot?.ownerMetadata?.system?.sessionCreationCorrespondenceV1?.recipe.projectFilesOrigin;
                     sessionTargetOrigin = retainedOrigin;
                     const managedPlacement = { ...effectiveOptionsForSpawn.managedTargetPlacement,
-                        ...(retainedOrigin ? { projectFilesSourceWorkspace: retainedOrigin.sourceWorkspace } : {}) };
+                        ...(retainedOrigin?.contentPolicyDigest ? { projectFilesSourceWorkspace: retainedOrigin.sourceWorkspace } : {}) };
                     const targetPreparationSignal = sessionTarget.signal;
                     const projectFilesCustody = () => {
                         if (!requesterAccountId) throw Object.assign(new Error('Requester Sync custody is unavailable'), { code: 'project_requester_authority_unavailable' });
@@ -1622,6 +1622,20 @@ export async function executeSpawnSessionRequest(
                         agentCliInstall: { env: params.processEnv ?? process.env },
                         signal: sessionTarget.signal });
                     sessionTargetWorkspace = launch.workspace;
+                    const creation = effectiveOptionsForSpawn.managedCreation;
+                    if (!sessionTargetOrigin && committedLaunchSession && creation?.controller
+                        && !managedPlacement.projectFilesSource && !managedPlacement.projectFilesSourceWorkspace
+                        && (!projectFiles || projectFiles.kind === 'copy_once')) {
+                        const bootstrap = requesterRuntime?.bootstrap;
+                        sessionTargetOrigin = await retainImplicitManagedProjectFilesOrigin({ credentials: params.credentials,
+                            managedCreation: { ...creation, controller: creation.controller }, workspace: launch.workspace,
+                            ...(bootstrap ? { sessionCustody: {
+                                accountId: bootstrap.attribution.accountId,
+                                serverId: bootstrap.homeServerIdentityId ?? bootstrap.attribution.serverId,
+                                serverHttpBaseUrl: bootstrap.serverHttpBaseUrl,
+                                isCurrent: () => bootstrap.isCurrent(targetPreparationSignal),
+                            } } : {}), signal: targetPreparationSignal });
+                    }
                     if (!retainedOrigin && sessionTargetOrigin && launchExistingSessionId && launchSessionAttachPayload) {
                         const retained = await persistSessionProjectFilesOrigin({ credentials: params.credentials,
                             sessionId: launchExistingSessionId, origin: sessionTargetOrigin });
@@ -1634,11 +1648,11 @@ export async function executeSpawnSessionRequest(
                             ownerMetadataEnvelope: snapshot.ownerMetadataEnvelope,
                         } };
                     }
-                    if (!sessionTargetBaseline && sessionTargetOrigin?.targetWorkspace.kind === 'managed' && launchExistingSessionId) {
+                    if (!sessionTargetBaseline && sessionTargetOrigin?.targetWorkspace.kind === 'managed'
+                        && sessionTargetOrigin.contentPolicyDigest && launchExistingSessionId) {
                         sessionTargetBaseline = await params.resolveManagedProjectFilesBaseline?.()?.({
                             sessionId: launchExistingSessionId, targetWorkspace: sessionTargetOrigin.targetWorkspace, credentials: params.credentials,
-                            contentPolicyDigest: sessionTargetOrigin.contentPolicyDigest
-                                ?? (managedPlacement.projectFiles?.kind === 'git_clone' ? undefined : managedPlacement.projectFiles?.contentPolicy?.policyDigest),
+                            contentPolicyDigest: sessionTargetOrigin.contentPolicyDigest,
                             signal: sessionTarget.signal,
                         }) ?? undefined;
                     }

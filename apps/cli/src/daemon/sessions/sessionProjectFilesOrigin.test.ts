@@ -6,7 +6,10 @@ import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
-import { persistSessionProjectFilesOrigin, withSessionProjectFilesOrigin } from './sessionProjectFilesOrigin';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { persistSessionProjectFilesOrigin, retainImplicitManagedProjectFilesOrigin, withSessionProjectFilesOrigin } from './sessionProjectFilesOrigin';
 
 // Home HTTP is the boundary. The owner-envelope codec, metadata tuple mutation,
 // stored recipe and copied-base codec are real.
@@ -39,6 +42,7 @@ function createHome() {
   vi.mocked(axios.get).mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
     if (path === '/v2/sessions/same-session') return { status: 200, data: { session: raw } };
+    if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     return { status: 404, data: {} };
   });
@@ -54,6 +58,32 @@ function createHome() {
 }
 
 describe('native copied Project files retained by the existing Session recipe owner', () => {
+  it('retains the actual endpoints of an implicit managed Copy once in the owner recipe', async () => {
+    const serverId = 'srv_implicit_copy';
+    await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl: 'https://implicit-copy.invalid' });
+    createHome();
+    const rows: unknown[] = [];
+    vi.mocked(axios.post).mockImplementation(createProjectAccountRowsHttpBoundary(rows));
+    const managedCreation = { homeId: serverId, managedId: 'sandbox',
+      controller: { machineId: 'controller', installationId: 'installation' } };
+    const workspace = { hostRoot: '/actual/git-root', targetRoot: '/guest/materialized-root' };
+    try {
+      const origin = await retainImplicitManagedProjectFilesOrigin({ credentials, managedCreation, workspace });
+      const retry = await retainImplicitManagedProjectFilesOrigin({ credentials, managedCreation, workspace });
+      const retained = await persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin });
+      expect(retained.origin).toEqual(retry);
+      expect(retained.origin).toMatchObject({
+        sourceWorkspace: { serverId, machineId: 'controller', rootPath: workspace.hostRoot },
+        targetWorkspace: { v: 2, kind: 'managed', serverId, managedId: 'sandbox', controller: managedCreation.controller, rootPath: workspace.targetRoot },
+      });
+      expect(rows).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: { kind: 'workspace-ref', serverId, id: retained.origin.sourceWorkspace.workspaceId } }),
+        expect.objectContaining({ key: { kind: 'workspace-ref', serverId, id: retained.origin.targetWorkspace.workspaceId } }),
+      ]));
+      expect(retained.origin.baseline).toBeUndefined();
+    } finally { withdrawActiveProjectAccountRowsSnapshot(); }
+  });
+
   it('includes the actual native address and original source in the existing birth correspondence', () => {
     const contentPolicyDigest = originalPolicyDigest;
     const retained = withSessionProjectFilesOrigin(correspondence(), { ...origin(), ...{ contentPolicyDigest }, baseline: { entries: [] } });

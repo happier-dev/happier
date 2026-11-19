@@ -3120,11 +3120,10 @@ export async function startDaemonSessionControlRuntime(
               const origin = recipe?.projectFilesOrigin;
               return await restoreSessionTargetRelay({ ...request, committedSessionId: sessionId, socketPath,
                 ...(origin ? { projectFiles: { sessionId, primarySocketPath: held.socketPath, origin,
-                  readBaseline: async signal => origin.targetWorkspace.kind === 'managed'
+                  readBaseline: async signal => origin.targetWorkspace.kind === 'managed' && origin.contentPolicyDigest
                     ? await params.resolveManagedProjectFilesBaseline?.()?.({ sessionId, targetWorkspace: origin.targetWorkspace, credentials,
                       signal,
-                      contentPolicyDigest: origin.contentPolicyDigest
-                        ?? (recipe?.projectFiles?.kind === 'git_clone' ? undefined : recipe?.projectFiles?.contentPolicy?.policyDigest) }) ?? null
+                      contentPolicyDigest: origin.contentPolicyDigest }) ?? null
                     : origin.baseline ?? null } } : {}),
                 // The runner (or its session host) this daemon reattached, read live.
                 readTrustedCallerPid: () => tracked.sessionRunnerPid ?? tracked.pid });
