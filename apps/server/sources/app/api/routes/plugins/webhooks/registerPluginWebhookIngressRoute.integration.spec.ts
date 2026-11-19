@@ -59,6 +59,20 @@ describe("public plugin webhook ingress route", () => {
         return app;
     }
 
+    it('returns an empty 404 over HTTP for an inactive heartbeat URL', async () => {
+        routeStoreState.findActivePluginWebhookRouteV1.mockResolvedValueOnce(null);
+        const app = await createApp({
+            env: ENABLED_ENV,
+            processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
+            distributedAdmission: { acquire: async () => ({ ok: true, release: async () => {} }) },
+        });
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        const response = await fetch(`${origin}/v1/plugins/webhooks/opaque-inactive-heartbeat`);
+        expect(response.status).toBe(404);
+        expect(response.headers.get('cache-control')).toBe('no-store');
+        await expect(response.text()).resolves.toBe('');
+    });
+
     it("returns an empty 202 only after the durable ingest owner reports admission", async () => {
         const ingest = vi.fn(async () => ({ kind: "accepted" as const, deliveryId: "delivery-1", duplicate: false }));
         const onCommittedWake = vi.fn();

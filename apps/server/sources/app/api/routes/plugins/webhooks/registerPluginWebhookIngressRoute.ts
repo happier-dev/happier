@@ -421,8 +421,8 @@ export function registerPluginWebhookIngressRoute(
                     }
                     if (prepared.kind !== "ready") {
                         if (prepared.statusCode === 405) reply.header("Allow", "POST");
-                        const rawRequest = request.raw as Readonly<{ destroy?(): void }>;
-                        rawRequest.destroy?.();
+                        // Close after the reply if the refused request still has an unread body.
+                        if (!request.raw.complete) reply.header("Connection", "close");
                         return publicEmpty(
                             reply,
                             prepared.statusCode,
