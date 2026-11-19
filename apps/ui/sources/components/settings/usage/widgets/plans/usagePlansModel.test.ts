@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import {
   ConnectedServiceQuotaGetResultV1Schema,
+  projectProviderAccountUsageQuotaReadV1,
   type ConnectedServiceQuotaGetResultV1,
 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import {
@@ -100,6 +101,46 @@ function quotaRead(
 }
 
 describe('Plans projection of admitted allowance reads', () => {
+  const day1 = Date.UTC(2026, 9, 3);
+  const day3 = Date.UTC(2026, 9, 5);
+  const day6 = Date.UTC(2026, 9, 8);
+  const weeklyReset = Date.UTC(2026, 9, 10);
+  const resetBetweenReadings = Date.UTC(2026, 9, 6);
+  const nextWeeklyReset = Date.UTC(2026, 9, 13);
+
+  it.each([
+    { scenario: 'three equal observations in one weekly window', firstReset: weeklyReset, day6Reset: weeklyReset, retainedDays: [day1, day3, day6] },
+    { scenario: 'three equal observations across a reset', firstReset: resetBetweenReadings, day6Reset: nextWeeklyReset, retainedDays: [day1, day3, day6] },
+    { scenario: 'the middle observation missing', firstReset: weeklyReset, day6Reset: weeklyReset, retainedDays: [day1, day6] },
+    { scenario: 'the last observation missing from history despite a current reading', firstReset: weeklyReset, day6Reset: weeklyReset, retainedDays: [day1, day3] },
+  ])('charts only the observed quota days with $scenario', ({ firstReset, day6Reset, retainedDays }) => {
+    const quotaAt = (day: number) => quotaRead({
+      accountId: 'sparse-weekly', observedAtMs: day + 12 * HOUR,
+      meters: [{ meterId: 'week', label: 'Weekly', usedPct: 20,
+        resetAtMs: day === day6 ? day6Reset : firstReset, windowDurationMs: 7 * DAY }],
+    });
+    const latest = quotaAt(day6);
+    const current = latest.current!;
+    const daySummaries = deriveProviderAccountUsageDayQuotaHistoryV1({
+      recordId: current.recordId, snapshots: retainedDays.map(day => day === day6 ? current : quotaAt(day).current!),
+    });
+    const read = projectProviderAccountUsageQuotaReadV1({
+      input: { source: latest.source, projection: {
+        range: { startAtMs: day1, endAtMs: NOW + 1 }, resolution: 'accepted_observations',
+      } },
+      current, daySummaries, recentHistory: { entries: [], nextCursor: null }, nowMs: NOW,
+    });
+
+    expect(projectUsageDailyQuotaHistory(projectUsagePlans([read], NOW).accounts)).toMatchObject([
+      { meterId: 'week', measure: 'percent', days: retainedDays.map(dayStartAtMs => {
+        const resetAtMs = dayStartAtMs === day6 ? day6Reset : firstReset;
+        return { dayStartAtMs, last: 20, peak: null, windows: [
+          { windowStartAtMs: resetAtMs - 7 * DAY, resetAtMs, lastObservedAtMs: dayStartAtMs + 12 * HOUR },
+        ] };
+      }) },
+    ]);
+  });
+
   it('keeps daily amount and percentage axes separate and leaves an unreported peak unknown', () => {
     const first = quotaRead({ accountId: 'percentage-only', observedAtMs: NOW - DAY,
       meters: [{ meterId: 'week', label: 'Weekly', usedPct: 70 }] });

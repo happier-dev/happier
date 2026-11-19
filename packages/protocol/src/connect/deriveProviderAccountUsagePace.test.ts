@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
+import { buildProviderAccountUsageRecordId, PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageSnapshotV1Schema,
+  type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { buildProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import { deriveProviderAccountUsageEarlierWindowCurves, deriveProviderAccountUsagePace, deriveProviderAccountUsageUnusedCapacity,
   getProviderAccountUsageDerivationInterval, hasProviderAccountUsageWitnessedReset, readProviderAccountUsageWindowComparabilityReason,
@@ -163,6 +164,41 @@ describe('accepted provider usage pace', () => {
   });
   it('projects observed utilization from witnessed elapsed time without advancing old counters to now', () => {
     expect(deriveProviderAccountUsagePace({ snapshot: snapshot(), meterId: 'weekly', nowMs: 500 })).toMatchObject({ status: 'available', usedFraction: .5, elapsedFraction: .25, pace: 2, projectedResetUtilizationFraction: 2, evenPaceFraction: .25 });
+  });
+  it('uses each flat weekly window’s latest stored reading to project unused capacity', () => {
+    const day = PROVIDER_ACCOUNT_USAGE_DAY_MS;
+    const flat = (observedDay: number, resetDay: number) => {
+      const value = snapshot(observedDay * day);
+      Object.assign(value.meters[0]!, { used: 20, utilizationPct: 20, resetsAt: resetDay * day, windowDurationMs: 7 * day });
+      return ProviderAccountUsageSnapshotV1Schema.parse(value);
+    };
+    const first = flat(1, 7);
+    const middle = flat(3, 7);
+    const latest = flat(6, 7);
+    const nextFirst = flat(8, 14);
+    const nextMiddle = flat(10, 14);
+    const nextLatest = flat(13, 14);
+    const currentWindow = { snapshot: latest, meterId: 'weekly', nowMs: 6 * day };
+    const start = { observedAtMs: day, usedFraction: .2 };
+    const end = { observedAtMs: 6 * day, usedFraction: .2 };
+    expect(deriveProviderAccountUsagePace({ ...currentWindow, history: [first, middle] }))
+      .toMatchObject({ status: 'available', usedFraction: .2, elapsedFraction: 6 / 7, pace: expect.closeTo(7 / 30), sampleCount: 3,
+        observedCurve: [start, { observedAtMs: 3 * day, usedFraction: .2 }, end] });
+    expect(deriveProviderAccountUsagePace({ ...currentWindow, history: [first] }))
+      .toMatchObject({ status: 'available', sampleCount: 2, observedCurve: [start, end] });
+
+    const projected = { status: 'available', unusedAmount: expect.closeTo(230 / 3), unusedFraction: expect.closeTo(23 / 30),
+      unit: 'requests', sampleCount: 3, qualification: 'estimated', method: 'linear_pace_at_last_observation' };
+    const firstWindow = { window: { windowStartAtMs: 0, resetAtMs: 7 * day }, value: { ...projected, observedAtMs: 6 * day } };
+    const secondWindow = { window: { windowStartAtMs: 7 * day, resetAtMs: 14 * day }, value: { ...projected, observedAtMs: 13 * day } };
+    expect(deriveProviderAccountUsageUnusedCapacity({ history: [first, middle, latest, nextFirst, nextMiddle, nextLatest], nowMs: 14 * day }))
+      .toMatchObject({ historyStatus: 'returned_page', windows: [firstWindow, secondWindow] });
+    expect(deriveProviderAccountUsageUnusedCapacity({ history: [first, middle, nextFirst, nextMiddle, nextLatest], nowMs: 14 * day }))
+      .toMatchObject({ historyStatus: 'returned_page', windows: [
+        { ...firstWindow, value: { ...firstWindow.value, observedAtMs: 3 * day, unusedAmount: expect.closeTo(160 / 3),
+          unusedFraction: expect.closeTo(8 / 15), sampleCount: 2 } },
+        secondWindow,
+      ] });
   });
   it('withholds zero elapsed, stale, unknown window and incompatible history', () => {
     expect(deriveProviderAccountUsagePace({ snapshot: snapshot(0), meterId: 'weekly', nowMs: 0 })).toMatchObject({ status: 'unavailable', reason: 'zero_elapsed' });

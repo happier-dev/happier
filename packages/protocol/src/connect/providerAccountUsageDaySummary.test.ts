@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { buildProviderAccountUsageDaySummaryV1, deriveProviderAccountUsageDayQuotaHistoryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, packProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import { projectProviderAccountUsageQuotaReadV1 } from './providerAccountUsageHistory.js';
 
@@ -13,6 +13,34 @@ function sample(at: number, used: number, resetAtMs: number): ProviderAccountUsa
       resetsAt: resetAtMs, windowDurationMs: 1000, unit: 'requests', status: 'ok', details: {} }] };
 }
 describe('provider quota daily summary', () => {
+  it('summarizes every witnessed day of flat weekly usage across a reset without filling gaps', () => {
+    const weekly = (observedDay: number, resetDay: number) => {
+      const snapshot = sample(observedDay * day, 20, resetDay * day);
+      snapshot.meters[0] = { ...snapshot.meters[0]!, meterId: 'weekly', label: 'Weekly', windowDurationMs: 7 * day };
+      return ProviderAccountUsageSnapshotV1Schema.parse(snapshot);
+    };
+    const first = weekly(1, 7);
+    const middle = weekly(3, 7);
+    const latest = weekly(6, 7);
+    const nextFirst = weekly(8, 14);
+    const nextMiddle = weekly(10, 14);
+    const nextLatest = weekly(13, 14);
+    const rows = (snapshots: readonly ProviderAccountUsageSnapshotV1[]) =>
+      deriveProviderAccountUsageDayQuotaHistoryV1({ recordId, snapshots }).flatMap(summary =>
+        summary.windows.map(window => ({ dayStartAtMs: summary.dayStartAtMs, observedAtMs: summary.lastSnapshot.observedAtMs,
+          lastObservedAtMs: window.lastObservedAtMs, resetAtMs: window.resetAtMs, peakUsed: window.peakUsed,
+          resets: window.resets })));
+    const day1 = { dayStartAtMs: day, observedAtMs: day, lastObservedAtMs: day, resetAtMs: 7 * day, peakUsed: 20, resets: [] };
+    const day3 = { ...day1, dayStartAtMs: 3 * day, observedAtMs: 3 * day, lastObservedAtMs: 3 * day };
+    const day6 = { ...day1, dayStartAtMs: 6 * day, observedAtMs: 6 * day, lastObservedAtMs: 6 * day };
+    const day8 = { dayStartAtMs: 8 * day, observedAtMs: 8 * day, lastObservedAtMs: 8 * day, resetAtMs: 14 * day,
+      peakUsed: 20, resets: [{ resetAtMs: 7 * day, usedBeforeReset: 20 }] };
+    const day10 = { ...day8, dayStartAtMs: 10 * day, observedAtMs: 10 * day, lastObservedAtMs: 10 * day, resets: [] };
+    const day13 = { ...day8, dayStartAtMs: 13 * day, observedAtMs: 13 * day, lastObservedAtMs: 13 * day, resets: [] };
+    expect(rows([first, middle, latest, nextFirst, nextMiddle, nextLatest])).toEqual([day1, day3, day6, day8, day10, day13]);
+    expect(rows([first, latest, nextFirst, nextMiddle, nextLatest])).toEqual([day1, day6, day8, day10, day13]);
+    expect(rows([first, middle, nextFirst, nextMiddle, nextLatest])).toEqual([day1, day3, day8, day10, day13]);
+  });
   it('losslessly encodes the Claude 13-day shape within its distinct-fact budget despite reset-clock revisions', () => {
     // Loaded census: 4,211 seven_day entries / 2,486 exact clocks. Each
     // revision remains distinct; neither second rounding nor a window cap is valid.
