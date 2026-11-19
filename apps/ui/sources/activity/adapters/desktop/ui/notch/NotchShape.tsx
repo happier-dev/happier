@@ -4,6 +4,7 @@ import {
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
+  type ViewStyle,
 } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -104,6 +105,13 @@ const SHOULDER_UNIT_PATH = buildNotchShoulderPath(1);
 
 /** The body casts `glass.castShadow`; its reach is read from that same recipe (it is one geometry in both themes). */
 const CAST_SHADOW_PAINT_INSETS = resolveBoxShadowPaintInsets(buildGlassCastShadow(true));
+
+function centredBodyOffset(size: number, centreOffset: number): ViewStyle['top'] {
+  'worklet';
+  // Resolve against the live containing block before React receives the resized WebView.
+  // The desktop WebView supports calc(), which React Native's dimension type does not model.
+  return `clamp(0px, calc(50% + ${centreOffset - size / 2}px), calc(100% - ${size}px))` as ViewStyle['top'];
+}
 
 /**
  * The island's plane paint (lab R6): the body fills with it, and every mark standing on the plane cuts its
@@ -292,29 +300,25 @@ export function NotchShape(
       ? Math.min(motion.height.value, Math.max(0, windowHeight - 2 * padY * openShoulder))
       : motion.height.value,
   );
-  const bodyLeft = useDerivedValue(() => {
+  const shapeStyle = useAnimatedStyle(() => {
     const width = bodyWidth.value;
-    const inset = padX * motion.shoulder.value;
-    if (growthX === 'right') return inset;
-    if (growthX === 'left') return windowWidth - width - inset;
-    return windowWidth / 2 + motion.centreX.value - width / 2;
-  });
-  const bodyTop = useDerivedValue(() => {
     const height = bodyHeight.value;
-    const inset = padY * motion.shoulder.value;
-    if (growthY === 'down') return inset;
-    if (growthY === 'up') return windowHeight - height - inset;
-    return windowHeight / 2 + motion.centreY.value - height / 2;
+    const insetX = padX * motion.shoulder.value;
+    const insetY = padY * motion.shoulder.value;
+    return {
+      width,
+      height,
+      left: growthX === 'right' ? insetX : growthX === 'left' ? 'auto' : centredBodyOffset(width, motion.centreX.value),
+      right: growthX === 'left' ? insetX : 'auto',
+      top: growthY === 'down' ? insetY : growthY === 'up' ? 'auto' : centredBodyOffset(height, motion.centreY.value),
+      bottom: growthY === 'up' ? insetY : 'auto',
+    } satisfies ViewStyle;
   });
 
   const mask = resolveNotchCornerMask(props.dock);
   const bodyStyle = useAnimatedStyle(() => {
     const radius = motion.corner.value;
     return {
-      left: bodyLeft.value,
-      top: bodyTop.value,
-      width: bodyWidth.value,
-      height: bodyHeight.value,
       opacity: motion.islandOpacity.value,
       borderTopLeftRadius: mask.topLeft ? radius : 0,
       borderTopRightRadius: mask.topRight ? radius : 0,
@@ -330,20 +334,11 @@ export function NotchShape(
   function shoulderPosition(index: 0 | 1) {
     'worklet';
     const size = motion.shoulder.value;
-    const left = bodyLeft.value;
-    const top = bodyTop.value;
-    const width = bodyWidth.value;
-    const height = bodyHeight.value;
     if (dock === 'top') {
-      return { left: index === 0 ? left - size : left + width, top };
+      return { left: index === 0 ? -size : bodyWidth.value, top: 0 };
     }
-    if (dock === 'left') {
-      return { left, top: index === 0 ? top - size : top + height };
-    }
-    return {
-      left: left + width - size,
-      top: index === 0 ? top - size : top + height,
-    };
+    const top = index === 0 ? -size : bodyHeight.value;
+    return { left: dock === 'left' ? 0 : bodyWidth.value - size, top };
   }
   const shoulderLeadingStyle = useAnimatedStyle(() => shoulderPosition(0));
   const shoulderTrailingStyle = useAnimatedStyle(() => shoulderPosition(1));
@@ -386,111 +381,114 @@ export function NotchShape(
         height: openIsland.height,
       } : StyleSheet.absoluteFill}
     >
-      {SHOULDERS_FOR(props.dock).map((placement, index) => (
-        <Animated.View
-          key={index}
-          pointerEvents="none"
-          style={[
-            styles.shoulder,
-            shoulderStyle,
-            index === 0 ? shoulderLeadingStyle : shoulderTrailingStyle,
-          ]}
-        >
-          <Svg
-            width="100%"
-            height="100%"
-            viewBox="0 0 1 1"
-            preserveAspectRatio="none"
-            style={{
-              transform: [
-                { scaleX: placement.flipX ? -1 : 1 },
-                { scaleY: placement.flipY ? -1 : 1 },
-              ],
-            }}
-          >
-            <Path d={SHOULDER_UNIT_PATH} fill={props.camera ? theme.colors.overlay.notch : paint} />
-          </Svg>
-        </Animated.View>
-      ))}
-      <Animated.View
-        testID={props.testID ? `${props.testID}-body` : undefined}
-        data-notch-dock={props.dock}
-        data-notch-form={props.form}
-        {...({ onPointerEnter: props.onPointerEnter } as Record<string, unknown>)}
-        style={[
-          styles.body,
-          { backgroundColor: paint },
-          castShadow ? styles.bodyCastShadow : null,
-          bodyStyle,
-        ]}
-      >
-        {props.form === 'open' && foot ? (
-          <View
-            testID={props.testID ? `${props.testID}-foot` : undefined}
+      <Animated.View pointerEvents="box-none" style={[styles.shape, shapeStyle]}>
+        {SHOULDERS_FOR(props.dock).map((placement, index) => (
+          <Animated.View
+            key={index}
             pointerEvents="none"
-            style={[styles.foot, { height: foot.band.height }, happierSurfaceGradientWebStyle(foot) as object]}
-          />
-        ) : null}
-        {floating || props.form === 'open' ? (
-          // The app's rim, its light in the corner free of the screen edge. A side against the edge runs
-          // past the window, so it carries no line.
-          <View
-            testID={props.testID ? `${props.testID}-rim` : undefined}
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFill, props.dock === 'top' ? { top: -corner } : props.dock === 'left' ? { left: -corner } : props.dock === 'right' ? { right: -corner } : null]}
+            style={[
+              styles.shoulder,
+              shoulderStyle,
+              index === 0 ? shoulderLeadingStyle : shoulderTrailingStyle,
+            ]}
           >
-            <SurfaceRim role="floating" radius={corner} border="default" anchor="bottom-left" />
-          </View>
-        ) : null}
-        {props.camera ? (
-          // Over the hairline, which so fades in below the black row.
-          <View
-            testID={props.testID ? `${props.testID}-seam` : undefined}
-            pointerEvents="none"
-            style={[styles.seam, { height: seam.height }]}
-          >
-            <Svg width="100%" height="100%">
-              <Defs>
-                <LinearGradient id={seamId} x1={0} y1={0} x2={0} y2={1}>
-                  {seam.stops.map((stop) => (
-                    <Stop key={stop.offset} offset={stop.offset} {...happierSvgGradientStop(theme.colors.overlay.notch, stop.alpha)} />
-                  ))}
-                </LinearGradient>
-              </Defs>
-              <Rect x={0} y={0} width="100%" height="100%" fill={`url(#${seamId})`} />
+            <Svg
+              width="100%"
+              height="100%"
+              viewBox="0 0 1 1"
+              preserveAspectRatio="none"
+              style={{
+                transform: [
+                  { scaleX: placement.flipX ? -1 : 1 },
+                  { scaleY: placement.flipY ? -1 : 1 },
+                ],
+              }}
+            >
+              <Path d={SHOULDER_UNIT_PATH} fill={props.camera ? theme.colors.overlay.notch : paint} />
             </Svg>
-          </View>
-        ) : null}
+          </Animated.View>
+        ))}
         <Animated.View
-          pointerEvents={props.form === 'open' ? 'auto' : 'none'}
+          testID={props.testID ? `${props.testID}-body` : undefined}
+          data-notch-dock={props.dock}
+          data-notch-form={props.form}
+          {...({ onPointerEnter: props.onPointerEnter } as Record<string, unknown>)}
           style={[
-            styles.openLayer,
-            growthY === 'up'
-              ? styles.openLayerFromBottom
-              : styles.openLayerFromTop,
-            { paddingTop: statusRowOffset, width: metrics.openWidth },
-            openLayerStyle,
+            StyleSheet.absoluteFill,
+            styles.body,
+            { backgroundColor: paint },
+            castShadow ? styles.bodyCastShadow : null,
+            bodyStyle,
           ]}
         >
-          {props.renderOpen({
-            includeStatusRow: !statusRowStays,
-            maxHeight: openMaxHeight,
-            onNaturalHeight: setPanelNaturalHeight,
-          })}
-        </Animated.View>
-        <Animated.View
-          pointerEvents={props.form === 'tip' ? 'none' : 'box-none'}
-          style={[
-            styles.standardLayer,
-            vertical ? styles.standardLayerVertical : null,
-            props.dock === 'right' ? styles.standardLayerRight : null,
-            growthY === 'up' && !statusRowStays
-              ? styles.standardLayerFromBottom
-              : null,
-            standardLayerStyle,
-          ]}
-        >
-          {props.renderStandard(onStandardLayout)}
+          {props.form === 'open' && foot ? (
+            <View
+              testID={props.testID ? `${props.testID}-foot` : undefined}
+              pointerEvents="none"
+              style={[styles.foot, { height: foot.band.height }, happierSurfaceGradientWebStyle(foot) as object]}
+            />
+          ) : null}
+          {floating || props.form === 'open' ? (
+            // The app's rim, its light in the corner free of the screen edge. A side against the edge runs
+            // past the window, so it carries no line.
+            <View
+              testID={props.testID ? `${props.testID}-rim` : undefined}
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFill, props.dock === 'top' ? { top: -corner } : props.dock === 'left' ? { left: -corner } : props.dock === 'right' ? { right: -corner } : null]}
+            >
+              <SurfaceRim role="floating" radius={corner} border="default" anchor="bottom-left" />
+            </View>
+          ) : null}
+          {props.camera ? (
+            // Over the hairline, which so fades in below the black row.
+            <View
+              testID={props.testID ? `${props.testID}-seam` : undefined}
+              pointerEvents="none"
+              style={[styles.seam, { height: seam.height }]}
+            >
+              <Svg width="100%" height="100%">
+                <Defs>
+                  <LinearGradient id={seamId} x1={0} y1={0} x2={0} y2={1}>
+                    {seam.stops.map((stop) => (
+                      <Stop key={stop.offset} offset={stop.offset} {...happierSvgGradientStop(theme.colors.overlay.notch, stop.alpha)} />
+                    ))}
+                  </LinearGradient>
+                </Defs>
+                <Rect x={0} y={0} width="100%" height="100%" fill={`url(#${seamId})`} />
+              </Svg>
+            </View>
+          ) : null}
+          <Animated.View
+            pointerEvents={props.form === 'open' ? 'auto' : 'none'}
+            style={[
+              styles.openLayer,
+              growthY === 'up'
+                ? styles.openLayerFromBottom
+                : styles.openLayerFromTop,
+              { paddingTop: statusRowOffset, width: metrics.openWidth },
+              openLayerStyle,
+            ]}
+          >
+            {props.renderOpen({
+              includeStatusRow: !statusRowStays,
+              maxHeight: openMaxHeight,
+              onNaturalHeight: setPanelNaturalHeight,
+            })}
+          </Animated.View>
+          <Animated.View
+            pointerEvents={props.form === 'tip' ? 'none' : 'box-none'}
+            style={[
+              styles.standardLayer,
+              vertical ? styles.standardLayerVertical : null,
+              props.dock === 'right' ? styles.standardLayerRight : null,
+              growthY === 'up' && !statusRowStays
+                ? styles.standardLayerFromBottom
+                : null,
+              standardLayerStyle,
+            ]}
+          >
+            {props.renderStandard(onStandardLayout)}
+          </Animated.View>
         </Animated.View>
       </Animated.View>
       {props.form === 'tip' ? (
@@ -520,12 +518,14 @@ export function readNotchLayoutSize(event: LayoutChangeEvent): NotchSize {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  shape: {
+    position: 'absolute',
+  },
   shoulder: {
     position: 'absolute',
   },
   // The island clips without scrolling: a scrolled island would draw its panel off the planner's rect.
   body: {
-    position: 'absolute',
     ...nonScrollingClipStyle(),
   },
   foot: {
