@@ -223,6 +223,8 @@ const styles = StyleSheet.create((theme) => ({
   // The chip's horizontal padding plus its (transparent) 1 px border.
   anchorOnLabelEdge: {
     marginLeft: -(theme.space.s10 + 1),
+    // Its own row: the negative margin must not let the row squeeze the chip below its words.
+    flexShrink: 0,
   },
   chip: {
     flexDirection: 'row',

@@ -85,6 +85,8 @@ const styles = StyleSheet.create((theme) => ({
     menuFoot: { ...Typography.variant('meta'), color: theme.colors.text.secondary, paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s8,
         borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
     addNote: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1, textAlign: 'right' },
+    // A muted line on the clause's own edge: no rule, no inset (it is the clause's note, not a menu's foot).
+    pendingReason: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
     addRowStacked: { flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-start', gap: theme.space.s4 },
     addNoteStacked: { textAlign: 'left' },
 }));
@@ -426,7 +428,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             <WorkflowTriggerSentenceLines testIDPrefix={props.testIDPrefix} lines={lines} startOptions={startOptions}
                 onAdd={addStart} onStartsOpenChange={demandCatalog} addFooter={addFooter}
                 status={props.status === 'failed' ? readState : pendingReason === null ? null : (
-                    <Text testID={`${props.testIDPrefix}-triggers-pending-reason`} style={styles.menuFoot}>{pendingReason}</Text>
+                    <Text testID={`${props.testIDPrefix}-triggers-pending-reason`} style={styles.pendingReason}>{pendingReason}</Text>
                 )} editable />
         );
     }
