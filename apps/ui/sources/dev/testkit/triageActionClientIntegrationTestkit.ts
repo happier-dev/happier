@@ -1,8 +1,11 @@
+import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import type { NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 
 import { connectUiPersonActionClient } from './actionClientIntegrationTestkit';
 import type { SourceDeclaredAccountPluginFixture } from './harness/portableAccountPlugin';
 import { installNativeRuntimeFetchBoundaryForTest } from './harness/nativeRuntimeFetch';
+import { waitForTestEvent } from './hooks/waitForTestEvent';
 
 /** A native UI Account runtime with real Triage activation and services at physical loader/HTTP boundaries. */
 export async function connectUiTriageActionClient(
@@ -14,7 +17,10 @@ export async function connectUiTriageActionClient(
         withAccountLifecycle: false });
     let disposeAccount: (() => void) | undefined;
     try {
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const [{ captureLazyActionAccountContext }, { storage }] = await Promise.all([
+            import('@/sync/ops/actions/actionAccountContext'),
+            import('@/sync/domains/state/storage'),
+        ]);
         const account = await captureLazyActionAccountContext(client.serverId);
         disposeAccount = account.dispose;
         const installed = await install({ accountLifetime: account.accountLifetime, publishProjection: true });
@@ -23,6 +29,15 @@ export async function connectUiTriageActionClient(
             async collectionClients(contracts: readonly NormalizedPluginAccountCollectionContractV1[]) {
                 const { createActivePluginCollectionClient } = await import('@/sync/api/plugins/data/activePluginCollectionClient');
                 return contracts.map(contract => createActivePluginCollectionClient({ contract, accountLifetime: account.accountLifetime }));
+            },
+            async waitForConnectedAccountProfile(ref: QualifiedConnectedAccountRef): Promise<void> {
+                await waitForTestEvent(storage.subscribe, () => {
+                    account.assertCurrent();
+                    const profile = storage.getState().profile;
+                    return profile.id === account.accountId && profile.connectedAccountsV4.some(connected =>
+                        sameQualifiedConnectedAccountRef(connected.ref, ref)
+                        && isQualifiedConnectedAccountProfileActiveV4(connected, Date.now()));
+                }, ready => ready);
             },
             async close() {
                 try { await installed.dispose(); } finally {

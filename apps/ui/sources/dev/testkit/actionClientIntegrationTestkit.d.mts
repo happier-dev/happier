@@ -86,6 +86,7 @@ export function connectUiTriageActionClient(params: Parameters<typeof connectUiP
 }>): Promise<Awaited<ReturnType<typeof connectUiActionClient>> & Readonly<{
     collectionClients(contracts: readonly import('@happier-dev/protocol/plugins/data/collectionsV1').NormalizedPluginAccountCollectionContractV1[]):
         Promise<import('../../sync/api/plugins/data/activePluginCollectionClient.js').ActivePluginCollectionClientV1[]>;
+    waitForConnectedAccountProfile(ref: import('@happier-dev/protocol/connect/qualified-connected-account-persistence').QualifiedConnectedAccountRef): Promise<void>;
 }>>;
 export function prepareUiTriageActionPluginsForTest(
     additionalPlugins?: Parameters<typeof connectUiTriageActionClient>[0]['additionalPlugins'],
