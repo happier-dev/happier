@@ -14,6 +14,44 @@ import {
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__');
 
+describe('parseClaudeScreenState — scrolled composer draft', () => {
+  const clipped = [
+    '❯ An earlier submitted prompt',
+    'Earlier assistant output.',
+    '─── ↑ 2 more ───────────────────────────────────────────────────────────────────',
+    '  The first visible draft paragraph.',
+    '',
+    '  The last visible draft paragraph.',
+    '────────────────────────────────────────────────────────────────────────────────',
+    '  Opus 5.5',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+
+  it('reads the bordered viewport instead of an earlier prompt echo and keeps it a user draft', () => {
+    const state = parseClaudeScreenState(clipped, { cursor: { x: 35, y: 5 } });
+    expect(state.composerContent).toBe('The first visible draft paragraph.\n\nThe last visible draft paragraph.');
+    expect(state.composerCursorRelation).toBe('inside_or_after_content');
+    expect(state.userDraftPresent).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('user_draft');
+  });
+
+  it('requires the complete bordered shape and lets a newer normal composer win', () => {
+    expect(parseClaudeScreenState(clipped.replace('────────────────────────────────────────────────────────────────────────────────\n', '')).composerContent)
+      .toBe('An earlier submitted prompt');
+    expect(parseClaudeScreenState(`${clipped}\n❯ current draft`).composerContent).toBe('current draft');
+    const withoutStatus = clipped.split('\n').slice(0, -2).join('\n');
+    expect(parseClaudeScreenState(`${withoutStatus}\n❯ current draft`).composerContent).toBe('current draft');
+    expect(parseClaudeScreenState('  A transcript paragraph\n────────────────\n  ⏵⏵ auto mode on').composerContent).toBeNull();
+  });
+
+  it('preserves shell ownership when its scrolled viewport has the native shell footer', () => {
+    const state = parseClaudeScreenState(clipped.replace('  Opus 5.5\n  ⏵⏵ auto mode on (shift+tab to cycle)', '  ! for shell mode'));
+    expect(state.composerContent).toBeNull();
+    expect(state.shellComposerContent).toBe('The first visible draft paragraph.\n\nThe last visible draft paragraph.');
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+  });
+});
+
 const CLAUDE_2_1_228_USAGE_LIMIT_DIALOG = [
   "You've hit your session limit · resets 2:40am (Europe/Zurich)",
   '',

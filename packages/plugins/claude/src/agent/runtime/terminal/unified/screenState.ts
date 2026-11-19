@@ -222,6 +222,9 @@ const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 // participate in the SAME last-input selection: an old shell capture cannot outrank a newer normal
 // draft, and an old normal composer cannot make the active shell prompt ready for ordinary input.
 const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[\u2502|][^\S\n]*)?((?:>|\u203a|\u276f)(?![^\S\n]*(?:\d+\.|[\u25ef\u25c9\u25cb\u25cf\u25d0\u25d1]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[\u2502|][^\S\n]*)?(?:\n|$)/;
+// A scrolled native composer replaces its hidden prompt row with an overflow border.
+// Require the bordered, indented viewport and leave the next row's delimiter for composer ordering.
+const SCROLLED_COMPOSER = /(?:^|\n)\u2500+[^\S\n]+\u2191[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+\u2500+\n((?:(?:[^\S\n][^\n]*)?\n)+)\u2500+(?=\n|$)/;
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (remote-dev live capture 2026-06-12): the selector header renders
 // `↑/↓ to select` and the focus cursor renders as `❯ ◯ <agent-type> <title>` rows. The cursor
@@ -482,6 +485,26 @@ function readComposerState(
     content: continuation.length === 0 ? content : [content, ...continuation].join('\n'),
     shellContent: null,
     cursorRelation,
+  };
+}
+
+function readScrolledComposerState(
+  text: string,
+  match: RegExpExecArray,
+  context?: ClaudeScreenParseContext | undefined,
+): ReturnType<typeof readComposerState> {
+  const rows = (match[1] ?? '').split('\n');
+  const content = rows.map((line) => line.trim()).join('\n').trim();
+  const headerLine = lineIndexAt(text, match.index + (match[0].startsWith('\n') ? 1 : 0));
+  const footerLine = headerLine + rows.length;
+  const cursor = context?.cursor;
+  const shellMode = /(?:^|\n)[^\S\n]*! for shell mode(?:\s|$)/.test(text.slice(match.index + match[0].length));
+  return {
+    content: shellMode ? null : content,
+    shellContent: shellMode ? content : null,
+    cursorRelation: !shellMode && cursor && cursor.y > headerLine && cursor.y < footerLine
+      ? 'inside_or_after_content'
+      : null,
   };
 }
 
@@ -772,8 +795,15 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
   const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
+  const scrolledMatch = lastMatch(new RegExp(SCROLLED_COMPOSER.source, 'g'), text);
+  const activeScrolledMatch = scrolledMatch
+    && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
+    ? scrolledMatch
+    : null;
   // A notice above the current composer belongs to transcript history, not the active footer.
-  const currentFooter = lastComposerMatch
+  const currentFooter = activeScrolledMatch
+    ? text.slice(activeScrolledMatch.index + activeScrolledMatch[0].length)
+    : lastComposerMatch
     ? text.slice(lastComposerMatch.index + lastComposerMatch[0].length)
     : visibleTail;
   const usageLimitWaitVisible = USAGE_LIMIT_WAIT_FOOTER.test(currentFooter);
@@ -797,7 +827,9 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
 
   const composerState = rewindSelectionVisible
     ? { content: null, shellContent: null, cursorRelation: null }
-    : readComposerState(text, rawText, lastComposerMatch, context);
+    : activeScrolledMatch
+      ? readScrolledComposerState(text, activeScrolledMatch, context)
+      : readComposerState(text, rawText, lastComposerMatch, context);
   const composerContent = composerState.content;
   const hasComposer = composerContent !== null;
   // A host cursor on the parsed composer is direct evidence that the composer, not an older
@@ -805,8 +837,8 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // unindexed chooser uses the same glyph and may put the terminal cursor on that option
   // (Claude 2.1.296 onboarding). A border immediately above the cursor-proven composer
   // distinguishes it from that chooser row, including when stale chooser output is visible.
-  const composerHasLeadingBorder = lastComposerMatch !== null
-    && COMPOSER_BORDER_LINE.test(text.slice(0, lastComposerMatch.index).split('\n').at(-1) ?? '');
+  const composerHasLeadingBorder = activeScrolledMatch !== null || (lastComposerMatch !== null
+    && COMPOSER_BORDER_LINE.test(text.slice(0, lastComposerMatch.index).split('\n').at(-1) ?? ''));
   const activeComposerOwnsInput = hasComposer && composerState.cursorRelation !== null
     && (visibleDialogSelection?.kind !== 'focused' || composerHasLeadingBorder);
   const composerHasSlash = hasComposer && composerContent.startsWith('/');
