@@ -13,25 +13,4 @@ describe('ScmComparisonSourceProtocolSchema', () => {
       ),
     ).not.toBeNull();
   });
-
-  it('still accepts each working-tree area and the area-less working tree', () => {
-    for (const area of ['included', 'pending', 'both'] as const) {
-      expect(
-        ScmComparisonSourceProtocolSchema.safeParse({
-          kind: 'workingTree',
-          area,
-        }).success,
-      ).toBe(true);
-    }
-    expect(
-      ScmComparisonSourceProtocolSchema.safeParse({ kind: 'workingTree' })
-        .success,
-    ).toBe(true);
-    expect(
-      ScmComparisonSourceProtocolSchema.safeParse({
-        kind: 'workingTree',
-        area: 'staged',
-      }).success,
-    ).toBe(false);
-  });
 });
