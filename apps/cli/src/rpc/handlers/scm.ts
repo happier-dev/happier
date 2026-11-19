@@ -262,7 +262,7 @@ export function registerScmHandlers(
             // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the
             // member's own child, whose OS account decides.
             if (selected.kind !== 'local') {
-                const owner = await deps.nativeOperationRuntime?.readMemberFolderOwner?.(readRequestCwd(input, projectRoot))
+                const owner = await deps?.nativeOperationRuntime?.readMemberFolderOwner?.(readRequestCwd(input, projectRoot))
                     .catch(() => null);
                 if (owner && owner.requester.serverId === identity.requester.serverId
                     && owner.requester.accountId === identity.requester.accountId) return await run();
