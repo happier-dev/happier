@@ -63,7 +63,7 @@ function createMediaAnnotationActionSpecs() {
   inputHints: { title: 'Read picture marks', fields: [...fields] },
 }, {
   ...client, id: 'media.annotation.apply', title: 'Apply picture marks',
-  description: 'Apply image-space mark operations through the same flatten and picture replacement used by the annotator. Blur is burned into PNG pixels. Reset restores the original. Session images require an into Session and create a copy; source messages are never changed.',
+  description: 'Apply image-space mark operations through the same flatten and picture replacement used by the annotator. Blur is burned into PNG pixels. Numbered comments are step marks with an optional note: add, edit or remove one with mark.add, mark.update or mark.remove; removing a step renumbers the rest. Reset restores the original. Session images require an into Session and create a copy; source messages are never changed.',
   cli: { commands: [{ path: ['media', 'annotation', 'apply'], visibility: 'canonical' }] },
   bindings: { mcpToolName: 'media_annotation_apply' },
   inputSchema: MediaAnnotationApplyInputV1Schema, outputSchema: MediaAnnotationApplyResultV1Schema,

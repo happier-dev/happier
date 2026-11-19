@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as protocol from '../../index.js';
-import { ImageMarksDocumentV1Schema, applyImageMarksOperations, countBlurMarks, hasBlur, isEmptyEdit, stepNumbers } from './imageMarksV1.js';
+import { ImageMarksDocumentV1Schema, applyImageMarksOperations, countBlurMarks, formatStepNotes, hasBlur, isEmptyEdit, stepNumbers } from './imageMarksV1.js';
 
 describe('image marks public owner', () => {
   it('exposes one serializable marks schema and shared operations for UI and Actions', () => {
@@ -50,5 +50,19 @@ describe('image marks public owner', () => {
     const empty = applyImageMarksOperations(document, [{ kind: 'reset' }]);
     expect(countBlurMarks(empty)).toBe(0);
     expect(hasBlur(empty)).toBe(false);
+  });
+  it('carries an optional note on a numbered step and writes the agent its steps in number order', () => {
+    const doc = ImageMarksDocumentV1Schema.parse({ v: 1, image: { width: 400, height: 300, scale: 1 }, marks: [
+      { id: 'a', kind: 'step', at: { x: 1, y: 1 }, color: 'red', size: 'm', note: 'Move this group under Input' },
+      { id: 'arrow', kind: 'arrow', from: { x: 0, y: 0 }, to: { x: 9, y: 9 }, color: 'red', size: 'm' },
+      { id: 'b', kind: 'step', at: { x: 2, y: 2 }, color: 'red', size: 'm' },
+      { id: 'c', kind: 'step', at: { x: 3, y: 3 }, color: 'red', size: 'm', note: 'List the microphones\nnot only System default' },
+    ] });
+    expect(formatStepNotes(doc)).toBe('1. Move this group under Input\n2.\n3. List the microphones\n   not only System default');
+    // Removing a step renumbers the rest; a video frame continues the message's numbering.
+    const removed = applyImageMarksOperations(doc, [{ kind: 'mark.remove', id: 'b' }]);
+    expect(formatStepNotes(removed, 4)).toBe('4. Move this group under Input\n5. List the microphones\n   not only System default');
+    // Numbers alone already sit on the picture: no note, no words.
+    expect(formatStepNotes({ ...doc, marks: [{ id: 'b', kind: 'step', at: { x: 2, y: 2 }, color: 'red', size: 'm', note: '  ' }] })).toBeNull();
   });
 });

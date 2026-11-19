@@ -20,7 +20,8 @@ export const ImageMarkV1Schema = lazyZodSchema(() => {
     z.strictObject({ ...identity, ...style, kind: z.literal('freehand'), points: z.array(ImagePointV1Schema).check(z.minLength(1)) }),
     z.strictObject({ ...identity, ...style, kind: z.literal('highlighter'), points: z.array(ImagePointV1Schema).check(z.minLength(1)) }),
     z.strictObject({ ...identity, ...style, kind: z.literal('text'), at: ImagePointV1Schema, text: z.string() }),
-    z.strictObject({ ...identity, ...style, kind: z.literal('step'), at: ImagePointV1Schema }),
+    // A numbered step may carry the person's note for the agent; numbers alone are fine.
+    z.strictObject({ ...identity, ...style, kind: z.literal('step'), at: ImagePointV1Schema, note: z.optional(z.string()) }),
     z.strictObject({ ...identity, kind: z.literal('blur'), rect: ImageRectV1Schema, size: ImageMarkSizeV1Schema }),
     z.strictObject({ ...identity, kind: z.literal('element'), rect: ImageRectV1Schema, label: z.string(), color: ImageMarkColorV1Schema }),
   ]);
@@ -64,6 +65,25 @@ export function stepNumbers(document: ImageMarksDocumentV1): Readonly<Record<str
   let next = 1;
   for (const mark of document.marks) if (mark.kind === 'step') numbers[mark.id] = next++;
   return numbers;
+}
+
+/**
+ * The agent's words for a picture's numbered steps, "N. note" in number order, starting at `firstNumber`
+ * (a video frame continues its message's numbering). A step without a note keeps its bare number so the
+ * list matches the picture; null when no step has a note, since the numbers already sit on the picture.
+ */
+export function formatStepNotes(document: ImageMarksDocumentV1, firstNumber = 1): string | null {
+  const lines: string[] = [];
+  let next = firstNumber;
+  let noted = false;
+  for (const mark of document.marks) {
+    if (mark.kind !== 'step') continue;
+    const note = mark.note?.trim() ?? '';
+    if (note) noted = true;
+    lines.push(note ? `${next}. ${note.split('\n').join('\n   ')}` : `${next}.`);
+    next += 1;
+  }
+  return noted ? lines.join('\n') : null;
 }
 
 /** Admitted operations share one owner between interactive edits and headless Actions. */
