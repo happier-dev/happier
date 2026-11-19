@@ -262,9 +262,42 @@ describe('RootLayoutRedirectGate', () => {
         }
     });
 
-    it('renders its children when unauthenticated on a public route', async () => {
+    it.each([
+        ['index'],
+        ['setup'],
+        ['setup', 'index'],
+        ['setup', 'wizard'],
+        ['server'],
+        ['settings', 'server'],
+        ['settings', 'server', 'add'],
+        ['settings', 'server', '[homeId]'],
+        ['settings', 'server', 'device'],
+        ['settings', 'server', 'groups', 'new'],
+        ['settings', 'server', 'groups', '[groupId]'],
+        ['terminal'],
+        ['terminal', 'connect'],
+        ['account'],
+        ['restore'],
+        ['restore', 'lost-access'],
+        ['restore', 'manual'],
+        ['restore', 'show-qr'],
+        ['oauth', '[provider]'],
+        ['oauth', 'connected-account', 'callback'],
+        ['oauth', 'mcp', 'callback'],
+        ['homes', 'sign-in'],
+        ['join', '[token]'],
+        ['teams', '[teamId]', 'sign-in'],
+        ['auth', 'email', 'verify', '[token]'],
+        ['auth', 'password', 'reset', '[token]'],
+        ['auth', 'password', 'recover'],
+        ['share', '[token]'],
+        ['preview-link', '[exposureId]'],
+        ['desktop', 'activity-overlay'],
+        ['desktop', 'capture'],
+        ['desktop', 'capture-selection'],
+    ].map(segments => ({ segments, pathname: segments[0] === 'index' ? '/' : `/${segments.join('/')}` })))('mounts a signed-out public route ($pathname)', async ({ pathname, segments }) => {
         authState.isAuthenticated = false;
-        setNav('/', ['index']);
+        setNav(pathname, ['(app)', ...segments]);
 
         const shell: Counter = { n: 0 };
         const screen = await renderGateScreen(

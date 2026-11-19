@@ -64,6 +64,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   // OAuth return routes must be reachable before authentication so the callback can finalize.
   if (first === 'oauth') return true;
 
+  // The certificate callback claims the pending sign-in before authentication.
+  if (first === 'mtls' && normalized.length === 1) return true;
+
   // Team invitations and the Team-scoped authentication entry must remain
   // reachable before a Home Account exists. Keep ordinary Team surfaces
   // private: only the exact entry leaf is an unauthenticated destination.

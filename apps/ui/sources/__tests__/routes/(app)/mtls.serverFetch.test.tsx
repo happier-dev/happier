@@ -21,6 +21,7 @@ const boundary = vi.hoisted<{
 }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
     params: () => boundary.params, router: { replace: boundary.replace },
+    pathname: '/mtls', segments: ['(app)', 'mtls'],
 }).module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -35,6 +36,7 @@ const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runt
 setRuntimeFetch(async () => { throw new Error('Unexpected mTLS HTTP request before fixture arrangement'); });
 // The real app entry publishes the Sync producer before routes or connection cleanup run.
 await loadSyncSingletonForTests();
+const { RootLayoutRedirectGate } = await import('@/components/navigation/root/RootLayoutRedirectGate');
 const [
     { AuthProvider, getCurrentAuth, setCurrentAuth }, { default: Route },
     { adoptHomeProfile, setActiveServerId, getActiveServerUrl, removeServerProfile },
@@ -170,7 +172,7 @@ async function mountRoute() {
     if (!auth) throw new Error('Expected the real mounted AuthProvider');
     // Observation only: preserve the actual credential-adoption implementation.
     login = vi.spyOn(auth, 'loginWithCredentials');
-    await screen.update(<AuthProvider initialCredentials={null}><Route /></AuthProvider>);
+    await screen.update(<AuthProvider initialCredentials={null}><RootLayoutRedirectGate><Route /></RootLayoutRedirectGate></AuthProvider>);
     await act(async () => {});
 }
 function claimCalls() {
