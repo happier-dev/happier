@@ -28,7 +28,7 @@ function workspaceDeclarationPaths(options, configPath, sources) {
   const declarationTargets = new Set(Object.values(sources.declarationPaths ?? {}).flat());
   const declarationHost = {
     // The manifest owns declaration routes even before publication creates dist.
-    fileExists: file => declarationTargets.has(file),
+    fileExists: file => declarationTargets.has(resolve(file)),
     readFile: () => undefined,
   };
   return Object.fromEntries(Object.entries(options.paths ?? {})
