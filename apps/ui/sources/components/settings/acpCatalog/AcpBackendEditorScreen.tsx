@@ -7,7 +7,6 @@ import { AgentsAcpBackendsDeleteOutputV1Schema, AgentsAcpBackendsUpsertOutputV1S
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { AcpBackendDefinitionV1, AcpCatalogAuthSupportV1, AcpCatalogSupportHintV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { createActionExecuteFailureError, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { CapabilityMachineTruth, type CapabilityMachineTruthRow } from '@/components/capabilities/detail/CapabilityMachineTruth';
@@ -350,8 +349,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
         }
         catch (error) {
             if (isEditorCurrent()) {
-                const failure = normalizeActionExecutorThrownError(error);
-                Modal.alert(t('common.error'), [...new Set([failure.errorCode, failure.error])].join(': '));
+                Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('errors.operationFailed')));
             }
             return;
         }

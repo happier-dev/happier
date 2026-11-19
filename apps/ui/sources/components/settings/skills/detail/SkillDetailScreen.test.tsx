@@ -282,7 +282,7 @@ describe('SkillDetailScreen instructions autosave', () => {
       await detail.unmount(); await home.dispose();
     }
   });
-  it('shows the typed delete refusal instead of an unknown error', async () => {
+  it('asks the person to review the current Skill after a stale delete', async () => {
     const home = await seededHome('https://skill-delete-refusal.test', async (path, init) =>
       init?.method === 'DELETE' && path.startsWith('/v1/artifacts/release-notes/')
         ? Response.json({ error: 'version_mismatch' }, { status: 409 }) : null);
@@ -293,7 +293,7 @@ describe('SkillDetailScreen instructions autosave', () => {
       modalSpies.alert.mockClear();
       modalSpies.confirm.mockResolvedValue(true);
       await screen.pressByTestIdAsync('skill.detail.remove');
-      await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('revision_conflict')));
+      await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith(t('common.error'), t('approvals.conflictFailure')));
       expect(home.boundary.read('release-notes')).not.toBeNull();
     } finally {
       modalSpies.confirm.mockReset().mockResolvedValue(false);

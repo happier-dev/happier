@@ -199,7 +199,9 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'account_settings_mutation_outcome_unknown') return t('errors.tryAgain');
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');
-    if (code === 'mcp_catalog_conflict') return t('approvals.conflictFailure');
+    if (code === 'mcp_catalog_conflict' || code === 'acp_catalog_conflict' || code === 'revision_conflict') {
+        return t('approvals.conflictFailure');
+    }
     if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');
     if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');

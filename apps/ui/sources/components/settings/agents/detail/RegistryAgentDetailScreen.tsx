@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { createActionExecuteFailureError, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { View } from 'react-native';
 
 import { AgentsAcpBackendsDeleteOutputV1Schema } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
@@ -12,6 +11,7 @@ import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSetting
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { useAcpCatalogActionExecution } from '@/components/settings/acpCatalog/useAcpCatalogActionExecution';
 import { useAgentsAdministrationTargetSelection } from '@/components/settings/agents/collection/useAgentAdministrationCatalog';
@@ -215,8 +215,7 @@ export function RegistryAgentDetailScreen(
       router.replace(AGENTS_ROUTE as never);
     } catch (error) {
       if (action.isCurrent()) {
-        const failure = normalizeActionExecutorThrownError(error);
-        Modal.alert(t('common.error'), [...new Set([failure.errorCode, failure.error])].join(': '));
+        Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('errors.operationFailed')));
       }
     } finally {
       setRemoving(false);

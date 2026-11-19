@@ -795,7 +795,7 @@ describe('AcpBackendEditorScreen', () => {
         shared.refuse = true;
         await act(remove);
         await waitForHomeGovernance(() => expect(shared.modalAlertSpy).toHaveBeenCalledWith(
-            'common.error', expect.stringMatching(/conflict/i)));
+            'common.error', 'approvals.conflictFailure'));
         expect(shared.writes).toHaveLength(0);
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
         shared.refuse = false;

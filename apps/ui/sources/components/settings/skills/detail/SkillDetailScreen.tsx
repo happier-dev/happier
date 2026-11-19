@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { useStore } from 'zustand';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import {
@@ -45,6 +44,7 @@ import {
 import { useReachRules } from '@/sync/domains/capabilities/reach/useReachRules';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import {
   SKILLS_COLLECTION_ROUTE,
@@ -310,9 +310,7 @@ function SavedSkill(props: Readonly<{ skillId: string; creationNotice?: React.Re
       const removed = await detail.remove();
       if (removed === true) router.replace(SKILLS_COLLECTION_ROUTE as never);
     } catch (error) {
-      const failure = normalizeActionExecutorThrownError(error, 'skills.delete');
-      Modal.alert(t('common.error'), failure.error === failure.errorCode
-        ? failure.error : `${failure.error} (${failure.errorCode})`);
+      Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('errors.operationFailed')));
     } finally {
       setRemoving(false);
     }
