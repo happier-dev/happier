@@ -66,10 +66,8 @@ const BROWSER_PAGE_TYPE_LABELS = {
   streamedBrowser: 'Browser on the Machine', simulatorPreview: 'Simulator',
 } satisfies Record<BrowserViewTargetKindV1, string>;
 
-const VIEWPORT_LABELS = { fitViewer: 'Fit the pane', preset: 'Device preview' } satisfies
-  Record<z.infer<typeof BrowserViewportEmulationV1Schema>['kind'], string>;
-const EXTENSION_SOURCE_LABELS = { webStore: 'Browser extension store', unpacked: 'Folder on the Machine' } satisfies
-  Record<z.infer<typeof BrowserExtensionSourceV1Schema>['kind'], string>;
+const VIEWPORT_LABELS = { fitViewer: 'Fit the pane', preset: 'Device preview' } satisfies Record<z.infer<typeof BrowserViewportEmulationV1Schema>['kind'], string>;
+const EXTENSION_SOURCE_LABELS = { webStore: 'Browser extension store', unpacked: 'Folder on the Machine' } satisfies Record<z.infer<typeof BrowserExtensionSourceV1Schema>['kind'], string>;
 
 export function readBrowserActionInputHintFields(schema: z.ZodMiniType,
   authored: readonly ActionInputFieldHint[]): readonly ActionInputFieldHint[] {
@@ -94,8 +92,7 @@ export function readBrowserActionInputHintFields(schema: z.ZodMiniType,
   ], { engineOverride: BROWSER_LOCATION_LABELS }, authored);
 }
 
-const COMPUTER_ACCESS_LABELS = { see: 'View only', use: 'View and control' } satisfies
-  Record<z.infer<typeof ComputerAccessV1Schema>, string>;
+const COMPUTER_ACCESS_LABELS = { see: 'View only', use: 'View and control' } satisfies Record<z.infer<typeof ComputerAccessV1Schema>, string>;
 const COMPUTER_DRIVER_LABELS = {
   cua: COMPUTER_CUA_DRIVER_INSTALLABLE_DESCRIPTOR.display.name,
   'agent-desktop': COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR.display.name,

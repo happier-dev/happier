@@ -273,8 +273,7 @@ describe('Happier SDK client', () => {
     const target = { serverId: 'home', machineId: 'machine' };
     const principal = { kind: 'account', accountId: 'bob' } as const;
     const grant = { machineId: 'machine', principal, level: 'view' } as const;
-    const saved = { kind: 'saved', grant, readiness: 'ready', canPrepareKeys: false } satisfies
-      PublicActionResultById['machines.access.grant.set'];
+    const saved = { kind: 'saved', grant, readiness: 'ready', canPrepareKeys: false } satisfies PublicActionResultById['machines.access.grant.set'];
     const access = { machineId: 'machine', custodian: { accountId: 'alice', displayName: 'Alice' },
       access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
       canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] } as const;

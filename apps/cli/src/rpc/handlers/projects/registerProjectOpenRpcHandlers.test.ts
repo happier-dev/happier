@@ -1146,8 +1146,7 @@ describe('Project Open RPC', () => {
       requesterMachineAdmissionBoundary: { machineId: 'machine', daemonToken: installed.bootstrap.credentials.token,
         isHomeCurrent: installed.isHomeCurrent, getObservedServerIdentityId: () => homeId,
         readInstallation: () => installed.installation },
-      credentials: installed.bootstrap.credentials, isCurrent: async () => installed.isHomeCurrent() } satisfies
-      Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0];
+      credentials: installed.bootstrap.credentials, isCurrent: async () => installed.isHomeCurrent() } satisfies Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0];
     const productionSync = syncing ? await createProductionDaemonWorkspaceSyncRuntime(productionSyncInput, nativeSyncBoundary.factories) : null;
     let recoveredSync: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>> | undefined;
     if (productionSync) { runtime = { ...runtime, workspaceSyncAdapter: productionSync.handoffAdapter }; onTestFinished(() => productionSync.stop()); }

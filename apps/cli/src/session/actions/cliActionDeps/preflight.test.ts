@@ -68,8 +68,7 @@ async function fixture(actionId: 'scm.diffSummary.generate' | 'session.delete' =
       ...(details === undefined ? {} : { details }) }),
   };
   const options = { exactMachineId: 'machine', authority: 'account_automation',
-    serverId: 'session-home', externalActionExecutionAuthorization: requester.authorization, externalActionTarget: target } satisfies
-    NonNullable<Parameters<NonNullable<ActionExecutorDeps['executionRunCheckProtocolV2']>>[2]>;
+    serverId: 'session-home', externalActionExecutionAuthorization: requester.authorization, externalActionTarget: target } satisfies NonNullable<Parameters<NonNullable<ActionExecutorDeps['executionRunCheckProtocolV2']>>[2]>;
   return { deps: createCliExecutionRunActionDeps(params, host).actionDeps, invoke, options, params };
 }
 

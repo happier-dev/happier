@@ -571,8 +571,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           },
           terminalCustody: { kind: 'machine', serverId: params.homeId, machineId: params.machineId,
             homeServerIdentityId: authorization.binding.serverIdentityId,
-            installationId: params.installation.installationId, requesterAccountId, rootPath: homedir() } } satisfies
-          Omit<Parameters<typeof applyMachineSetup>[0], 'setup' | 'recipePlans'>;
+            installationId: params.installation.installationId, requesterAccountId, rootPath: homedir() } } satisfies Omit<Parameters<typeof applyMachineSetup>[0], 'setup' | 'recipePlans'>;
         const executeNative = (connectorSecretGrant?: NonNullable<typeof elevation>['connectorSecretGrant']) => {
           nativeStarted = true;
           return mode === 'remove' ? removeMachineSetup({ ...nativeInput,

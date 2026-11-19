@@ -261,8 +261,7 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
     const admittedCodec = preparation
         ? await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId, machineId, requiredRole: 'use' })
         : { kind: 'admitted' as const, actorAccountId: binding.accountId, machineId, installationId: machine.installationId,
-            custodianAccountId: machine.accountId, role: 'use' as const, encryptionMode: mode.mode } satisfies
-                SocketRpcMachineAdmissionContextV1 & Readonly<{ kind: 'admitted' }>;
+            custodianAccountId: machine.accountId, role: 'use' as const, encryptionMode: mode.mode } satisfies SocketRpcMachineAdmissionContextV1 & Readonly<{ kind: 'admitted' }>;
     if (admittedCodec.kind !== 'admitted' || !admittedCodec.installationId) return null;
     const { kind: _kind, ...codecAdmission } = admittedCodec;
     return { machineId, installationId: admittedCodec.installationId, actorAccountId: binding.accountId, routing, codecAdmission,

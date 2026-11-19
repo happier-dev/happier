@@ -92,8 +92,7 @@ describe('Agent registration catalog projections', () => {
       isCurrent: () => current, preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS,
     });
     expect(projected.resolveRuntimeMaxInputUnicodeCharacters?.({ accountSettings: null })).toBe(1 << 20);
-    const catalogEntry = { ...projected, id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported' } satisfies
-      NonNullable<Parameters<typeof readAgentRuntimeMaxInputUnicodeCharacters>[0]['catalogEntry']>;
+    const catalogEntry = { ...projected, id: 'codex', cliSubcommand: 'codex', vendorResumeSupport: 'unsupported' } satisfies NonNullable<Parameters<typeof readAgentRuntimeMaxInputUnicodeCharacters>[0]['catalogEntry']>;
     await expect(readAgentRuntimeMaxInputUnicodeCharacters({ agentId: 'codex', catalogEntry })).resolves.toBe(1 << 20);
     await expect(readAgentRuntimeMaxInputUnicodeCharacters({ agentId: 'codex', catalogEntry: null })).resolves.toBeNull();
     expect(projected.resolveRuntimeMaxInputUnicodeCharacters?.({

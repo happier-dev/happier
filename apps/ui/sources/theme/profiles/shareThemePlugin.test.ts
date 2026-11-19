@@ -64,8 +64,7 @@ function setup(count: number, packFails = false, includeFuturePresentation = tru
     const refs: ThemeReference[] = documents.map(document => ({ kind: 'artifact', id: document.profile.id }));
     return { share: createThemeActionExecute({ withLibrary: operation => operation(library),
         readSelection: () => ({ light: null, dark: null }), clientId: () => '' }), documents, reads, writes, calls, path,
-        request: ({ actionId: THEME_ACTION_IDS.sharePlugin, input: { refs, machineId: 'machine-one', path }, context: { hostReviewedChild: child } } satisfies
-            Parameters<ReturnType<typeof createShareThemePlugin>>[0]) };
+        request: ({ actionId: THEME_ACTION_IDS.sharePlugin, input: { refs, machineId: 'machine-one', path }, context: { hostReviewedChild: child } } satisfies Parameters<ReturnType<typeof createShareThemePlugin>>[0]) };
 }
 
 describe('share themes as a plugin', () => {

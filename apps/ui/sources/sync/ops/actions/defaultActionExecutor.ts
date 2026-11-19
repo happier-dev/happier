@@ -2045,8 +2045,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }), promptLibraryStore?.organization, () => deps, { onPublicLinkIssued });
       return { botTemplateAction, prepareBotTemplateInstantiation: request => botTemplateAction.prepareInstantiation(request),
         prepareBotTemplateUpdate: request => botTemplateAction.prepareUpdate(request),
-        prepareBotTemplateRelease: request => botTemplateAction.prepareRelease(request) } satisfies
-        Pick<ActionExecutorDeps, 'botTemplateAction' | 'prepareBotTemplateInstantiation' | 'prepareBotTemplateUpdate' | 'prepareBotTemplateRelease'>;
+        prepareBotTemplateRelease: request => botTemplateAction.prepareRelease(request) } satisfies Pick<ActionExecutorDeps, 'botTemplateAction' | 'prepareBotTemplateInstantiation' | 'prepareBotTemplateUpdate' | 'prepareBotTemplateRelease'>;
     })() : {}),
     ...(accountContext ? {
       themeAction: createThemeActionExecute({

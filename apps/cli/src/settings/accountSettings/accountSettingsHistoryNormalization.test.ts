@@ -35,8 +35,7 @@ describe('captured CLI Account Settings history normalization', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     const input = { credentials: { token: 'checkpoint-fixture', encryption: null }, serverBaseUrl: 'https://captured.home',
-      isCurrent: async () => true, destinationAuthority: { activeTransferredRoots: [] } } satisfies
-      Parameters<typeof normalizeCliAccountSettingsHistoryAfterTransfer>[0];
+      isCurrent: async () => true, destinationAuthority: { activeTransferredRoots: [] } } satisfies Parameters<typeof normalizeCliAccountSettingsHistoryAfterTransfer>[0];
     expect(await normalizeCliAccountSettingsHistoryAfterTransfer(input)).toEqual({ status: 'complete' });
     expect(await normalizeCliAccountSettingsHistoryAfterTransfer({ ...input, serverBaseUrl: 'https://captured.home/' }))
       .toEqual({ status: 'complete' });
@@ -77,8 +76,7 @@ describe('captured CLI Account Settings history normalization', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     const input = { credentials: { token: 'pending-checkpoint-fixture', encryption: null }, serverBaseUrl: 'https://captured.home',
-      isCurrent: async () => current, destinationAuthority: { activeTransferredRoots: [] } } satisfies
-      Parameters<typeof normalizeCliAccountSettingsHistoryAfterTransfer>[0];
+      isCurrent: async () => current, destinationAuthority: { activeTransferredRoots: [] } } satisfies Parameters<typeof normalizeCliAccountSettingsHistoryAfterTransfer>[0];
     expect(await normalizeCliAccountSettingsHistoryAfterTransfer(input)).toEqual({ status: 'cleanup-pending', versions: [6] });
     unavailable = false;
     expect(await normalizeCliAccountSettingsHistoryAfterTransfer(input)).toEqual({ status: 'complete' });

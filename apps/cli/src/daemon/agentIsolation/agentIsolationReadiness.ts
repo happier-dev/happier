@@ -57,8 +57,7 @@ type Unavailable = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' 
 
 const probeExits = { uid: 71, umask: 72, managed_payload: 73, groups: 74, mcp_authentication: 75,
   workspace: 76, home: 77, user: 78, required_groups: 79, agent_payload: 80, root_sudo: 81,
-  docker_socket: 82, private_path: 83, mcp_anonymous: 85 } as const satisfies
-  Partial<Record<MachineAgentIsolationProbeFailureV1['check'], number>> & { required_groups: number };
+  docker_socket: 82, private_path: 83, mcp_anonymous: 85 } as const satisfies Partial<Record<MachineAgentIsolationProbeFailureV1['check'], number>> & { required_groups: number };
 function probeFailure(identity: MachineAgentIsolationProbeFailureV1['identity'], error: unknown): MachineAgentIsolationProbeFailureV1 {
   const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
   if (typeof code === 'number' && Number.isSafeInteger(code) && code >= 0) {

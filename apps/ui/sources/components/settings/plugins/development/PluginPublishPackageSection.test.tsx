@@ -10,8 +10,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 afterEach(standardCleanup);
 
 it('keeps the template review visible beside the ordinary package checks before publication', async () => {
-    const controller = { preparation: null, pending: null, available: true, prepare: async () => undefined } satisfies
-        React.ComponentProps<typeof PluginPublishPackageSection>['controller'];
+    const controller = { preparation: null, pending: null, available: true, prepare: async () => undefined } satisfies React.ComponentProps<typeof PluginPublishPackageSection>['controller'];
     const botTemplate = { draftArtifactId: '20fe6b6d-2a3e-4fdb-ae3d-00c0e7cd664d', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
         release: { v: 1 as const, version: '1.0.0', releasedAtMs: 1, changelog: '', content: {
             v: 1 as const, identity: { name: 'Garden', description: '' }, instructions: { markdown: 'Review plants' },
@@ -25,8 +24,7 @@ it('keeps the template review visible beside the ordinary package checks before 
 });
 
 it('says each package stage has not run, or is running, until a report exists', async () => {
-    const idle = { preparation: null, pending: null, available: true, prepare: async () => undefined } satisfies
-        React.ComponentProps<typeof PluginPublishPackageSection>['controller'];
+    const idle = { preparation: null, pending: null, available: true, prepare: async () => undefined } satisfies React.ComponentProps<typeof PluginPublishPackageSection>['controller'];
     const screen = await renderScreen(<PluginPublishPackageSection controller={idle} />);
     expect(screen.findAllByProps({ detail: 'Not run yet' }).map((node) => node.props.title)).toEqual(['Check', 'Build', 'Pack']);
     await screen.unmount();
