@@ -263,12 +263,14 @@ export function PluginPageContent(props: Readonly<{
         pluginId: props.pluginId,
         localId: props.localId,
         subPath: props.subPath,
+        preserveDeliveredLaunch: pageIsLive && locationOwner.preservesCurrentEditor(),
     });
     // A companion opened from this page shows the page's own entity: its launch input and current location.
     const pageLaunchInput = launch?.input;
     const surfaceInput = React.useMemo(() => ({
         ...(pageLaunchInput === undefined ? {} : { launchInput: pageLaunchInput }), subPath: props.subPath,
-    }), [pageLaunchInput, props.subPath]);
+        ...(props.reviewContext ? { review: props.reviewContext } : {}),
+    }), [pageLaunchInput, props.subPath, props.reviewContext]);
     const detailNavigation = usePluginDetailNavigation({ identity: `${props.pluginId}/${props.localId}`,
         lifetime: accountLifetime, scope: accountLifetime?.scope ?? null, live: pageIsLive,
         presented: isFocused && isVisible, title: page?.label ?? props.pluginId, openSurface, surfaceInput });

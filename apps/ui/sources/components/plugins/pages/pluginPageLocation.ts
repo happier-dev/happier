@@ -34,6 +34,8 @@ export type PluginPageLocationOwner = Readonly<{
     selectedView: () => string | null;
     /** Whether the rendered location is this page's own settled navigation. */
     ownsCurrentLocation: () => boolean;
+    /** Whether this page settled on the rendered location without retiring its editor. */
+    preservesCurrentEditor: () => boolean;
     /** Notified whenever {@link hasBackStep} or {@link selectedView} may have changed. Returns its unsubscribe. */
     subscribe: (listener: () => void) => () => void;
     /**
@@ -106,7 +108,7 @@ export function createPluginPageLocationOwner<Route = string>(
     let settledView: string | null = normalizeView(input.initialView);
     // A view the route named belongs to the location it arrived on, so a foreign location change retires it.
     let settledSubPath: string | null = settledView === null ? null : input.currentSubPath();
-    let backPreservesUnsavedChanges = false;
+    let preservesEditor = false;
     let disposed = false;
     const listeners = new Set<() => void>();
     const notify = (): void => { for (const listener of [...listeners]) listener(); };
@@ -115,7 +117,7 @@ export function createPluginPageLocationOwner<Route = string>(
         declaredBackLocation = null;
         settledSubPath = null;
         settledView = null;
-        backPreservesUnsavedChanges = false;
+        preservesEditor = false;
         notify();
     };
     const ownsLocation = (currentSubPath: string | null): boolean => (
@@ -169,7 +171,7 @@ export function createPluginPageLocationOwner<Route = string>(
             const opensDetail = backLocation !== undefined && !sameLocation(backLocation, subPath)
                 && at !== null && sameLocation(backLocation, at);
             declaredBackLocation = backLocation ?? null;
-            backPreservesUnsavedChanges = preserveUnsavedChanges === true;
+            preservesEditor = preserveUnsavedChanges === true;
             const nextView = normalizeView(view);
             const viewChanged = nextView !== settledView;
             settledSubPath = subPath;
@@ -191,9 +193,10 @@ export function createPluginPageLocationOwner<Route = string>(
     return Object.freeze({
         handleReplaceRequest,
         hasBackStep,
-        hasPreservingBackStep: () => hasBackStep() && backPreservesUnsavedChanges,
+        hasPreservingBackStep: () => hasBackStep() && preservesEditor,
         selectedView: () => settledView,
         ownsCurrentLocation: () => ownsLocation(input.currentSubPath()),
+        preservesCurrentEditor: () => preservesEditor && ownsLocation(input.currentSubPath()),
         subscribe: (listener: () => void): (() => void) => {
             listeners.add(listener);
             return () => { listeners.delete(listener); };

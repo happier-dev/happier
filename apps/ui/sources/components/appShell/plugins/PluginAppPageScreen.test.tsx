@@ -2005,6 +2005,28 @@ describe('plugin app page host route (EU-5b)', () => {
         expect(reactNativeSurfaceInstanceRefs.at(-1)).toBe(host);
     });
 
+    it('keeps the current launch on a preserving page replacement and clears it on a foreign location', async () => {
+        const { act } = await import('react-test-renderer');
+        const PageHost = await loadPageHost();
+        const model = pageModel();
+        routerLocation.pathname = NOTES_PAGE_PATH;
+        const screen = await renderScreen(<PageHost model={model} />);
+        const launch = { entryId: 'a' };
+        await openFromMountedPage(launch);
+        expect(readRenderContext().launchInput).toEqual(launch);
+
+        await act(async () => {
+            await readRenderContext().hostApi.replacePageLocation('entries/a', { preserveUnsavedChanges: true });
+        });
+        await screen.update(<PageHost model={model} location={{ subPath: 'entries/a' }} />);
+        expect(readRenderContext().launchInput).toEqual(launch);
+
+        await screen.update(<PageHost model={model} location={{ subPath: 'entries/b' }} />);
+        expect(readRenderContext().launchInput).toBeUndefined();
+        await screen.update(<PageHost model={model} location={{ subPath: 'entries/a' }} />);
+        expect(readRenderContext().launchInput).toBeUndefined();
+    });
+
     it('rejects a location that would address out of the page namespace', async () => {
         await renderPage();
 

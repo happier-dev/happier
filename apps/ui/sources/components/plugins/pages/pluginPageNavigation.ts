@@ -499,7 +499,8 @@ export function usePluginPageCatalogActivationHandler(navigate?: (routePath: str
  *
  * The destination TAKES the pending open — it does not read a shared slot that
  * keeps holding it — and then holds the value itself for as long as it is the
- * same page, at the same plugin-local location, under the same authority. That
+ * same page and editor under the same authority. A location change retires
+ * that editor unless the location owner settled it as preserving. That
  * is what makes the three §3.7 rules hold at once: reopening with new input
  * replaces it, an open without input clears it, and a later navigation to the
  * same location cannot inherit an argument from an earlier one.
@@ -508,6 +509,7 @@ export function usePluginPageLaunch(location: Readonly<{
     pluginId: string;
     localId: string;
     subPath: string | null;
+    preserveDeliveredLaunch?: boolean;
 }>): PluginPageLaunchOpen | null {
     const scope = React.useContext(PluginPageLaunchInputScopeContext);
     const { localId, pluginId, subPath } = location;
@@ -546,22 +548,20 @@ export function usePluginPageLaunch(location: Readonly<{
         && authority !== null
         && subPath !== null
         && delivered.pageId === pageId
-        && delivered.subPath === subPath
+        && (delivered.subPath === subPath || location.preserveDeliveredLaunch)
         && pluginPageTargetKey(delivered.target ?? { kind: 'app' }) === pluginPageTargetKey(scope.target)
         && isSamePluginSurfaceLaunchAuthority(delivered.authority, authority)
-    ) ? delivered : null;
-    if (staged !== null && staged !== retained) {
-        setDelivered(staged);
-    } else if (delivered !== null && retained === null) {
-        // The authority or the location moved on; the argument does not follow.
-        setDelivered(null);
+    ) ? (delivered.subPath === subPath ? delivered : { ...delivered, subPath }) : null;
+    const current = staged ?? retained;
+    if (current !== delivered) {
+        setDelivered(current);
     }
 
     React.useEffect(() => {
         if (staged !== null) scope?.store.settle(staged);
     }, [scope, staged]);
 
-    return staged ?? retained;
+    return current;
 }
 
 /**

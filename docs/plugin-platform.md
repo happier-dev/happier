@@ -3775,9 +3775,11 @@ also asks that guard before replacing a different subpath, so an editor retires
 its selected target only after consuming the settled location. Keep editing
 returns the incumbent location; a same-location Back declaration does not retire
 the editor. Native/RNW pages can declare `preserveUnsavedChanges: true` on a
-same-editor layout replacement and its Back step. The page-location owner lends
-that fact to the same guard, which keeps the dirty boolean armed and admits only
-the accepted synchronous navigation stack. Hosted document replacement refuses
+same-editor layout replacement and its Back step. A preserving replacement also
+keeps the launch input on that editor while the same page and authority remain live.
+The page-location owner lends the preserving fact to the same guard, which keeps
+the dirty boolean armed and admits only the accepted synchronous navigation stack.
+Hosted document replacement refuses
 that option because it replaces the document. Browser unload retains the platform
 confirmation. Account/credential
 retirement still erases private state without asking, and stale facades cannot
