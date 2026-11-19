@@ -127,7 +127,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         const value = localized(fact.title);
         if (facts?.nativeFacts?.[dimension]) nativeLabels.push(value);
         // A place leads with its country's flag wherever the receipt names it, as in the location choices.
-        const flag = dimension === 'location' ? countryFlag('countryCode' in fact ? fact.countryCode : undefined) : '';
+        const flag = dimension === 'location' ? countryFlag(facts?.nativeFacts?.location?.countryCode) : '';
         rows.push({ id: dimension, label: t(`managedMachines.config.${dimension}`), value: flag ? `${flag} ${value}` : value });
     }
     // Saved launch choices are an object of field values; any other JSON shape has no field to present.

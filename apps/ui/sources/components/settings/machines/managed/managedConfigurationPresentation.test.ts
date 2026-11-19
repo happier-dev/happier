@@ -12,14 +12,14 @@ import { DEVCONTAINER_PLUGIN } from '../../../../../../../packages/plugins/devco
 
 describe('saved image roles', () => {
     it('projects the declared Devcontainer image into the offer and receipt without native review', () => {
-        const action = DEVCONTAINER_PLUGIN.manifest.contributes.actions.find(action => action.id === 'options');
-        const provisioner = DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners.find(entry => entry.id === 'devcontainer');
+        const action = DEVCONTAINER_PLUGIN.manifest.contributes?.actions?.find(action => action.id === 'options');
+        const provisioner = DEVCONTAINER_PLUGIN.manifest.contributes?.machineProvisioners?.find(entry => entry.id === 'devcontainer');
         if (!action || !provisioner) throw new Error('Missing Devcontainer declaration');
         const savedLaunchPresentation = { schema: provisioner.launchSchema, inputHints: InputHintsSchema.parse(action.inputHints) };
         const saved = { provider: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: provisioner.id }, schemaVersion: 1,
             name: 'Docker container', choices: { configuration: { kind: 'image', image: 'node:22' } } };
         expect(describeManagedPresetOffer({ launch: saved, savedLaunchPresentation })).toBe('node:22');
-        const receipt = buildManagedConfigurationReceipt({ launch: saved, savedLaunchPresentation });
+        const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: null, savedLaunchPresentation });
         expect(receipt.facts.find(fact => fact.id === 'image')?.value).toBe('node:22');
         expect(receipt.facts.some(fact => fact.id === 'saved:configuration.image')).toBe(false);
     });
@@ -37,7 +37,7 @@ describe('saved image roles', () => {
             choices: { image: 'ubuntu:24.04', memory: 4, arch: 'arm64', hidden: 'hidden', secret: 'secret', source: '{"image":"raw"}' } };
         expect(describeManagedPresetOffer({ launch: saved, savedLaunchPresentation })).toBe(
             `${formatManagedSizeBytes(4 * 1024 ** 3).replace(/ /g, '\u00a0')} · ubuntu:24.04`);
-        const receipt = buildManagedConfigurationReceipt({ launch: saved, savedLaunchPresentation });
+        const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: null, savedLaunchPresentation });
         expect(receipt.facts.find(fact => fact.id === 'image')?.value).toBe('ubuntu:24.04');
         expect(receipt.facts.find(fact => fact.id === 'saved:arch')?.value).toBe('arm64');
         expect(receipt.facts.some(fact => fact.id === 'saved:image' || fact.id === 'saved:memory')).toBe(false);
