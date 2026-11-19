@@ -19405,6 +19405,8 @@ const fr: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'Aucune exécution pour l’instant. Une exécution apparaît ici dès qu’un workflow démarre.',
     columns: {
+        view: 'Affichage',
+        icons: 'Icônes',
         run: 'Exécution',
         started: 'Démarrée',
         took: 'Durée',

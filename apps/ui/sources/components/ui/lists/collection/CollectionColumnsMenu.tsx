@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import {
   useHeaderControlMetrics,
   type HeaderControlMetrics,
@@ -103,6 +104,10 @@ export function CollectionColumnsMenuButton(
     fittedIds?: readonly string[] | null;
     label?: string;
     beforeColumns?: React.ReactNode;
+    /** What follows the columns (a "New section" row): the menu's foot. */
+    afterColumns?: React.ReactNode;
+    /** `labelled`: the toolbar's "View" button (scene 8), its glyph and word; the page head keeps the bare "⋯". */
+    trigger?: 'icon' | 'labelled';
     testID: string;
   }>,
 ) {
@@ -118,7 +123,7 @@ export function CollectionColumnsMenuButton(
     [controller, props.collectionId, scope],
   );
   return (
-    <CollectionColumnsMenuTrigger testID={props.testID} label={props.label}>
+    <CollectionColumnsMenuTrigger testID={props.testID} label={props.label} {...(props.trigger ? { trigger: props.trigger } : {})}>
       {props.beforeColumns}
       <CollectionColumnsMenuView
         columns={props.columns}
@@ -127,6 +132,7 @@ export function CollectionColumnsMenuButton(
         fittedIds={props.fittedIds ?? null}
         testID={props.testID}
       />
+      {props.afterColumns}
     </CollectionColumnsMenuTrigger>
   );
 }
@@ -138,18 +144,32 @@ export function CollectionColumnsMenuTrigger(
     children: React.ReactNode;
     initiallyOpen?: boolean;
     label?: string;
+    trigger?: 'icon' | 'labelled';
+    /** The bare trigger's glyph: the page head's "⋯" by default; a column's View menu uses its sliders. */
+    iconName?: 'dots-three' | 'sliders-horizontal';
   }>,
 ) {
   const [open, setOpen] = React.useState(props.initiallyOpen === true);
+  const { theme } = useUnistyles();
   const anchorRef = React.useRef<View>(null);
   const control = useHeaderControlMetrics(PAGE_HEADER_CONTROL);
   const label = props.label ?? t('collectionColumns.title');
   return (
     <>
       <View ref={anchorRef} collapsable={false}>
-        <IconButton
+        {props.trigger === 'labelled' ? (
+          <RoundButton
+            testID={props.testID}
+            size="small"
+            display="secondary"
+            title={label}
+            leading={<Icon name="sliders-horizontal" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
+            expanded={open}
+            onPress={() => setOpen((current) => !current)}
+          />
+        ) : <IconButton
           testID={props.testID}
-          iconName="dots-three"
+          iconName={props.iconName ?? 'dots-three'}
           variant="plain"
           size={control.sizePx}
           iconSize={control.glyphPx}
@@ -160,7 +180,7 @@ export function CollectionColumnsMenuTrigger(
           hasPopup="menu"
           selected={open}
           onPress={() => setOpen((current) => !current)}
-        />
+        />}
       </View>
       {open ? (
         <Popover

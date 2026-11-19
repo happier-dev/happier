@@ -19282,6 +19282,8 @@ const ja: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'まだ実行はありません。ワークフローが始まるとここに表示されます。',
     columns: {
+        view: '表示',
+        icons: 'アイコン',
         run: '実行',
         started: '開始',
         took: '所要時間',

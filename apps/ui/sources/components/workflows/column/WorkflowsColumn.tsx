@@ -31,7 +31,14 @@ import { t, tLoose } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
-import { WorkflowColumnRow } from './WorkflowColumnRow';
+import { WorkflowColumnRow, WorkflowColumnRowDisplayContext } from './WorkflowColumnRow';
+import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
+import { CollectionColumnsMenuTrigger } from '@/components/ui/lists/collection/CollectionColumnsMenu';
+import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
+import { resolveWorkflowRowDetails } from '../library/workflowLibraryCells';
+import { WorkflowRunsViewMenu, WorkflowsViewLines, WorkflowsViewNewSection, WorkflowsViewRowDetails } from '../library/WorkflowsViewMenu';
+
+const EMPTY_PLUGIN_DETAILS: readonly Readonly<{ id: string; title: string }>[] = Object.freeze([]);
 import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
 import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import type { WorkflowLibraryItem } from '../library/workflowLibraryCells';
@@ -205,6 +212,20 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
     const runs = useWorkflowRunCollection(presented && runsShown);
     const runHeader = useWorkflowRunCollectionHeader(runs, 'workflows-column-runs-space');
     const shownHeader = definitions ? header : runsShown ? runHeader : null;
+    // The sidebar's View menu (scene 8 column): Lines and Row details for its workflow rows, New section; Runs group by.
+    const display = useCollectionDisplayOptions('workflow', false);
+    const rowDisplay = React.useMemo(() => ({ lines: display.lines, details: resolveWorkflowRowDetails(display.details) }),
+        [display.details, display.lines]);
+    const viewMenu = definitions ? (
+        <CollectionColumnsMenuTrigger testID="workflows-column:view-menu" iconName="sliders-horizontal" label={t('workflows.destination.columns.view')}>
+            <WorkflowsViewLines lines={display.lines} onChange={display.setLines} testIDPrefix="workflows-column:view-menu:lines" />
+            <WorkflowsViewRowDetails details={display.details} onChange={display.setDetail} pluginDetails={EMPTY_PLUGIN_DETAILS}
+                testIDPrefix="workflows-column:view-menu:detail" />
+            <WorkflowsViewNewSection onPress={libraryView.workflowSections.create} testID="workflows-column:view-menu:new-section" />
+        </CollectionColumnsMenuTrigger>
+    ) : runsShown ? (
+        <WorkflowRunsViewMenu groupBy={runs.display.groupBy} onGroupBy={runs.display.setGroupBy} trigger="icon" testID="workflows-column:runs-view-menu" />
+    ) : null;
     const { searchQuery, setSearchQuery } = libraryView;
     const runSearchQuery = runs.binding.searchQuery;
     const setRunSearchQuery = runs.setSearchQuery;
@@ -249,12 +270,14 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
             {shownHeader ? shownHeader.conditionRow : null}
             {shownHeader ? shownHeader.overlays : null}
         </>}
-        headerAction={<View style={styles.headerActions}>{shownHeader ? shownHeader.filterButton : null}{props.headerAction}</View>}
+        headerAction={<View style={styles.headerActions}>{shownHeader ? shownHeader.filterButton : null}{viewMenu}{props.headerAction}</View>}
         // Both lists stay built once shown and the switch only presents one: a switch never rebuilds a list.
         scrollContent={<>
             <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
                 <ItemList presentation="grouped" style={styles.definitionsList}>
-                    <WorkflowsColumnDefinitions libraryView={libraryView} />
+                    <WorkflowColumnRowDisplayContext.Provider value={rowDisplay}>
+                        <WorkflowsColumnDefinitions libraryView={libraryView} />
+                    </WorkflowColumnRowDisplayContext.Provider>
                 </ItemList>
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
@@ -278,7 +301,12 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     const params = useGlobalSearchParams<{ trigger?: string; serverId?: string | string[] }>();
     const selectedDefinitionId = readOpenWorkflowDefinition(pathname);
     const homeUnavailable = useActiveHomeUnavailable();
-    const { library, isVisible, visibleLibraryRows, accountWorkflows } = props.libraryView;
+    const { library, isVisible, accountWorkflows, workflowSections } = props.libraryView;
+    // Sections the person made stand above the shipped groups (scene 8): a filed saved workflow is listed there only.
+    const sectionOf = React.useCallback((row: WorkflowLibraryItem) => 'definition' in row
+        ? workflowSections.assignmentFor(row.definition.definitionId) ?? null : null, [workflowSections]);
+    const visibleLibraryRows = React.useMemo(() => props.libraryView.visibleLibraryRows.filter(row => sectionOf(row) === null),
+        [props.libraryView.visibleLibraryRows, sectionOf]);
     // One Library (Q7): saved workflows and the Account's step-holding triggers, in the owner's one
     // order and count. An Account Workflow opens its settings popover where it stands.
     const accountEditor = useAccountWorkflowEditor({ read: accountWorkflows });

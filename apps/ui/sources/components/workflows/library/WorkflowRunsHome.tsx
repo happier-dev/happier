@@ -26,6 +26,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { t, usePreferredLanguage } from '@/text';
+import { WorkflowRunsViewMenu } from './WorkflowsViewMenu';
 
 import {
   useWorkflowRunCollection,
@@ -217,6 +218,7 @@ export function WorkflowRunsHome(): React.ReactElement {
             />
             <View style={styles.grow} />
             {header.filterButton}
+            <WorkflowRunsViewMenu groupBy={model.display.groupBy} onGroupBy={model.display.setGroupBy} trigger="labelled" testID="workflow-runs:view" />
           </View>
           <View style={styles.spaceStrip}>{header.strip}</View>
           {header.conditionRow ? (

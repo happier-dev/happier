@@ -18842,6 +18842,8 @@ const de: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'Noch keine Läufe. Ein Lauf erscheint hier, sobald ein Workflow startet.',
     columns: {
+        view: 'Ansicht',
+        icons: 'Symbole',
         run: 'Lauf',
         started: 'Gestartet',
         took: 'Dauer',

@@ -302,7 +302,8 @@ describe('WorkflowsColumn', () => {
         expect(leadingMarks).toEqual([]);
         // The Account Workflow's trigger is its quiet line; it carries no switch of its own.
         expect(screen.findAll(node => node.props?.testID === 'workflows-column:library:account-trigger:digest' && 'subtitle' in node.props)[0]
-            ?.props.subtitle).toBe('workflows.triggers.summary.everyDayAt(time=09:00)');
+            // The one app clock words the time (34a1cd1dc10): the sidebar, table, card and History read the same.
+            ?.props.subtitle).toBe(`workflows.triggers.summary.everyDayAt(time=${(await import('../triggers/triggerSchedule')).formatClockTime({ hour: 9, minute: 0 })})`);
         expect(screen.findByTestId('workflows-column:trigger:digest-switch')).toBeNull();
         // A saved workflow opens its editor; an Account Workflow opens its settings where it stands.
         await screen.pressByTestIdAsync(`workflows-column:library:${definitionId}`);

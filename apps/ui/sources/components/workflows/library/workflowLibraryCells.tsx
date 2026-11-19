@@ -172,6 +172,37 @@ export function readWorkflowLibraryRowFacts(
   };
 }
 
+/**
+ * The details a workflow row can draw (scene 8 View menu, "Row details"; the table names the same set "Columns"),
+ * each with its default: the marks, the trigger and the run strip show, the rest are opt-in (Next run, owner 11-19).
+ */
+export const WORKFLOW_ROW_DETAILS = Object.freeze([
+  { id: 'icons', defaultOn: true },
+  { id: 'trigger', defaultOn: true },
+  { id: 'steps', defaultOn: false },
+  { id: 'lastRun', defaultOn: false },
+  { id: 'nextRun', defaultOn: false },
+  { id: 'recentRuns', defaultOn: true },
+] as const);
+export type WorkflowRowDetailId = (typeof WORKFLOW_ROW_DETAILS)[number]['id'];
+export type WorkflowRowDetails = Readonly<Record<WorkflowRowDetailId, boolean>>;
+
+/** The row details as the person set them in the one display owner, defaults filled. */
+export function resolveWorkflowRowDetails(stored: Readonly<Record<string, boolean>> | undefined): WorkflowRowDetails {
+  return Object.fromEntries(WORKFLOW_ROW_DETAILS.map(detail => [detail.id, stored?.[detail.id] ?? detail.defaultOn])) as WorkflowRowDetails;
+}
+
+export function workflowRowDetailTitle(id: WorkflowRowDetailId): string {
+  switch (id) {
+    case 'icons': return t('workflows.destination.columns.icons');
+    case 'trigger': return t('workflows.destination.columns.trigger');
+    case 'steps': return t('workflows.destination.columns.steps');
+    case 'lastRun': return t('workflows.destination.columns.lastRun');
+    case 'nextRun': return t('automations.detail.overview.nextRunTitle');
+    case 'recentRuns': return t('workflows.destination.columns.recentRuns', { count: WORKFLOW_RUN_STRIP_LENGTH });
+  }
+}
+
 /** What a workflow uses, as marks: what starts it, then the Agents once the list owner carries them. */
 export function readWorkflowLibraryRowMarks(
   facts: WorkflowLibraryRowFacts,
@@ -331,6 +362,8 @@ export function buildWorkflowLibraryFields(
 export function buildWorkflowLibraryCard(
   readFacts: (row: WorkflowLibraryItem) => WorkflowLibraryRowFacts,
   openRun: (runId: string) => void,
+  /** The person's Row details; the card's sentence always shows (D4), its marks and strip follow these. */
+  details: WorkflowRowDetails = resolveWorkflowRowDetails(undefined),
 ): NonNullable<CollectionAnatomy<WorkflowLibraryItem>['card']> {
   return {
     headerRight: (row) => {
@@ -361,17 +394,16 @@ export function buildWorkflowLibraryCard(
       const lastRun = formatLastRun(facts.lastRunAt);
       return (
         <View style={styles.cardFoot}>
-          <WorkflowMarks
-            layout="row"
-            marks={readWorkflowLibraryRowMarks(facts, row)}
-          />
+          {details.icons ? (
+            <WorkflowMarks layout="row" marks={readWorkflowLibraryRowMarks(facts, row)} />
+          ) : null}
           <View style={styles.cardFootSpacer} />
           {lastRun === null ? null : (
             <Text variant="meta" numberOfLines={1} style={styles.cardFootText}>
               {t('workflows.destination.lastRun', { age: lastRun })}
             </Text>
           )}
-          {facts.strip === null ? null : (
+          {facts.strip === null || !details.recentRuns ? null : (
             <WorkflowRunStripView strip={facts.strip} />
           )}
         </View>

@@ -19372,6 +19372,8 @@ const pl: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'Brak uruchomień. Pojawi się tu, gdy tylko przepływ pracy się rozpocznie.',
     columns: {
+        view: 'Widok',
+        icons: 'Ikony',
         run: 'Uruchomienie',
         started: 'Start',
         took: 'Czas',

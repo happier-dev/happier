@@ -37,6 +37,8 @@ export const en = {
     },
     runsEmpty: 'No runs yet. A run appears here as soon as a workflow starts.',
     columns: {
+        view: 'View',
+        icons: 'Icons',
         run: 'Run',
         started: 'Started',
         took: 'Took',

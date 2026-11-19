@@ -19284,6 +19284,8 @@ const es: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'Aún no hay ejecuciones. Aparecerá una aquí en cuanto empiece un flujo de trabajo.',
     columns: {
+        view: 'Vista',
+        icons: 'Iconos',
         run: 'Ejecución',
         started: 'Inicio',
         took: 'Duración',

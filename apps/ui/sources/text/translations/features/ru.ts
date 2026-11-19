@@ -19373,6 +19373,8 @@ const ru: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'Запусков пока нет. Запуск появится здесь, как только начнётся рабочий процесс.',
     columns: {
+        view: 'Вид',
+        icons: 'Значки',
         run: 'Запуск',
         started: 'Начат',
         took: 'Длительность',

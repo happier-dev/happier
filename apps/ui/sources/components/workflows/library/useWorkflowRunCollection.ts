@@ -25,6 +25,7 @@ import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkf
 const runDraft = createCollectionSpaceDraftStore<'workflowRun'>();
 const RUN_ICON = { kind: 'icon', name: 'list' } as const;
 type GroupLabel = Readonly<{ key: string; title: string }>;
+const DAY_MS = 86_400_000;
 export type WorkflowRunCollectionRow = Readonly<{
     key: string;
     title: string;
@@ -59,6 +60,7 @@ export function useWorkflowRunCollection(focused: boolean) {
     const rows = React.useMemo(() => {
         const dateFormat = new Intl.DateTimeFormat(language, { dateStyle: 'medium' });
         const dates = new Map<string, GroupLabel>();
+        const todayStart = new Date().setHours(0, 0, 0, 0);
         return runs.rows.map((run): WorkflowRunCollectionRow => {
             const { summary } = run;
             const title = formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(run.metadata));
@@ -78,7 +80,12 @@ export function useWorkflowRunCollection(focused: boolean) {
             const dateKey = day ? String(day.setHours(0, 0, 0, 0)) : 'unknownDate';
             let date = dates.get(dateKey);
             if (!date) {
-                date = { key: dateKey, title: day ? dateFormat.format(day) : t('workflows.destination.display.unknownDate') };
+                // Today and Yesterday read as words (scene 8 Runs); older days keep their date.
+                const dayStart = day ? day.getTime() : null;
+                const title = dayStart === null ? t('workflows.destination.display.unknownDate')
+                    : dayStart === todayStart ? t('sessionHistory.today')
+                        : dayStart === todayStart - DAY_MS ? t('sessionHistory.yesterday') : dateFormat.format(day!);
+                date = { key: dateKey, title };
                 dates.set(dateKey, date);
             }
             const result = summary?.state ?? run.automation?.workflowRunState;

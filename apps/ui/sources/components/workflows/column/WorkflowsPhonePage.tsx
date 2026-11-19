@@ -17,6 +17,9 @@ import { useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumn
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
+import { CollectionColumnsMenuTrigger } from '@/components/ui/lists/collection/CollectionColumnsMenu';
+import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
+import { WorkflowRunsViewMenu, WorkflowsViewFilters, WorkflowsViewGroupBy, WorkflowsViewLines, WorkflowsViewNewSection, WorkflowsViewRowDetails } from '../library/WorkflowsViewMenu';
 import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import {
   WorkflowsColumnLibraryContext,
@@ -24,6 +27,8 @@ import {
 } from './workflowsColumnCreation';
 
 export type WorkflowsColumnView = 'definitions' | 'runs' | 'events';
+
+const EMPTY_PLUGIN_DETAILS: readonly Readonly<{ id: string; title: string }>[] = Object.freeze([]);
 
 /**
  * Workflows as a phone's main screen (owner 11-11): the shell's Home line, then the main-screen head — the library's
@@ -51,6 +56,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
   );
   // Runs read the one `workflowRun` collection (scene 8 D2): its space is the title, its search and filters the head's.
   const runsShown = props.view === 'runs';
+  const display = useCollectionDisplayOptions('workflow', true);
   const runs = useWorkflowRunCollection(presented && runsShown);
   const runHeader = useWorkflowRunCollectionHeader(runs, 'workflows-column-runs-space');
   const runSearchQuery = runs.binding.searchQuery;
@@ -108,10 +114,26 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
           titleControl={definitions ? spaceHeader.titleControl : runsShown ? runHeader.titleControl : undefined}
           search={search}
           actions={
-            <WorkflowsColumnActions
-              canCreate={props.ownsCreation}
-              addOpenerRef={openAddRef}
-            />
+            <>
+              {/* The phone's View sheet (scene 8): Filters first, then the same options as the wide View menu. */}
+              {definitions ? (
+                <CollectionColumnsMenuTrigger testID="workflows-phone:view" iconName="sliders-horizontal" label={t('workflows.destination.columns.view')}>
+                  <WorkflowsViewFilters onPress={spaceHeader.openFilters} testID="workflows-phone:view:filters" />
+                  <WorkflowsViewGroupBy groupBy={display.groupBy} onChange={display.setGroupBy} testIDPrefix="workflows-phone:view:group" />
+                  <WorkflowsViewLines lines={display.lines} onChange={display.setLines} testIDPrefix="workflows-phone:view:lines" />
+                  <WorkflowsViewRowDetails details={display.details} onChange={display.setDetail} pluginDetails={EMPTY_PLUGIN_DETAILS}
+                    testIDPrefix="workflows-phone:view:detail" />
+                  <WorkflowsViewNewSection onPress={libraryView.workflowSections.create} testID="workflows-phone:view:new-section" />
+                </CollectionColumnsMenuTrigger>
+              ) : runsShown ? (
+                <WorkflowRunsViewMenu groupBy={runs.display.groupBy} onGroupBy={runs.display.setGroupBy} trigger="icon"
+                  onFilters={runHeader.openFilters} testID="workflows-phone:runs-view" />
+              ) : null}
+              <WorkflowsColumnActions
+                canCreate={props.ownsCreation}
+                addOpenerRef={openAddRef}
+              />
+            </>
           }
           create={create}
           createTrigger={null}

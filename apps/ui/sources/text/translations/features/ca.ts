@@ -19362,6 +19362,8 @@ const ca: WorkflowsDestinationTranslations = {
     },
     runsEmpty: 'Encara no hi ha execucions. N\'apareixerà una aquí tan bon punt comenci un flux de treball.',
     columns: {
+        view: 'Vista',
+        icons: 'Icones',
         run: 'Execució',
         started: 'Inici',
         took: 'Durada',

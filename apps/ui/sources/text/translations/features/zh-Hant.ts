@@ -19222,6 +19222,8 @@ const zhHant: WorkflowsDestinationTranslations = {
     },
     runsEmpty: '還沒有執行。工作流程一開始，執行就會出現在這裡。',
     columns: {
+        view: '檢視',
+        icons: '圖示',
         run: '執行',
         started: '開始',
         took: '耗時',

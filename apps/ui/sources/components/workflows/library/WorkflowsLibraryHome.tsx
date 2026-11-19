@@ -29,7 +29,6 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { CollectionViewSwitch } from '@/components/ui/lists/collection/CollectionViewSwitch';
 import { CollectionColumnsMenuButton, CollectionColumnsMenuTrigger, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
-import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -47,6 +46,7 @@ import {
     exportSavedWorkflowDocument,
 } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
@@ -59,9 +59,10 @@ import {
 } from './workflowLibraryReads';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
-import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks,
+import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, resolveWorkflowRowDetails,
     WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
+import { WorkflowsViewGroupBy, WorkflowsViewLines, WorkflowsViewNewSection, WorkflowsViewRowDetails } from './WorkflowsViewMenu';
 import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
 import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
@@ -223,11 +224,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     });
     const commands = useLibraryRowCommands(library.deletedDefinitionId, workflowSections);
     const { anatomy, pluginDetails } = useLibraryAnatomy(display.presentation, commands.openRun, display.lines, display.details);
-    const groupOptions = <ActionListSection title={t('workflows.destination.display.groupBy')} actions={(['source', 'project'] as const).map(groupBy => ({
-        id: groupBy, testID: `workflows-home:view:group:${groupBy}`,
-        label: t(`workflows.destination.display.${groupBy}`), selected: display.groupBy === groupBy,
-        onPress: () => { void display.setGroupBy(groupBy); },
-    }))} />;
+    const groupOptions = <WorkflowsViewGroupBy groupBy={display.groupBy} onChange={display.setGroupBy} testIDPrefix="workflows-home:view:group" />;
+    const newSectionOption = <WorkflowsViewNewSection onPress={workflowSections.create} testID="workflows-home:view:new-section" />;
     const [fittedColumns, setFittedColumns] = React.useState<readonly string[] | null>(null);
     const columns = React.useMemo(() => ({ collectionId: WORKFLOWS_COLLECTION_ID, onColumnsFit: setFittedColumns }), []);
     const menuColumns = React.useMemo(() => collectionColumnsMenuColumns(
@@ -310,27 +308,23 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             {phone ? null : search}
             {phone ? <View style={styles.spaceStripInline}>{spaceHeader.strip}</View> : <View style={styles.controlLineGrow} />}
             {spaceHeader.filterButton}
+            {/* Scene 8's one View menu: Group by, Lines (rows and cards), "Columns" in the table or "Row details" for
+                rows and cards (owner 2026-11-19), then New section. */}
             {display.presentation === 'table' ? <CollectionColumnsMenuButton
                 testID="workflows-home:view"
+                trigger="labelled"
                 collectionId={WORKFLOWS_COLLECTION_ID}
                 columns={menuColumns}
                 fittedIds={fittedColumns}
-                label={t('sessionsList.viewOptions')}
+                label={t('workflows.destination.columns.view')}
                 beforeColumns={groupOptions}
-            /> : <CollectionColumnsMenuTrigger testID="workflows-home:view" label={t('sessionsList.viewOptions')}>
+                afterColumns={newSectionOption}
+            /> : <CollectionColumnsMenuTrigger testID="workflows-home:view" trigger="labelled" label={t('workflows.destination.columns.view')}>
                 {groupOptions}
-                <ActionListSection title={t('settingsSession.sessionList.densityMenuTitle')} actions={([1, 2, 3] as const).map(lines => ({
-                    id: String(lines), testID: `workflows-home:view:lines:${lines}`,
-                    label: String(lines), selected: display.lines === lines,
-                    onPress: () => { void display.setLines(lines); },
-                }))} />
-                {pluginDetails.length > 0 ? <ActionListSection title={t('workflows.destination.display.rowDetails')}
-                    actions={pluginDetails.map(detail => ({
-                        id: detail.id,
-                        label: detail.title,
-                        checked: display.details?.[detail.id] === true,
-                        onPress: () => { void display.setDetail(detail.id, display.details?.[detail.id] !== true); },
-                    }))} /> : null}
+                <WorkflowsViewLines lines={display.lines} onChange={display.setLines} testIDPrefix="workflows-home:view:lines" />
+                <WorkflowsViewRowDetails details={display.details} onChange={display.setDetail} pluginDetails={pluginDetails}
+                    testIDPrefix="workflows-home:view:detail" />
+                {newSectionOption}
             </CollectionColumnsMenuTrigger>}
             {phone ? null : <CollectionViewSwitch presentation={display.preferredPresentation}
                 onChange={display.setPresentation} testIDPrefix="workflows-home:presentation" />}
@@ -453,6 +447,7 @@ function useLibraryAnatomy(
     }, []);
     const openRunRef = React.useRef(openRun);
     openRunRef.current = openRun;
+    const rowDetails = React.useMemo(() => resolveWorkflowRowDetails(details), [details]);
     const readableFacts = React.useMemo(() => new Map<string, (row: LibraryRow) => unknown>([
         ['stepCount', row => readFacts(row).stepCount],
         ['lastRunAt', row => readFacts(row).lastRunAt],
@@ -460,7 +455,7 @@ function useLibraryAnatomy(
     ]), [readFacts]);
     const extensions = useWorkflowListExtensions('workflow', readableFacts);
     const card = React.useMemo(() => {
-        const base = buildWorkflowLibraryCard(readFacts, (runId) => openRunRef.current(runId));
+        const base = buildWorkflowLibraryCard(readFacts, (runId) => openRunRef.current(runId), rowDetails);
         return {
             ...base,
             facts: (row: LibraryRow) => {
@@ -469,7 +464,7 @@ function useLibraryAnatomy(
                 return <>{base.facts?.(row)}{context || mark ? <Text variant="meta">{[context, mark].filter(Boolean).join(' · ')}</Text> : null}</>;
             },
         };
-    }, [details, extensions.details, readFacts]);
+    }, [details, extensions.details, readFacts, rowDetails]);
     const nextRun = React.useMemo(() => [{
         key: 'nextRun',
         title: t('automations.detail.overview.nextRunTitle'),
@@ -497,13 +492,21 @@ function useLibraryAnatomy(
         // A list row (a phone, a narrow page) at Lines 2 (scene 8 phone): the state word leads line 2 when it speaks, then
         // the trigger sentence; what it uses ends the title line and its recent runs end the row.
         byline: lines === 1 ? undefined : (row) => {
-            const trigger = readFacts(row).triggerLine ?? (row.group === 'fromPlugins' ? row.plugin.description ?? null : null);
+            const trigger = !rowDetails.trigger ? null
+                : readFacts(row).triggerLine ?? (row.group === 'fromPlugins' ? row.plugin.description ?? null : null);
             const extension = readWorkflowPluginDetails(extensions.details, details, row, 'context');
             return [trigger, extension].filter(Boolean).join(' · ') || null;
         },
+        // Lines 3 (scene 8 "Lines × details"): the row's opt-in details on their own line.
         description: lines === 3 && !table ? (row) => {
-            const steps = readFacts(row).stepCount;
-            return steps === null ? null : t('workflows.examples.stepCount', { count: steps });
+            const facts = readFacts(row);
+            const nextRunAt = !isAccountRow(row) && row.group !== 'fromPlugins' ? row.definition.nextRunAt : null;
+            return [
+                rowDetails.steps && facts.stepCount !== null ? t('workflows.examples.stepCount', { count: facts.stepCount }) : null,
+                rowDetails.nextRun && nextRunAt !== null ? formatNextScheduledRun(nextRunAt) : null,
+                rowDetails.lastRun && facts.lastRunAt !== null
+                    ? t('workflows.destination.lastRun', { age: formatRelativeTimeShort(facts.lastRunAt, Date.now()) }) : null,
+            ].filter(Boolean).join(' · ') || null;
         } : undefined,
         bylineLead: lines === 1 ? undefined : (row) => {
             const facts = readFacts(row);
@@ -514,7 +517,7 @@ function useLibraryAnatomy(
         // itself never draws a list fact, and a card draws the strip in its own foot).
         ...(presentation === 'grid' ? {} : {
             listFact: (row: LibraryRow) => {
-                const strip = readFacts(row).strip;
+                const strip = rowDetails.recentRuns ? readFacts(row).strip : null;
                 return strip === null ? null : <WorkflowRunStripView testID={`workflows-home:row:${row.key}:strip`} strip={strip} />;
             },
         }),
@@ -524,7 +527,7 @@ function useLibraryAnatomy(
                 const facts = readFacts(row);
                 return <>
                     {lines === 1 && facts.state ? <WorkflowLibraryStateWord state={facts.state} needsYouRunId={null} /> : null}
-                    <WorkflowMarks layout="cluster" marks={readWorkflowLibraryRowMarks(facts, row)} />
+                    {rowDetails.icons ? <WorkflowMarks layout="cluster" marks={readWorkflowLibraryRowMarks(facts, row)} /> : null}
                     {details ? readWorkflowPluginDetails(extensions.details, details, row, 'mark') : null}
                 </>;
             },
@@ -538,7 +541,7 @@ function useLibraryAnatomy(
         accessibilityLabel: rowTitle,
         testID: (row) => `workflows-home:row:${row.key}`,
         columnTitles: { title: t('workflows.destination.columns.workflow') },
-    }), [card, details, extensions.details, fields, lines, presentation, readFacts, table]);
+    }), [card, details, extensions.details, fields, lines, presentation, readFacts, rowDetails, table]);
     return { anatomy, pluginDetails: extensions.details };
 }
 

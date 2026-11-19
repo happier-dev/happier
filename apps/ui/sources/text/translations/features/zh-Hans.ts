@@ -19222,6 +19222,8 @@ const zhHans: WorkflowsDestinationTranslations = {
     },
     runsEmpty: '还没有运行。工作流一开始，运行就会出现在这里。',
     columns: {
+        view: '视图',
+        icons: '图标',
         run: '运行',
         started: '开始',
         took: '用时',

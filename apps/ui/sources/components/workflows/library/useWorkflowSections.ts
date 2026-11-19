@@ -72,5 +72,13 @@ export function useWorkflowSections(focused: boolean, lifetime: ServerAccountSco
         await executeValue('session.section.set', { entityKind: 'workflow', entityId: id, sectionId: selected?.sectionId ?? null });
     });
     const [, move] = useHappyAction(moveWorkflow);
-    return React.useMemo(() => ({ sections, assignmentFor, move }), [sections, assignmentFor, move]);
+    // "New section" from the View menu (scene 8): the same naming prompt and Action the move's own "New section" uses.
+    const createSection = useEventCallback(async () => {
+        if (!lifetime?.isCurrent()) return;
+        const name = await requestSessionSectionName(null);
+        if (!name || !lifetime.isCurrent()) return;
+        await executeValue('session.sections.create', { name });
+    });
+    const [, create] = useHappyAction(createSection);
+    return React.useMemo(() => ({ sections, assignmentFor, move, create }), [sections, assignmentFor, move, create]);
 }

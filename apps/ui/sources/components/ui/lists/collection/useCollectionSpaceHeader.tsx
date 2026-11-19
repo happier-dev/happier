@@ -288,5 +288,7 @@ export function useCollectionSpaceHeader<
     filterButton: <SettingAnchor setting={collectionSpaceSettingRefs(input.entityKind).filters}>{conditions.filterButton}</SettingAnchor>,
     overlays,
     reorder: editing.reorder,
+    /** Opens the same filter editor from another entry (a phone View sheet's "Filters" row, scene 8). */
+    openFilters: conditions.openEditor,
   };
 }
