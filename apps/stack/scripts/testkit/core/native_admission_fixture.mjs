@@ -259,6 +259,9 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 }
 `);
   try {
+    const notificationModule = 'packages/cli-common/fileChangeObserver.mjs';
+    await mkdir(dirname(join(checkout, notificationModule)), { recursive: true });
+    await copyFile(join(sourceRoot, notificationModule), join(checkout, notificationModule));
     await copyFile(admissionClientSourcePath, join(proc, 'admission_client.mjs'));
     await copyFile(join(dirname(admissionClientSourcePath), 'admission_socket.mjs'), join(proc, 'admission_socket.mjs'));
     // This worker's memory is simulated (broker-memory-observation.json). Its

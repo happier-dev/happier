@@ -323,6 +323,35 @@ test('a pre-admission real socket reset reconnects through broker startup and la
     assert.equal((await fixture.native.brokerStatus()).activeCount, 0);
   });
 
+test('pre-admission EOF waits for a broker socket change instead of polling its listener',
+  { skip: process.platform !== 'linux', timeout: 15_000 }, async t => {
+    const fixture = await restartFixture(t);
+    const root = fixture.native.admissionRoot;
+    const firstClose = Promise.withResolvers();
+    let requests = 0;
+    const listener = createServer(socket => {
+      socket.once('data', () => { requests++; socket.end(firstClose.resolve); });
+    });
+    const closeListener = () => new Promise(resolve => listener.close(resolve));
+    t.after(closeListener);
+    listener.listen(brokerAddress(root));
+    await once(listener, 'listening');
+    const client = fixture.start('process.stdout.write("entered");');
+    await Promise.race([firstClose.promise, client.closed.then(result => {
+      assert.fail(`client exited before its first acquisition: ${result}: ${client.stderr()}`);
+    })]);
+    // Let the client process the EOF while the old endpoint is still present.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(requests, 2, 'one attempt can retry a transient disconnect, then it must wait');
+    assert.equal(client.child.exitCode, null, 'the original request must survive to the successor');
+
+    // Removing the endpoint wakes the original client. Its existing startup
+    // path brings up the real successor.
+    await closeListener();
+    assert.deepEqual(await client.closed, [0, null], client.stderr());
+    assert.equal(client.stdout(), 'entered');
+  });
+
 test('a real socket reset retries a finite broker sample while a typed check refusal stays terminal',
   { skip: process.platform !== 'linux' }, async t => {
     const fixture = await restartFixture(t);

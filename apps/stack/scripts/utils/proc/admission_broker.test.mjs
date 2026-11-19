@@ -177,6 +177,59 @@ test('current admission clients retain duration metadata across broker successio
   await task;
 });
 
+test('an admitted parent’s nested process is refused before it can queue for a second slot', { ...linux, timeout: 10_000 }, async t => {
+  const { root, broker, sampleResources } = await fixture(t);
+  await (await acquire(root, 100, t)).admit();
+  const sendAcquire = String.raw`
+    import { createConnection } from 'node:net';
+    import { once } from 'node:events';
+    import { createInterface } from 'node:readline';
+    const [socketPath, repoDir] = process.argv.slice(1);
+    const socket = createConnection(socketPath);
+    const lines = createInterface({ input: socket });
+    const response = once(lines, 'line');
+    await once(socket, 'connect');
+    socket.write(JSON.stringify({ kind: 'acquire', className: 'compilation-ui', cpuCost: 'host',
+      floorKiB: 100, pid: process.pid, repoDir, cacheBaseDir: repoDir }) + '\n');
+    process.stdout.write((await response)[0]);
+    socket.destroy();
+  `;
+  const nestedDecision = async () => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', sendAcquire, brokerAddress(root), root], {
+      env: {}, stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    t.after(() => child.kill());
+    let output = '';
+    child.stdout.setEncoding('utf8').on('data', text => { output += text; });
+    const [status] = await once(child, 'close');
+    assert.equal(status, 0);
+    return JSON.parse(output);
+  };
+  const assertRefused = async currentBroker => {
+    const decision = await nestedDecision();
+    assert.equal(decision.kind, 'refused');
+    assert.equal(decision.reason, 'HSTACK_ADMISSION_INHERITANCE_REQUIRED');
+    assert.equal(currentBroker.status().activeCount, 1);
+    assert.equal(currentBroker.status().waitingCount, 0);
+  };
+  await assertRefused(broker);
+  await broker.close();
+  const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources });
+  t.after(() => successor.close());
+  await successor.start();
+  await assertRefused(successor);
+
+  const clientPath = fileURLToPath(new URL('./admission_client.mjs', import.meta.url));
+  const child = spawn(process.execPath, [clientPath, '--run', `--root=${root}`, '--class=compilation-ui', '--floor-kib=100',
+    '--machine=fixture', `--repo=${root}`, '--failure-id=nested', '--', process.execPath, '-e', 'process.exitCode = 2'],
+  { env: {}, signal: t.signal, stdio: ['ignore', 'ignore', 'pipe'] });
+  let diagnostic = '';
+  child.stderr.setEncoding('utf8').on('data', value => { diagnostic += value; });
+  assert.deepEqual(await once(child, 'close'), [1, null]);
+  assert.match(diagnostic, /HSTACK_ADMISSION_INHERITANCE_REQUIRED/);
+  assert.doesNotMatch(diagnostic, /HSTACK_ADMISSION_UNAVAILABLE|waiting for admission/);
+});
+
 test('an admitted command reports its run time, excluding its queue wait, once for its dispatcher', linux, async t => {
   const { root } = await fixture(t);
   const holder = await (await acquire(root, 100, t)).admit();
@@ -1316,7 +1369,6 @@ test('native compiler admission tags completion peaks with canonical projects', 
   // Substitute only the executable payload/reentry, keeping native policy,
   // admission CLI, client, broker and history writer real.
   await writeFile(launcher, '#!/bin/sh\nshift 2\nexec "$@"\n', { mode: 0o700 });
-  const client = new URL('./admission_client.mjs', import.meta.url).href;
   const recorded = new Promise(resolve => {
     const watcher = fs.watch(root, (_, name) => {
       if (name === 'completed-slot-memory.jsonl') { watcher.close(); resolve(); }
@@ -1332,13 +1384,18 @@ resolve_native_command_policy node scripts/workspaces/runTypeScriptCli.mjs -p pa
 run_heavyweight_admission "$2" compilation fixture "$4" --input-type=module -e "$5" "$2"
 `;
   child = spawn('/bin/sh', ['-c', script, 'compiler-peak', repo, root, launcher, process.execPath,
-    // A sample request only reads status. A second admission observes the live
-    // compiler slot before its payload exits, making a completion peak real.
-    `import { requestAdmissionSample } from ${JSON.stringify(client)}; await requestAdmissionSample(process.argv[1], { kind: 'acquire', floorKiB: 1, pid: process.pid, className: 'compilation', repoDir: process.cwd() });`],
-  { env: { ...process.env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '' }, stdio: 'ignore' });
+    'process.stdout.write("ready"); process.stdin.resume();'],
+  { env: { ...process.env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '' },
+    stdio: ['pipe', 'pipe', 'inherit'] });
   t.after(() => { if (child.exitCode === null) child.kill(); });
-  // Fixture capacity models a real host large enough for the canonical floor.
-  assert.equal(await new Promise(resolve => child.once('exit', resolve)), 0);
+  const exited = once(child, 'exit');
+  await once(child.stdout, 'data', { signal: t.signal });
+  // Another caller observes the live compiler slot while its payload is held.
+  const observer = await acquire(root, 1, t);
+  assert.equal((await observer.next()).kind, 'reserved');
+  observer.socket.destroy();
+  child.stdin.end();
+  assert.deepEqual(await exited, [0, null]);
   await recorded;
   const rows = (await readFile(join(root, 'completed-slot-memory.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.equal(rows.length, 1);

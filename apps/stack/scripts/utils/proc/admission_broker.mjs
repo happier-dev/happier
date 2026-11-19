@@ -975,6 +975,29 @@ export function createAdmissionBroker({ root,
     peer.once('close', () => enqueue(() => release(slot)));
     return slot;
   }
+  function hasAdmittedAncestor(pid) {
+    const activeOwners = new Set();
+    for (const slot of slots.values()) {
+      if (slot.admitted || slot.recovered) activeOwners.add(slot.pid);
+    }
+    if (activeOwners.size === 0) return false;
+    // The process tree is authoritative even when a launcher dropped the
+    // inherited markers. Only the live slot listener can own a grant.
+    while (pid > 1) {
+      let status;
+      try { status = readFileSync(`/proc/${pid}/status`, 'utf8'); }
+      catch (error) {
+        if (error.code === 'ENOENT' || error.code === 'ESRCH') return false;
+        throw error;
+      }
+      const parent = Number(/^PPid:\s+(\d+)$/m.exec(status)?.[1]);
+      if (!Number.isSafeInteger(parent) || parent === pid) return false;
+      if (activeOwners.has(parent)) return true;
+      pid = parent;
+    }
+    return false;
+  }
+
   function accept(socket) {
     controls.add(socket);
     let item;
@@ -1057,6 +1080,11 @@ export function createAdmissionBroker({ root,
             || !Number.isSafeInteger(option.workers) || option.workers <= 0)))
         || !Array.isArray(request.locks ?? []) || (request.locks ?? []).some(lock => typeof lock?.path !== 'string')) {
         send(socket, { kind: 'refused', reason: 'HSTACK_INVALID_ADMISSION' }); socket.end(); return;
+      }
+      if (hasAdmittedAncestor(request.pid)) {
+        send(socket, { kind: 'refused', reason: 'HSTACK_ADMISSION_INHERITANCE_REQUIRED' });
+        socket.end();
+        return;
       }
       item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
         arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, ownPriority: headPriorityRank(request),

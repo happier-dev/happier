@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
+import { lstatSync } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import { constants } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { relative, resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
+import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
 import { resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
@@ -232,13 +234,22 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     let selectedFloorKiB = floorKiB;
     let selectedWorkers;
     let selectedCpuCores;
+    const address = brokerAddress(root);
+    const readSocketIdentity = () => {
+      const state = lstatSync(address, { bigint: true, throwIfNoEntry: false });
+      return state?.isSocket() ? `${state.dev}:${state.ino}:${state.ctimeNs}` : null;
+    };
+    let unansweredEndpoint;
     while (!cancellation.signal.aborted) {
+      const socketIdentity = readSocketIdentity();
+      let answered = false;
       control = await connectAdmissionBroker(root);
       cancellation.signal.throwIfAborted();
       const onAbort = () => control.destroy();
       cancellation.signal.addEventListener('abort', onAbort, { once: true });
       try {
         for await (const response of brokerResponses(control, request, cancellation.signal)) {
+          answered = true;
           if (response.kind === 'refused') throw new AdmissionRefusal(response.reason, response.cause);
           if (response.kind === 'queued') {
             const position = response.queuePosition === undefined ? ''
@@ -333,8 +344,19 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
           await closeSlot();
         }
       }
-      // Waiting clients reconnect on broker close. Admitted clients retain
-      // their kernel slot, which a replacement broker discovers independently.
+      // A single lost connection can replay on the same broker. An endpoint
+      // that repeatedly disconnects before it answers waits for replacement
+      // or the existing catch-up (a crashed broker can leave its inode behind).
+      if (!answered && socketIdentity && socketIdentity === unansweredEndpoint) {
+        const observer = createFileChangeObserver([root], {
+          isRelevant: (_directory, name) => name == null || String(name) === basename(address),
+        });
+        try {
+          await observer.wait({ snapshot: socketIdentity, readSnapshot: readSocketIdentity,
+            maxWaitMs: DEFAULT_FILE_CHANGE_CATCH_UP_MS, signal: cancellation.signal });
+        } finally { observer.close(); }
+      }
+      unansweredEndpoint = answered ? undefined : socketIdentity;
     }
     cancellation.signal.throwIfAborted();
   } finally {
@@ -424,6 +446,10 @@ export async function runAdmissionCommand({ command, args = [], validationPrepar
     return status;
   } catch (error) {
     if (error.name === 'AbortError') return 130;
+    if (error instanceof AdmissionRefusal && error.code === 'HSTACK_ADMISSION_INHERITANCE_REQUIRED') {
+      console.error(`[preferred-execution] ${error.code}: nested command must inherit its parent’s admission grant`);
+      return 1;
+    }
     const env = options.env ?? process.env;
     if (options.requireInherited || env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT
       || env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN) {

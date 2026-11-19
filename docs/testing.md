@@ -630,6 +630,15 @@ without memory/process observations. A request larger than the host receives
 `HSTACK_CPU_CAPACITY`; a nonwaiting request without current room receives
 `HSTACK_CPU_BUSY`.
 
+A nested Linux command uses the parent's grant when it retains the admission
+environment. If it sends a new acquire request, the broker checks the
+requesting PID's ancestry against its live and recovered slots and refuses with
+`HSTACK_ADMISSION_INHERITANCE_REQUIRED` before it enters the queue. An acquire
+connection that repeatedly ends before an answer waits for a socket change,
+with the existing catch-up interval covering abrupt broker death. The original
+arrival survives a reconnect. Succession loads the broker check for retained
+clients. The reconnect change takes effect when a client process starts.
+
 The current command-resource catalog owns each class's CPU cost; clients send
 that policy with their memory floor so retained brokers do not re-decide it
 from stale catalog modules. Focused validation and native source/custody work
