@@ -3,6 +3,7 @@ export * from './correlations.js';
 export * from './review.js';
 export * from './semanticInput.js';
 export * from './telemetry.js';
+export { createDeploymentTargetVariableSyncV1, projectDeploymentTargetVariablesV1, type DeploymentTargetObservedVariableV1 } from './variables.js';
 export {
     ProtocolDeploymentPreviewProvenanceV1Schema as DeploymentPreviewProvenanceV1Schema,
     ProtocolDeploymentControllerAvailabilityV1Schema as DeploymentControllerAvailabilityV1Schema,
