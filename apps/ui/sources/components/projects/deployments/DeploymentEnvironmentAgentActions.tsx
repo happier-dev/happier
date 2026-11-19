@@ -37,11 +37,13 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   // Until the catalog answers, the Environment's declared records wait in their settled place (DEPLOY-ACCEPT-143 A6).
   const waiting = investigation.actions === undefined;
   const actions = waiting ? declaredSubjectAgentActions('deploymentEnvironment') : investigation.actions ?? [];
-  if (!props.preparation && actions.length === 0 && !investigation.showOutcome) return null;
+  // Healthy with nothing to offer stays silent; a refused catalog keeps the section to say what it needs.
+  if (!props.preparation && actions.length === 0 && !investigation.showOutcome && !investigation.catalogOutcome) return null;
   const content = (
     <View style={styles.actions}>
-      {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare" /> : null}
-      <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} waiting={waiting} compact={props.compact}
+      {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare"
+        emphasis={actions.length === 0 ? props.emphasis : 'secondary'} /> : null}
+      <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} unavailable={investigation.catalogOutcome} onRetry={investigation.retryCatalog} waiting={waiting} compact={props.compact}
         emphasis={props.emphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
       {investigation.showOutcome && investigation.outcome ? (

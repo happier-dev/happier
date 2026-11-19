@@ -311,7 +311,7 @@ describe('Environment draft Machine Home', () => {
       // The mounted Environment panel reads the Account's settings scope from the app store.
       storage.setState({ settingsScope: account.accountLifetime.scope });
       const panel = await renderScreen(<DeploymentPermissionsPanel detail={{ ...DeploymentEnvironmentDetailV1Schema.parse(read.value), runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] }}
-        lifetime={account.accountLifetime} machineName={id => id} onOpenController={() => {}} editing={{ actions: createDeploymentActions(account.accountLifetime, 'source-app'),
+        lifetime={account.accountLifetime} machineName={id => id} editing={{ actions: createDeploymentActions(account.accountLifetime, 'source-app'),
           serverId, review: { pendingId: null, request: () => {}, open: () => {} }, onChanged: () => {} }} />);
       expect(panel.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${prefix}.deployers`)?.props.value).toBe('chosen');
       expect(panel.findByTestId(`${prefix}.chosen.account.account-bo`)).not.toBeNull();

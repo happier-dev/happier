@@ -83,6 +83,8 @@ export const en = {
         uncertainBody: 'Check your sessions before trying again.',
         unavailableTitle: 'Couldn’t start an investigation',
         unavailableBody: 'Nothing was started.',
+        agentActionsNeedMachine: 'Agent actions need their Machine online.',
+        agentActionsUnavailable: 'Agent actions couldn’t be loaded.',
         alertInvestigateHint: 'Opens a session with this issue as evidence.',
         investigateUnavailable: 'Investigate isn’t available for this alert.',
         notSetUpTitle: 'This action isn’t set up',

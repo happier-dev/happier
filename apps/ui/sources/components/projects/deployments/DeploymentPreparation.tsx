@@ -7,6 +7,8 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import type { ProjectDetectedApplicationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { projectActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { Button } from '@happier-dev/plugin-ui/components';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -116,7 +118,14 @@ function PreparationRecognized(props: Readonly<{ read: RecognizedRead | null; on
 }
 
 /** Prepare and Import share the registered Action; neither depends on an investigation record. */
-export function DeploymentPreparationEntry(props: DeploymentPreparationContext & Readonly<{ mode: PreparationMode }>) {
+export function DeploymentPreparationEntry(props: DeploymentPreparationContext & Readonly<{
+    mode: PreparationMode;
+    /**
+     * Set where the entry stands among agent-action controls (an Environment's Ask an agent): it takes their face, at
+     * this emphasis, so the row reads as one set of buttons (PAGE-ACCEPT-176 R3-D1). Absent, it is a section action.
+     */
+    emphasis?: 'primary' | 'secondary';
+}>) {
     const [handoff, setHandoff] = React.useState<(DeploymentPreparationContext & Readonly<{
         mode: PreparationMode; session: SessionAddress;
     }>) | null>(null);
@@ -127,11 +136,16 @@ export function DeploymentPreparationEntry(props: DeploymentPreparationContext &
         && handoff.environmentId === props.environmentId && props.lifetime.isCurrent()
         ? handoff.session : null;
     const title = t(`projects.deployments.preparation.${props.mode}`);
+    const { emphasis, ...context } = props;
+    const open = () => showDeploymentSheet({ component: DeploymentPreparationSheet,
+        props: { ...context, onSessionAvailable: session => setHandoff({ ...context, session }) },
+        title, testID: `project-deployments.${props.mode}.dialog`, closeOnBackdrop: false });
     return <>
-        <SectionActionButton testID={`project-deployments.${props.mode}.open`} title={title} icon="sparkle"
-            onPress={() => showDeploymentSheet({ component: DeploymentPreparationSheet,
-                props: { ...props, onSessionAvailable: session => setHandoff({ ...props, session }) },
-                title, testID: `project-deployments.${props.mode}.dialog`, closeOnBackdrop: false })} />
+        {emphasis ? (
+            <CorePluginUiPresentationScope>
+                <Button testID={`project-deployments.${props.mode}.open`} title={title} variant={emphasis} size="small" onPress={open} />
+            </CorePluginUiPresentationScope>
+        ) : <SectionActionButton testID={`project-deployments.${props.mode}.open`} title={title} icon="sparkle" onPress={open} />}
         {session ? <DeploymentPreparationResult session={session} lifetime={props.lifetime} /> : null}
     </>;
 }

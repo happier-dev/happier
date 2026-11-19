@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { useWindowDimensions } from 'react-native';
+import { useWindowDimensions, View } from 'react-native';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { AgentActionButton, Row, Stack } from '@happier-dev/plugin-ui/components';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { readFailureActionsBinding } from '@/hooks/inbox/failureActionsBinding';
@@ -43,10 +44,28 @@ export function InvestigationAgentActionButtons(props: Readonly<{
    */
   emphasis?: 'primary' | 'secondary';
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
+  /**
+   * The catalog read was refused (its Machine offline, Triage not answering) and the page has no record of its own to
+   * press: nothing was pressed, so this is the controls' availability, said once and quietly with what it needs, in
+   * the controls' place (PAGE-ACCEPT-176 R3-D1). A failure page that keeps its default Investigate passes nothing:
+   * that press stays the next step and its own outcome says what happened.
+   */
+  unavailable?: Readonly<{ code: string }> | null;
+  /** Reads the catalog again (the line's Retry). */
+  onRetry?: () => void;
 }>): React.ReactElement | null {
   const openEditor = useOpenFailureActionEditor();
   // A phone-width window recomposes a banner's actions (rowStackBelowWidthPx), whatever device class the page passed.
   const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
+  if (props.unavailable) {
+    // The line spans the controls' row, so its Retry stays on the sentence's line instead of wrapping under it.
+    return <View style={UNAVAILABLE_LINE_STYLE}>
+      <SurfaceStateCard testID="investigation.agentActions.unavailable" size="line" kind="unavailable"
+        title={t(props.unavailable.code === 'machine_unreachable'
+          ? 'inbox.work.healthNotice.agentActionsNeedMachine' : 'inbox.work.healthNotice.agentActionsUnavailable')}
+        {...(props.onRetry ? { action: { label: t('common.retry'), onPress: props.onRetry } } : {})} />
+    </View>;
+  }
   if (props.actions.length === 0) return null;
   const buttons = props.actions.map((action, index) => (
     <AgentActionButton
@@ -73,3 +92,5 @@ export function InvestigationAgentActionButtons(props: Readonly<{
     </CorePluginUiPresentationScope>
   );
 }
+
+const UNAVAILABLE_LINE_STYLE = { alignSelf: 'stretch' } as const;

@@ -80,17 +80,17 @@ function editing(
 }
 
 describe('Environment → Permissions: layout (dPerm KEEP, R2-D6)', () => {
-  it('closes the deployer sheet with your role, offers no previews entry, and ends with the controller', async () => {
+  it('closes the deployer sheet with your role, offers no previews entry, and leaves the Controller to Settings', async () => {
     const { t } = await import('@/text');
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={manager() as never}
-      machineName={() => 'vps-1'} onOpenController={() => {}} editing={editing().value as never} />);
+      machineName={() => 'vps-1'} editing={editing().value as never} />);
     try {
       const text = screen.getTextContent();
       const role = text.indexOf(t('projects.deployments.roleManager'));
       expect(role).toBeGreaterThan(text.indexOf(t('projects.deployments.whoMayDeploy')));
       expect(role).toBeLessThan(text.indexOf(t('projects.deployments.editors.approvalsTitle')));
-      expect(text.lastIndexOf(t('projects.deployments.sectionController')))
-        .toBeGreaterThan(text.indexOf(t('projects.deployments.editors.approvalsTitle')));
+      // dPerm draws no Controller section; Settings → Controller is its one place (PAGE-ACCEPT-176 R2-D6).
+      expect(screen.findByTestId('project-deployments.environment.permissions.controller')).toBeNull();
       expect(text).not.toContain(t('projects.deployments.settingsSections.previewEditor.configure'));
     } finally { await screen.unmount(); }
   });
@@ -112,7 +112,7 @@ describe('Environment → Permissions: approvals', () => {
     await account.dispose();
     account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1 }) });
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
-      machineName={() => 'vps-1'} onOpenController={() => {}} editing={editing().value as never} />);
+      machineName={() => 'vps-1'} editing={editing().value as never} />);
     try {
       const deploy = `${prefix}.approvals.deployments.deploy`;
       expect(screen.findByTestId(`${deploy}:mode:ask_first`)?.props.accessibilityState.checked).toBe(true);
@@ -127,7 +127,6 @@ describe('Environment → Permissions: approvals', () => {
       <DeploymentPermissionsPanel
         detail={detail as never}
         machineName={() => 'vps-1'}
-        onOpenController={() => {}}
         editing={editing().value as never}
       />,
     );
@@ -185,7 +184,7 @@ describe('Environment → Permissions: approvals read as what the person does (P
     const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
     const { ActionScopedApprovalRow } = await import('@/components/settings/actions/ActionScopedApprovalRow');
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={manager() as never}
-      machineName={() => 'vps-1'} onOpenController={() => {}} editing={null} />);
+      machineName={() => 'vps-1'} editing={null} />);
     const rows = screen.findAllByType(ActionScopedApprovalRow);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
@@ -205,7 +204,6 @@ describe('Environment → Permissions: chosen people', () => {
       <DeploymentPermissionsPanel
         detail={manager() as never}
         machineName={() => 'vps-1'}
-        onOpenController={() => {}}
         editing={editing().value as never}
       />,
     );
@@ -220,7 +218,6 @@ describe('Environment → Permissions: chosen people', () => {
       <DeploymentPermissionsPanel
         detail={manager({ owner: { kind: 'team', teamId: 'team-a' } }) as never}
         machineName={() => 'vps-1'}
-        onOpenController={() => {}}
         editing={editing().value as never}
       />,
     );
@@ -243,7 +240,6 @@ describe('Environment → Permissions: chosen people', () => {
       <DeploymentPermissionsPanel
         detail={detail as never}
         machineName={() => 'vps-1'}
-        onOpenController={() => {}}
         editing={value as never}
       />,
     );
@@ -269,7 +265,6 @@ describe('Environment → Permissions: chosen people', () => {
       <DeploymentPermissionsPanel
         detail={detail as never}
         machineName={() => 'vps-1'}
-        onOpenController={() => {}}
         editing={value as never}
       />,
     );
@@ -303,7 +298,7 @@ describe('Environment → Permissions: recorded platform access', () => {
           providerEnvironment: { kind: 'preview' as const, gitBranch: 'release' } } },
     ] };
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
-      machineName={() => 'vps-1'} onOpenController={() => {}} />);
+      machineName={() => 'vps-1'} />);
     try {
       const rows = screen.findAllByType(Item);
       const row = (id: string) => rows.find(node => node.props.testID === `${prefix}.platform.${id}`)?.props;
@@ -328,7 +323,7 @@ describe('Environment → Permissions: recorded platform access', () => {
         providerIdentity: { providerAccountId: 'data-org', providerResourceId: 'database', providerEnvironment: 'main' },
       } }] };
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
-      machineName={() => 'vps-1'} onOpenController={() => {}} />);
+      machineName={() => 'vps-1'} />);
     try { expect(screen.findByTestId(`${prefix}.platform`)).toBeNull(); }
     finally { await screen.unmount(); }
   });

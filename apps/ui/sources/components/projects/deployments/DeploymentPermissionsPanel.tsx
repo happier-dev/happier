@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
@@ -23,7 +22,6 @@ import { ActionScopedApprovalRow, type ActionScopedApprovalMode } from '@/compon
 import { normalizeActionsSettings } from '@/components/settings/actions/normalizeActionsSettings';
 import { resolveActionSettingsTargetControlState } from '@/components/settings/actions/resolveActionSettingsControlState';
 import { useActionPolicyWriter } from '@/components/settings/actions/useActionPolicyWriter';
-import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -65,12 +63,10 @@ export const DeploymentPermissionsPanel = React.memo(
       detail: DeploymentEnvironmentReadDetailV1;
       lifetime?: ServerAccountScopeLifetime | null;
       machineName: (machineId: string) => string;
-      onOpenController: () => void;
       /** The Action owner's manager edits; absent where this viewer cannot change who may deploy. */
       editing?: DeploymentEnvironmentEditing | null;
     }>,
   ) {
-    const { theme } = useUnistyles();
     const { environment } = props.detail;
     const editing = environment.capabilities.role === 'manager' ? props.editing ?? null : null;
     const change = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
@@ -134,27 +130,6 @@ export const DeploymentPermissionsPanel = React.memo(
         </ItemGroup>
         <DeploymentPlatformAccess detail={props.detail} scope={accountScope} lifetime={props.lifetime ?? null} />
         <EnvironmentApprovals environment={environment} environmentName={props.detail.content.name} />
-        {/* Last: the Machine that runs its jobs and alerts, edited in Settings → Controller (P40-R54). */}
-        <ItemGroup
-          testID="project-deployments.environment.permissions.controller"
-          title={t('projects.deployments.sectionController')}
-          description={t('projects.deployments.sectionControllerDescription')}
-        >
-          <Item
-            testID="project-deployments.environment.permissions.controller.link"
-            icon={
-              <Icon
-                name="hard-drives"
-                size={18}
-                color={theme.colors.text.secondary}
-              />
-            }
-            title={t('projects.deployments.controllerRow')}
-            detail={props.machineName(environment.controllerMachineId)}
-            showChevron
-            onPress={props.onOpenController}
-          />
-        </ItemGroup>
       </>
     );
   },

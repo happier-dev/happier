@@ -15,6 +15,6 @@ export const deploymentMoveTranslations = {
     "stateless": "This app has no local data to move",
     "source": "From",
     "destination": "To",
-    "run": "Start Move Workflow"
+    "run": "Move"
   },
 } satisfies Pick<Record<SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, 'en'>;
