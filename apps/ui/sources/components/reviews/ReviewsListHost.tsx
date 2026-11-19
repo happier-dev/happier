@@ -19,6 +19,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 import {
@@ -127,8 +129,13 @@ const ReviewRowSpaceMenu = React.memo(function ReviewRowSpaceMenu(props: Readonl
         setOpen(false);
         const [operation, spaceId] = id.split(/:(.*)/s) as ['add' | 'remove', string];
         void setMembership({ resourceKind: 'artifact', resourceId: item.reviewId, operation, spaceId })
-            .then(result => { if (result.ok) void view.list.refresh(); });
-    }, [item.reviewId, setMembership, view.list]);
+            .then(result => {
+                if (result.ok) return;
+                const presentation = presentActionExecutionFailure(result);
+                alertActionFailure({ reason: presentation.reason, code: result.errorCode,
+                    requestId: result.requestId, context: readSafeFailureDetails(result.details) });
+            });
+    }, [item.reviewId, setMembership]);
     if (items.length === 0) return null;
     return <View ref={anchor} collapsable={false}>
         <IconButton testID={`reviews:row:${item.reviewId}:menu`} iconName="dots-three" variant="plain"

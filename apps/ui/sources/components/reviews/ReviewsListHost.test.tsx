@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import '@/sync/ops/actions/defaultActionExecutor';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -18,8 +19,13 @@ import { WorkspaceRouteBody } from '@/app/(app)/reviews';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
+import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 } from '@happier-dev/protocol/collections/spaces/collectionSpaceEnablementV1';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 const routerPush = vi.hoisted(() => vi.fn());
+const membershipAlert = vi.hoisted(() => vi.fn());
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { alert: membershipAlert } }).module);
 // RN's physical recycler is absent from Test Renderer; keep real Collection rows beneath it.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(
     (await import('@/dev/testkit/mocks/virtualizedList')).createCapturingFlatListMock().module,
@@ -31,7 +37,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-afterEach(async () => { await homes.reset(); routerPush.mockClear(); });
+afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); });
 
 describe('/reviews live host', () => {
     it('renders real list metadata and withdraws demand while its retained page is hidden', async () => {
@@ -47,11 +53,14 @@ describe('/reviews live host', () => {
             reads++;
             return { body: { items: [{ reviewId: 'review-live', projectSourceId: null, workflowId: null,
                 subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
-                startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 3, needsDecision: 1 } }], cursor: null } };
+                startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 3, needsDecision: 1 },
+                needsYou: { reviewId: 'review-live', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } }], cursor: 'next-page' } };
         } });
         const page = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={active}>
             <WorkspaceRouteBody />
         </PluginSurfaceFocusEligibilityProvider>;
+        const restorePopoverGlobals = withPopoverWebGlobals();
         const screen = await renderScreen(page(true));
         try {
             await waitForHomeGovernance(() => expect(screen.findByTestId('reviews:list')).not.toBeNull());
@@ -62,6 +71,8 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-live')).not.toBeNull());
             expect(screen.findHostByTestId('reviews:row:review-live')?.props.accessibilityLabel)
                 .toBe(`${t('detailsSurface.review.title')} · ${formatRelativeTimeShort(1, Date.now())}`);
+            await screen.pressByTestIdAsync('reviews-space-filter-open');
+            expect(screen.getTextContent()).toContain(t('sessionsList.conditionCountPartial', { count: 1 }));
             await screen.pressByTestIdAsync('reviews:row:review-live');
             expect(routerPush).toHaveBeenCalledWith(artifactViewRoute('review-live'));
             await act(async () => { screen.update(page(false)); });
@@ -73,7 +84,54 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(reads).toBe(2));
         } finally {
             await screen.unmount();
+            restorePopoverGlobals();
             storage.setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }
+    });
+
+    it.each([true, false])('settles saved-space row menu membership (allowed=%s) visibly without a competing list refresh', async allowed => {
+        const serverId = await homes.addHome({ serverUrl: 'https://reviews-membership.example', name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const previous = storage.getState();
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        const base = createDefaultCollectionSpaceV1('review');
+        const scope = { serverId, accountId: 'alice' };
+        storage.setState({ profileScope: scope, settingsScope: scope, settingsVersion: 1,
+            settings: settingsParse({ collectionSpacesEnabled: true, [COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1.review]: true,
+                collectionSpacesV1: { v: 1, spaces: [{ ...base, id: 'release', name: 'Release', membership: { mode: 'manual_only' } }] } }) });
+        let reads = 0;
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => {
+            reads++;
+            return { body: { items: [{ reviewId: 'review-member', projectSourceId: null, workflowId: null,
+                subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+                startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 },
+                needsYou: { reviewId: 'review-member', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } }], cursor: null } };
+        } });
+        const mutations: unknown[] = [];
+        homes.answer(serverId, 'POST /v2/session-organization/resource-space-memberships', { select: input => {
+            mutations.push(input);
+            return allowed ? { body: { changed: true } } : { status: 403, body: { error: 'permission_denied' } };
+        } });
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive><WorkspaceRouteBody /></PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-member:menu')).not.toBeNull());
+            await screen.pressByTestIdAsync('reviews:row:review-member:menu');
+            await screen.pressByTestIdAsync('reviews:row:review-member:add:release');
+            await waitForHomeGovernance(() => expect(mutations).toEqual([{ resourceKind: 'artifact', resourceId: 'review-member', operation: 'add', spaceId: 'release' }]));
+            if (!allowed) await waitForHomeGovernance(() => expect(membershipAlert).toHaveBeenCalled());
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(reads).toBe(1);
+            if (allowed) expect(membershipAlert).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            restorePopoverGlobals();
+            storage.setState({ profileScope: previous.profileScope, settingsScope: previous.settingsScope,
+                settingsVersion: previous.settingsVersion, settings: previous.settings });
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
         }
     });
