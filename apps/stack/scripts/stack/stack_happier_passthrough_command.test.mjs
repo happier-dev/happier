@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -339,13 +339,17 @@ for (const fails of [false, true]) {
     const expected = { v: 1, ok: true, kind: 'session_create', data: { sessionId: 'fixture-session' } };
     let script = createFixtureDaemonCliScript({ startLogLine: 'start', statusLogLine: 'status', sessionCreateResult: expected });
     if (fails) script = script.replace("if (sub === 'start') {", "if (sub === 'start') { append('start'); process.exit(11);");
+    script = script.replace("if (args[0] !== 'daemon') process.exit(0);", `
+if (['resume', 'attach'].includes(args[0])) console.log(args.join(' '));
+if (args[0] !== 'daemon') process.exit(0);`);
     const fixture = await createStackHappierCliCommandFixture(t, { prefix: 'hstack-create-local-', distIndexScript: script });
     statePath = await prepareSessionCreateFixture(fixture);
     assert.equal(existsSync(statePath), false);
-    const runCreate = () => runNodeCapture([fileURLToPath(new URL('../../bin/hstack.mjs', import.meta.url)),
-      'stack', 'happier', fixture.stackName, '--', 'session', 'create', '--machine-id=local-machine', '--path', '/workspace', '--json'], {
+    const runPassthrough = (...args) => runNodeCapture([fileURLToPath(new URL('../../bin/hstack.mjs', import.meta.url)),
+      'stack', 'happier', fixture.stackName, '--', ...args], {
       cwd: fixture.root, env: { ...fixture.baseEnv, HAPPIER_STACK_MIGRATE_CREDENTIALS: '0', HAPPIER_STACK_AUTO_AUTH_SEED: '0' },
     });
+    const runCreate = () => runPassthrough('session', 'create', '--machine-id=local-machine', '--path', '/workspace', '--json');
     const result = await runCreate();
     assert.equal(result.code, fails ? 1 : 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout.trim()), fails
@@ -360,9 +364,36 @@ for (const fails of [false, true]) {
     const repeatedCreate = await runCreate();
     assert.equal((JSON.parse(await readFile(statePath, 'utf8'))).pid, incumbent.pid,
       'a repeated session create must keep the live incumbent when control is unavailable');
-    assert.doesNotMatch(await readFile(lifecycleLog, 'utf8'), /^stop$/m);
     assert.equal(repeatedCreate.code, 0, repeatedCreate.stderr);
     assert.deepEqual(JSON.parse(repeatedCreate.stdout.trim()), expected);
+
+    const attached = await runPassthrough('attach', 'fixture-session');
+    assert.equal(attached.code, 0, attached.stderr);
+    assert.equal(attached.stdout.trim(), 'attach fixture-session');
+    assert.equal((JSON.parse(await readFile(statePath, 'utf8'))).pid, incumbent.pid);
+
+    const startingLock = `${statePath}.lock`;
+    await writeFile(startingLock, String(incumbent.pid));
+    const retainedState = `${statePath}.fixture-retained`;
+    await rename(statePath, retainedState);
+    try {
+      const resumed = await runPassthrough('resume', 'fixture-session');
+      assert.equal(resumed.code, 0, resumed.stderr);
+      assert.equal(resumed.stdout.trim(), 'resume fixture-session');
+      assert.equal(await readFile(startingLock, 'utf8'), String(incumbent.pid));
+      assert.equal(existsSync(statePath), false, 'resume must leave the live startup in place');
+    } finally {
+      await rename(retainedState, statePath);
+    }
+    assert.doesNotMatch(await readFile(lifecycleLog, 'utf8'), /^stop$/m);
+
+    const logsDir = join(fixture.stackCliHome, 'logs');
+    const attemptLogs = await Promise.all((await readdir(logsDir))
+      .filter(name => name.endsWith('-daemon-start-attempt.log'))
+      .map(name => readFile(join(logsDir, name), 'utf8')));
+    assert.ok(attemptLogs.some(log => /caller=stack-happier-preflight status=stopped decision=start reason=no-live-daemon/.test(log)));
+    assert.ok(attemptLogs.some(log => /caller=stack-happier-preflight status=running decision=keep reason=live-daemon/.test(log)));
+    assert.ok(attemptLogs.some(log => /caller=stack-happier-preflight status=starting decision=keep reason=live-daemon/.test(log)));
   });
 }
 
