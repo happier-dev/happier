@@ -2,7 +2,7 @@ import type {
   ActionExecutorContext,
   ActionExecutorDeps,
 } from '@happier-dev/protocol/actions/executor/types';
-import { prepareProjectSourceDeploymentRecipientsV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployment-protocol/v1';
+import { prepareProjectSourceDeploymentRecipientsV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployments';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readUiProjectDeploymentDefaults } from '@/sync/api/projects/projectDeploymentDefaultsRead';
 

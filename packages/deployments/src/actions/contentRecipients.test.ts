@@ -5,7 +5,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import {
   createDeploymentEnvironmentHeaderV1,
   createDeploymentTargetLinkHeaderV1,
-} from '../testing/v1.js';
+} from '@happier-dev/deployment-protocol/testing/v1';
 import {
   changesDeploymentEnvironmentAccessV1,
   prepareDeploymentEnvironmentRecipientsV1,

@@ -14,7 +14,7 @@ import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { withDeploymentEnvironmentRecipientDeliveryV1 } from '@happier-dev/deployment-protocol/v1';
+import { withDeploymentEnvironmentRecipientDeliveryV1 } from '@happier-dev/deployments';
 import { createUiDeploymentContentRecipientPorts } from './deploymentContentRecipients';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';

@@ -5,7 +5,8 @@ import { buildDeploymentTargetLinkInputV1, createDeploymentLinkContentArtifactId
     type DeploymentTargetLinkInputV1, type DeploymentTargetLinkAlreadyLinkedResultV1,
     type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1,
     type DeploymentEnvironmentGetResultV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
-import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployments';
 import type { createCredentialedAccountArtifactStore, ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';

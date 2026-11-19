@@ -227,7 +227,8 @@ import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydra
 
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { prepareProjectSourceDeploymentRecipientsV1, readDeploymentReceiptActionFactsV1, withDeploymentEnvironmentRecipientDeliveryV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentReceiptActionFactsV1 } from '@happier-dev/deployment-protocol/v1';
+import { prepareProjectSourceDeploymentRecipientsV1, withDeploymentEnvironmentRecipientDeliveryV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployments';
 import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
 
 /** Private Session adapter receives IDs already resolved by Workflow/SCM admission. */

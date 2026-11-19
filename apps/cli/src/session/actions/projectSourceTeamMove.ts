@@ -5,7 +5,8 @@ import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectD
 import { AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
-import { createProjectSourceTeamMovePreparationV1, selectProjectSourceTeamMoveApiTokensV1, moveFailure, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol/v1';
+import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol/v1';
+import { createProjectSourceTeamMovePreparationV1, selectProjectSourceTeamMoveApiTokensV1, moveFailure } from '@happier-dev/deployments';
 
 type Request = Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0];
 /** CLI supplies its existing Account readers; review facts and child operands have one domain owner. */

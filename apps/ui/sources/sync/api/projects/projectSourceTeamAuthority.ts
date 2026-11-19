@@ -1,4 +1,4 @@
-import { selectProjectSourceTeamMoveApiTokensV1 } from '@happier-dev/deployment-protocol/v1';
+import { selectProjectSourceTeamMoveApiTokensV1 } from '@happier-dev/deployments';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema,

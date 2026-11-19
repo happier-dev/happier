@@ -74,8 +74,9 @@ import {
     type DeploymentMachineResultV1, type DeploymentReceiptHeaderV1, type DeploymentSourceIntentV1,
     DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentDataTeardownContentV1Schema, DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema,
     DeploymentProviderTeardownContentV1Schema,
-    OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, findExistingNativeComposeTargetLinkV1,
+    OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1,
 } from '@happier-dev/deployment-protocol';
+import { findExistingNativeComposeTargetLinkV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { createDeploymentMemberVersionProjectionV1, deploymentDomainProbeVantageV1,
     projectDeploymentDomainHealthFactsV1 } from '@happier-dev/deployments';

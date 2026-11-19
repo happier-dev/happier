@@ -4,7 +4,8 @@ import { buildDeploymentTargetLinkInputV1, DeploymentTargetLinksListResultV1Sche
     type DeploymentEnvironmentGetResultV1Schema} from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
-import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployments';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';

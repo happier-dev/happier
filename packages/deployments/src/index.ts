@@ -47,3 +47,6 @@ export { buildDeploymentFleetWorkflowDefinition, type DeploymentFleetWorkflowInp
 export { resolvePublishTargetRecommendation, type PublishTargetRecommendationInput } from './targets/resolvePublishTargetRecommendation.js';
 
 export { readDeploymentDatabaseSizesV1 } from './projection/deploymentDatabaseSize.js';
+export * from './actions/contentRecipients.js';
+export * from './actions/projectSourceTeamMove.js';
+export * from './targets/targetLinkComparison.js';

@@ -1,12 +1,12 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { createProjectSourceTeamMovePreparationV1 } from '@happier-dev/deployment-protocol/v1';
+import { createProjectSourceTeamMovePreparationV1 } from '@happier-dev/deployments';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createProjectSourceActionDeps } from './projectSourceActions';
 import { readProjectSourceTeamApiTokens } from './projectSourceTeamAuthority';
 import { readUiProjectDeploymentDefaults } from './projectDeploymentDefaultsRead';
 
-export { moveFailure, ProjectSourceTeamMoveReadFailure } from '@happier-dev/deployment-protocol/v1';
+export { moveFailure, ProjectSourceTeamMoveReadFailure } from '@happier-dev/deployments';
 export type ProjectSourceTeamMoveReadPorts = Required<Pick<ActionExecutorDeps,
     'deploymentAction' | 'workflowAction' | 'machineAccessAction'>>;
 
