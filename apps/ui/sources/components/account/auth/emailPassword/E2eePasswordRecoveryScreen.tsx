@@ -14,6 +14,7 @@ import { SecretKeyEntryForm, type SecretKeyEntrySubmitResult } from '@/component
 import { usePortableHomeLinkTarget } from '@/components/teams/join/teamJoinTarget';
 import { Text } from '@/components/ui/text/Text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -101,7 +102,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
     ) : undefined;
     const destination = useExactHomeDestination({
         refreshAuth: auth.refreshFromActiveServer,
-        onFocused: React.useCallback(() => router.replace('/'), [router]),
+        onFocused: React.useCallback(() => resolvePostAuthLanding({ replace: router.replace }), [router]),
     });
     const [phase, setPhase] = React.useState<'key' | 'password'>('key');
     const [draft, setDraft] = React.useState<EmailPasswordDraft>(() => createEmailPasswordDraft());

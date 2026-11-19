@@ -11,7 +11,6 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
-import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { desktopHostKind, invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
@@ -20,6 +19,7 @@ import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/pub
 import { usePluginPageExplicitNavigation } from '@/components/plugins/pages/pluginPageNavigation';
 import { matchWorkspaceDestinationRoute, workspacePluginAppPageRouteKey } from '@/components/appShell/workspace/workspaceRoutes';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 
 /**
  * Owns every navigation/auth-driven side effect from the app root layout.
@@ -82,27 +82,6 @@ function LocalRootLayoutNavigationEffects(): React.ReactElement | null {
 
     useWebInitialRouteReconcile({ routerPathname: pathname, routerServerId });
 
-    const legacySessionDeepLinkHandledRef = React.useRef(false);
-    React.useEffect(() => {
-        if (legacySessionDeepLinkHandledRef.current) return;
-        const didConsume = consumeLegacySessionDeepLinkFromWebLocation({
-            isAuthenticated,
-            replaceRelativeUrl: (nextRelativeUrl) => {
-                if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-                try {
-                    window.history.replaceState(null, '', nextRelativeUrl);
-                } catch {
-                    // ignore
-                }
-            },
-            navigateToRoute: (route) => {
-                router.replace(route);
-            },
-        });
-        if (!didConsume) return;
-        legacySessionDeepLinkHandledRef.current = true;
-    }, [isAuthenticated]);
-
     const pendingTerminalHandledRef = React.useRef(false);
     React.useEffect(() => {
         if (!isAuthenticated) {
@@ -125,7 +104,7 @@ function LocalRootLayoutNavigationEffects(): React.ReactElement | null {
                     const focused = await focusTerminalConnectTarget({
                         request: pendingTerminalConnect, serverUrl: pendingTerminalConnect.serverUrl, refreshAuth,
                     });
-                    if (focused) router.replace(terminalConnectResumeHref());
+                    if (focused) resolvePostAuthLanding({ replace: router.replace, continuation: terminalConnectResumeHref() });
                 } catch (error) {
                     Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
                 }

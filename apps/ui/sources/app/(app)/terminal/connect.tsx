@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { TerminalConnectSurface } from '@/components/terminalConnect/TerminalConnectSurface';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { terminalLinkProblemMessage } from '@/components/terminalConnect/terminalLinkProblem';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useTerminalConnectContinuation } from '@/hooks/session/useTerminalConnectContinuation';
@@ -16,7 +17,7 @@ export default function TerminalConnectScreen() {
     const { request, hashProcessed, scrubIfResumable } = useTerminalConnectWebRequest(routeHash);
     const serverUrlFromHash = request?.serverUrl ?? null;
     const homeConnectionDescriptor = request?.homeConnectionDescriptor;
-    const onSuccess = React.useCallback(() => { router.replace('/'); }, [router]);
+    const onSuccess = React.useCallback(() => { resolvePostAuthLanding({ replace: router.replace }); }, [router]);
     const onReject = React.useCallback(() => {
         safeRouterBack({ router, fallbackHref: '/' });
     }, [router]);

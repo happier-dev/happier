@@ -18,7 +18,8 @@ import {
     presentFirstKeyCredentialLifecycle,
 } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
-import { admitInternalRouteHref, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
+import { admitInternalRouteHref, tryAdmitInternalRouteHref } from '@/utils/path/routeUtils';
 
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
@@ -82,7 +83,7 @@ export default function MtlsCallbackScreen() {
                         teamId: pending.teamContinuation.destination.teamId,
                         carrier: pending.teamContinuation.homeServerIdentityId,
                     })
-                    : normalizeInternalReturnPath(pending.returnTo) ?? '/';
+                    : typeof pending.returnTo === 'string' && tryAdmitInternalRouteHref(pending.returnTo) ? pending.returnTo : '/';
                 const callbackAdmissionReference = typeof params.admissionReference === 'string'
                     ? params.admissionReference
                     : '';
@@ -197,16 +198,18 @@ export default function MtlsCallbackScreen() {
                             }, { expectedCredentialTokenDigest: pending.accountContinuation.credentialTokenDigest })) {
                                 throw new Error('Account Service credential custody changed');
                             }
-                            router.replace(admitInternalRouteHref(destination));
+                            resolvePostAuthLanding({ replace: router.replace, returnTo: destination });
                             return;
                         }
-                        router.replace(admitInternalRouteHref(pending.teamContinuation
-                            ? teamSignInReturnPath({
+                        resolvePostAuthLanding({
+                            replace: router.replace,
+                            teamContinuation: pending.teamContinuation ? teamSignInReturnPath({
                                 teamId: pending.teamContinuation.destination.teamId,
                                 carrier: pending.teamContinuation.homeServerIdentityId,
                                 postAuthInvitation: retainPostAuthInvitation,
-                            })
-                            : failureReturnTo));
+                            }) : undefined,
+                            returnTo: pending.returnTo,
+                        });
                     };
                     await presentFirstKeyCredentialLifecycle({
                         run: async () =>

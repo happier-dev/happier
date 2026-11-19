@@ -8,8 +8,10 @@ import { setLastSeenReleaseId } from '@/changelog/releaseNotes/storage';
 import { OnboardingShowcaseStorySurface } from '@/components/onboarding/showcase';
 import { Modal, useModal } from '@/modal';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
+import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 
-import { isShowcaseAwaitingSignIn, markShowcaseAwaitingSignIn } from './storage';
+import { isShowcaseAwaitingSignIn, isShowcaseHomeLandingPending, markShowcaseAwaitingSignIn, subscribeShowcaseHomeLanding } from './storage';
 import { useOnboardingShowcaseState } from './useOnboardingShowcaseState';
 
 function markCurrentReleaseNotesSeen(): void {
@@ -31,6 +33,8 @@ export function OnboardingShowcaseAutoShowMount(): null {
     const modal = useModal();
     const modalStackActive = modal.state.modals.length > 0;
     const welcomeActive = isWelcomeRoute(useCurrentRouteSegments());
+    const landingPending = React.useSyncExternalStore(subscribeShowcaseHomeLanding, isShowcaseHomeLandingPending);
+    const setupPending = usePendingSetupIntent() !== null;
     const ranRef = React.useRef(false);
 
     React.useEffect(() => {
@@ -44,42 +48,37 @@ export function OnboardingShowcaseAutoShowMount(): null {
             showcase.markSeen();
             return;
         }
-        if (modalStackActive || !welcomeActive) return;
+        if (modalStackActive || !welcomeActive || landingPending || setupPending || getPendingTerminalConnect()) return;
 
-        const timer = setTimeout(() => {
-            if (ranRef.current) return;
-            ranRef.current = true;
-            let modalId: string | null = null;
-            const close = () => {
-                if (!modalId) return;
-                Modal.hide(modalId);
-                modalId = null;
-            };
-            const markSeenAndClose = () => {
-                showcase.markSeen();
-                markCurrentReleaseNotesSeen();
-                close();
-            };
+        ranRef.current = true;
+        let modalId: string | null = null;
+        const close = () => {
+            if (!modalId) return;
+            Modal.hide(modalId);
+            modalId = null;
+        };
+        const markSeenAndClose = () => {
+            showcase.markSeen();
+            markCurrentReleaseNotesSeen();
+            close();
+        };
 
-            modalId = Modal.show({
-                component: OnboardingShowcaseStorySurface,
-                phonePresentation: 'sheet',
-                onRequestClose: markSeenAndClose,
-                props: {
-                    manifest: showcase.manifest,
-                    onComplete: markSeenAndClose,
-                    onDismiss: markSeenAndClose,
-                    onAskHappier: () => {
-                        markSeenAndClose();
-                        fireAndForget(import('@/components/sessions/bots/askHappierEntry')
-                            .then(({ startAskHappier }) => startAskHappier({ lifetime: null })), { tag: 'Showcase.askHappier' });
-                    },
+        modalId = Modal.show({
+            component: OnboardingShowcaseStorySurface,
+            phonePresentation: 'sheet',
+            onRequestClose: markSeenAndClose,
+            props: {
+                manifest: showcase.manifest,
+                onComplete: markSeenAndClose,
+                onDismiss: markSeenAndClose,
+                onAskHappier: () => {
+                    markSeenAndClose();
+                    fireAndForget(import('@/components/sessions/bots/askHappierEntry')
+                        .then(({ startAskHappier }) => startAskHappier({ lifetime: null })), { tag: 'Showcase.askHappier' });
                 },
-            });
-        }, 250);
-
-        return () => clearTimeout(timer);
-    }, [auth.isAuthenticated, modalStackActive, showcase, welcomeActive]);
+            },
+        });
+    }, [auth.isAuthenticated, landingPending, modalStackActive, setupPending, showcase, welcomeActive]);
 
     return null;
 }

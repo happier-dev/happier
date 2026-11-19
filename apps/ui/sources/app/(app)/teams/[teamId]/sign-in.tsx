@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { TeamAuthEntrySurface } from '@/components/teams/entry/TeamAuthEntrySurface';
@@ -306,7 +307,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                         teamId: selection.teamId,
                         accountSelection: recoveringIdentity ? 'another' : 'current',
                     } : undefined}
-                    onAuthenticated={() => router.replace(returnTo)}
+                    onAuthenticated={() => resolvePostAuthLanding({ replace: router.replace, teamContinuation: returnTo })}
                     onBack={leaveMethod}
                 />
             </TeamAuthenticationStep>

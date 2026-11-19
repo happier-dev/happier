@@ -1,5 +1,5 @@
 import { useAuth } from '@/auth/context/AuthContext';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { useRouter, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
@@ -11,7 +11,7 @@ import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingS
 import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/authenticatedRootDeepLinkRedirectAllowed';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { resolveLegacySessionDeepLinkRoute } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
+import { consumeLegacySessionDeepLinkFromWebLocation, resolveLegacySessionDeepLinkRoute } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveNewSessionAuthContinuation } from '@/components/sessions/new/navigation/newSessionAuthContinuation';
 import { PersonalHomeBootstrapContent, usePersonalHomeBootstrapActive } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -20,6 +20,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 
 const stylesheet = StyleSheet.create({
     root: {
@@ -30,22 +31,40 @@ const stylesheet = StyleSheet.create({
 
 export function Home() {
     const auth = useAuth();
+    const router = useRouter();
+    const params = useLocalSearchParams<{ id?: string; newSessionAuthContinuation?: string }>();
     const activeServerSnapshot = useActiveServerSnapshot();
     const personalHomeBootstrapActive = usePersonalHomeBootstrapActive();
+    const pendingSetupIntent = usePendingSetupIntent();
     const keepDesktopPersonalHomeShell = shouldKeepDesktopPersonalHomeShell({
         isAuthenticated: auth.isAuthenticated,
         isPersonalHomeBootstrapActive: personalHomeBootstrapActive,
     });
-    if (!auth.isAuthenticated && !keepDesktopPersonalHomeShell) {
+    const [showAuthenticated, setShowAuthenticated] = React.useState(auth.isAuthenticated || keepDesktopPersonalHomeShell);
+    React.useLayoutEffect(() => {
+        if (!auth.isAuthenticated || keepDesktopPersonalHomeShell) {
+            setShowAuthenticated(keepDesktopPersonalHomeShell);
+            return;
+        }
+        if (showAuthenticated) return;
+        if (params.id || params.newSessionAuthContinuation || pendingSetupIntent || getPendingTerminalConnect() || !isAuthenticatedRootDeepLinkRedirectAllowed()) {
+            setShowAuthenticated(true);
+            return;
+        }
+        resolvePostAuthLanding({ replace: router.replace, revealHome: () => setShowAuthenticated(true) });
+    }, [auth.isAuthenticated, keepDesktopPersonalHomeShell, params.id, params.newSessionAuthContinuation, pendingSetupIntent, router, showAuthenticated]);
+
+    if (!keepDesktopPersonalHomeShell && (!auth.isAuthenticated || !showAuthenticated)) {
         // Only the active provider owns bootstrap/adoption recovery in the shell. An explicit
         // existing Home bypasses that provider and needs real pre-auth, not Account-only loading.
         return <PreAuthOnboardingWizardEntry />;
     }
-    return <Authenticated activeServerId={activeServerSnapshot.serverId} />;
+    return <Authenticated activeServerId={activeServerSnapshot.serverId} pendingSetupIntent={pendingSetupIntent} />;
 }
 
 function Authenticated(props: Readonly<{
     activeServerId: string;
+    pendingSetupIntent: ReturnType<typeof usePendingSetupIntent>;
 }>) {
     const params = useLocalSearchParams<{
         id?: string | string[];
@@ -70,20 +89,34 @@ function Authenticated(props: Readonly<{
             routeParams: params,
         });
     }, [params, props.activeServerId]);
-    const pendingSetupIntent = usePendingSetupIntent();
+    const { pendingSetupIntent } = props;
     const consumedIntentRef = React.useRef<typeof pendingSetupIntent>(null);
     const pendingTerminalConnect = getPendingTerminalConnect();
 
+    const routeContinuation = isAuthenticatedRootDeepLinkRedirectAllowed() ? newSessionAuthContinuation ?? legacySessionRoute : null;
+    const legacyWebLocationConsumed = React.useRef(false);
     React.useEffect(() => {
-        if (!newSessionAuthContinuation) return;
-        router.replace(newSessionAuthContinuation);
-    }, [newSessionAuthContinuation, router]);
-
-    React.useEffect(() => {
-        if (!legacySessionRoute) return;
         if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
-        router.replace(legacySessionRoute);
-    }, [legacySessionRoute, router]);
+        if (newSessionAuthContinuation) {
+            resolvePostAuthLanding({ replace: router.replace, continuation: newSessionAuthContinuation });
+            return;
+        }
+        if (Platform.OS === 'web' && !legacyWebLocationConsumed.current) {
+            legacyWebLocationConsumed.current = consumeLegacySessionDeepLinkFromWebLocation({
+                isAuthenticated: true,
+                replaceRelativeUrl: (relativeUrl) => {
+                    try {
+                        window.history.replaceState(null, '', relativeUrl);
+                    } catch {
+                        // Navigation can still replace the legacy link.
+                    }
+                },
+                navigateToRoute: (continuation) => resolvePostAuthLanding({ replace: router.replace, continuation }),
+            });
+            if (legacyWebLocationConsumed.current) return;
+        }
+        if (routeContinuation) resolvePostAuthLanding({ replace: router.replace, continuation: routeContinuation });
+    }, [newSessionAuthContinuation, routeContinuation, router]);
 
     React.useEffect(() => {
         if (normalizeSessionId(sessionId) || newSessionAuthContinuation) return;
@@ -108,11 +141,13 @@ function Authenticated(props: Readonly<{
         }
         consumedIntentRef.current = pendingSetupIntent;
         clearPendingSetupIntent();
-        router.replace(buildMachineAddHref({
-            path: pendingSetupIntent.branch === 'remoteMachine' ? 'ssh' : 'thisComputer',
-        }));
+        resolvePostAuthLanding({
+            replace: router.replace,
+            continuation: buildMachineAddHref({ path: pendingSetupIntent.branch === 'remoteMachine' ? 'ssh' : 'thisComputer' }),
+        });
     }, [activeServerAccountScope, askHappierReady, newSessionAuthContinuation, pendingSetupIntent, pendingTerminalConnect, router, sessionId, startAskHappier]);
 
+    if (routeContinuation) return null;
     return (
         <View style={stylesheet.root}>
             <PersonalHomeBootstrapContent>
