@@ -13,7 +13,6 @@ import {
   stopDaemonSession,
 } from '@/daemon/controlClient';
 import type { DaemonSessionRunnerRestartMode, RestartAllDaemonSessionRunnersResult } from '@/daemon/controlClient';
-import { startDaemon } from '@/daemon/startDaemon';
 import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
@@ -404,6 +403,7 @@ export async function handleDaemonControlCliCommand(context: CommandContext): Pr
       console.log(warn('This relay has its own background service: taking it over from the default background service...'));
     }
 
+    const { startDaemon } = await import('@/daemon/startDaemon');
     await startDaemon({
       takeover: takeoverRequested,
       ...(pluginRecoveryRequested ? { pluginRecovery: true } : {}),
