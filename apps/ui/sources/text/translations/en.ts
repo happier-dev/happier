@@ -10689,7 +10689,7 @@ const enSession = {
       unauthorized: 'You don’t have permission to send to this session.',
       steerAccessRequired: 'You can’t send messages here. Ask the session owner for Can steer.',
       modelNotGranted: 'The selected model is not allowed.',
-      permissionModeNotGranted: 'The selected permission mode is not allowed.',
+      permissionModeNotGranted: 'Message not sent. Choose an allowed permission mode or ask the session owner for permission to approve prompts.',
       targetUnavailable:
         'The selected agent conversation is no longer available. Nothing was sent.',
       targetUpdateRequired:

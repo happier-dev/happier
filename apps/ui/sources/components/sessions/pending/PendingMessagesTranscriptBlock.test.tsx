@@ -347,6 +347,14 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(renderedText).toContain(t('connectedServices.diagnostics.body.provider_session_state_unavailable_for_resume'));
     });
 
+    it('presents a permission mode refusal on the undelivered input', async () => {
+        const message = { ...queuedMessage('refused', 1), discardedAt: 2, discardedReason: 'permission_mode_not_granted' as const };
+        const Component = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
+        const renderedText = screen.findByTestId('pendingMessages.discarded.message:refused')?.findAll(node => String(node.type) === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        expect(renderedText).toContain(t('session.pendingMessages.admissionRejected.permissionModeNotGranted'));
+    });
+
     it('presents a retained launch refusal from its typed cause alone', async () => {
         const pendingFailure = { code: 'resume_failed' as const, errorDetail: { kind: 'launch_error' as const,
             code: 'agent_startup_model_reconciliation_failed', childExit: { code: 1, signal: null },

@@ -1060,7 +1060,7 @@ function withPendingDeliveryState<T extends PendingMessage>(row: PendingRow, mes
 }
 
 function coerceDiscardReason(value: string | null): DiscardedPendingMessage['discardedReason'] {
-    if (value === 'switch_to_local' || value === 'resume_failed') return value;
+    if (value === 'switch_to_local' || value === 'resume_failed' || value === 'permission_mode_not_granted') return value;
     if (value === 'dismissed_uncertain' || value === 'resent_as_new') return value;
     return 'manual';
 }

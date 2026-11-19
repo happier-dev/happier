@@ -160,6 +160,7 @@ export type WaitForSessionInputResult =
         | 'encryption_material_unavailable'
         | 'invalid_local_id'
         | 'cancelled'
+        | 'permission_mode_not_granted'
         | 'session_reply_timeout'
         | 'result_read_failed';
       candidates?: string[];
@@ -627,6 +628,7 @@ type CurrentPromptDeliveryOutcome =
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'materialized'; message: TranscriptMessageLookupResult }>
   | Readonly<{ kind: 'blocked'; reason: PendingQueueDeliveryBlockedReason }>
+  | Readonly<{ kind: 'rejected'; code: 'permission_mode_not_granted' }>
   | Readonly<{ kind: 'cancelled' }>;
 
 type FulfilledReplyObservation = Readonly<{ kind: 'fulfilled'; outcome: SessionMessageReplyOutcomeV1 }>;
@@ -708,6 +710,7 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       });
       params.signal?.throwIfAborted();
+      let terminalReply: FulfilledReplyObservation | undefined;
       if (params.replyCredentials) {
         try {
           const original = await readOriginalReply({ ...params, credentials: params.replyCredentials });
@@ -717,17 +720,24 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
           // without ever producing a committed transcript input or answer.
           if (outcome && !('result' in outcome)
             && !(original.status === 'available' && isPublishedWorkflowDiscussionAnswer(original.progress))) {
-            // A committed input settles through its accepted turn, which owns the input ref and typed cause.
-            if (materialized) return { kind: 'materialized', message: materialized };
-            return { kind: 'fulfilled', outcome };
+            terminalReply = { kind: 'fulfilled', outcome };
           }
         } catch {
           // Unavailable custody is not completion; reuse the input change wait.
           params.signal?.throwIfAborted();
         }
       }
+      // Read custody after reply progress so a concurrent pre-provider refusal
+      // cannot be observed as a generic failed reply before its discard reason.
       const deliveryStatus = await readPromptDeliveryStatus(params);
       params.signal?.throwIfAborted();
+      if (deliveryStatus?.status === 'discarded' && deliveryStatus.reason === 'permission_mode_not_granted') {
+        return { kind: 'rejected', code: deliveryStatus.reason };
+      }
+      if (terminalReply) {
+        // A committed input settles through its accepted turn, which owns the input ref and typed cause.
+        return materialized ? { kind: 'materialized', message: materialized } : terminalReply;
+      }
       if (deliveryStatus?.status === 'discarded' && deliveryStatus.reason === 'session_input_cancelled') return { kind: 'cancelled' };
       if (deliveryStatus?.status === 'blocked') return { kind: 'blocked', reason: deliveryStatus.reason };
       // Host transcript custody precedes provider acceptance. Keep observing
@@ -1439,6 +1449,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
     const promptDelivery = params.observeReply
       ? await waitForCurrentPromptDelivery({ ...deliveryParams, replyCredentials: params.credentials })
       : await waitForCurrentPromptDelivery(deliveryParams);
+    if (promptDelivery.kind === 'rejected') return { ok: false, code: promptDelivery.code };
     if (promptDelivery.kind === 'fulfilled') {
       return { ok: true, sessionId: sessionTarget.sessionId, localId,
         result: promptDelivery, replyOutcome: promptDelivery.outcome };
@@ -2346,6 +2357,9 @@ export async function sendSessionMessage(
         message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
         admissionResult: projectBlockedPromptDeliveryAdmissionResult(promptDelivery.reason, localId),
       };
+    }
+    if (promptDelivery.kind === 'rejected') {
+      return { ok: false, code: 'wait_failed', admissionResult: { status: 'rejected', code: promptDelivery.code } };
     }
     if (promptDelivery.kind === 'missing') {
       return {

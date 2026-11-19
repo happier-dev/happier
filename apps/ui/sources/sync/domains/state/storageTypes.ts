@@ -262,7 +262,7 @@ export interface PendingMessage extends TranscriptAccountActorMetadata {
 
 export interface DiscardedPendingMessage extends PendingMessage {
     discardedAt: number;
-    discardedReason: 'switch_to_local' | 'manual' | 'dismissed_uncertain' | 'resent_as_new' | 'resume_failed';
+    discardedReason: 'switch_to_local' | 'manual' | 'dismissed_uncertain' | 'resent_as_new' | 'resume_failed' | 'permission_mode_not_granted';
     pendingFailure?: import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1').PendingDeliveryFailureV1;
 }
 

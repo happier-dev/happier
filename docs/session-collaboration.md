@@ -144,6 +144,14 @@ For Account input, current read access without **Can steer** yields `403` with
 writes and their duplicate reconciliation, use the same decision. A caller without
 access receives the endpoint's missing-Session `404`.
 
+Home records the permission ceiling for shared editors without permission-approval
+delegation in the Pending admission receipt. In 0.3 source, the Session runner opens
+the input and compares its requested or inherited permission mode to that ceiling.
+If the mode exceeds it, the current publisher settles the original Pending input as
+`permission_mode_not_granted` before provider dispatch. The discard advances the
+queue and remains the delivery outcome for the original in the CLI reply wait and
+app transcript.
+
 The Session share also governs its ephemeral managed Browser: View watches its
 frames and Steer drives it, without a Machine grant. Browser routing consumes
 `resolveSessionAccessForOperation` (`readTranscript` for viewing,

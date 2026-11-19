@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
+import axios from "axios";
 import tweetnacl from 'tweetnacl';
 import type { Prisma } from "@prisma/client";
 import {
@@ -62,6 +63,8 @@ import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
 import { readManagedWakeTargets, assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
 import { registerSessionListingRoutes } from "@/app/api/routes/session/registerSessionListingRoutes";
 import { registerSessionMessageRoutes } from "@/app/api/routes/session/registerSessionMessageRoutes";
+import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
+import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { mapPendingActivationAuthorization, mapPendingActivationFailureDetails } from './pendingActivationAuthorization';
@@ -89,6 +92,16 @@ import { UpdateSchema, UserMessageSchema } from '../../../../../cli/src/api/type
 import { handleSessionNewMessageUpdate } from '../../../../../cli/src/api/session/sessionNewMessageUpdate';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/sessionPermissionModes';
+import { buildProtectedSessionInputTextRecordV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { encodeBase64, encrypt } from '../../../../../cli/src/api/encryption';
+import { MessageQueue2 } from '../../../../../cli/src/agent/runtime/modeMessageQueue';
+import { registerPermissionModeMessageQueueBinding } from '../../../../../cli/src/agent/runtime/permissions/bindModeQueue';
+import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '../../../../../cli/src/agent/runtime/permissions/queuedPrompt';
+import { createSessionProviderInputOutcomeBinding } from '../../../../../cli/src/agent/runtime/session/input/providerInputOutcome';
+import { waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
+import * as cliSessionSockets from '../../../../../cli/src/api/session/sockets';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 type EnqueuePendingMessageParams = Parameters<typeof enqueuePendingMessageWithAction>[0];
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -520,6 +533,127 @@ describe("pendingMessageService (shared sessions)", () => {
         await expect(db.sessionPendingMessage.findUnique({ where: {
             sessionId_localId: { sessionId: session.id, localId: "disjoint-token" },
         } })).resolves.toBeNull();
+    });
+
+    it('settles an encrypted shared editor permission refusal and delivers the following input', async () => {
+        const ownerKey = tweetnacl.box.keyPair();
+        const editorKey = tweetnacl.box.keyPair();
+        const owner = await db.account.create({ data: createSignedAccountContentBinding(ownerKey.publicKey), select: { id: true } });
+        const editor = await db.account.create({ data: createSignedAccountContentBinding(editorKey.publicKey), select: { id: true } });
+        const session = await createSession(owner.id);
+        await shareSession({ sessionId: session.id, ownerId: owner.id, participantId: editor.id, accessLevel: 'edit' });
+        const serverSocket = createAuthenticatedFakeSocket({ id: randomUUID(),
+            nsp: { server: createSocketRoomDiscoveryHarness(async () => []) } });
+        const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id, socket: serverSocket });
+        sessionUpdateHandler(owner.id, serverSocket as unknown as Parameters<typeof sessionUpdateHandler>[1], {
+            connectionType: 'session-scoped', socket: serverSocket, userId: owner.id, sessionId: session.id,
+        } as unknown as Parameters<typeof sessionUpdateHandler>[2], { presence: publisher.presence, binding: publisher });
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, input) => {
+            let response: unknown;
+            await getSocketHandler(serverSocket, event)(input, (value: unknown) => { response = value; });
+            return response;
+        } });
+        const senderHeaders = { 'x-test-user-id': editor.id, 'x-test-auth-token-kind': 'terminal' };
+        const encryptionKey = new Uint8Array(32).fill(3);
+        await db.session.update({ where: { id: session.id }, data: { metadataLayoutVersion: 1,
+            ownerMetadata: JSON.stringify({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'session_owner_metadata',
+                material: { type: 'dataKey', machineKey: ownerKey.secretKey }, payload: { v: 1 }, randomBytes: tweetnacl.randomBytes }) }),
+            metadata: encodeBase64(encrypt(encryptionKey, 'dataKey', { v: 1 })) } });
+        await db.sessionDataKeyEnvelope.create({ data: { sessionId: session.id, recipientAccountId: editor.id,
+            encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: encryptionKey,
+                recipientPublicKey: editorKey.publicKey, randomBytes: tweetnacl.randomBytes }) } });
+        const basePath = `/v2/sessions/${session.id}/pending`;
+        const refused = 'editor-refused';
+        const allowed = 'editor-allowed';
+        await withAuthenticatedTestApp(app => {
+            sessionPendingRoutes(app);
+            registerSessionListingRoutes(app);
+            registerSessionMessageRoutes(app);
+            registerAccountEncryptionRoutes(app);
+            registerAccountProfileRoute(app);
+        }, async app => {
+            for (const [localId, permissionMode] of [[refused, 'yolo'], [allowed, 'default']] as const) {
+                const original = buildTrustedHostSessionInputAdmissionV1('cli');
+                const replyIntent = { mode: 'wait' } as const;
+                const record = buildProtectedSessionInputTextRecordV1({ text: localId, meta: { permissionMode },
+                    admission: { ...original, request: { ...original.request, replyIntent } } });
+                const response = await app.inject({ method: 'POST', url: basePath, headers: senderHeaders,
+                    payload: { localId, ciphertext: encodeBase64(encrypt(encryptionKey, 'dataKey', record)),
+                        messageRole: 'user', requestedAction: { v: 1, kind: 'enqueue' }, reply: replyIntent } });
+                expect(response.statusCode, response.body).toBe(200);
+            }
+            vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+                encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'e2ee' },
+                session: { pendingInput: { protocolVersion: 5 }, runtimeActivity: { protocolVersion: 2 }, publisherAuthority: { protocolVersion: 1 } },
+            } })));
+            const token = `header.${Buffer.from(JSON.stringify({ sub: owner.id })).toString('base64url')}.signature`;
+            const client = new ApiSessionClient(token, { ...createPlainSessionFixture({ id: session.id,
+                pendingCount: 2, pendingVersion: 2, metadata: createTestMetadata({ machineId: publisher.machineId }) }),
+                encryptionMode: 'e2ee', encryptionKey, encryptionVariant: 'dataKey',
+            }, { localMachineId: publisher.machineId, durableMutationDeliveryInitiallyActive: false,
+                metadataAuthority: { kind: 'owner', credentials: { token, encryption: null } },
+                transport: { serverId: 'permission-home', serverUrl: 'https://permission-home.example.test',
+                    createAccountUpdatesSocket: () => createApiSessionSocketStub({ connected: true }),
+                    createSessionSocketTransport: () => ({ socket, transport: createSocketTransportAdapter(socket) }),
+                },
+            });
+            const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
+                mode => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
+            const outcomes = createSessionProviderInputOutcomeBinding({ getTarget: () => client });
+            registerPermissionModeMessageQueueBinding({ session: client, queue,
+                getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {},
+                inFlightSteer: { isTurnInFlight: () => false, supportsInFlightSteer: () => false,
+                    registerProviderAcceptedEffect: () => {}, steerText: async () => {},
+                    rejectPromptBeforeProvider: info => outcomes.observeProviderInputOutcome({ type: 'rejected_before_write', ...info }) },
+            });
+            const httpPost = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const response = await app.inject({ method: 'POST', url: new URL(String(url)).pathname,
+                    headers: { 'x-test-user-id': owner.id }, payload: body });
+                expect(response.statusCode).toBe(200);
+                return { status: response.statusCode, data: response.json() };
+            });
+            const senderReads: Array<{ path: string; status: number }> = [];
+            const httpGet = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+                const path = new URL(String(url));
+                for (const [key, value] of Object.entries(config?.params ?? {})) path.searchParams.set(key, String(value));
+                const headers = Object.fromEntries(Object.entries(axios.AxiosHeaders.from(config?.headers ?? {}).toJSON(true))
+                    .filter(([name]) => name.toLowerCase() !== 'authorization').map(([name, value]) => [name, String(value)]));
+                const response = await app.inject({ method: 'GET', url: path.pathname + path.search,
+                    headers: { ...headers, ...senderHeaders } });
+                senderReads.push({ path: path.pathname, status: response.statusCode });
+                return { status: response.statusCode, data: response.json() };
+            });
+            const observationSocket = vi.spyOn(cliSessionSockets, 'createSessionScopedSocketConnection').mockImplementation(() => {
+                const socket = createApiSessionSocketStub({ connected: true });
+                return { socket, transport: createSocketTransportAdapter(socket) } as ReturnType<typeof cliSessionSockets.createSessionScopedSocketConnection>;
+            });
+            try {
+                await new Promise<void>(resolve => client.once('session-sync-server-contract', resolve));
+                await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: refused });
+                expect(queue.size()).toBe(0);
+                await vi.waitFor(async () => {
+                    const response = await app.inject({ method: 'GET', url: `${basePath}?includeDiscarded=true`, headers: senderHeaders });
+                    expect(response.statusCode).toBe(200);
+                    const pending = response.json().pending as Array<{ localId: string; deliveryStatus: unknown }>;
+                    expect(pending.find(row => row.localId === refused)?.deliveryStatus)
+                        .toEqual({ status: 'discarded', reason: 'permission_mode_not_granted' });
+                });
+                const result = await waitForSessionInputResult({ credentials: { token: 'editor-fixture', encryption: {
+                    type: 'dataKey', machineKey: editorKey.secretKey, publicKey: editorKey.publicKey,
+                } }, idOrPrefix: session.id, localId: refused, observeReply: true, timeoutMs: 1000 });
+                expect(result, JSON.stringify(senderReads)).toEqual({ ok: false, code: 'permission_mode_not_granted' });
+                await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: allowed });
+                expect(queue.size()).toBe(1);
+                expect(await queue.waitForMessagesAndGetAsString()).toMatchObject({ message: { text: allowed, localId: allowed } });
+                expect(queue.size()).toBe(0);
+            } finally {
+                observationSocket.mockRestore();
+                httpGet.mockRestore();
+                httpPost.mockRestore();
+                await client.close();
+                vi.unstubAllGlobals();
+            }
+        });
     });
 
     it("limits direct transcript permission modes for opaque input from a shared editor", async () => {

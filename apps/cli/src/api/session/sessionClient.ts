@@ -5327,9 +5327,18 @@ export class ApiSessionClient extends EventEmitter {
             || this.terminalPendingSettlementLocalIds.has(localId)) return false;
         const signal = input.signal
             ? AbortSignal.any([input.signal, this.socketAckAbortController.signal]) : this.socketAckAbortController.signal;
-        const result = await settlePendingQueueV2Admission({ socket: this.socket, sessionId: this.sessionId, localId,
-            signal, decision: { kind: 'reject', code: 'session_input_cancelled' } });
-        if (result.status !== 'rejected' || result.code !== 'session_input_cancelled') return false;
+        return await this.rejectPendingInputBeforeProviderDispatch(localId, 'session_input_cancelled', this.socket, signal);
+    }
+
+    private async rejectPendingInputBeforeProviderDispatch(
+        localId: string,
+        code: 'session_input_cancelled' | 'permission_mode_not_granted',
+        socket: ApiSessionClient['socket'],
+        signal: AbortSignal,
+    ): Promise<boolean> {
+        const result = await settlePendingQueueV2Admission({ socket, sessionId: this.sessionId, localId,
+            signal, decision: { kind: 'reject', code } });
+        if (result.status !== 'rejected' || result.code !== code) return false;
         this.deletePendingProviderInputLocalState(localId);
         this.emit('pending-provider-input-retired', localId);
         return true;
@@ -5570,6 +5579,16 @@ export class ApiSessionClient extends EventEmitter {
                 try {
                     const accepted = this.terminalPendingSettlementLocalIds.get(localId);
                     if (accepted?.kind === 'rejected_before_effect') {
+                        if (accepted.outcome.reason === 'permission_mode_not_granted' && !authority.executionRun
+                            && !this.dispatchedPendingProviderInputLocalIds.has(localId)) {
+                            if (await this.rejectPendingInputBeforeProviderDispatch(
+                                localId, accepted.outcome.reason, authority.socket, authority.abortSignal,
+                            )) {
+                                this.terminalPendingSettlementLocalIds.delete(localId);
+                                this.wakePendingMaterialization();
+                            }
+                            return;
+                        }
                         await this.blockPendingProviderInputDelivery(accepted.outcome, authority.executionRun, authority.abortSignal);
                         return;
                     }
@@ -5805,7 +5824,8 @@ export class ApiSessionClient extends EventEmitter {
         signal: AbortSignal = this.socketAckAbortController.signal,
     ): Promise<boolean> {
         const localId = outcome.localId;
-        const reason = outcome.kind === 'rejected_before_effect' ? outcome.reason : 'delivery_outcome_uncertain';
+        const reason = outcome.kind !== 'rejected_before_effect' ? 'delivery_outcome_uncertain'
+            : outcome.reason === 'permission_mode_not_granted' ? 'provider_rejected_before_acceptance' : outcome.reason;
         const didRequeueConditionalSteer = await this.blockPendingProviderInputDeliveryByReason(localId, reason, executionRun, signal);
         if (executionRun && !executionRun.isCurrent()) return false;
         if (didRequeueConditionalSteer) {

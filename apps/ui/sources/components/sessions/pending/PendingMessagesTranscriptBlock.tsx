@@ -36,6 +36,7 @@ import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import {
     getPendingMessageVisualState,
+    getSessionInputFailureLabelKey,
     isAcceptedLocalPendingProjection,
     isLaunchOwnedPendingMessage,
     canUseDirectPendingDeliveryActions,
@@ -1148,9 +1149,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
     const renderDiscardedMessage = React.useCallback((message: DiscardedPendingMessage, index: number, all: readonly DiscardedPendingMessage[]) => {
         const isLastDiscarded = index === all.length - 1;
+        const admissionFailure = getSessionInputFailureLabelKey({ code: message.discardedReason });
         const outcomeLabel = message.pendingFailure
             ? resolvePendingDeliveryFailureMessage(message.pendingFailure)
-            : t('session.pendingMessages.discarded.label');
+            : t(admissionFailure ?? 'session.pendingMessages.discarded.label');
         const text = getPendingText(message).trim();
         const { isHostInput: isHostFollowInput, followInput } = resolvePendingMessageContentPresentation(message);
         const menuKey = `discarded:${message.id}`;

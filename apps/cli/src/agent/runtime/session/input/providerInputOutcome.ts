@@ -65,6 +65,7 @@ export type SessionProviderInputOutcomeIdentity = Readonly<{
 
 export type SessionProviderInputRejectedBeforeEffectReason =
     | 'provider_rejected_before_acceptance'
+    | 'permission_mode_not_granted'
     | 'terminal_composer_draft'
     | 'runtime_config_blocked'
     | 'provider_unavailable_before_acceptance'
@@ -84,7 +85,8 @@ export function isReversibleSessionProviderInputBlockReason(
 function readSessionProviderInputRejectedBeforeEffectReason(
     value: unknown,
 ): SessionProviderInputRejectedBeforeEffectReason {
-    return value === 'terminal_composer_draft'
+    return value === 'permission_mode_not_granted'
+        || value === 'terminal_composer_draft'
         || value === 'runtime_config_blocked'
         || value === 'provider_unavailable_before_acceptance'
         || value === 'host_retired_before_dispatch'

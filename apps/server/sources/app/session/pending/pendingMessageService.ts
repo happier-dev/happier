@@ -2281,15 +2281,16 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
     if (!requestedAction.success) return null;
 
     let requestEqualityEvidenceV1: SessionInputRequestEqualityEvidenceV1 | undefined;
-    if (requestContent.t === "plain") {
+    // A publisher refusing this exact claim leaves its original content and equality evidence intact.
+    if (params.code !== "permission_mode_not_granted" && requestContent.t === "plain") {
         const derived = derivePlainRequestEqualityEvidence({
             content: requestContent,
             requestedAction: requestedAction.data,
         });
         if (!derived) return null;
         requestEqualityEvidenceV1 = derived;
-    } else if (requestContent.t !== "encrypted" || params.code !== "session_input_cancelled"
-        || params.existing.requestEqualityEvidenceV1 != null) {
+    } else if (params.code !== "permission_mode_not_granted" && (requestContent.t !== "encrypted"
+        || params.code !== "session_input_cancelled" || params.existing.requestEqualityEvidenceV1 != null)) {
         const parsed = createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(
             params.existing.requestEqualityEvidenceV1,
         );
@@ -2583,7 +2584,13 @@ export async function settlePendingInputAdmission(params: Readonly<{
             }
             // Domain validation writes only the exchange root's transcript row, never this Pending row.
             const progress = existing.replyProgress == null ? null : SessionMessageReplyProgressV1Schema.safeParse(existing.replyProgress);
-            if (progress && (!progress.success || !matchesOriginalReplyAdmission(progress.data, params.decision.validation?.reply, existing.content))
+            const permissionRefusal = params.decision.kind === "reject" && params.decision.code === "permission_mode_not_granted";
+            if (permissionRefusal && (existing.targetExecutionRunId !== null || existing.turnStartWitnessId !== null)) {
+                return { ok: false, error: "conflict" } as const;
+            }
+            // A current publisher's refusal of the exact claim does not change its original reply intent.
+            if (progress && (!progress.success || (!permissionRefusal || params.decision.validation?.reply !== undefined)
+                && !matchesOriginalReplyAdmission(progress.data, params.decision.validation?.reply, existing.content))
                 || !progress && params.decision.validation?.reply !== undefined) return { ok: false, error: 'conflict' } as const;
             if (!domainValidation.ok && !domainValidation.rejectionCode) {
                 return { ok: false, error: "conflict" } as const;

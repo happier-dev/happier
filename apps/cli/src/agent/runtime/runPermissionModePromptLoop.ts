@@ -1082,7 +1082,8 @@ export async function runPermissionModePromptLoop(opts: {
         ? 'model_not_granted'
         : !isPermissionModeGrantedV1(constraints, message.mode.permissionMode)
           ? 'permission_mode_not_granted' : null;
-      return code ? { code, message: code, retryable: false } : null;
+      return code ? { code, message: code, retryable: false,
+        ...(code === 'permission_mode_not_granted' ? { reason: code } : {}) } : null;
     };
     // Reject before permission mutation/reset, then recheck under provider dispatch custody.
     const callerInputFailure = readCallerInputFailure();

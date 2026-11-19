@@ -626,7 +626,10 @@ export function createCliMessageActionDeps(
         }
         const failObservation = async (errorCode: string) => {
           await release();
-          return { ok: false as const, errorCode, error: errorCode, details: { admission } };
+          const error = errorCode === 'permission_mode_not_granted'
+            ? 'Choose an allowed permission mode or ask the session owner for permission to approve prompts.'
+            : errorCode;
+          return { ok: false as const, errorCode, error, details: { admission } };
         };
         const accountPending = context?.accountPendingSessionId === sent.sessionId;
         try {
