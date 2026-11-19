@@ -20,6 +20,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { AGENT_DEFINITION, CODEX_NATIVE_SESSION_MEDIA_CAPABILITIES } from '../../definition.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
+import { createSessionTaskSnapshotPublisher } from '@happier-dev/plugin-sdk/sessions/work-state';
 import {
   createAgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBuffer,
@@ -1144,6 +1145,7 @@ export async function openCodexNativeAppServerSession(
     ...(request.mcpToolPolicy ? { mcpToolPolicy: request.mcpToolPolicy } : {}),
     ...(request.skills ? { skills: request.skills } : {}),
     resolveCurrentPolicy: () => resolveCodexTerminalPermissionPolicy(readPermissionMode(request), request.configuration?.workspaceWrites, request.configuration?.unlistedTools, request.configuration?.nativeSandbox),
+    observePlan: createSessionTaskSnapshotPublisher(context.workState.publisher('plan'), { kind: 'todo', origin: 'vendor' }),
     ...(goalProjection
       ? {
           goalProjection,

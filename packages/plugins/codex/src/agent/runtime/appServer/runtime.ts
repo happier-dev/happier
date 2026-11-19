@@ -65,6 +65,7 @@ import {
   type CodexActiveProviderAccount,
 } from '../../auth/services/runtime/auth/accountId.js';
 import { readCodexAuthTokensFromNativeHome } from '../../cli/auth/environment.js';
+import type { SessionTaskSnapshotEntry } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { readAgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ConnectedServiceLimitCategoryV1Schema } from '@happier-dev/protocol/connect/connectedServiceLimitCategory';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../auth/services/quota/runtimeRateLimits.js';
@@ -358,6 +359,7 @@ type CodexAppServerRuntimeParams = CodexAppServerRuntimeTarget & Readonly<{
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
   resolveCurrentPolicy?: () => CodexAppServerPolicy | null;
   observeGoal?: (payload: Readonly<{ kind: 'present'; goal: Readonly<Record<string, unknown>> }> | Readonly<{ kind: 'absent' }>) => void | Promise<void>;
+  observePlan?: (entries: readonly SessionTaskSnapshotEntry[]) => Promise<void>;
   goalProjection?: CodexGoalProjection;
 }>;
 
@@ -2326,6 +2328,24 @@ export function createCodexAppServerRuntime(
     nextClient.registerNotificationHandler('thread/name/updated', (notificationParams) => {
       applyThreadNameUpdate(notificationParams);
     });
+    if (params.observePlan) {
+      const observePlan = params.observePlan;
+      nextClient.registerNotificationHandler('turn/plan/updated', (notificationParams) => {
+        if (!threadId || readThreadId(notificationParams) !== threadId) return;
+        const plan = readRecord(notificationParams)?.plan;
+        if (!Array.isArray(plan)) return;
+        const entries = plan.flatMap((value: unknown): SessionTaskSnapshotEntry[] => {
+          const step = readRecord(value);
+          const title = trimStringValue(step?.step);
+          if (!title) return [];
+          if (step?.status === 'completed') return [{ title, status: 'complete' }];
+          if (step?.status === 'inProgress') return [{ title, status: 'active' }];
+          return step?.status === 'pending' ? [{ title, status: 'pending' }] : [];
+        });
+        if (entries.length === 0 && plan.length > 0) return;
+        void observePlan(entries).catch(() => params.host.logger.debug('Codex app-server plan publication failed'));
+      });
+    }
     nextClient.registerNotificationHandler('thread/goal/updated', (notificationParams) => {
       const record = readRecord(notificationParams);
       const notificationThreadId = readThreadId(notificationParams);

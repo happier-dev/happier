@@ -14,6 +14,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { createSessionTaskSnapshotPublisher, type WorkStatePublisher } from '@happier-dev/plugin-sdk/sessions/work-state';
 import type { CodexAppServerEvent } from './core.js';
 import { createCodexAppServerRpcError } from './compatibility.js';
 
@@ -535,6 +536,7 @@ function createRuntime(overrides: Readonly<{
   initialProviderBinding?: typeof providerBindingMaterialization.engineConfig;
   publishGeneratedMedia?: (candidate: import('./media/generatedMedia.js').CodexGeneratedMediaCandidate) => Promise<void>;
   observeGoal?: (payload: unknown) => void | Promise<void>;
+  observePlan?: Parameters<typeof createCodexAppServerRuntime>[0]['observePlan'];
   host?: CodexAppServerRuntimeHost;
   executionRunId?: string;
 }> = {}) {
@@ -596,6 +598,7 @@ function createRuntime(overrides: Readonly<{
     initialCollaborationModeId: overrides.initialCollaborationModeId,
     initialProviderBinding: overrides.initialProviderBinding,
     ...(overrides.observeGoal ? { observeGoal: overrides.observeGoal } : {}),
+    ...(overrides.observePlan ? { observePlan: overrides.observePlan } : {}),
   });
 }
 
@@ -3080,6 +3083,31 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       .rejects.toThrow('Codex collaboration mode is unavailable.');
     expect(clientState.requests.filter((request) => request.method === 'collaborationMode/list')).toHaveLength(1);
     expect(clientState.requests.filter((request) => request.method === 'model/list')).toHaveLength(0);
+  });
+
+  it('replaces and clears the plan for the active thread only', async () => {
+    const plans: Parameters<WorkStatePublisher['publish']>[0][] = [];
+    const observePlan = createSessionTaskSnapshotPublisher({
+      async publish(snapshot) {
+        plans.push(snapshot);
+        return { status: 'applied', sourceSequence: snapshot.sourceSequence, revision: String(snapshot.sourceSequence) };
+      },
+    }, { kind: 'todo', origin: 'vendor' });
+    const runtime = createRuntime({ observePlan });
+    await startCodexAppServerRuntime(runtime);
+    const plan = [{ step: 'Run checks', status: 'inProgress' }];
+    try {
+      emitNotification('turn/plan/updated', { threadId: 'thread-other', turnId: 'turn-1', plan });
+      emitNotification('turn/plan/updated', { threadId: 'thread-1', turnId: 'turn-1', plan });
+      emitNotification('turn/plan/updated', { threadId: 'thread-1', turnId: 'turn-1', plan });
+      emitNotification('turn/plan/updated', { threadId: 'thread-1', turnId: 'turn-1', plan: [] });
+      expect(plans.map(snapshot => snapshot.items)).toEqual([
+        [expect.objectContaining({ kind: 'todo', origin: 'vendor', title: 'Run checks', status: 'active' })],
+        [],
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   it('observes goal updates and clears for the active thread only', async () => {

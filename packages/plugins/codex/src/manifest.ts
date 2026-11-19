@@ -330,7 +330,7 @@ export const CODEX_PLUGIN = definePlugin({
               inactive: ['vendorPlugins', 'skills'],
             },
             continuationVerification: { intents: ['resume', 'fork'], requirement: 'required' },
-            workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
+            workStateSources: [{ id: 'goals', itemKinds: ['goal'] }, { id: 'plan', itemKinds: ['todo'] }],
             startupInstructions: { versions: [1], revisionChanges: 'resume' },
             executionRunContext: { versions: [1] },
           },
