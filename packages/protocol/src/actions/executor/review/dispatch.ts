@@ -102,7 +102,9 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
           if (actor?.kind !== 'agent' || (ctx.defaultSessionId && ctx.defaultSessionId !== actor.sessionId)) {
             return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
           }
-          if (reviewCommentActionId === 'reviews.comments.list') {
+          // Review roots can be authored without a Session attachment. Only legacy
+          // comment scopes default to the actor's Session; explicit filters stay intact.
+          if (reviewCommentActionId === 'reviews.comments.list' && !data.reviewId) {
             reviewCommentInput = {
               ...data,
               sessionId: data.sessionId ?? actor.sessionId,

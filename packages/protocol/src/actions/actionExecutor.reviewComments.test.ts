@@ -436,21 +436,63 @@ describe('createActionExecutor (review comments)', () => {
       .resolves.toEqual({ ok: true, result: { items: [], cursor: 'next' } });
   });
 
-  it('binds an agent read to its host-stamped review scope and defaults the own session', async () => {
-    const reviewCommentAction = vi.fn(async () => ({ items: [], cursor: null }));
-    const executor = createActionExecutor(createDeps({ reviewCommentAction }));
-    const reviewCommentPrincipal = {
-      actor: { kind: 'agent' as const, agentId: 'codex', sessionId: 'session-1' },
+  it.each(['agent', 'mcp'] as const)('reads accepted Review roots through %s without adding the ambient Session filter', async surface => {
+    const root = ReviewCommentV1Schema.parse({
+      v: 1, id: 'accepted-root', accountId: 'account', reviewId: 'review', roundOrdinal: 1, appearances: [],
+      body: 'The accepted human finding delivered by Apply', bodyVersion: 1, edits: [], flags: {}, dispositions: {},
+      threadId: 'accepted-root', transitions: [], anchor: { kind: 'file', filePath: 'total.ts' },
+      snapshot: { kind: 'none', capturedAt: 1 }, author: { kind: 'user', userId: 'account' },
+      state: 'open', reviewTriageStatus: 'accept', serverRevision: 2, createdAt: 1, updatedAt: 1,
+    });
+    const legacy = ReviewCommentV1Schema.parse({ ...root, reviewId: undefined, roundOrdinal: undefined,
+      sessionId: 'session-1', runId: 'run-1', workspace: { machineId: 'machine', path: '/repo' } });
+    const stored = (comment: typeof root) => {
+      const split = splitReviewCommentV1(comment);
+      return { v: 1, structural: split.structural,
+        sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ ...split, mode: 'plain' }) };
     };
-
-    await expect(executor.execute('reviews.comments.list', { runId: 'review-1' }, {
-      surface: 'agent', defaultSessionId: 'session-1', reviewCommentPrincipal,
-    })).resolves.toMatchObject({ ok: true });
-
-    expect(reviewCommentAction).toHaveBeenCalledWith(expect.objectContaining({
-      input: expect.objectContaining({ sessionId: 'session-1', runId: 'review-1' }),
-      reviewCommentPrincipal,
-    }));
+    let reads = 0;
+    const executor = createActionExecutor(createDeps({ reviewCommentAction: async ({ actionId, input, reviewCommentPrincipal }) => {
+      if (actionId !== 'reviews.comments.list') throw new Error('Unexpected mutation');
+      const request = ReviewCommentActionInputSchemasV1[actionId].parse(input);
+      return executeReviewCommentTransportV1({ actionId, input: request,
+        actor: reviewCommentPrincipal?.actor ?? { kind: 'user', userId: 'account' },
+        context: { accountId: 'account', mode: 'plain', material: null,
+          // Substitute the admitted Artifact codec boundary; dispatch, opening and filtering stay real.
+          ...(request.reviewId ? { resource: { reviewId: request.reviewId, mode: 'plain' as const,
+            open: async envelope => {
+              if (envelope.t !== 'plain') throw new Error('Expected plain Artifact content');
+              return envelope.v;
+            },
+            seal: async value => ({ t: 'plain' as const, v: value }),
+            commitment: (_purpose, value) => value,
+          } } : {}),
+        },
+        randomBytes: length => new Uint8Array(length),
+        // Authenticated HTTP is the boundary. The client must still apply its actual query filters.
+        request: async () => {
+          reads++;
+          return { items: request.reviewId ? [stored(root)] : [stored(legacy),
+            stored({ ...legacy, id: 'other-session-root', threadId: 'other-session-root', sessionId: 'other-session' })], cursor: null };
+        },
+      });
+    } }));
+    const context = { surface, defaultSessionId: 'session-1', reviewCommentPrincipal: {
+      actor: { kind: 'agent' as const, agentId: 'codex', sessionId: 'session-1' },
+    } };
+    const selected = { reviewId: 'review', commentIds: [root.id] };
+    const expected = { ok: true, result: { items: [root], cursor: null } };
+    await expect(executor.execute('reviews.comments.list', selected, { surface: 'ui' })).resolves.toEqual(expected);
+    await expect(executor.execute('reviews.comments.list', selected, context)).resolves.toEqual(expected);
+    await expect(executor.execute('reviews.comments.list', { reviewId: 'review' }, context)).resolves.toEqual(expected);
+    await expect(executor.execute('reviews.comments.list', { ...selected, sessionId: 'session-1' }, context))
+      .resolves.toEqual({ ok: true, result: { items: [], cursor: null } });
+    await expect(executor.execute('reviews.comments.list', { runId: 'run-1' }, context))
+      .resolves.toEqual({ ok: true, result: { items: [legacy], cursor: null } });
+    const beforeRefusal = reads;
+    await expect(executor.execute('reviews.comments.list', selected, { ...context, defaultSessionId: 'other-session' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+    expect(reads).toBe(beforeRefusal);
   });
 
   it('refuses an agent review operation when the caller scope cannot be established', async () => {
