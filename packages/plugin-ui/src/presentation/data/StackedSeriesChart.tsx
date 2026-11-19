@@ -548,8 +548,10 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     const washed = variant === 'area' && entry.fillOpacity !== undefined;
     return pieces.map(({ indexes, ink, runLength }, index) => {
       // A run of a few samples is not a solid area to read: filled, it is a hard-edged sliver. It is the line alone, at the
-      // chart's line stroke, with no fill beneath it. A wash is faint enough to sit under any run.
-      if (indexes.length > 1 && variant === 'area' && !washed && entry.fillPattern !== 'hatch' && runLength < MIN_AREA_RUN_SAMPLES && runLength < geometry.buckets.length) {
+      // chart's line stroke, with no fill beneath it. A wash is faint enough to sit under any run. A run stacked on other
+      // series keeps its ribbon: alone, its upper edge would float over the stack as a stray stroke.
+      const stacked = indexes.some((bucketIndex) => geometry.buckets[bucketIndex]!.values[seriesIndex]!.lower !== 0);
+      if (indexes.length > 1 && variant === 'area' && !washed && !stacked && entry.fillPattern !== 'hatch' && runLength < MIN_AREA_RUN_SAMPLES && runLength < geometry.buckets.length) {
         const points = indexes.map((bucketIndex) => ({ x: geometry.xAt(bucketIndex), y: inset + geometry.yAt(geometry.buckets[bucketIndex]!.values[seriesIndex]!.upper) }));
         const linePath = buildHappierSeriesPath(points, 0);
         const lineKey = `${entry.id}:${index}`;

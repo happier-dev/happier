@@ -395,6 +395,19 @@ describe('neutral series dataset', () => {
       expect(mixed.container.querySelectorAll('line')).toHaveLength(0);
     } finally { mixed.unmount(); long.unmount(); }
   });
+  it('keeps a short run that is stacked on other series as its filled ribbon, never a floating stroke', () => {
+    const view = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Tokens"
+      series={[
+        { id: 'base', label: 'Base', points: [5, 6, 5, 6, 5, 6].map((y, x) => ({ id: String(x), x, y })) },
+        { id: 'top', label: 'Top', points: [null, null, 2, 3, null, null].map((y, x) => ({ id: String(x), x, y })) },
+      ]}
+      width={200} viewportHeight={100} plotInset={0} minimumMaximum={10} variant="area" size="tile" testID="layered" />);
+    try {
+      expect(view.container.querySelectorAll('[data-testid^="layered-short-run-1-"]')).toHaveLength(0);
+      const filled = [...view.container.querySelectorAll('path')].filter((path) => /Z$/u.test(path.getAttribute('d') ?? '') && path.getAttribute('fill') !== 'none');
+      expect(filled).toHaveLength(2);
+    } finally { view.unmount(); }
+  });
   it('tones only geometry above the threshold and keeps missing samples as separate paths', () => {
     const input = [{ id: 'memory', label: 'Memory', points: [2, 8, null, 9, 3].map((y, x) => ({ id: String(x), x, y })) }];
     const options = { threshold: { value: 6, label: 'Critical', tone: 'error' as const } };
