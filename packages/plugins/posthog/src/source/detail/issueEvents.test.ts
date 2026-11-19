@@ -125,6 +125,34 @@ describe('readPosthogSampledIssueEvents', () => {
             .toEqual(['renderSummary', 'commitWork']);
     });
 
+    it('lets no distinct_id or unapproved property value through the projector (QB-17)', async () => {
+        const { client } = setup(() => json(queryIssueEventsPage));
+
+        const outcome = await readPosthogSampledIssueEvents(client, {
+            teamRouteId: 4821,
+            issueId: ISSUE_ID,
+            detailWindow: DETAIL_WINDOW,
+            limit: 3,
+            offset: 0,
+        }, {});
+
+        expect(outcome.ok).toBe(true);
+        if (!outcome.ok) return;
+        const serialized = JSON.stringify(outcome.value);
+        for (const leaked of [
+            'person-distinct-id-must-not-survive',
+            'another-distinct-id-must-not-survive',
+            'third-distinct-id-must-not-survive',
+            'https://eu.posthog.com/project/1/person/redacted',
+            '203.0.113.7',
+            'posthog-js',
+            '1.203.4',
+            '$exception_code_variables',
+            '$geoip_city_name',
+            'internal_customer_note',
+        ]) expect(serialized).not.toContain(leaked);
+    });
+
     it('charges an omitted provider row to the same page budget as an accepted one', async () => {
         const malformed = {
             ...queryIssueEventsPage,
