@@ -11,7 +11,7 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { resolvePnpmCommandInvocation } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
 import { inspectDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { readSourceRevisionDescriptor, resolveSourceRevision } from './source_revision.mjs';
-import { captureSourceRuntimeSharedInputs } from './build_source_runtime.mjs';
+import { captureSourceRuntimeSharedInputs, captureSourceWebBuildInputs } from './build_source_runtime.mjs';
 import { prepareSourceRevisionBase, resolveSourceTreeRevision, setSourceRevisionTreeWritable } from './source_revision_tree.mjs';
 
 // A pnpm workspace with a committed lockfile. Its only external dependency is a
@@ -197,12 +197,19 @@ test('a revision bundle capture generates with its revision\'s own installation 
     const outputDir = fixture.path(`capture-${name}`);
     await mkdir(outputDir);
     await captureSourceRuntimeSharedInputs({ repoDir, outputDir, env, treesRoot, revision: { descriptorPath } });
-    return { outputDir, manifest: JSON.parse(await readFile(join(outputDir, '.source-runtime-shared-inputs.json'), 'utf8')) };
+    const serverCapture = await captureSourceWebBuildInputs({ repoDir, component: 'server',
+      outputDir: fixture.path(`server-${name}`), sharedSourceInputs: { repoDir: outputDir } });
+    return { outputDir, serverCapture,
+      manifest: JSON.parse(await readFile(join(outputDir, '.source-runtime-shared-inputs.json'), 'utf8')) };
   };
   const old = await capture(older, 'older');
   assert.equal(await readFile(join(old.outputDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '6.0.0');
   assert.equal(dirname(old.manifest.dependencyRootDir), join(treesRoot, 'installs'));
   assert.equal(createRequire(join(old.manifest.dependencyRootDir, 'apps/server/package.json'))('@prisma/client/package.json').version, '6.0.0');
+  const client = 'apps/server/generated/default-client/prisma-version';
+  assert.equal(await readFile(join(old.serverCapture.repoDir, client), 'utf8'), '6.0.0',
+    'the server component carries the generated default client even when it had no checkout copy');
+  assert.ok(old.serverCapture.files.includes(client), 'the bundle emitter receives the default client');
   const head = await capture('HEAD', 'head');
   assert.equal(await readFile(join(head.outputDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '7.0.0');
   assert.equal(head.manifest.dependencyRootDir, undefined, 'the checkout\'s installation serves a revision with its identity');

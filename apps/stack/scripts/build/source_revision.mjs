@@ -9,7 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { BuildInputDriftError, mountInstalledNodeModules, unmountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
+import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs, SERVER_GENERATED_INPUT_ROOTS } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readStaleServerGeneratedClients, resolveServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
@@ -336,9 +336,10 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     throw new BuildInputDriftError(`[source-revision] capture differs from ${descriptor.key} at ${drift.length} path(s) (first: ${drift[0]}); the checkout or its mirror moved after the revision was described`);
   }
   await deriveRevisionGeneratedInputs({ captureDir, sourceDir, env, signal });
-  // A capture-owned Prisma layout (revisions before the server's layout owner) adds
-  // its client package and clients to the capture's inputs.
-  for (const root of readRevisionServerClientRoots(captureDir)) {
+  // Generation can create a run-local default client absent from the checkout's
+  // file list. Inventory the outputs after generation, including the private
+  // wrapper and its clients for revisions with the legacy Prisma layout.
+  for (const root of new Set([...SERVER_GENERATED_INPUT_ROOTS, ...readRevisionServerClientRoots(captureDir)])) {
     for (const path of await listCapturedFiles(captureDir, root)) result.add(path);
   }
   return [...result].sort();
