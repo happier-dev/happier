@@ -1389,6 +1389,42 @@ describe('composer content exposure (incident cmq7pyqkj, U1)', () => {
 // composer draft soft-wraps onto indented continuation lines inside the composer box. Capturing
 // only the `❯` line truncated the draft, so an own-injected leftover could never exact-match the
 // own-text registry (guard misclassified it foreign_draft → injection starvation, C11).
+describe('parseClaudeScreenState — scrolled composer draft', () => {
+  const clipped = [
+    '❯ An earlier submitted prompt',
+    'Earlier assistant output.',
+    '─── ↑ 2 more ───────────────────────────────────────────────────────────────────',
+    '  The first visible draft paragraph.',
+    '',
+    '  The last visible draft paragraph.',
+    '────────────────────────────────────────────────────────────────────────────────',
+    '  Opus 5.5',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+
+  it('reads the bordered viewport instead of an earlier prompt echo and keeps it a user draft', () => {
+    const state = parseClaudeScreenState(clipped, { cursor: { x: 35, y: 5 } });
+    expect(state.composerContent).toBe('The first visible draft paragraph.\n\nThe last visible draft paragraph.');
+    expect(state.composerCursorRelation).toBe('inside_or_after_content');
+    expect(state.userDraftPresent).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('user_draft');
+  });
+
+  it('requires the complete bordered shape and lets a newer normal composer win', () => {
+    expect(parseClaudeScreenState(clipped.replace('────────────────────────────────────────────────────────────────────────────────\n', '')).composerContent)
+      .toBe('An earlier submitted prompt');
+    expect(parseClaudeScreenState(`${clipped}\n❯ current draft`).composerContent).toBe('current draft');
+    expect(parseClaudeScreenState('  A transcript paragraph\n────────────────\n  ⏵⏵ auto mode on').composerContent).toBeNull();
+  });
+
+  it('preserves shell ownership when its scrolled viewport has the native shell footer', () => {
+    const state = parseClaudeScreenState(clipped.replace('  Opus 5.5\n  ⏵⏵ auto mode on (shift+tab to cycle)', '  ! for shell mode'));
+    expect(state.composerContent).toBeNull();
+    expect(state.shellComposerContent).toBe('The first visible draft paragraph.\n\nThe last visible draft paragraph.');
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+  });
+});
+
 describe('parseClaudeScreenState — soft-wrapped composer draft (C11)', () => {
   const WRAPPED = [
     '⏺ BRAVO',

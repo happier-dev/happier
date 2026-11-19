@@ -1,8 +1,10 @@
-name: NIGHTLY — v0.3 journey suites
+name: NIGHTLY — v0.3 journey and unit suites
 
-# Schedules fire only on the default branch. The v0.3 journey suites run
-# affected-only per v0.3 push, so this nightly dispatches their full run on
-# v0.3 through its own manual-dispatch workflow (v0.3's workflow file and source).
+# Schedules fire only on the default branch. The v0.3 journey suites and unit
+# suites run affected-only per v0.3 push, so this nightly dispatches their full
+# run on v0.3 through its own manual-dispatch workflow (v0.3's workflow file and
+# source). A unit failure here that the push run's selection missed is a selector
+# defect (scripts/testing/runAffectedTests.ts selectGraphUnitTests) to fix there.
 # Kept out of tests.yml: tests.yml is also a reusable workflow, and callers that
 # grant only `actions: read` reject any nested job requesting `actions: write`.
 on:
@@ -15,7 +17,7 @@ permissions:
 
 jobs:
   dispatch:
-    name: Dispatch the full v0.3 journey suites
+    name: Dispatch the full v0.3 journey and unit suites
     runs-on: ubuntu-24.04
     # One API call; GitHub's own job limit is the hang guard otherwise.
     timeout-minutes: 5
@@ -25,4 +27,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh workflow run tests-dispatch.yml --repo "$GITHUB_REPOSITORY" --ref v0.3
-          -f profile=custom -f custom_checks=e2e_core,e2e_core_slow,ui_e2e,daemon_e2e
+          -f profile=custom -f custom_checks=e2e_core,e2e_core_slow,ui_e2e,daemon_e2e,ui,cli,server,stack,plugin_workspaces

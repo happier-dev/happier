@@ -143,6 +143,11 @@ structured-question projection to preserve Claude's exact displayed scopes;
 the original tool or plan remains in the transcript. Plan controls require a
 live matching request, including after reconnect.
 
+Native permission identity excludes Claude's changing unattended safety countdown.
+The displayed warning remains intact; a changed command, warning or permission
+scope still replaces the request and prevents answering an older prompt.
+The request retains the warning captured when published; Claude owns the timeout.
+
 The existing screen probe observes native rendering and the existing terminal
 drivers navigate verified forms. App question responses are acknowledged only
 after Claude's correlated structured result matches. Native tool results,
@@ -1697,6 +1702,10 @@ requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+The development parser recognizes Claude's bordered `↑ N more` composer viewport
+when a small terminal hides the prompt marker. Submission verifies the visible
+prompt text through that same parser, without requiring a terminal attachment or
+resize; an unrelated visible draft remains protected.
 In development source, normal and shell prompts share one active-input selection and
 wrapped-text reader. Shell input is verification-only: it cannot make the terminal
 ready for an ordinary message, and only a request starting with `!` can authorize

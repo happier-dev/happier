@@ -155,6 +155,40 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toThrow();
   });
 
+  it('submits a scrolled composer whose prompt marker is above the viewport', async () => {
+    // 2026-11-19 live incident: detached 80x24 tmux. The provider
+    // scrolls the composer itself and replaces its prompt marker with this border.
+    const promptText = 'Review the whole implementation.\n\nExplain whether every fix addresses the cause.\n\nKeep the existing behavior and report any remaining uncertainty.';
+    const screenText = [
+      'Earlier assistant output.',
+      '─── ↑ 2 more ───────────────────────────────────────────────────────────────────',
+      '  Explain whether every fix addresses the cause.',
+      '',
+      '  Keep the existing behavior and report any remaining uncertainty.',
+      '────────────────────────────────────────────────────────────────────────────────',
+      '  Opus 5.5',
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const submitEnter = vi.fn(async () => 'success' as const);
+
+    expect(await runTerminalPromptSubmission({
+      promptText,
+      verifyStagedBeforeSubmit: async () => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter,
+      verifyAfterSubmit: async () => false,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+      postSubmitSettleMs: 0,
+    })).toEqual({ success: true });
+    expect(submitEnter).toHaveBeenCalledOnce();
+    expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText })).toBe(true);
+    expect(() => policy.isPromptStagedBeforeSubmit({
+      promptText,
+      screenText: screenText.replace('remaining uncertainty', 'a different user draft'),
+    })).toThrow();
+  });
+
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const words = Array.from({ length: 90 }, (_, index) => `incident-word-${index}`);

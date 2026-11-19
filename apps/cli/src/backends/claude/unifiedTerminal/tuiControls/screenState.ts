@@ -220,6 +220,9 @@ const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 // participate in the SAME last-input selection: an old shell capture cannot outrank a newer normal
 // draft, and an old normal composer cannot make the active shell prompt ready for ordinary input.
 const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?((?:>|›|❯)(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
+// A scrolled native composer replaces its hidden prompt row with an overflow border.
+// Require the complete bordered, indented viewport; arbitrary transcript tails are not input.
+const SCROLLED_COMPOSER = /(?:^|\n)─+[^\S\n]+↑[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+─+\n((?:(?:[^\S\n][^\n]*)?\n)+)─+(?:\n|$)/;
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (live capture 2026-06-12 11:50, runner pid 58731): the selector header
 // renders `↑/↓ to select` and the focus cursor renders as `❯ ◯ <agent-type> <title>` rows. The
@@ -465,6 +468,25 @@ function readComposerState(
     content: continuation.length === 0 ? content : [content, ...continuation].join('\n'),
     shellContent: null,
     cursorRelation,
+  };
+}
+
+function readScrolledComposerState(
+  text: string,
+  match: RegExpExecArray,
+  context?: ClaudeScreenParseContext | undefined,
+): ReturnType<typeof readComposerState> {
+  const content = (match[1] ?? '').split('\n').map((line) => line.trim()).join('\n').trim();
+  const headerLine = lineIndexAt(text, match.index + match[0].indexOf('─'));
+  const footerLine = headerLine + (match[1] ?? '').split('\n').length;
+  const cursor = context?.cursor;
+  const shellMode = /(?:^|\n)[^\S\n]*! for shell mode(?:\s|$)/.test(text.slice(match.index + match[0].length));
+  return {
+    content: shellMode ? null : content,
+    shellContent: shellMode ? content : null,
+    cursorRelation: !shellMode && cursor && cursor.y > headerLine && cursor.y < footerLine
+      ? 'inside_or_after_content'
+      : null,
   };
 }
 
@@ -749,8 +771,15 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
   const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
+  const scrolledMatch = lastMatch(new RegExp(SCROLLED_COMPOSER.source, 'g'), text);
+  const activeScrolledMatch = scrolledMatch
+    && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
+    ? scrolledMatch
+    : null;
   // A notice above the current composer belongs to transcript history, not the active footer.
-  const currentFooter = lastComposerMatch
+  const currentFooter = activeScrolledMatch
+    ? text.slice(activeScrolledMatch.index + activeScrolledMatch[0].length)
+    : lastComposerMatch
     ? text.slice(lastComposerMatch.index + lastComposerMatch[0].length)
     : visibleTail;
   const usageLimitWaitVisible = USAGE_LIMIT_WAIT_FOOTER.test(currentFooter);
@@ -777,7 +806,9 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // otherwise the selected row masquerades as a draft and suppresses the generic dialog path.
   const composerState = rewindSelectionVisible || visibleDialogSelection?.kind === 'focused'
     ? { content: null, shellContent: null, cursorRelation: null }
-    : readComposerState(text, rawText, lastComposerMatch, context);
+    : activeScrolledMatch
+      ? readScrolledComposerState(text, activeScrolledMatch, context)
+      : readComposerState(text, rawText, lastComposerMatch, context);
   const composerContent = composerState.content;
   const hasComposer = composerContent !== null;
   // A host cursor on the parsed composer is direct evidence that the composer, not an older
