@@ -402,7 +402,7 @@ export function createTargetActionExecutor(deps: Readonly<{
                 invocationSurface: request.invocationSurface,
                 ...(args.approvalContext?.actionAutomationAdmission ? {
                   automaticChecks: createApprovalAutomaticChecksV1(args.approvalContext.actionAutomationAdmission.selection,
-                    pluginActionRequiresPresentUserIntent(request.action.action, invocationSurface, args.input, args.invocationAuthority)),
+                    !request.reviewedChild && pluginActionRequiresPresentUserIntent(request.action.action, invocationSurface, args.input, args.invocationAuthority)),
                   automationContext: args.approvalContext,
                 } : {}),
                 ...(args.replayPlacement === undefined

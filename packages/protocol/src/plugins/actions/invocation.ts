@@ -584,6 +584,8 @@ export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
   surface: string;
   /** Actual invoking host surface that the approval binds. */
   invocationSurface: string;
+  /** The present-user owner already admitted these exact child operands. */
+  reviewedChild?: true;
   signal?: AbortSignal;
 }>;
 
@@ -595,7 +597,7 @@ export type PluginActionCurrentIntentResult = Readonly<
 >;
 
 export type PluginActionPresentUserGateResult<TAction> = Readonly<
-  /** reviewedChild: a host-reviewed parent admitted these exact operands (no current-intent round ran). */
+  /** reviewedChild: a host-reviewed parent admitted these exact operands; automatic checks may still run. */
   | { status: 'admitted'; action: TAction; artifactId?: string; reviewedChild?: true }
   | { status: 'deferred'; artifactId: string }
   | { status: 'unavailable'; code: string; message: string; data?: StrictJsonValue }
@@ -804,17 +806,16 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       const initial = await readResolved();
       if ('status' in initial && initial.status !== 'resolved') return initial;
       const reviewedChild = readHostReviewedChildOperationV1(args.reviewedChildContext, initial.policy.qualifiedId, args.input);
-      if (isHostAdmittedReviewedChildPolicyV1(
+      const reviewedChildAdmitted = isHostAdmittedReviewedChildPolicyV1(
         reviewedChild, initial.policy.qualifiedId, args.input,
-      )) {
-        return Object.freeze({ status: 'admitted' as const, action: initial.action, reviewedChild: true as const });
-      }
-      const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
-      if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
+      );
+      const initialPolicy = reviewedChildAdmitted ? undefined : evaluatePresentUserPolicy(initial.policy, args);
+      if (initialPolicy && initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);
       const requiresCurrentIntent = args.requireCurrentIntent === true
-        || initialPolicy.requiresCurrentIntent;
+        || initialPolicy?.requiresCurrentIntent;
+      const reviewedChildAdmission = reviewedChildAdmitted ? { reviewedChild: true as const } : {};
       if (!requiresCurrentIntent) {
-        return Object.freeze({ status: 'admitted' as const, action: initial.action });
+        return Object.freeze({ status: 'admitted' as const, action: initial.action, ...reviewedChildAdmission });
       }
 
       const requestCurrentIntent = deps.requestCurrentIntent;
@@ -839,6 +840,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
           fingerprint,
           surface: args.surface,
           invocationSurface: args.invocationSurface,
+          ...reviewedChildAdmission,
           ...(args.signal === undefined ? {} : { signal: args.signal }),
         });
       } catch (error) {
@@ -867,7 +869,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
         return presentUserUnavailable('plugin_action_current_intent_mismatch', undefined, { field: 'fingerprint_source' });
       }
 
-      return Object.freeze({ status: 'admitted' as const, action: initial.action,
+      return Object.freeze({ status: 'admitted' as const, action: initial.action, ...reviewedChildAdmission,
         ...(intent.artifactId === undefined ? {} : { artifactId: intent.artifactId }) });
     },
   });

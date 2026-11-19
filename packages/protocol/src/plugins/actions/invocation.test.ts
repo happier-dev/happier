@@ -370,6 +370,24 @@ describe('createPluginActionInvocation', () => {
     expect(present).not.toHaveBeenCalled();
   });
 
+  it.each(['approved', 'rejected'] as const)('runs the required current-intent round for an exact reviewed child: %s', async decision => {
+    const action = { pluginId: 'acme.action', localId: 'commit' };
+    const input = { title: 'ship it' };
+    const reviewed = createHostReviewedChildPortV1({ actionId: 'action.invoke', input: { action, input },
+      context: {}, reviewAdmitted: true });
+    const gate = createPluginActionPresentUserGate({
+      resolve: () => currentIntentResolution(),
+      requestCurrentIntent: async ({ fingerprint }) => decision === 'approved'
+        ? { status: 'approved', fingerprint, artifactId: 'automatic-checks' }
+        : { status: 'rejected', code: 'plugin_action_current_intent_rejected' },
+    });
+    const result = await gate.admit({ input, surface: 'ui', invocationSurface: 'ui',
+      requireCurrentIntent: true, reviewedChildContext: { hostReviewedChild: reviewed } });
+    expect(result).toMatchObject(decision === 'approved'
+      ? { status: 'admitted', artifactId: 'automatic-checks', reviewedChild: true }
+      : { status: 'unavailable', code: 'plugin_action_current_intent_rejected' });
+  });
+
   it.each(['exact', 'changed input', 'changed Action', 'serialized port'] as const)(
     'accepts only the existing private admitted Account operand: %s', async variant => {
       const input = { title: 'ship it' };
