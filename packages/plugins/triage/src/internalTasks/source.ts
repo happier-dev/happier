@@ -31,7 +31,7 @@ export const INTERNAL_TASK_SORT_FIELDS_V1 = Object.freeze(['updated', 'created',
 export const INTERNAL_TASK_STATES_V1 = ['backlog', 'unstarted', 'started', 'completed', 'canceled'] as const;
 /** Fields this adapter maps to internal task writes; the contribution advertises this same subset. */
 export const INTERNAL_TASK_EDIT_FIELDS_V1 = Object.freeze(['title', 'body', 'assigneeIds', 'labelIds', 'dueDate', 'parent', 'blockedBy'] as const);
-export function internalTaskStateV1(state: Task['state']): TriageEntryStateV1 {
+export function internalTaskStateV1(state: Task['state']): TriageEntryStateV1 & Readonly<{ nativeLabel: string }> {
   return state === 'completed' || state === 'canceled'
     ? { presentation: state === 'completed' ? 'resolved' : 'closed', nativeLabel: state === 'completed' ? 'Done' : 'Canceled', completionReason: state }
     : { presentation: 'active', stage: state, nativeLabel: state === 'backlog' ? 'Backlog' : state === 'started' ? 'In progress' : 'To do' };
