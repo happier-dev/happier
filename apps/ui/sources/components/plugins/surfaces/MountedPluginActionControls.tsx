@@ -7,26 +7,33 @@ import {
     type MountedPluginActionControl,
     type PluginSurfaceActionControls,
 } from './pluginSurfaceActionControls';
+import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
 
 const DISPLAY = { primary: 'default', secondary: 'secondary', plain: 'inverted', destructive: 'destructive' } as const satisfies Record<string, RoundButtonDisplay>;
 
 /** The one physical host button for a registered control, in the slot or at its declaration. */
-function PluginActionControlButton({ controls, id, presentation, busy }: Readonly<{
+function PluginActionControlButton({ controls, id, contributedPluginId, presentation, busy }: Readonly<{
     controls: PluginSurfaceActionControls;
     /** Absent until the host admits the registration: the button holds its place but does nothing. */
     id: string | undefined;
+    contributedPluginId?: string;
     presentation: PluginUiActionControlPresentationV1;
     busy: boolean;
 }>) {
     // The host's button for an author's Action.Control stands at the plugin Button's own default size (`normal`, the page
     // control height), so it lines up with the author's Buttons and segmented controls beside it (DBW 02:57Z, Run).
-    return <RoundButton size="normal" title={presentation.title}
-        accessibilityLabel={presentation.accessibilityLabel}
-        display={DISPLAY[presentation.variant ?? 'secondary']}
-        disabled={busy || presentation.disabled}
-        loading={busy}
-        {...(id === undefined ? {} : { testID: `plugin-surface-action-control:${id}` })}
-        onPress={() => { if (id !== undefined) void controls.press(id); }} />;
+    return <>
+        {/* Targeted mounts can render this control before its callee's Action slice has been read. */}
+        {controls.projectionScope && contributedPluginId
+            ? <PluginSurfaceProjectionDemand pluginId={contributedPluginId} accountScope={controls.projectionScope} /> : null}
+        <RoundButton size="normal" title={presentation.title}
+            accessibilityLabel={presentation.accessibilityLabel}
+            display={DISPLAY[presentation.variant ?? 'secondary']}
+            disabled={busy || presentation.disabled}
+            loading={busy}
+            {...(id === undefined ? {} : { testID: `plugin-surface-action-control:${id}` })}
+            onPress={() => { if (id !== undefined) void controls.press(id); }} />
+    </>;
 }
 
 /** The mount's slot, outside the author tree/frame: controls no author-tree placement draws (framed carriers). */
@@ -35,7 +42,7 @@ export function MountedPluginActionControls({ controls }: Readonly<{ controls: P
     if (snapshot.length === 0) return null;
     // A press at the surface's end, its own width: never a bar across the pane.
     return <View style={BAND_STYLE}>{snapshot.map(control => <View key={control.id}>
-        <PluginActionControlButton controls={controls} id={control.id} presentation={control.presentation} busy={control.busy} />
+        <PluginActionControlButton controls={controls} id={control.id} contributedPluginId={control.contributedPluginId} presentation={control.presentation} busy={control.busy} />
     </View>)}</View>;
 }
 
@@ -58,7 +65,7 @@ export function PluginInlineActionControl({ controls, control, presentation }: R
         () => id === undefined ? NO_CONTROL : controls.getSnapshot().find(entry => entry.id === id));
     // A bound control the mount no longer offers (Actions unavailable, released) draws nothing, as in the slot.
     if (id !== undefined && view === undefined) return null;
-    return <PluginActionControlButton controls={controls} id={view?.id}
+    return <PluginActionControlButton controls={controls} id={view?.id} contributedPluginId={view?.contributedPluginId}
         presentation={view?.presentation ?? presentation} busy={view?.busy ?? false} />;
 }
 

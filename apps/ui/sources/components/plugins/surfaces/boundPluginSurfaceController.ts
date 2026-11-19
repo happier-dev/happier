@@ -85,7 +85,7 @@ import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import type { PluginMachineExecutionOriginStateV1, PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { describePluginCollectionWriterRefusal, describePluginExecutionOriginRefusal, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
-import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getActiveServerAccountScope, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -1338,6 +1338,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const actionControls = callerBinding && homeFamilyScope && !isOpenableContentViewer
         ? createPluginSurfaceActionControls({
             pluginId: surfaceContext.pluginId, surfaceId: surfaceContext.surfaceId, hostAction,
+            ...(areServerAccountScopesEqual(homeFamilyScope, getActiveServerAccountScope()) ? { projectionScope: homeFamilyScope } : {}),
             signal: mountLifetime.signal, isCurrent: isInteractionCurrent,
             isActionAvailable: canManageActions,
             captureCurrentBinding: () => {

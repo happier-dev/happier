@@ -39,6 +39,10 @@ import { StoreDiscover } from '@/components/store/StoreDiscover';
 import { listStoreKindContributions } from '@/components/store/catalog/storeKindContributions';
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
+import { MountedPluginActionControls } from './MountedPluginActionControls';
+import { createPluginSurfaceActionControls } from './pluginSurfaceActionControls';
+import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
+import type { PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
 import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { SettingsCatalogOverviewGroup } from '@/components/settings/SettingsCatalogOverviewGroup';
@@ -58,7 +62,7 @@ import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { usePluginUiProjectionCurrentness, PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
-import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { pluginUiSections, REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry,
     readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
@@ -378,7 +382,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
 
 /** The measured 20-Machine cold fleet; only the Socket and HTTP transports are substituted. */
 async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; machineOnly?: boolean;
-    channels?: boolean; inventoryGate?: Promise<void>; projectionGate?: Promise<void> }> = {}) {
+    channels?: boolean; writeAction?: boolean; inventoryGate?: Promise<void>; projectionGate?: Promise<void> }> = {}) {
     const { PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
     const accountId = 'source-fleet-account';
     const serverIdentityId = 'srv_source_fleet';
@@ -410,6 +414,9 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
             projection: rememberProjection(machine.id, PluginProjectionV2Schema.parse({ v: 2, generation: 7,
                 installedPackagesById: { [pluginId]: { id: pluginId, displayName: options.channels ? CHANNELS_MANIFEST.displayName : `Triage on ${machine.id}`, version: pluginVersion,
                     enabled: true, source: { kind: 'localPath', locator: `/src/${machine.id}/triage` }, occurrenceId: widget.occurrenceId, executionOrigin, sourceCustody } },
+                ...(options.writeAction ? { actionsById: { [`${pluginId}/write`]: { id: 'write', pluginId, title: 'Write',
+                    executionOrigin, occurrenceId: widget.occurrenceId, execution: { target: 'daemon' },
+                    scopes: ['global'], surfaces: ['ui'], dangerLevel: 'writesRemote', confirmation: { title: 'Review write' }, available: true } } } : {}),
                 familiesById: options.channels ? { pluginUi: { family: 'pluginUi', entriesById: Object.fromEntries(
                     Object.entries(channelUiEntries).map(([id, entry]) => [id, { ...entry, occurrenceId: widget.occurrenceId, executionOrigin }]),
                 ) } } : { ...(options.machineOnly ? { connectedAccounts: { family: 'connectedAccounts', entriesById: {
@@ -534,9 +541,10 @@ it('discovers a Machine-only source from the presented Connect target with no Ac
     }
 });
 
-it('asks only the presented origin for packages and UI in a cold 20-Machine source fleet', async () => {
-    const { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId } = await serveSourceFleet();
+it.each(['surface', 'Action control'] as const)('asks only the presented %s origin for packages and UI in a cold 20-Machine source fleet', async presentation => {
+    const { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId } = await serveSourceFleet({ writeAction: true });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
+    const controlLifetime = new AbortController();
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         const serverId = home.homes.home!.id;
@@ -546,20 +554,39 @@ it('asks only the presented origin for packages and UI in a cold 20-Machine sour
         await sync.refreshPluginAccountAvailability();
         const lifetime = captureActiveServerAccountScopeLifetime()!;
         const uiSectionsLoaded = () => machines.filter(machine => readCachedDaemonMergedProjectionCacheEntry({
-            machineId: machine.id, serverId, sections: [] })?.deferredProjection?.loadedSections.includes('familiesById.pluginUi'));
+            machineId: machine.id, serverId, sections: pluginUiSections(pluginId) })?.kind === 'ready');
         const packagesLoaded = () => machines.filter(machine => readCachedDaemonMergedProjectionCacheEntry({
             machineId: machine.id, serverId, sections: [] })?.deferredProjection?.loadedSections.includes('installedPackagesById'));
+        const surface: PluginUiSurfaceContextV1 = {
+            pluginId: 'acme.target-host', contributionId: 'detail', surfaceId: 'detail', placement: 'appSurface',
+            platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [],
+        };
+        const controls = createPluginSurfaceActionControls({
+            pluginId: surface.pluginId, surfaceId: surface.surfaceId,
+            projectionScope: lifetime.scope,
+            hostAction: { execute: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }) },
+            signal: controlLifetime.signal, isCurrent: lifetime.isCurrent, captureCurrentBinding: () => lifetime.isCurrent,
+        });
+        // An embedded control can call another contributor whose catalogue the parent never presented.
+        // While preparing a press, the plugin disables the presented control but still needs its Action.
+        await controls.handleRequest({ version: 1, requestId: 'bind-write', surface, method: 'actionControl',
+            payload: { kind: 'bind', subscriptionId: 'write', action: { pluginId, localId: 'write' },
+                presentation: { title: 'Write', disabled: true } },
+        }, { actionControlSubscription: { retain() {}, publish() {} } });
         tree = await renderWithAppProviders(<AppShellPluginUiProjectionProvider>
-            <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} enabled />
+            {presentation === 'Action control' ? <MountedPluginActionControls controls={controls} />
+                : <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} />}
         </AppShellPluginUiProjectionProvider>);
         // Account descriptors rank placement intent before exact runtime admission.
         // Unopened alternative origins do not acquire Machine projections.
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(packagesLoaded()).toHaveLength(1);
-            expect(uiSectionsLoaded().length).toBeGreaterThan(0);
+            const projection = readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true });
+            expect(readPluginUiContributionOrigin(projection?.actionsById[`${pluginId}/write`]))
+                .toMatchObject({ phase: 'current', interactionEnabled: true });
         });
         await flushHookEffects({ cycles: 3 });
+        expect(packagesLoaded()).toHaveLength(1);
         const selected = uiSectionsLoaded().map(machine => machine.id);
         const reads = [...sectionReadsByMachineId].map(([id, digests]) => [id, digests.length] as const);
         expect({ selected: selected.length, reads: Object.fromEntries(reads) }).toMatchObject({ selected: 1 });
@@ -570,6 +597,7 @@ it('asks only the presented origin for packages and UI in a cold 20-Machine sour
         }
     } finally {
         if (tree) await act(async () => tree.unmount());
+        controlLifetime.abort();
         await home.dispose();
     }
 });

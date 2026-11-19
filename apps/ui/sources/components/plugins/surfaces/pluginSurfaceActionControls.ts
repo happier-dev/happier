@@ -16,9 +16,11 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
 import type { PluginSurfaceHostActionBinding } from './pluginSurfaceActionDispatch';
 import { randomUUID } from '@/platform/randomUUID';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type MountedPluginActionControl = Readonly<{
     id: string;
+    contributedPluginId?: string;
     presentation: PluginUiActionControlPresentationV1;
     busy: boolean;
 }>;
@@ -41,6 +43,7 @@ export function readPluginActionControlPlacement(control: object): string | unde
 
 /** Host-private presentation and gesture entry. Neither is part of the author Host API. */
 export type PluginSurfaceActionControls = Readonly<{
+    projectionScope?: ServerAccountScope;
     getSnapshot(): readonly MountedPluginActionControl[];
     /** The controls no author-tree placement draws: the mount's slot for framed carriers. */
     getSlotSnapshot(): readonly MountedPluginActionControl[];
@@ -55,8 +58,16 @@ export type PluginSurfaceActionControls = Readonly<{
     dispose(): void;
 }>;
 
+function resolveMountedControlAction(pluginId: string, action: PluginUiMountedActionReferenceV1) {
+    const hostId = typeof action === 'string' ? PluginInvocableActionIdSchema.safeParse(action) : null;
+    const contributed = hostId?.success ? null : normalizePluginUiMountedContributedActionReferenceV1({
+        callerPluginId: pluginId, action,
+    });
+    return { hostId, contributed };
+}
+
 type Binding = {
-    action: PluginUiMountedActionReferenceV1;
+    action: ReturnType<typeof resolveMountedControlAction>;
     view: MountedPluginActionControl;
     publish(event: PluginUiActionControlEventV1): void;
     abort: AbortController;
@@ -77,6 +88,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     pluginId: string;
     surfaceId: string;
     hostAction: PluginSurfaceHostActionBinding;
+    projectionScope?: ServerAccountScope;
     signal: AbortSignal;
     isCurrent(): boolean;
     isActionAvailable?(): boolean;
@@ -134,9 +146,11 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         if (payload.kind === 'bind') {
             const subscription = options?.actionControlSubscription;
             if (!subscription || controls.has(payload.subscriptionId)) return createPluginSurfaceHostApiError('unavailable');
-            const binding: Binding = { action: payload.action, publish: subscription.publish,
+            const action = resolveMountedControlAction(input.pluginId, payload.action);
+            const binding: Binding = { action, publish: subscription.publish,
                 abort: new AbortController(),
-                view: Object.freeze({ id: payload.subscriptionId, presentation: payload.presentation, busy: false }) };
+                view: Object.freeze({ id: payload.subscriptionId, presentation: payload.presentation, busy: false,
+                    ...(action.contributed ? { contributedPluginId: action.contributed.pluginId } : {}) }) };
             controls.set(payload.subscriptionId, binding);
             subscription.retain(() => release(payload.subscriptionId, binding));
             publish();
@@ -167,12 +181,8 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     };
 
     // The one person-admission path, shared by slot buttons and host inline editors.
-    const execute = async (action: PluginUiMountedActionReferenceV1, preparation: PluginUiActionControlPreparationV1,
+    const execute = async ({ hostId, contributed }: Binding['action'], preparation: PluginUiActionControlPreparationV1,
         signal: AbortSignal, requestId: string): Promise<PluginUiActionControlExecutionV1> => {
-        const hostId = typeof action === 'string' ? PluginInvocableActionIdSchema.safeParse(action) : null;
-        const contributed = hostId?.success ? null : normalizePluginUiMountedContributedActionReferenceV1({
-            callerPluginId: input.pluginId, action,
-        });
         let execution: PluginUiActionControlExecutionV1;
         if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
         else {
@@ -190,7 +200,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         signal: input.signal, preparationSignal: options?.signal,
         available: input.isActionAvailable?.() !== false, isCurrent: current,
         captureCurrentBinding: input.captureCurrentBinding,
-        execute: (action, preparation, signal) => execute(action, preparation, signal, randomUUID()),
+        execute: (action, preparation, signal) => execute(resolveMountedControlAction(input.pluginId, action), preparation, signal, randomUUID()),
     });
     const press = async (id: string): Promise<void> => {
         const binding = controls.get(id);
@@ -252,7 +262,8 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         listeners.clear();
     };
     input.signal.addEventListener('abort', dispose, { once: true });
-    return Object.freeze({ getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot,
+    return Object.freeze({ projectionScope: input.projectionScope,
+        getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot,
         getSlotSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : slotSnapshot, placeInline, subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => { listeners.delete(listener); };
