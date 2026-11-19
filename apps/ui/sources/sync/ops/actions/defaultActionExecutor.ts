@@ -5231,8 +5231,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           throw error;
         }
       }
+      // A Session draft's attempt ID also identifies its reviewed sandbox acquire.
       return reviewDigest
-        ? executeMachineOwnedAction({ actionId, input: actionInput, context: freshRequest(context), confirmInFlow: true, reviewDigest })
+        ? executeMachineOwnedAction({ actionId, input: actionInput, context: isSessionSpawnNewActionIdV1(actionId) ? context : freshRequest(context),
+            confirmInFlow: true, reviewDigest })
         : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow });
     }, deps.presentUserActionConfirmation);
   };

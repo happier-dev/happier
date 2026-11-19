@@ -202,7 +202,7 @@ describe('default Action original Home selection', () => {
             const httpPaths: string[] = [];
             let relayedInput: unknown;
             const confirm = vi.fn(async () => true);
-            let reviewedDispatches = 0;
+            const confirmedSpawnRequests = new Set<string>();
             const machine = { ...createPlainMachineRowFixture({ id: 'alice-machine', accountId: 'alice' }),
                 installationId: 'alice-installation', installationPublicKey: encodeBase64(installation.publicKey),
                 access: { custodian, role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const } };
@@ -275,16 +275,16 @@ describe('default Action original Home selection', () => {
                         expect(opened?.invocation).toMatchObject({ surface: 'voice', caller: { kind: 'host' } });
                     }
                     if (operation === 'spawn confirmation') {
-                        reviewedDispatches++;
-                        if (reviewedDispatches === 1) return Response.json({ v: 1, actionId, requestId: request.envelope.requestId,
+                        const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                            purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+                            serverIdentityId: homeId, installationPrivateKey: installation.secretKey, includeInvocation: true });
+                        if (!opened?.invocation?.presentUserConfirmation) return Response.json({ v: 1, actionId, requestId: request.envelope.requestId,
                             execution: { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
                                 details: { reviewDigest: 'a'.repeat(43), review: { actionArgs: bindApiSessionSpawnNewInput(request.envelope.input, {
                                     actionId, surface: 'api', caller: { kind: 'host' }, serverId: homeId, externalActionTarget: request.envelope.target }),
                                     preview: { kind: 'session_spawn', directory: '/workspace/project' } } } } });
-                        const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
-                            purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
-                            serverIdentityId: homeId, installationPrivateKey: installation.secretKey, includeInvocation: true });
-                        expect(opened?.invocation?.presentUserConfirmation).toMatchObject({ reviewDigest: 'a'.repeat(43) });
+                        expect(opened.invocation.presentUserConfirmation).toMatchObject({ reviewDigest: 'a'.repeat(43) });
+                        confirmedSpawnRequests.add(request.envelope.requestId);
                     }
                     if (operation === 'spawn acknowledgement loss') return new Response(null, { status: 502 });
                     return Response.json({ v: 1, actionId, requestId: request.envelope.requestId,
@@ -355,7 +355,11 @@ describe('default Action original Home selection', () => {
             else expect(relayedInput).toEqual(actionId === 'session.spawn_new' ? projectSessionSpawnNewApiRequest(input).input : resumeInput);
             // One receiving Action per invocation; preparation must not admit locally.
             expect(httpPaths.filter(path => path === `/v1/actions/${actionId}`)).toHaveLength(operation === 'spawn confirmation' ? 2 : 1);
-            if (operation === 'spawn confirmation') expect(confirm).toHaveBeenCalledTimes(1);
+            if (operation === 'spawn confirmation') {
+                expect(await executeSessionSpawnNewAction(input, context, executor)).toEqual(outcome);
+                expect(confirm).toHaveBeenCalledTimes(2);
+                expect([...confirmedSpawnRequests]).toEqual([context.actionRequestId]);
+            }
             if (actionId === 'session.spawn_new' && operation !== 'spawn confirmation' && operation !== 'spawn plugin') {
                 const prepared = await executor.prepare(actionId, input, context, { reviewOnly: true });
                 expect(prepared.kind).toBe('ready');
