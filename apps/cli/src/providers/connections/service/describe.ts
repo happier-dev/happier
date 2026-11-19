@@ -28,6 +28,7 @@ import type { ProviderConnectionRegistryProjection } from './types';
 import type { ProviderLocalInstallationReadResult } from '@/providers/discovery/installations';
 import { isRemoteProviderGatewayPlacement } from '@/providers/managed/gatewayPlacement';
 import { errorForProviderResolution } from '@/providers/registry/resolutionError';
+import { supportsTeamProviderConnectionDeployment } from '@/providers/broker/providerConnectionSource';
 
 const EMPTY_RUNTIME_SUMMARY: ProviderConnectionRuntimeSummary = Object.freeze({
   health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [],
@@ -329,7 +330,7 @@ export async function describeProviderConnections(
                 : {}),
             }
           : null,
-        teamCredentialSourceOffer: resolved && credentialDefinition
+        teamCredentialSourceOffer: resolved && supportsTeamProviderConnectionDeployment(resolved.record.deployment) && credentialDefinition
           ? {
               connectionId: connection.id,
               connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint,

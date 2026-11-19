@@ -2454,7 +2454,8 @@ separate Remove from pool action on account details remains available.
 
 Current 0.3 development source contains the protocol, server routes, and UI foundations for
 sharing an existing Connected Account, Connected Service Pool, or Provider Connection as a
-Team credential resource. This is not a released capability. It is bounded by
+Team credential resource. Provider Connection sharing requires an external deployment.
+This is not a released capability. It is bounded by
 `teams.credentialResources`, which depends on `teams` and is enabled by default with
 `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED=0` as the operator opt-out; the
 independently exposed Internet API additionally requires

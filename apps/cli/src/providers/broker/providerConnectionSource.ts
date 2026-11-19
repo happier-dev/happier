@@ -117,6 +117,12 @@ function fail(
   return { ok: false, error: createProviderErrorV1(code, { connectionId: source.connectionId, machineId }, cause) };
 }
 
+export function supportsTeamProviderConnectionDeployment(
+  deployment: ResolvedProviderConnectionRecord['deployment'],
+): boolean {
+  return deployment.kind === 'external';
+}
+
 function selectCredential(input: Readonly<{
   record: ResolvedProviderConnectionRecord;
   protocol: ProviderWireProtocol;
@@ -178,7 +184,7 @@ export function resolveProviderConnectionBrokerSource(
   }
   const sourceFingerprint = resolveProviderConnectionSecurityFingerprintMatch(record, input.source.connectionSecurityFingerprint);
   if (
-    record.deployment.kind !== 'external'
+    !supportsTeamProviderConnectionDeployment(record.deployment)
     || record.source.kind !== 'contribution'
     || !sourceFingerprint.matches
   ) {
@@ -656,7 +662,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
           : {}),
       });
-      if (resolution.status !== 'resolved' || resolution.record.deployment.kind !== 'external') {
+      if (resolution.status !== 'resolved' || !supportsTeamProviderConnectionDeployment(resolution.record.deployment)) {
         return unavailable('endpoint_resolution_unavailable');
       }
       const endpoints = resolution.record.endpoints.filter((candidate) => (

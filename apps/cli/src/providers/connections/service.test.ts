@@ -773,9 +773,16 @@ describe('provider connection service', () => {
   it.each([
     ['built-in', 'bundled'],
     ['external', 'path'],
-  ] as const)('passes the exact %s Provider settings resolution to runtime summary', async (_kind, source) => {
+  ] as const)('keeps the exact %s Provider runtime summary without offering Share for managed-local', async (_kind, source) => {
     const h = harness();
-    h.providersByContributionKey.set(contributionKey, managedContributionForSource(source));
+    const managed = managedContributionForSource(source);
+    h.providersByContributionKey.set(contributionKey, {
+      ...managed,
+      definition: ProviderContributionV1Schema.parse({
+        ...managed.definition,
+        credential: contribution().definition.credential,
+      }),
+    });
     const connection = ProviderConnectionV1Schema.parse({
       v: 1,
       id: 'pc_runtime_summary_snapshot',
@@ -832,7 +839,7 @@ describe('provider connection service', () => {
       connectionId: connection.id,
     })).resolves.toMatchObject({
       status: 'success',
-      connections: [{ connectionId: connection.id, authorized: true }],
+      connections: [{ connectionId: connection.id, authorized: true, teamCredentialSourceOffer: null }],
     });
     const runtimeSummaryInput = h.runtimeSummary.mock.calls.at(-1)?.[0];
     const snapshot = h.getLastSnapshot();
