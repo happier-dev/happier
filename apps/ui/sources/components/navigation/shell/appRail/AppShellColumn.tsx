@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { PluginAppPageColumn } from '@/components/appShell/plugins/PluginAppPageColumn';
 import { ProjectsColumn } from '@/components/projects/ProjectsColumn';
+import { ReviewsListHost } from '@/components/reviews/ReviewsListHost';
 import { DiscussionsColumn } from '@/components/discussions/DiscussionsColumn';
 import { WorkflowsColumn } from '@/components/workflows/column/WorkflowsColumn';
 import { BoardsColumn } from '@/components/boards/BoardsColumn';
@@ -56,6 +57,10 @@ const SessionsColumn = React.memo(function SessionsColumn() {
     return <MainView variant="sidebar" />;
 });
 
+function ReviewsColumn() {
+    return <ReviewsListHost surface="column" />;
+}
+
 /** The only built-in column table: a column id the catalog knows without an entry here is a type error. */
 const BUILTIN_COLUMNS = {
     sessions: SessionsColumn,
@@ -67,6 +72,7 @@ const BUILTIN_COLUMNS = {
     settings: SettingsSidebar,
     machines: MachinesColumn,
     services: ServicesColumn,
+    reviews: ReviewsColumn,
 } satisfies Record<BuiltinAppShellColumnId, React.ComponentType>;
 
 const stylesheet = StyleSheet.create(() => ({

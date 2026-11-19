@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import type { ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { applyReviewListPage, getReviewListSnapshot, reviewListKey, subscribeReviewList } from './list';
 
 const scope = { serverId: 'reviews-list-home', accountId: 'alice' };
 const input = { limit: 2 };
-function row(reviewId: string): ReviewListItemV1 {
+function row(reviewId: string): ReviewListResponseV1['items'][number] {
     return { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
         state: 'running', currentRoundOrdinal: 1, startedAt: 1, finishedAt: null, createdAt: 1, updatedAt: 1,
-        counts: { total: 0, needsDecision: 0 } };
+        counts: { total: 0, needsDecision: 0 }, needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you',
+            needsYou: false, requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } };
 }
 
 describe('Review list header publication', () => {

@@ -66,7 +66,7 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'deployments', 'monitoring', 'boards', 'artifacts']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'deployments', 'monitoring', 'boards', 'artifacts', 'reviews']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);

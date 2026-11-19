@@ -100,6 +100,9 @@ export type ReviewWalkthroughTranslations = {
         includeTranscriptLine: string;
     };
     collection: {
+        needsYourDecision: string;
+        caughtUp: string;
+        noProject: string;
         search: string;
         filteredWithinLoaded: string;
         rowOptions: string;
@@ -311,6 +314,9 @@ export const en: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Every reviewer in this step reads the conversation as well as the changes.',
     },
     collection: {
+        needsYourDecision: 'Needs your decision',
+        caughtUp: 'Nothing needs your decision',
+        noProject: 'Without a project',
         search: 'Search reviews',
         filteredWithinLoaded: 'Filtered within the loaded reviews',
         rowOptions: 'Review options',

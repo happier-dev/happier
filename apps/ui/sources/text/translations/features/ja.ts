@@ -12847,6 +12847,9 @@ const ja: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'このステップのすべてのレビュアーが、変更に加えて会話も読みます。',
     },
     collection: {
+        needsYourDecision: "あなたの判断が必要",
+        caughtUp: "判断が必要なものはありません",
+        noProject: "プロジェクトなし",
         search: 'レビューを検索',
         filteredWithinLoaded: '読み込んだレビューの中で絞り込み',
         rowOptions: 'レビューのオプション',

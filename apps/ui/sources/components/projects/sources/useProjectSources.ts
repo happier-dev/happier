@@ -9,6 +9,7 @@ import { readProjectSourcesCatalog } from './projectSourcesCatalog';
 import { useActiveServerAccountScopeLifetime, useMachineListStatusForServer } from '@/sync/store/hooks';
 import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
 import { projectSourceRepositoryFacts, type ProjectSourceRepositoryFacts } from './projectSourceRepositoryFacts';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 const NO_REPOSITORY_FACTS: ReadonlyMap<string, ProjectSourceRepositoryFacts> = new Map();
 
@@ -96,10 +97,43 @@ export function useProjectSource(lifetime: ServerAccountScopeLifetime | null, so
     // Keep the last admitted presentation during a refresh, as the Source
     // controller does, including transient offline failures. Definitive refusal
     // and Account retirement withdraw it; display grants no effect authority.
-    const current = lifetime?.isCurrent() && (state.detailStatus === 'ready' || state.detailStatus === 'loading' || state.detailStatus === 'offline')
-        && state.current?.id === sourceId ? state.current : null;
+    const current = lifetime?.isCurrent() ? presentedProjectSource(state, sourceId) : null;
     const source = React.useMemo(() => current && lifetime ? { serverId: lifetime.scope.serverId, source: current } : null, [current, lifetime]);
     const resolveSource = React.useCallback(() => owner?.settle() ?? Promise.resolve(null), [owner]);
     return React.useMemo(() => ({ status: state.detailStatus, issue: state.issue, source, resolveSource }),
         [source, resolveSource, state.detailStatus, state.issue]);
+}
+
+function presentedProjectSource(state: SourceReadState, sourceId: string | null) {
+    return (state.detailStatus === 'ready' || state.detailStatus === 'loading' || state.detailStatus === 'offline')
+        && state.current?.id === sourceId ? state.current : null;
+}
+
+/** Names for the Sources already referenced by loaded rows; shares their exact readers, never lists the inventory. */
+export function useProjectSourceNames(lifetime: ServerAccountScopeLifetime | null, sourceIds: readonly string[], enabled: boolean) {
+    const execute = useProjectSourceActionExecute();
+    const selection = React.useMemo(() => {
+        const catalog = lifetime?.isCurrent() && enabled ? readProjectSourcesCatalog(lifetime, execute) : null;
+        const owners = catalog ? sourceIds.map(id => ({ id, owner: catalog.readSource(id) })) : [];
+        let names: readonly (string | null)[] = [];
+        const getSnapshot = (): readonly (string | null)[] => {
+            const current = lifetime?.isCurrent();
+            names = retainShallow(names, owners.map(({ id, owner }) => current
+                ? presentedProjectSource(owner.controller.getSnapshot(), id)?.name ?? null : null));
+            return names;
+        };
+        const subscribe = (listener: () => void) => {
+            const stops = owners.map(({ owner }) => owner.controller.subscribe(listener));
+            const retirement = lifetime?.onRetire(listener);
+            return () => { stops.forEach(stop => stop()); retirement?.dispose(); };
+        };
+        const demand = () => {
+            const stops = lifetime?.isCurrent() ? owners.map(({ owner }) => owner.demand()) : [];
+            return () => stops.forEach(stop => stop());
+        };
+        return { getSnapshot, subscribe, demand };
+    }, [enabled, execute, lifetime, sourceIds]);
+    const names = React.useSyncExternalStore(selection.subscribe, selection.getSnapshot, selection.getSnapshot);
+    React.useEffect(selection.demand, [selection]);
+    return names;
 }

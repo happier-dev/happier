@@ -12924,6 +12924,9 @@ const ru: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Каждый рецензент на этом шаге читает разговор вместе с изменениями.',
     },
     collection: {
+        needsYourDecision: "Требуют вашего решения",
+        caughtUp: "Ваше решение не требуется",
+        noProject: "Без проекта",
         search: 'Искать проверки',
         filteredWithinLoaded: 'Отфильтровано среди загруженных проверок',
         rowOptions: 'Параметры проверки',

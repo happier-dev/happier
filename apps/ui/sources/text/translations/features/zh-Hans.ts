@@ -12787,6 +12787,9 @@ const zhHans: ReviewWalkthroughTranslations = {
         includeTranscriptLine: '此步骤中的每位审查者除了更改，还会阅读对话。',
     },
     collection: {
+        needsYourDecision: "需要你做出决定",
+        caughtUp: "暂无需要你决定的事项",
+        noProject: "无项目",
         search: '搜索审阅',
         filteredWithinLoaded: '在已加载的审阅中筛选',
         rowOptions: '审阅选项',

@@ -498,7 +498,7 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'artifacts')).toMatchObject({ routePath: '/artifacts', activation: 'navigate' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
         expect(destinations.find((destination) => destination.id === 'reviews'))
-            .toMatchObject({ routePath: '/reviews', activation: 'navigate', band: 'library' });
+            .toMatchObject({ routePath: '/reviews', activation: 'navigate', band: 'library', column: 'reviews' });
         // Feature-disabled built-ins are omitted, including the Bots roster.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
             .toEqual(['sessions', 'search', 'projects', 'deployments', 'monitoring', 'boards', 'artifacts', 'reviews', 'sessions.compose', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template', 'team-setup']);

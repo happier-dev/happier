@@ -1,6 +1,8 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
+import type { ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@/sync/ops/actions/defaultActionExecutor';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
@@ -9,13 +11,16 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
+import { sync } from '@/sync/sync';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { deriveArtifactStoredKindV1, REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/reviews/list';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkspaceRouteBody } from '@/app/(app)/reviews';
+import { ReviewsListHost } from './ReviewsListHost';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
@@ -30,9 +35,13 @@ const routerPush = vi.hoisted(() => vi.fn());
 const membershipAlert = vi.hoisted(() => vi.fn());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { alert: membershipAlert } }).module);
 // RN's physical recycler is absent from Test Renderer; keep real Collection rows beneath it.
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(
-    (await import('@/dev/testkit/mocks/virtualizedList')).createCapturingFlatListMock().module,
-));
+vi.mock('react-native', async () => {
+    const lists = await import('@/dev/testkit/mocks/virtualizedList');
+    return (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+        ...lists.createCapturingFlatListMock().module,
+        ...lists.createCapturingSectionListMock().module,
+    });
+});
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 // Menus and editors on this page render inline under Test Renderer (no window).
 vi.mock('@/components/ui/popover', async original => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(original));
@@ -41,9 +50,93 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
-afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); });
+let restoreDimensions = () => {};
+beforeEach(() => {
+    const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 900, scale: 1, fontScale: 1 });
+    restoreDimensions = () => dimensions.mockRestore();
+});
+afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); restoreDimensions(); });
 
 describe('/reviews live host', () => {
+    it.each([['desktop', 1024, true], ['phone', 390, false], ['collapsed desktop', 1024, false]] as const)('projects the %s collection from per-person attention and shares list, titles and search demand', async (surface, width, columnVisible) => {
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+        const serverUrl = `https://review-groups-${surface.replaceAll(' ', '-')}.example`;
+        const serverId = await homes.addHome({ serverUrl, name: 'Review groups', accountId: 'alice', currentAccount: true });
+        const row = (reviewId: string, projectSourceId: string, state: 'running' | 'completed', needsYou: boolean): ReviewListResponseV1['items'][number] => ({
+            reviewId, projectSourceId, workflowId: null, subjectKind: 'repository', sourceKind: 'direct', state,
+            currentRoundOrdinal: 1, startedAt: 1, finishedAt: state === 'running' ? null : 2, createdAt: 1, updatedAt: 2,
+            counts: { total: 8, needsDecision: 8 }, needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you',
+                needsYou, requestedVerdict: needsYou, pendingDecisions: false, canSubmitVerdict: needsYou },
+        });
+        const items = [row('needs', 'source-a', 'completed', true), row('running', 'source-b', 'running', false),
+            row('finished', 'source-a', 'completed', false), row('elsewhere', 'source-b', 'completed', false)];
+        for (const item of items) homes.artifacts(serverId).replaceStoredRow({ id: item.reviewId, ownerAccountId: 'alice', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: item.reviewId, title: `Exact ${item.reviewId}` }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
+        homes.answer(serverId, 'POST /v1/reviews/list', { body: { items, cursor: null } });
+        for (const [id, name] of [['source-a', 'Happier'], ['source-b', 'Website']]) homes.answer(serverId, `/v1/projects/sources/${id}`, {
+            body: { ok: true, source: { id, name, revision: 1, audience: [], createdByAccountId: 'alice' }, canManage: true },
+        });
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
+        // Measure the visible collection after the ordinary bootstrap's conservative recovery wake.
+        await sync.awaitBootstrapForegroundAcquisition();
+        // Machine inventory is an eager Home bootstrap read, independent of this collection's demand.
+        await waitForHomeGovernance(() => expect(homes.requests.some(request => new URL(request.path, serverUrl).pathname === '/v1/machines')).toBe(true));
+        items.forEach(item => storage.getState().deleteArtifact(item.reviewId));
+        const before = homes.requests.length;
+        const page = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={active}>
+            <AppShellColumnContext.Provider value={{ present: width > 390, columnVisible }}>
+                <WorkspaceRouteBody />{columnVisible ? <ReviewsListHost surface="column" /> : null}
+            </AppShellColumnContext.Provider>
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(page(true));
+        try {
+            await reportCollectionLayout(screen, 'reviews:list');
+            await vi.waitFor(() => expect(screen.findHostByTestId('reviews:row:needs')).not.toBeNull());
+            expect(screen.findHostByTestId('reviews:row:running')).not.toBeNull();
+            if (columnVisible) {
+                expect(screen.findHostByTestId('reviews:row:finished')).toBeNull();
+                expect(screen.findHostByTestId('reviews:row:elsewhere')).toBeNull();
+                expect(screen.getTextContent()).toContain('Needs your decision');
+                await reportCollectionLayout(screen, 'reviews:column');
+            }
+            const prefix = columnVisible ? 'reviews:column:row' : 'reviews:row';
+            await vi.waitFor(() => expect(screen.findHostByTestId(`${prefix}:finished`)).not.toBeNull());
+            expect(screen.findHostByTestId(`${prefix}:elsewhere`)).not.toBeNull();
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('Website'));
+            expect(screen.getTextContent()).toContain('Happier');
+            expect(screen.findAllHostsByTestId('reviews:scope-line')).toHaveLength(1);
+            const reads = () => homes.requests.slice(before);
+            expect(reads().filter(request => request.path === '/v1/reviews/list').map(request => request.input)).toEqual([
+                { limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 },
+            ]);
+            const paths = () => reads().map(request => new URL(request.path, serverUrl).pathname);
+            expect(paths().filter(path => path.startsWith('/v1/projects/sources/')).sort()).toEqual([
+                '/v1/projects/sources/source-a', '/v1/projects/sources/source-b',
+            ]);
+            expect(paths().filter(path => path === '/v1/projects/sources')).toEqual([]);
+            expect(reads().filter(request => request.path === '/v1/artifacts/read').map(request => request.input)).toEqual([
+                { artifactIds: items.map(item => item.reviewId).sort(), projection: 'headers' },
+            ]);
+            await screen.pressByTestIdAsync('reviews:search-toggle');
+            await act(async () => { screen.changeTextByTestId('reviews:search', 'Exact needs'); });
+            await vi.waitFor(() => expect(screen.findHostByTestId(`${prefix}:finished`)).toBeNull());
+            expect(screen.findHostByTestId(`${prefix}:needs`)).not.toBeNull();
+            await act(async () => { screen.changeTextByTestId('reviews:search', ''); });
+            await vi.waitFor(() => expect(screen.findHostByTestId(`${prefix}:finished`)).not.toBeNull());
+            expect(reads().filter(request => request.path === '/v1/reviews/list')).toHaveLength(1);
+            expect(reads().filter(request => /comments|machine|rpc/.test(request.path))).toEqual([]);
+            for (const item of items) expect(storage.getState().artifacts[item.reviewId]?.body).toBeUndefined();
+            await screen.update(page(false));
+            const settledReads = reads().length;
+            await act(async () => publishHomeAccountChange(serverId, ['needs'], {
+                changeKinds: ['artifact'], artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })],
+            }));
+            expect(reads()).toHaveLength(settledReads);
+        } finally { await screen.unmount(); await connection.dispose(); }
+    });
     it('names and searches loaded Reviews from their exact Artifact headers and follows header updates', async () => {
         const serverUrl = 'https://review-titles.example';
         const serverId = await homes.addHome({ serverUrl, name: 'Review titles', accountId: 'alice', currentAccount: true });
@@ -73,13 +166,13 @@ describe('/reviews live host', () => {
             const titleReads = () => homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read');
             expect(titleReads().map(request => request.input)).toEqual([{ artifactIds: [reviewId], projection: 'headers' }]);
             await screen.pressByTestIdAsync('reviews:search-toggle');
-            screen.changeTextByTestId('reviews:search', 'handshake');
+            await act(async () => { screen.changeTextByTestId('reviews:search', 'handshake'); });
             expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).not.toBeNull();
             const artifact = storage.getState().artifacts[reviewId];
             if (!artifact?.isDecrypted) throw new Error('The list must open the canonical header');
             await act(async () => storage.getState().applyArtifacts([{ ...artifact, title: 'Durable review', headerVersion: 2 }]));
             await waitForHomeGovernance(() => expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).toBeNull());
-            screen.changeTextByTestId('reviews:search', 'durable');
+            await act(async () => { screen.changeTextByTestId('reviews:search', 'durable'); });
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Durable review'));
             expect(titleReads()).toHaveLength(1);
         } finally { await screen.unmount(); await connection.dispose(); }
@@ -206,9 +299,9 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-pr')).not.toBeNull());
             expect(screen.findByTestId('reviews:search')).toBeNull();
             await screen.pressByTestIdAsync('reviews:search-toggle');
-            screen.changeTextByTestId('reviews:search', t('reviewWalkthrough.collection.subjectPullRequest'));
+            await act(async () => { screen.changeTextByTestId('reviews:search', t('reviewWalkthrough.collection.subjectPullRequest')); });
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-repo')).toBeNull());
-            expect(screen.findHostByTestId('reviews:row:review-pr')).not.toBeNull();
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-pr')).not.toBeNull());
             expect(screen.findByTestId('reviews:search-scope')).not.toBeNull();
         } finally {
             await screen.unmount();

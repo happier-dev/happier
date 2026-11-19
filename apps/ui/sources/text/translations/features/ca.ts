@@ -12896,6 +12896,9 @@ const ca: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Cada revisor d’aquest pas llegeix la conversa a més dels canvis.',
     },
     collection: {
+        needsYourDecision: "Necessiten la teva decisió",
+        caughtUp: "Res no necessita la teva decisió",
+        noProject: "Sense projecte",
         search: 'Cerca revisions',
         filteredWithinLoaded: 'Filtrat dins de les revisions carregades',
         rowOptions: 'Opcions de la revisió',

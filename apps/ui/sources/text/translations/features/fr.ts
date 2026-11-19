@@ -12915,6 +12915,9 @@ const fr: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Chaque relecteur de cette étape lit la conversation en plus des modifications.',
     },
     collection: {
+        needsYourDecision: "À vous de décider",
+        caughtUp: "Aucune décision à prendre",
+        noProject: "Sans projet",
         search: 'Rechercher des revues',
         filteredWithinLoaded: 'Filtré parmi les revues chargées',
         rowOptions: 'Options de la revue',

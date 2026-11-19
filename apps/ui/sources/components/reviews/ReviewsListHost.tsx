@@ -2,8 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HostCollection as Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
-import type { HappierCollectionWindow } from '@happier-dev/plugin-ui/presentation';
-import type { ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import type { HappierCollectionGrouping, HappierCollectionWindow } from '@happier-dev/plugin-ui/presentation';
+import type { ReviewListItemV1, ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
@@ -19,7 +19,10 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { useProjectSourceNames } from '@/components/projects/sources/useProjectSources';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
@@ -40,26 +43,27 @@ const reviewCountsLabel = (item: ReviewListItemV1) => [
     t('reviewWalkthrough.detail.glanceToDecide', { count: item.counts.needsDecision }),
 ].join(' · ');
 const passThrough = (children: React.ReactNode) => children;
-const EMPTY_ITEMS: readonly ReviewListItemV1[] = Object.freeze([]);
+type ReviewRow = ReviewListResponseV1['items'][number];
+const EMPTY_ITEMS: readonly ReviewRow[] = Object.freeze([]);
 
 /**
  * The Reviews collection (plan 04 U3, lab list-strip / list-search / list-drag): the page's one toolbar owns the
  * saved views. The title chevron is the view menu, the strip holds the spaces and + New space, a dragged Review joins
  * a space by dropping on its tab, and search waits behind its icon. Rows open their Review.
  */
-export function ReviewsListHost(): React.ReactElement {
+export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home' | 'column' }> = {}): React.ReactElement {
     const focused = useIsFocused();
-    const view = useReviewsCollectionView(focused);
-    const header = useReviewsSpaceHeader(view, 'reviews-space');
+    const presented = useLayoutPresentationActive();
+    const { columnVisible } = useAppShellColumn();
+    const overview = surface === 'home' && columnVisible;
+    const view = useReviewsCollectionView(focused, surface === 'home');
     const { list } = view;
     const router = useRouter();
     // Starting a Review needs a subject; the one Start review command picks it (the palette's).
     const universalSearch = useOptionalUniversalSearchRuntime();
     const reviewLabel = t('detailsSurface.review.title');
     const moreLabel = t('common.more');
-    const [searchOpen, setSearchOpen] = React.useState(false);
-    const searching = searchOpen || view.searchQuery.length > 0;
-    const closeSearch = React.useCallback(() => { setSearchOpen(false); view.setSearchQuery(''); }, [view]);
+    const searching = view.searchQuery.trim().length > 0;
     const window = React.useMemo((): HappierCollectionWindow => list.cursor ? {
         kind: 'partial', continuations: [{ key: 'more', label: moreLabel,
             load: list.loadMore, busy: list.status === 'loading_more' }],
@@ -67,12 +71,30 @@ export function ReviewsListHost(): React.ReactElement {
     const open = React.useCallback((key: string | null) => {
         if (key !== null) router.push(artifactViewRoute(key) as never);
     }, [router]);
-    const model = useHappierCollection<ReviewListItemV1>({
-        items: view.items ?? EMPTY_ITEMS, keyOf, window, openKey: null, onOpenChange: open,
+    const loaded = view.items ?? EMPTY_ITEMS;
+    // P02's per-person result owns attention; aggregate pending counts do not say who must decide.
+    const items = React.useMemo(() => overview
+        ? loaded.filter(item => item.needsYou.needsYou || item.state === 'running') : loaded, [loaded, overview]);
+    const projectIds = React.useMemo(() => [...new Set(list.items?.map(item => item.projectSourceId) ?? [])], [list.items]);
+    const sourceIds = React.useMemo(() => projectIds.filter((id): id is string => id !== null), [projectIds]);
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const names = useProjectSourceNames(lifetime, sourceIds, !overview && projectIds.length > 1 && focused && presented);
+    const sourceNames = React.useMemo(() => new Map(sourceIds.map((id, index) => [id, names[index]])), [names, sourceIds]);
+    const groups = React.useMemo((): HappierCollectionGrouping<ReviewRow> | undefined => overview ? {
+        axis: [{ key: 'needs-you', title: t('reviewWalkthrough.collection.needsYourDecision') },
+            { key: 'running', title: t('reviewWalkthrough.collection.stateRunning') }],
+        groupOf: item => item.needsYou.needsYou ? 'needs-you' : 'running',
+    } : projectIds.length > 1 ? {
+        axis: projectIds.map(id => ({ key: id ?? '', title: id === null ? t('reviewWalkthrough.collection.noProject')
+            : sourceNames.get(id) ?? t('projects.title') })),
+        groupOf: item => item.projectSourceId ?? '',
+    } : undefined, [overview, projectIds, sourceNames]);
+    const model = useHappierCollection<ReviewRow>({
+        items, keyOf, groups, window, openKey: null, onOpenChange: open,
     });
     const scope = useActiveServerAccountScope();
     // The Artifact owner opens sealed headers; the collection only presents those exact titles.
-    const anatomy = React.useMemo((): CollectionAnatomy<ReviewListItemV1> => ({
+    const anatomy = React.useMemo((): CollectionAnatomy<ReviewRow> => ({
         wrapItem: (item, children) => <WorkspaceDestinationRow href={artifactViewRoute(item.reviewId)} existingMenu
             entityTitle={view.titles.get(item.reviewId) || reviewLabel} entityItem={scope ? { kind: 'artifact', scope, artifactId: item.reviewId } : null}>
             {children}
@@ -84,11 +106,36 @@ export function ReviewsListHost(): React.ReactElement {
         byline: item => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state),
             formatRelativeTimeShort(item.createdAt, Date.now())].join(' · '),
         action: item => <ReviewRowSpaceMenu item={item} view={view} />,
-        testID: item => `reviews:row:${item.reviewId}`,
-    }), [reviewLabel, scope, view]);
+        testID: item => `${surface === 'column' ? 'reviews:column:row' : 'reviews:row'}:${item.reviewId}`,
+    }), [reviewLabel, scope, surface, view]);
     const failure = list.error ? <SurfaceStateCard kind="error" title={t('common.error')}
         diagnosticCode={list.error.code ?? undefined} action={{ label: t('common.retry'), onPress: list.refresh }}
         {...(list.items?.length ? { size: 'line' as const } : { replacesContent: true })} /> : null;
+    const collection = <Collection model={model} anatomy={anatomy} presentation="list" detail="none"
+        accessibilityLabel={t('homeSettings.groups.reviews')}
+        scroll={surface === 'column' ? 'collection' : 'page-virtualized'} minListWidth={0} minDetailWidth={0} preferredListRatio={1}
+        loading={list.items === null && list.error === null} testID={surface === 'column' ? 'reviews:column' : 'reviews:list'}
+        empty={failure ?? (searching ? <SurfaceStateCard kind="empty" title={t('ui.pluginUi.empty')} replacesContent />
+            : overview && list.items?.length ? <SurfaceStateCard kind="empty"
+                title={t('reviewWalkthrough.collection.caughtUp')} replacesContent />
+            : <SurfaceStateCard testID="reviews:empty" kind="empty" title={t('reviewWalkthrough.detail.emptyTitle')}
+                reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
+                action={universalSearch ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
+                    onPress: () => universalSearch.open(t('commandPalette.commands.startReviewRunTitle')) } : undefined} />)} />;
+    if (surface === 'column') return <CoreCollectionScope>
+        {list.items?.length ? failure : null}{collection}
+    </CoreCollectionScope>;
+    return <ReviewsCollectionPage view={view} failure={failure}>{collection}</ReviewsCollectionPage>;
+}
+
+/** Only the home owns the saved-view toolbar; its draft also narrows the adjacent column. */
+function ReviewsCollectionPage({ view, failure, children }: Readonly<{
+    view: ReviewsCollectionView; failure: React.ReactNode; children: React.ReactNode;
+}>): React.ReactElement {
+    const header = useReviewsSpaceHeader(view, 'reviews-space');
+    const [searchOpen, setSearchOpen] = React.useState(false);
+    const searching = searchOpen || view.searchQuery.length > 0;
+    const closeSearch = React.useCallback(() => { setSearchOpen(false); view.setSearchQuery(''); }, [view]);
     return <ItemList pageColumn="wide"><CoreCollectionScope renderPageScroller={passThrough}>
         <PageContentColumn>
             <PageHeader title={t('homeSettings.groups.reviews')} />
@@ -109,16 +156,8 @@ export function ReviewsListHost(): React.ReactElement {
             </View> : null}
             {header.conditionRow}
             {header.overlays}
-            {list.items?.length ? failure : null}
-            <Collection model={model} anatomy={anatomy} presentation="list" detail="none"
-                accessibilityLabel={t('homeSettings.groups.reviews')}
-                scroll="page-virtualized" minListWidth={0} minDetailWidth={0} preferredListRatio={1}
-                loading={list.items === null && list.error === null} testID="reviews:list"
-                empty={failure ?? (searching ? <SurfaceStateCard kind="empty" title={t('ui.pluginUi.empty')} replacesContent />
-                    : <SurfaceStateCard testID="reviews:empty" kind="empty" title={t('reviewWalkthrough.detail.emptyTitle')}
-                        reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
-                        action={universalSearch ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
-                            onPress: () => universalSearch.open(t('commandPalette.commands.startReviewRunTitle')) } : undefined} />)} />
+            {view.list.items?.length ? failure : null}
+            {children}
         </PageContentColumn>
     </CoreCollectionScope></ItemList>;
 }

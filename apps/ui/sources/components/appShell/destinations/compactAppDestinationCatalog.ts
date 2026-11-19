@@ -119,7 +119,7 @@ export const DISCUSSIONS_DESTINATION_ID = 'discussions';
  * typed against this list, so a column id without a renderer is a type error. A placement naming any
  * other column falls back to the rail.
  */
-export const BUILTIN_APP_SHELL_COLUMN_IDS = ['sessions', 'discussions', 'projects', 'workflows', 'boards', 'plugins', 'settings', 'machines', 'services'] as const;
+export const BUILTIN_APP_SHELL_COLUMN_IDS = ['sessions', 'discussions', 'projects', 'workflows', 'boards', 'plugins', 'settings', 'machines', 'services', 'reviews'] as const;
 export type BuiltinAppShellColumnId = typeof BUILTIN_APP_SHELL_COLUMN_IDS[number];
 
 export function isBuiltinAppShellColumnId(value: string): value is BuiltinAppShellColumnId {
@@ -132,10 +132,12 @@ export function isBuiltinAppShellColumnId(value: string): value is BuiltinAppShe
  * column lists workflow sections from their own owners (FIN 04 §3.3), not other destinations. Nor is
  * Boards: its column lists the user's boards (INT §5.1). Nor is Machines: its column is the machine
  * list (plan machine-resources 10 §4.2). Nor is Services: its column is the Projects with their Environments (lab pfc-redesign).
+ * Reviews likewise owns its project-grouped Review rows (Reviews plan 04 U3).
  */
-export type PlaceableAppShellColumnId = Exclude<BuiltinAppShellColumnId, 'settings' | 'workflows' | 'boards' | 'machines' | 'services'>;
+const UNPLACEABLE_APP_SHELL_COLUMNS = ['settings', 'workflows', 'boards', 'machines', 'services', 'reviews'] as const satisfies readonly BuiltinAppShellColumnId[];
+export type PlaceableAppShellColumnId = Exclude<BuiltinAppShellColumnId, typeof UNPLACEABLE_APP_SHELL_COLUMNS[number]>;
 
-const UNPLACEABLE_APP_SHELL_COLUMN_IDS: ReadonlySet<string> = new Set(['settings', 'workflows', 'boards', 'machines', 'services']);
+const UNPLACEABLE_APP_SHELL_COLUMN_IDS: ReadonlySet<string> = new Set(UNPLACEABLE_APP_SHELL_COLUMNS);
 
 function isPlaceableAppShellColumnId(value: string): value is PlaceableAppShellColumnId {
     return isBuiltinAppShellColumnId(value) && !UNPLACEABLE_APP_SHELL_COLUMN_IDS.has(value);
@@ -375,7 +377,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     },
     {
         id: 'reviews', titleKey: 'homeSettings.groups.reviews', icon: 'check-square',
-        placement: { kind: 'rail', region: 'app' }, band: 'library',
+        placement: { kind: 'rail', region: 'app' }, band: 'library', column: 'reviews',
         activation: 'navigate', routePath: '/reviews', currentRoutePatterns: ['/reviews/[...rest]'],
     },
     {

@@ -12795,6 +12795,9 @@ const es: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Cada revisor de este paso lee la conversación además de los cambios.',
     },
     collection: {
+        needsYourDecision: "Necesitan tu decisión",
+        caughtUp: "Nada necesita tu decisión",
+        noProject: "Sin proyecto",
         search: 'Buscar revisiones',
         filteredWithinLoaded: 'Filtrado dentro de las revisiones cargadas',
         rowOptions: 'Opciones de la revisión',

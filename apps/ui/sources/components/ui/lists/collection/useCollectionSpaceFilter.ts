@@ -104,11 +104,16 @@ export function useCollectionSpaceFilter<K extends CollectionEntityKindV1>(entit
     // The condition header hands over the whole next filter from the entity's own registry; a field it removed is an
     // absent key, so the filter is replaced, never merged (SERVICES-ACCEPT-1116 F1).
     const setFilters = React.useCallback((filters: CollectionFilterMapV1[K]): boolean => write(() => filters), [write]);
+    // Loaded-row search is shared presentation, available before saved spaces have loaded.
+    const setSearchQuery = React.useCallback((searchQuery: string): void => {
+        if (!lifetime?.isCurrent()) return;
+        setDraft(previous => previous.searchQuery === searchQuery ? previous : { ...previous, searchQuery });
+    }, [lifetime, setDraft]);
     const reset = React.useCallback((): boolean => {
         if (!lifetime?.isCurrent() || !binding.spacesReady) return false;
         setDraft(previous => previous.filters === previous.savedFilter && previous.searchQuery === ''
             ? previous : { ...previous, filters: previous.savedFilter, searchQuery: '' });
         return true;
     }, [binding.spacesReady, lifetime, setDraft]);
-    return { ...binding, filters: current.filters, searchQuery: current.searchQuery, bound: current.bound, update, setFilters, reset };
+    return { ...binding, filters: current.filters, searchQuery: current.searchQuery, bound: current.bound, update, setFilters, setSearchQuery, reset };
 }

@@ -104,7 +104,7 @@ export function reviewStateLabel(state: ReviewListItemV1['state']): string {
  * Review query (filters are server-readable metadata; manual members are the Account's own associations). Search
  * narrows only the loaded rows, and says so.
  */
-export function useReviewsCollectionView(focused: boolean) {
+export function useReviewsCollectionView(focused: boolean, commandOwner = true) {
   const lifetime = useActiveServerAccountScopeLifetime();
   const binding = useCollectionSpaceFilter('review', {
     lifetime,
@@ -132,9 +132,8 @@ export function useReviewsCollectionView(focused: boolean) {
   const openedTitles = useArtifactTitleProjections(list.scope, artifactIds, focused);
   const titles = React.useMemo(() => new Map(artifactIds.map((id, index) =>
     [id, openedTitles[index] ?? null] as const)), [artifactIds, openedTitles]);
-  // Search is this page's presentation over loaded rows, so it never waits on saved spaces to load.
-  const [searchQuery, setSearchQuery] = React.useState('');
-  useCurrentUiContextLocalCommands(focused ? [{
+  const { searchQuery, setSearchQuery } = binding;
+  useCurrentUiContextLocalCommands(focused && commandOwner ? [{
     key: 'reviews.query',
     title: t('common.search'),
     description: 'reviews.query — Search the loaded Review rows with {value: string}.',

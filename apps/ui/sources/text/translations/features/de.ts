@@ -12900,6 +12900,9 @@ const de: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Alle Prüfer in diesem Schritt lesen neben den Änderungen auch das Gespräch.',
     },
     collection: {
+        needsYourDecision: "Deine Entscheidung ist gefragt",
+        caughtUp: "Keine Entscheidung von dir nötig",
+        noProject: "Ohne Projekt",
         search: 'Reviews durchsuchen',
         filteredWithinLoaded: 'Gefiltert in den geladenen Reviews',
         rowOptions: 'Review-Optionen',

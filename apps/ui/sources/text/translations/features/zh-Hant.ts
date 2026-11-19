@@ -12787,6 +12787,9 @@ const zhHant: ReviewWalkthroughTranslations = {
         includeTranscriptLine: '此步驟中的每位審查者除了變更，還會閱讀對話。',
     },
     collection: {
+        needsYourDecision: "需要你做出決定",
+        caughtUp: "暫無需要你決定的事項",
+        noProject: "無專案",
         search: '搜尋審閱',
         filteredWithinLoaded: '在已載入的審閱中篩選',
         rowOptions: '審閱選項',

@@ -1,11 +1,11 @@
-import { ReviewListRequestV1Schema, type ReviewListItemV1, type ReviewListRequestV1, type ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import { ReviewListRequestV1Schema, type ReviewListRequestV1, type ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 
 export type ReviewListSnapshot = Readonly<{
-    items: readonly ReviewListItemV1[] | null;
+    items: ReadonlyArray<ReviewListResponseV1['items'][number]> | null;
     cursor: string | null;
     status: 'idle' | 'loading' | 'refreshing' | 'loading_more' | 'ready' | 'error';
     error: HomeActionFailure | null;

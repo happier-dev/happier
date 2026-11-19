@@ -12924,6 +12924,9 @@ const pl: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Każdy recenzent w tym kroku czyta rozmowę oprócz zmian.',
     },
     collection: {
+        needsYourDecision: "Wymagają Twojej decyzji",
+        caughtUp: "Nic nie wymaga Twojej decyzji",
+        noProject: "Bez projektu",
         search: 'Szukaj recenzji',
         filteredWithinLoaded: 'Przefiltrowane wśród wczytanych recenzji',
         rowOptions: 'Opcje recenzji',

@@ -12890,6 +12890,9 @@ const pt: ReviewWalkthroughTranslations = {
         includeTranscriptLine: 'Cada revisor deste passo lê a conversa além das alterações.',
     },
     collection: {
+        needsYourDecision: "Precisam da sua decisão",
+        caughtUp: "Nada precisa da sua decisão",
+        noProject: "Sem projeto",
         search: 'Pesquisar revisões',
         filteredWithinLoaded: 'Filtrado nas revisões carregadas',
         rowOptions: 'Opções da revisão',
