@@ -18,10 +18,12 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner', 'terminal owner after Machine use withdrawal'] as const)(
+    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner',
+        'terminal owner after Machine use withdrawal', 'terminal owner reply-wait after Machine use withdrawal'] as const)(
         'sends to a live shared encrypted Session with the correct admission route for %s', async role => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-shared-send-' }, async () => {
-            const withdrawn = role === 'terminal owner after Machine use withdrawal';
+            const replyWait = role === 'terminal owner reply-wait after Machine use withdrawal';
+            const withdrawn = role === 'terminal owner after Machine use withdrawal' || replyWait;
             const owner = role === 'owner' || withdrawn;
             const accountId = owner ? 'alice' : 'bob';
             const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
@@ -45,9 +47,11 @@ describe('original CLI Session Action delivery', () => {
                     }) }
                     : { share: { accessLevel: role === 'viewer' ? 'view' : 'edit', canApprovePermissions: false } }) });
             const actionId = 'session.message.send';
-            const input = { sessionId, message: 'Shared Bot request', reply: 'none', localId: 'shared-input',
-                requestedAction: { v: 1, kind: 'enqueue' } };
-            vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const input = { sessionId, message: 'Shared Bot request', reply: replyWait ? 'wait' : 'none', localId: 'shared-input',
+                ...(replyWait ? {} : { requestedAction: { v: 1, kind: 'enqueue' } }) };
+            const restoredInputPath = `/v2/sessions/${sessionId}/messages/by-local-id/restored-input`;
+            const replyProgress = { v: 1, mode: 'wait', disposition: 'observing', outcome: { kind: 'pass' } };
+            const reads = vi.spyOn(axios, 'get').mockImplementation(async url => {
                 if (url.endsWith(`/v2/sessions/${sessionId}`)) {
                     if (role === 'outsider') return { status: 404, data: { error: 'session-not-found' } };
                     return { status: 200, data: { session } };
@@ -58,6 +62,13 @@ describe('original CLI Session Action delivery', () => {
                 if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+                if (replyWait && url.endsWith(`/v2/sessions/${sessionId}/messages/reply-capability`)) {
+                    return { status: 200, data: { v: 1, protocolVersions: [1] } };
+                }
+                if (replyWait && url.endsWith(restoredInputPath)) return { status: 404, data: { error: 'message-not-found' } };
+                if (replyWait && url.endsWith(`${restoredInputPath}/reply`)) {
+                    return { status: 200, data: { v: 1, status: 'available', progress: replyProgress } };
+                }
                 throw new Error(`Unexpected Home read: ${url}`);
             });
             let machineUseWithdrawn = withdrawn;
@@ -66,7 +77,12 @@ describe('original CLI Session Action delivery', () => {
                     return { status: 200, data: { sessions: [] } };
                 }
                 if (withdrawn && url === `https://home.test/v1/actions/${actionId}`) {
-                    return { status: 404, data: { error: 'invalid_request', code: 'target_unavailable' } };
+                    return { status: 409, data: { error: 'invalid_request', code: 'target_unavailable' } };
+                }
+                if (replyWait && url.endsWith(`${restoredInputPath}/reply`)) {
+                    expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+                    expect(body).toEqual({ kind: 'inline' });
+                    return { status: 200, data: { v: 1, ok: true, progress: { ...replyProgress, disposition: 'inline' } } };
                 }
                 if (role === 'owner') {
                     expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
@@ -89,7 +105,9 @@ describe('original CLI Session Action delivery', () => {
                     status: 403, data: { error: 'forbidden', code: 'session_input_machine_binding_unavailable' },
                 } });
                 if (role === 'viewer') throw Object.assign(new Error('Forbidden'), { response: { status: 403, data: { error: 'forbidden' } } });
-                expect(body).toMatchObject({ localId: withdrawn ? 'restored-input' : input.localId, requestedAction: input.requestedAction });
+                expect(body).toMatchObject({ localId: withdrawn ? 'restored-input' : input.localId,
+                    requestedAction: { v: 1, kind: replyWait ? 'steer_if_active' : 'enqueue' } });
+                if (replyWait) expect(body).toHaveProperty('reply.mode', 'wait');
                 expect(body).not.toHaveProperty('e2eeTag');
                 if (withdrawn) expect(body).toHaveProperty('targetMachineId', 'alice-machine');
                 else expect(body).not.toHaveProperty('targetMachineId');
@@ -108,9 +126,12 @@ describe('original CLI Session Action delivery', () => {
             if (withdrawn) {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
                     result: { status: 'rejected', code: 'session_input_machine_binding_unavailable' } });
+                expect(delivered.mock.calls.map(([url]) => url)).toEqual([`https://home.test/v2/sessions/${sessionId}/pending`]);
+                expect(reads.mock.calls.filter(([url]) => new URL(url).pathname.startsWith('/v1/machines'))).toEqual([]);
                 machineUseWithdrawn = false;
                 expect(await executor.execute(actionId, { ...input, localId: 'restored-input' }, { surface: 'cli' }))
-                    .toMatchObject({ ok: true, result: { status: 'accepted', localId: 'restored-input' } });
+                    .toMatchObject({ ok: true, result: replyWait ? { status: 'replied', localId: 'restored-input', outcome: { kind: 'pass' } }
+                        : { status: 'accepted', localId: 'restored-input' } });
                 return;
             }
             if (role === 'outsider') {

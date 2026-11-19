@@ -799,10 +799,11 @@ export function supportsAccountPendingForSessionInput(input: Readonly<{
   idempotencyKey?: string;
   toolAnswerDelivery?: unknown;
 }>): boolean {
-  const observesReply = input.cliSession?.role === 'recipient'
+  const usesCliAccountPending = input.cliSession?.role === 'recipient'
+    || input.cliSession?.role === 'owner' && input.cliSession.pairedTerminal === true;
+  const observesReply = usesCliAccountPending
     && input.request?.v === 1 && input.request.producer === 'cli';
-  return (!input.cliSession || input.cliSession.role === 'recipient'
-    || input.cliSession.role === 'owner' && input.cliSession.pairedTerminal === true)
+  return (!input.cliSession || usesCliAccountPending)
     && (input.reply === undefined || input.reply === 'none' || observesReply && input.reply === 'wait')
     && input.wait !== true
     && input.recipient === undefined
