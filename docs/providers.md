@@ -974,9 +974,10 @@ returns `provider_catalog_unavailable`; gateway compatibility declarations canno
 supply account membership. Sources without an observation declaration retain their
 static models as `account_unverified` diagnostics. Managed-purpose launch reads the
 same catalog owner through the Account-scoped model projection port, so launch and
-the picker admit the same models. For an enrolled devcontainer, the same-Account
-controller observes the selected Connected Account and the guest applies its own
-Agent compatibility to that catalog. A selected source model missing from its
+the picker admit the same models. For a sandbox guest enrolled under the
+controller's Account, the Home's managed Machine record identifies the controller.
+The controller observes the selected Connected Account and the guest applies its
+own Agent compatibility to that catalog. A selected source model missing from its
 current catalog returns `provider_model_not_found`, including during confirmation. The CLI's
 `modelManagement/sourceCatalog.ts#projectCurrentProviderSourceModelCatalogs` owns
 runnable source-catalog membership for Provider connections and Connected Account

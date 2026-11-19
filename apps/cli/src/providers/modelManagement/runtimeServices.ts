@@ -319,7 +319,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
   invokeConnectedAccountNativeModels?: InvokeConnectedAccountNativeModels;
   observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
-  readConnectedAccountCatalogCustodianMachineId?: () => string | undefined;
+  readConnectedAccountCatalogCustodianMachineId?: (signal: AbortSignal) => string | undefined | Promise<string | undefined>;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   openTeamDirect?: Parameters<typeof createRuntimeProviderServices>[0]['openTeamDirect'];
 }>): RuntimeProviderModelManagementServices {
@@ -657,12 +657,15 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         if (!resolveSelection || request.providerConnection || request.sourceConnectionId) return unavailable();
         const invokeNative = accountContext ? accountContext.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
         const observe = accountContext ? accountContext.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
-        const catalogCustodianMachineId = accountContext ? undefined : input.readConnectedAccountCatalogCustodianMachineId?.();
         const sources = request.connectedServices
           ? resolveAgentPurposeSelections({ contributions: lease.registry.contributes, agentId: agentId!,
               connectedServices: request.connectedServices }).map(candidate => ({ target: candidate.binding.target,
                 agentPurpose: candidate.declaration }))
           : [{ target: request.connectedAccountTarget!, agentPurpose: undefined }];
+        const catalogCustodianMachineId = !accountContext && sources.length > 0 && input.readConnectedAccountCatalogCustodianMachineId
+          ? await awaitWithinProviderOperation(
+              Promise.resolve(input.readConnectedAccountCatalogCustodianMachineId(operationLifetime.signal)), operationLifetime)
+          : undefined;
         const groups: DaemonProviderModelProjectionGroupV1[] = [];
         const { connectedServices: _selectedServices, ...sourceRequest } = request;
         for (const source of sources) {

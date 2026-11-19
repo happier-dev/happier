@@ -22,7 +22,6 @@ import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import type { CliUpdateFacts } from '@happier-dev/protocol';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import { DevcontainerChildProjectionV1Schema } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import type { SessionHandoffDirectPeerTransferHandle } from '@/api/machine/sessionHandoff/handlers';
 import { createFileTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { readDaemonPluginUiArtifactBytes } from '@/rpc/handlers/daemonContributionRegistryProjection';
@@ -118,6 +117,7 @@ import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/prof
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
 import { triggerLegacyProfileMigration as triggerLegacyProfileMigrationRuntime } from '@/providers/migrations/runtime';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readManagedMachines } from '@/machines/managed/readManagedMachine';
 import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
 import type { FeaturesResponse, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
 import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
@@ -1216,14 +1216,20 @@ export async function bootstrapMachineSyncRuntime(
       ...(params.resolveManagedPurposeBindingIntentSelection
         ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
         : {}),
-      ...(readProviderModelProjection ? { readModelProjection: readProviderModelProjection,
-        readConnectedAccountCatalogCustodianMachineId: () => {
-          const snapshot = connectedApiMachine.getMachineMetadataSnapshot();
-          if (snapshot.status !== 'ready') return undefined;
-          // Home projects this field from the guest's current enrollment.
-          const child = DevcontainerChildProjectionV1Schema.safeParse(snapshot.metadata.devcontainerChild);
-          return child.success ? child.data.relation.parentMachineId : undefined;
-        } } : {}),
+      ...(readProviderModelProjection && storedCredentials ? {
+        readModelProjection: readProviderModelProjection,
+        readConnectedAccountCatalogCustodianMachineId: async signal => {
+          const origin = await params.resolveCurrentMachineExecutionOriginContext?.();
+          const accountId = readAccountIdFromToken(storedCredentials.token);
+          if (!origin || !accountId) return undefined;
+          const machines = await readManagedMachines({ credentials: storedCredentials,
+            serverHttpBaseUrl: readProviderHomeServerUrl(), homeId: origin.serverIdentityId,
+            enrolledMachineId: origin.machineId, signal });
+          const guest = machines.find(machine => machine.custodianAccountId === accountId
+            && machine.enrollmentIdentity?.kind === 'guestProcess');
+          return guest?.controller?.machineId;
+        },
+      } : {}),
       modelSettingsMutation: providerConnectionRuntimeServices?.service.mutateModelSettings
         ?? providerConnectionUnavailable,
       localCatalogFallback: createProviderLocalCatalogFallbackRunner({
