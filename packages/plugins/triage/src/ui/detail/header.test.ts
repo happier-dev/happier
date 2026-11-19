@@ -12,6 +12,8 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
+import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
+
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
 import { projectTriageDetailHeaderV1, readTriageDetailContextLineV1 } from './header.js';
 
@@ -201,14 +203,14 @@ describe('the detail header line (lab meta: where the entry lives, then who open
         expect(lineFor({})).toBe('example/repository #17 · Mara Oduya opened 42 minutes ago');
     });
 
-    it('puts a pull request\'s branch pair between where it lives and who opened it (lab: head → base)', () => {
+    it('leaves a pull request\'s branch pair to the facts row, where its diff size stands beside it', () => {
         const outcome = testkitPresentOutcome({
             locator: testkitLocator(),
             snapshot: testkitSnapshot({ title: 'Fix the parser', createdAtMs: CREATED, authorLabel: 'Mara Oduya',
                 branches: { head: 'leeroy/server-rounding', base: 'main' } }),
             viewer: testkitViewer(),
         });
-        expect(lineFor({ outcome })).toBe('example/repository #17 · Mara Oduya opened 42 minutes ago · leeroy/server-rounding → main');
+        expect(lineFor({ outcome })).not.toContain('leeroy/server-rounding');
     });
 
     it('says "You" when the reader opened it, through the row display\'s one rule', () => {
@@ -228,5 +230,79 @@ describe('the detail header line (lab meta: where the entry lives, then who open
         // name it, and the header must say which one this detail is read through.
         expect(lineFor({ secondConfigured: true }))
             .toBe('example/repository #17 · Mara Oduya opened 42 minutes ago · via Example account');
+    });
+});
+
+/**
+ * The change request's facts the header reads at a glance: its diff size, one checks outcome and who reviewed it.
+ *
+ * Each comes from the source's own live status read, so the failure this guards is the header inventing a fact the
+ * source never stated (a zero diff, "no checks") or showing a stale shape for a source that states nothing.
+ */
+describe('the change request facts (diff size, checks outcome, reviewers)', () => {
+    function status(overrides: Partial<TriagePullRequestStatusV1> = {}): TriagePullRequestStatusV1 {
+        return {
+            kind: 'status', observedAtMs: 1_000, facts: [],
+            checks: { state: 'complete', passed: 5, failed: 0, pending: 0, total: 7, rows: [], incomplete: false },
+            review: { decision: 'changesRequested', incomplete: false, reviewers: [
+                { id: 'u1', name: 'Mika Tanaka', verb: 'approved' },
+                { id: 'u2', name: 'Sam Okafor', verb: 'changesRequested' },
+                { id: 'u3', name: 'Ada Brook', verb: 'pending' },
+                { id: 'u4', name: 'Old Reviewer', verb: 'dismissed' },
+            ] },
+            merge: null,
+            branch: { head: 'leeroy/server-rounding', base: 'main', additions: 28, deletions: 3 },
+            ...overrides,
+        };
+    }
+
+    const facts = (pullRequestStatus: TriagePullRequestStatusV1 | null | undefined) => projectTriageDetailHeaderV1({
+        row: row(), lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
+        linkedSessions: [], linkedSessionsHasMore: false,
+        ...(pullRequestStatus === undefined ? {} : { pullRequestStatus }),
+    }).changeFacts;
+
+    it('states nothing for a source that reads no change-request status (an issue, an error group)', () => {
+        expect(facts(undefined)).toBeNull();
+        expect(facts(null)).toBeNull();
+    });
+
+    it('carries the diff size the source counted, and none when it did not count it', () => {
+        expect(facts(status())?.diff).toEqual({ additions: 28, deletions: 3 });
+        expect(facts(status({ branch: { head: 'a', base: 'b' } }))?.diff).toBeNull();
+        expect(facts(status({ branch: null }))?.diff).toBeNull();
+    });
+
+    it('carries one checks rollup from the source\'s counts, never a verdict over checks nobody read', () => {
+        expect(facts(status())?.checks).toEqual({ failingCount: 0, runningCount: 0, passingCount: 5 });
+        expect(facts(status({ checks: { state: 'incomplete', passed: null, failed: 2, pending: 1, total: null, rows: [], incomplete: true } }))?.checks)
+            .toEqual({ incomplete: true, failingCount: 2, runningCount: 1 });
+        // No checks configured, or counts the source could not establish: nothing to say.
+        expect(facts(status({ checks: { state: 'none', passed: 0, failed: 0, pending: 0, total: 0, rows: [], incomplete: false } }))?.checks).toBeNull();
+        expect(facts(status({ checks: { state: 'complete', passed: null, failed: null, pending: null, total: null, rows: [], incomplete: false } }))?.checks).toBeNull();
+        expect(facts(status({ checks: null }))?.checks).toBeNull();
+    });
+
+    it('groups reviewers by where their review stands, most consequential first, leaving dismissed reviews out', () => {
+        expect(facts(status())?.reviewers).toEqual([
+            { verb: 'changesRequested', names: ['Sam Okafor'] },
+            { verb: 'approved', names: ['Mika Tanaka'] },
+            { verb: 'pending', names: ['Ada Brook'] },
+        ]);
+        expect(facts(status({ review: null }))?.reviewers).toEqual([]);
+    });
+
+    it('names the branch pair from the status read when the entry\'s own snapshot did not carry it', () => {
+        const projected = (pullRequestStatus: TriagePullRequestStatusV1 | null) => projectTriageDetailHeaderV1({
+            row: row(), lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
+            linkedSessions: [], linkedSessionsHasMore: false, pullRequestStatus,
+        }).branches;
+        expect(projected(status())).toEqual({ head: 'leeroy/server-rounding', base: 'main' });
+        expect(projected(status({ branch: { head: 'leeroy/server-rounding' } }))).toBeNull();
+        expect(projected(null)).toBeNull();
+    });
+
+    it('states nothing when the status read carries none of the three facts', () => {
+        expect(facts(status({ checks: null, review: null, branch: null }))).toBeNull();
     });
 });

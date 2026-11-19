@@ -653,7 +653,7 @@ function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
   overview: GithubOverviewControllerV1,
   onObserved: GithubObservedEntryHandlerV1,
   activity: ReturnType<typeof useTabPanelActivity>,
-): Readonly<{ value: TriageDetailPrimaryWriteV1 | null; refresh: () => Promise<void> }> {
+): Readonly<{ value: TriageDetailPrimaryWriteV1 | null; nativeStatus: SessionPullRequestNativeStatusV1 | null; refresh: () => Promise<void> }> {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
   const { active, activeSignal } = activity;
@@ -726,7 +726,7 @@ function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
       disabledReason: readReason, pending: false, execute: async () => {}, ...(reading ? { reading: true } : {}),
       ...(nativeStatus === null ? {} : { nativeStatus }), readRequirements: controller.refresh, ...retry };
   }, [controller.primaryWrite, controller.refresh, input.observation.entryRef.kindId, presentation, overview.failure, overview.value, overview.refresh, nativeStatus, readReason, text]);
-  return React.useMemo(() => ({ value, refresh: controller.refresh }), [value, controller.refresh]);
+  return React.useMemo(() => ({ value, nativeStatus, refresh: controller.refresh }), [value, nativeStatus, controller.refresh]);
 }
 
 type GithubMergeSignatureStateV1 = Readonly<{
@@ -4555,6 +4555,14 @@ function GithubDetailBody({
     publishPrimaryWrite(primaryWrite);
     return () => { publishPrimaryWrite(null); };
   }, [publishesPrimaryWrite, primaryWrite, publishPrimaryWrite]);
+  // The header's facts read the status in every state; a write is offered only while the pull request is open.
+  const primaryStatus = kindId === 'pull-request' ? primaryController.nativeStatus : null;
+  const publishPrimaryStatus = primaryHost?.offerStatus;
+  React.useLayoutEffect(() => {
+    if (publishPrimaryStatus === undefined || !publishesPrimaryWrite) return undefined;
+    publishPrimaryStatus(primaryStatus);
+    return () => { publishPrimaryStatus(null); };
+  }, [publishesPrimaryWrite, primaryStatus, publishPrimaryStatus]);
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
   const publicationProposals = useReviewCommentProposalsForEntry({
     reviewId: kindId === 'pull-request' ? input.admittedReview?.reviewId : undefined,

@@ -33,6 +33,7 @@ import {
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import type {
+  SessionPullRequestNativeStatusV1,
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
   TriageSourceWorkflowSubjectV1,
@@ -88,6 +89,7 @@ import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { presentInternalTaskReadFailure } from '../../internalTasks/readFailure.js';
 import { projectTriageDetailHeaderV1, readTriageDetailContextSegmentsV1, type TriageDetailHeaderV1 } from './header.js';
+import { TriageDetailHeaderFacts } from './headerFacts.js';
 import {
   readTriageSourceDetailContributionV1,
   readTriageSourceDescriptorV1,
@@ -675,6 +677,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
           <Stack grow><Text variant="micro" tone="secondary" value={typeof identity.subtitle === 'string' ? identity.subtitle : identity.subtitle.join(' · ')} numberOfLines={1} /></Stack>
         </Row>
       )}
+      <TriageDetailHeaderFacts header={header} />
       {props.lastKnown === true ? <Status tone="muted" labelKey="plugins.triage.surface.detail.lastKnown" label="These are the last facts this page held for this entry, and they may be out of date." /> : null}
       {header.attention === null || props.attentionInActions === true ? null : <TriageAttentionBadge attention={header.attention} />}
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
@@ -777,9 +780,18 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     setPrimaryWriteRecord((current) => value === null && current?.key !== primaryWriteKey
       ? current : { key: primaryWriteKey, value });
   }, [primaryWriteKey]);
+  // The change request's live status for the header's facts, kept per mounted connection like the write it sits beside.
+  const [statusRecord, setStatusRecord] = React.useState<Readonly<{
+    key: string | null; value: SessionPullRequestNativeStatusV1 | null;
+  }> | null>(null);
+  const sourceStatus = statusRecord?.key === primaryWriteKey ? statusRecord.value : null;
+  const offerStatus = React.useCallback((value: SessionPullRequestNativeStatusV1 | null) => {
+    setStatusRecord((current) => value === null && current?.key !== primaryWriteKey
+      ? current : { key: primaryWriteKey, value });
+  }, [primaryWriteKey]);
   const evidenceDisclosure = React.useMemo(() => ({ ...insertion, panelActions: props.sourcePanelActions,
-    primaryWrite: { value: sourcePrimaryWrite, offer: offerPrimaryWrite },
-  }), [insertion, offerPrimaryWrite, props.sourcePanelActions, sourcePrimaryWrite]);
+    primaryWrite: { value: sourcePrimaryWrite, offer: offerPrimaryWrite, offerStatus },
+  }), [insertion, offerPrimaryWrite, offerStatus, props.sourcePanelActions, sourcePrimaryWrite]);
 
   const observedDetail = useTriageEntryDetail(
     props.lastKnown === true || props.exactRead === null || selection === null || observation === null ? null
@@ -797,6 +809,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     ? detail.linkedSessionsNextCursor !== undefined
     : false;
   const sourceDescriptor = props.lastKnown === true ? null : readTriageSourceDescriptorV1(context, row.entryRef.source);
+  // The header's change facts read the source's own live status offer, the value its write carries: never a second read.
+  const pullRequestStatus = sourceStatus === null || sourceStatus.kind === 'unavailable' ? null : sourceStatus.value;
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
     row,
     lanes: props.lanes,
@@ -804,8 +818,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     sourceDescriptor,
     linkedSessions,
     linkedSessionsHasMore,
+    pullRequestStatus,
     text,
-  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, row, sourceDescriptor, text]);
+  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, text]);
 
   const completePostMutation = props.completePostMutation;
   const refreshLinkedSessions = detail?.kind === 'ready' ? detail.refreshLinkedSessions : undefined;

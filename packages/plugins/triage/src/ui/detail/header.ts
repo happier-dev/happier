@@ -1,11 +1,13 @@
 import {
   formatTriageTimestampV1,
   type TriageLinkedSessionProjectionV1,
+  type TriagePullRequestStatusV1,
   type TriageSourceKindGlyphV1,
   type TriageSourceDescriptorV1,
   type TriageSourceEntrySnapshotV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
+import type { TriageDetailChecksRollupV1 } from '@happier-dev/triage-sources/ui';
 import { readTriageAttentionReasonDangerV1, readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
 
 import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
@@ -34,6 +36,22 @@ import { projectTriageEntryDisplay, type TriageEntryDisplayTextV1, type TriageEn
  * declared kinds this entry is, and what the source calls it — and that is the
  * §2.2 decision this projection exists to make in one place.
  */
+
+/** Where one reviewer's review stands, in the order a reader acts on it. */
+export type TriageDetailReviewerVerbV1 = 'changesRequested' | 'approved' | 'pending' | 'commented';
+
+/**
+ * A change request's facts the header reads at a glance, as the source's own live status read states them.
+ *
+ * Each member is `null` (or empty) when that read did not state it, never a zero: a diff nobody counted is not
+ * "+0 −0" and checks nobody read are not "none".
+ */
+export type TriageDetailChangeFactsV1 = Readonly<{
+  diff: Readonly<{ additions: number; deletions: number }> | null;
+  /** The one rollup the detail story's Checks step also says, so the two never read two ways. */
+  checks: TriageDetailChecksRollupV1 | null;
+  reviewers: readonly Readonly<{ verb: TriageDetailReviewerVerbV1; names: readonly string[] }>[];
+}>;
 
 export type TriageDetailHeaderV1 = Readonly<{
   title: string;
@@ -79,7 +97,10 @@ export type TriageDetailHeaderV1 = Readonly<{
    * address. `null` with no present answer.
    */
   breadcrumb: readonly string[] | null;
-  /** A pull/merge request's branch pair as the source names it; `null` when unknown or not a branch-based kind. */
+  /**
+   * A pull/merge request's branch pair as the source names it: the entry's snapshot, else the live status read;
+   * `null` when unknown or not a branch-based kind.
+   */
   branches: Readonly<{ head: string; base: string }> | null;
   /** Who opened it: "You" when the reader did, else the source's author name (the row display's rule). */
   authorLabel: string | null;
@@ -101,7 +122,43 @@ export type TriageDetailHeaderV1 = Readonly<{
   webUrl: string | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   linkedSessionsHasMore: boolean;
+  /** Diff size, checks outcome and reviewers; `null` for an entry whose source read states none of them. */
+  changeFacts: TriageDetailChangeFactsV1 | null;
 }>;
+
+const REVIEWER_VERB_ORDER: readonly TriageDetailReviewerVerbV1[] = ['changesRequested', 'approved', 'pending', 'commented'];
+
+function readChecksRollup(checks: TriagePullRequestStatusV1['checks']): TriageDetailChecksRollupV1 | null {
+  // No checks configured, or a read that established nothing, has no outcome to state.
+  if (checks === null || checks.state === 'none' || checks.state === 'unknown') return null;
+  if (checks.failed === null || checks.pending === null) return null;
+  if (checks.state === 'incomplete' || checks.incomplete) {
+    return { incomplete: true, failingCount: checks.failed, runningCount: checks.pending };
+  }
+  return checks.passed === null ? null
+    : { failingCount: checks.failed, runningCount: checks.pending, passingCount: checks.passed };
+}
+
+function readStatusBranches(status: TriagePullRequestStatusV1 | null | undefined): TriageDetailHeaderV1['branches'] {
+  const head = status?.branch?.head;
+  const base = status?.branch?.base;
+  return head === undefined || base === undefined ? null : Object.freeze({ head, base });
+}
+
+/** The live status read's three header facts; `null` when it states none of them. */
+function projectChangeFacts(status: TriagePullRequestStatusV1 | null | undefined): TriageDetailChangeFactsV1 | null {
+  if (status === null || status === undefined) return null;
+  const branch = status.branch;
+  const diff = branch?.additions === undefined || branch.deletions === undefined
+    ? null : Object.freeze({ additions: branch.additions, deletions: branch.deletions });
+  const checks = readChecksRollup(status.checks);
+  const reviewers = REVIEWER_VERB_ORDER.flatMap((verb) => {
+    const names = (status.review?.reviewers ?? []).filter((reviewer) => reviewer.verb === verb).map((reviewer) => reviewer.name);
+    return names.length === 0 ? [] : [Object.freeze({ verb, names: Object.freeze(names) })];
+  });
+  if (diff === null && checks === null && reviewers.length === 0) return null;
+  return Object.freeze({ diff, checks, reviewers: Object.freeze(reviewers) });
+}
 
 function selectedObservation(row: TriageListRowV1): ProjectedObservationV1 | null {
   const selectedInstanceId = row.selected.kind === 'selected' ? row.selected.sourceInstanceId : null;
@@ -137,6 +194,11 @@ export type TriageDetailHeaderInputV1 = Readonly<{
   sourceDescriptor: TriageSourceDescriptorV1 | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   linkedSessionsHasMore: boolean;
+  /**
+   * The source's own live read of a change request's status, when it offers one (the same value merge readiness
+   * reads). Absent for every entry whose source reads no such status.
+   */
+  pullRequestStatus?: TriagePullRequestStatusV1 | null;
   /** The reader's words, for the author line ("You"); English fallbacks when absent. */
   text?: TriageEntryDisplayTextV1;
 }>;
@@ -174,7 +236,8 @@ export function projectTriageDetailHeaderV1(
       present.snapshot.scopeLabel,
       ...(present.snapshot.designation === undefined ? [] : [present.snapshot.designation]),
     ]),
-    branches: present?.snapshot.branches ?? null,
+    // A row read may not carry the branch names; the live status read that states the diff size does.
+    branches: present?.snapshot.branches ?? readStatusBranches(input.pullRequestStatus),
     authorLabel: display.authorLabel,
     markFacts: Object.freeze({
       lifecyclePresentation: display.lifecyclePresentation,
@@ -196,14 +259,17 @@ export function projectTriageDetailHeaderV1(
     webUrl: present?.locator.webUrl ?? null,
     linkedSessions: input.linkedSessions,
     linkedSessionsHasMore: input.linkedSessionsHasMore,
+    changeFacts: projectChangeFacts(input.pullRequestStatus),
   });
 }
 
 /**
- * The line under the detail title: where the entry lives, who opened it and when, then a pull request's branch pair
- * ("example/repository #17 · You opened 42 minutes ago · leeroy/server-rounding → main"). The source's brand mark leads it and the kind glyph sits beside the title, so the
- * source's name and the state word are not repeated in words. The connection is named only when the reader has
- * more than one connection to this source, which is the only time there is one to tell apart.
+ * The line under the detail title: where the entry lives, then who opened it and when
+ * ("example/repository #17 · You opened 42 minutes ago"). The source's brand mark leads it and the kind glyph sits
+ * beside the title, so the source's name and the state word are not repeated in words. A pull request's branch pair
+ * is not here: it leads the facts row under the header, beside the diff size it belongs with. The connection is named
+ * only when the reader has more than one connection to this source, which is the only time there is one to tell
+ * apart.
  */
 export function readTriageDetailContextSegmentsV1(
   header: TriageDetailHeaderV1,
@@ -218,14 +284,9 @@ export function readTriageDetailContextSegmentsV1(
     : header.authorLabel === null
       ? text('plugins.triage.surface.detail.openedAt', 'Opened {age}', { age })
       : text('plugins.triage.surface.detail.openedBy', '{author} opened {age}', { author: header.authorLabel, age });
-  // Who and when precede the branch pair: a branch name is the longest and least-read part, so on a narrow pane it
-  // is the part the line's end cuts, never the author or the age.
   const parts = [
     header.addressLabel,
     opened,
-    header.branches === null
-      ? null
-      : text('plugins.triage.surface.detail.branches', '{head} → {base}', { head: header.branches.head, base: header.branches.base }),
     header.connectionLabel === null || header.sourceConnections < 2
       ? null
       : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),

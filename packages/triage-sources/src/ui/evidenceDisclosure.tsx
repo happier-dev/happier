@@ -56,6 +56,12 @@ export type TriageDetailPrimaryWriteHostV1 = Readonly<{
   /** Allows the source's existing actions panel to consume the same offer. */
   value?: TriageDetailPrimaryWriteV1 | null;
   offer(write: TriageDetailPrimaryWriteV1 | null): void;
+  /**
+   * The change request's live status for the header's facts row, offered whether or not a write is: a merged pull
+   * request still has a diff size and reviewers. The same value a write carries as `nativeStatus`, never a second
+   * read; `null` withdraws it.
+   */
+  offerStatus?(status: SessionPullRequestNativeStatusV1 | null): void;
 }>;
 
 /**

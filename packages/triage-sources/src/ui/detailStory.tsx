@@ -180,6 +180,7 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
   const text = usePluginTranslation();
   const count = useStoryCount();
   const [expanded, setExpanded] = React.useState(false);
+  const { locale } = useSurfaceContext();
   const summary = summarizeTriageChangesV1({ rows, more, totals });
   // Open, every file read so far in the same order; what is left is the files not read yet.
   const listed = expanded ? summarizeTriageChangesV1({ rows, more, totals, shown: rows.length }) : summary;
@@ -191,8 +192,9 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
       ? count('files', summary.fileCount, { one: '{count} file', other: '{count} files' })
       : text('plugins.triage.detailStory.filesPartial', '{count}+ files', files)} />
     : <Row gap="xsmall" align="center">
-      <Text variant="micro" tone="success" value={`+${String(summary.lines.additions)}`} />
-      <Text variant="micro" tone="danger" value={`−${String(summary.lines.deletions)}`} />
+      {/* Grouped as the header's diff size groups them, so one page never spells one count two ways. */}
+      <Text variant="micro" tone="success" value={`+${summary.lines.additions.toLocaleString(locale)}`} />
+      <Text variant="micro" tone="danger" value={`−${summary.lines.deletions.toLocaleString(locale)}`} />
       <Text variant="micro" tone="secondary" value={summary.complete
         ? count('inFiles', summary.fileCount, { one: 'in {count} file', other: 'in {count} files' })
         : text('plugins.triage.detailStory.inFilesPartial', 'in {count}+ files', files)} />
@@ -286,7 +288,7 @@ function useChecksRollupLine(rollup: TriageDetailChecksRollupV1 | null, latestCo
 function ChecksRollupSentence({ lead, line, variant = 'micro' }: Readonly<{
   lead: string | null;
   line: string;
-  variant?: 'micro' | 'body';
+  variant?: 'micro' | 'meta' | 'body';
 }>): React.ReactElement {
   return lead === null ? <Text variant={variant} tone="secondary" value={line} />
     : <Row gap="xsmall" align="center">
@@ -300,12 +302,14 @@ function ChecksRollupSentence({ lead, line, variant = 'micro' }: Readonly<{
  * draws the rows itself. The same sentence the detail story's Checks step carries, so one rollup
  * never reads two ways. Nothing is drawn when the rollup does not state its counts.
  */
-export function TriageChecksRollupLine({ rollup, latestCommit = false }: Readonly<{
+export function TriageChecksRollupLine({ rollup, latestCommit = false, variant = 'body' }: Readonly<{
   rollup: TriageDetailChecksRollupV1 | null;
   latestCommit?: boolean;
+  /** `body` stands alone above a checks list; `meta` is one fact in an entry's facts row. */
+  variant?: 'meta' | 'body';
 }>): React.ReactElement | null {
   const sentence = useChecksRollupLine(rollup, latestCommit);
-  return sentence === null ? null : <ChecksRollupSentence lead={sentence.lead} line={sentence.line} variant="body" />;
+  return sentence === null ? null : <ChecksRollupSentence lead={sentence.lead} line={sentence.line} variant={variant} />;
 }
 
 /**
