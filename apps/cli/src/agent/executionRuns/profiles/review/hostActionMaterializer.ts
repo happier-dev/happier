@@ -241,6 +241,7 @@ async function prepareSubject(params: Readonly<{
 export function createReviewCommentHostActionMaterializer(deps: Readonly<{
   cwd: string;
   readCurrentCandidate: () => ReviewCommentHostActionCandidate | null;
+  isRunActive: () => boolean;
   readCurrentPluginAuthority: (pluginId: string) => Promise<ReviewCommentHostPluginAuthority | null>;
   resolveWorkspace: () => Promise<ReviewCommentHostWorkspace | null>;
   requestCurrentIntent: (subject: ReviewCommentHostActionSubject) => Promise<CurrentIntentResult>;
@@ -286,7 +287,7 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
     const comments: Array<Readonly<{ findingId?: string; commentId: string; replayed: boolean }>> = [];
     const failures: Array<Readonly<{ findingId?: string; errorCode: string }>> = [];
     for (const [itemIndex, item] of prepared.entries()) {
-      if (!deps.readCurrentCandidate()) {
+      if (!deps.isRunActive()) {
         for (const remaining of prepared.slice(itemIndex)) {
           failures.push({
             ...(remaining.proposal.findingId ? { findingId: remaining.proposal.findingId } : {}),

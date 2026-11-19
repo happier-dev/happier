@@ -221,10 +221,11 @@ export function registerExecutionRunRpcHandlers(
     : undefined;
   const requestCurrentIntent = ctx.actionApprovalDeps?.executionRunHostActionCurrentIntent;
   const materializeReviewHostAction = requestCurrentIntent
-    ? async (readCurrentCandidate: Parameters<typeof createReviewCommentHostActionMaterializer>[0]['readCurrentCandidate']) => {
+    ? async (readCurrentCandidate: Parameters<typeof createReviewCommentHostActionMaterializer>[0]['readCurrentCandidate'], isRunActive: () => boolean) => {
       const materialize = createReviewCommentHostActionMaterializer({
         cwd: ctx.cwd,
         readCurrentCandidate,
+        isRunActive,
         readCurrentPluginAuthority: async pluginId => {
           const current = await (ctx.actionApprovalDeps?.resolveReviewHostPluginAuthority ?? readCurrentReviewHostPluginAuthority)(pluginId);
           return current ? { sourceCustody: current.sourceCustody } : null;

@@ -69,6 +69,7 @@ export async function applyExecutionRunAction(args: Readonly<{
   profileCatalog?: ExecutionRunProfileContributionCatalog;
   materializeReviewHostAction?: (
     readCurrentCandidate: () => ReviewCommentHostActionCandidate | null,
+    isRunActive: () => boolean,
   ) => Promise<ReviewCommentHostActionMaterializationResult>;
   causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   effectiveCallerPermissionMode?: string;
@@ -338,7 +339,8 @@ export async function applyExecutionRunAction(args: Readonly<{
     };
     let materialized: ReviewCommentHostActionMaterializationResult;
     try {
-      materialized = await args.materializeReviewHostAction(readCurrentCandidate);
+      materialized = await args.materializeReviewHostAction(readCurrentCandidate,
+        () => args.runs.get(args.runId)?.status === 'succeeded');
     } catch {
       return {
         ok: false,

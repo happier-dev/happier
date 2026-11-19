@@ -388,6 +388,7 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
   materializeReviewHostAction?: (
     readCurrentCandidate: () => ReviewCommentHostActionCandidate | null,
+    isRunActive: () => boolean,
   ) => Promise<ReviewCommentHostActionMaterializationResult>;
   reviewComments?: ReviewRunCommentService;
   checkConnectedServicesGenerationCurrent?: (input: Readonly<{

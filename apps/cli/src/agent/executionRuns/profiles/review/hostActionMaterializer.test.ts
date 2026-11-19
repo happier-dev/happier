@@ -102,10 +102,12 @@ describe('createReviewCommentHostActionMaterializer', () => {
   it('binds approved intent once and dispatches deterministic canonical host actions', async () => {
     const cwd = await fixture();
     let current: ReviewCommentHostActionCandidate | null = candidate();
+    let candidateReads = 0;
     const dispatches: Array<Readonly<{ input: ReviewCommentCreateRequestV1; context: ActionExecutorContext }>> = [];
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
-      readCurrentCandidate: () => current,
+      isRunActive: () => true,
+      readCurrentCandidate: () => { candidateReads += 1; return current; },
       readCurrentPluginAuthority: async () => currentPluginAuthority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
       requestCurrentIntent: async (subject) => ({ status: 'approved', fingerprint: subject.subjectFingerprint }),
@@ -120,6 +122,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     expect(first).toEqual({ ok: true, result: { status: 'created', comments: [{ findingId: 'finding-1', commentId: 'comment-1', replayed: false }] } });
     expect(second).toEqual({ ok: true, result: { status: 'created', comments: [{ findingId: 'finding-1', commentId: 'comment-1', replayed: true }] } });
     expect(dispatches).toHaveLength(2);
+    expect(candidateReads).toBe(2);
     expect(dispatches[0]?.input).toMatchObject({
       projectId: 'project-1', workspaceId: 'workspace-1', sessionId: 'session-1', runId: 'run-1',
       engineId: 'acme.review', findingId: 'finding-1', authorIntent: 'propose',
@@ -162,6 +165,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     let dispatchCount = 0;
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
+      isRunActive: () => true,
       readCurrentCandidate: () => mode === 'missing'
         ? {
           ...twoProposalCandidate(),
@@ -199,6 +203,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     const dispatched: ReviewCommentCreateRequestV1[] = [];
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
+      isRunActive: () => true,
       readCurrentCandidate: () => current,
       readCurrentPluginAuthority: async () => authority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
@@ -225,6 +230,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     const dispatchedMutationIds: string[] = [];
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
+      isRunActive: () => true,
       readCurrentCandidate: twoProposalCandidate,
       readCurrentPluginAuthority: async () => currentPluginAuthority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
@@ -256,6 +262,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     const grantRequests: unknown[] = [];
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
+      isRunActive: () => true,
       readCurrentCandidate: twoProposalCandidate,
       readCurrentPluginAuthority: async () => currentPluginAuthority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
@@ -321,6 +328,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     let requestCount = 0;
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
+      isRunActive: () => true,
       readCurrentCandidate: twoProposalCandidate,
       readCurrentPluginAuthority: async () => currentPluginAuthority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
@@ -344,6 +352,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     let dispatchCount = 0;
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
+      isRunActive: () => current !== null,
       readCurrentCandidate: () => current,
       readCurrentPluginAuthority: async () => currentPluginAuthority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
