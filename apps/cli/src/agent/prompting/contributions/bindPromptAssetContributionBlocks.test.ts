@@ -19,7 +19,7 @@ function digest(bytes: Uint8Array | string): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
-async function createFixture(params: Readonly<{ bytes: Buffer; contentType: string; withSecondary?: boolean }>) {
+async function createFixture(params: Readonly<{ bytes: Buffer; contentType: string; withSecondary?: boolean; demandLoaded?: boolean }>) {
   const promptPluginId = 'acme.prompts';
   const resourcePluginId = 'acme.resources';
   const rootPath = await mkdtemp(join(tmpdir(), 'happier-prompt-asset-binding-'));
@@ -49,7 +49,7 @@ async function createFixture(params: Readonly<{ bytes: Buffer; contentType: stri
       [promptPluginId, { pluginId: promptPluginId, immutableGenerationId: 'prompts-1', rootPath: '/unused', files: [] }],
       [resourcePluginId, {
         pluginId: resourcePluginId, immutableGenerationId: 'resources-1', rootPath,
-        files: [{ relativePath: 'resources/instructions.txt', byteLength: params.bytes.byteLength, digest: digest(params.bytes) },
+        files: params.demandLoaded ? null : [{ relativePath: 'resources/instructions.txt', byteLength: params.bytes.byteLength, digest: digest(params.bytes) },
           ...(params.withSecondary ? [{ relativePath: 'resources/secondary.txt', byteLength: secondaryBytes.byteLength, digest: digest(secondaryBytes) }] : [])],
       }],
     ]),
@@ -70,8 +70,8 @@ async function createFixture(params: Readonly<{ bytes: Buffer; contentType: stri
 }
 
 describe('prompt asset production binding', () => {
-  it('uses structured cross-plugin identity and exact SVC11 text once policy allows it', async () => {
-    const { owner, promptAsset, occurrenceIdsByPluginId } = await createFixture({ bytes: Buffer.from('\nExact instructions\n'), contentType: 'text/markdown' });
+  it.each([false, true])('uses exact allowed cross-plugin prompt text with demand-loaded bytes %s', async (demandLoaded) => {
+    const { owner, promptAsset, occurrenceIdsByPluginId } = await createFixture({ bytes: Buffer.from('\nExact instructions\n'), contentType: 'text/markdown', demandLoaded });
     await expect(bindPromptAssetContributionBlocks({
       promptAssets: [promptAsset],
       resolveContributionOccurrence: (pluginId) => occurrenceIdsByPluginId.get(pluginId) ?? null,

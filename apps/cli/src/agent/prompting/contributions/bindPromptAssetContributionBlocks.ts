@@ -84,10 +84,6 @@ export async function bindPromptAssetContributionBlocks(params: Readonly<{
         if (!params.isOccurrenceCurrent() || !params.isContributionOccurrenceCurrent(request.pluginId, request.occurrenceId)) {
           return failResource('Prompt asset occurrence is stale');
         }
-        const descriptor = service.describe(request.resourceLocalId);
-        if (descriptor.kind !== 'prompt' || !descriptor.contentType.toLowerCase().startsWith('text/')) {
-          return failResource('Prompt asset resource must be textual prompt content');
-        }
         let result: Awaited<ReturnType<typeof service.read>>;
         try {
           result = await service.read(request.resourceLocalId, {
@@ -100,10 +96,8 @@ export async function bindPromptAssetContributionBlocks(params: Readonly<{
             failResource('Prompt asset occurrence is stale');
           }
         }
-        if (result.kind !== descriptor.kind
-          || result.contentType !== descriptor.contentType
-          || result.digest !== descriptor.digest) {
-          return failResource('Prompt asset resource identity changed during materialization');
+        if (result.kind !== 'prompt' || !result.contentType.toLowerCase().startsWith('text/')) {
+          return failResource('Prompt asset resource must be textual prompt content');
         }
         try {
           return new TextDecoder('utf-8', { fatal: true }).decode(result.bytes);
