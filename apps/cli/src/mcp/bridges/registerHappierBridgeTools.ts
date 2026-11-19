@@ -1,6 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
-import type { ProgressNotification, RequestMeta } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError, type ProgressNotification, type RequestMeta } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '@/ui/logger';
 
 type BridgeRequestExtra = Readonly<{
@@ -66,6 +66,9 @@ function forwardTool(name: string, callHttpTool: HappierBridgeToolCaller) {
           { type: 'text', text: `Failed to call tool ${name}: ${error instanceof Error ? error.message : String(error)}` },
         ],
         isError: true,
+        ...(error instanceof McpError && error.code === ErrorCode.RequestTimeout
+          ? { structuredContent: { code: error.code } }
+          : {}),
       };
     }
   };

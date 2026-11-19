@@ -11,11 +11,14 @@ import { Duplex } from 'node:stream';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResultSchema, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { DESKTOP_UI_ACTION_CLIENT_RPC_METHOD, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { ensureManagedGuestSessionHolder } from '@happier-dev/cli-common/machines/managed';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { reloadConfiguration } from '@/configuration';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
@@ -23,6 +26,9 @@ import { createSessionHolderSocketPath, requireSessionHolderExecutablePath, spaw
 import { SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { sessionMcpAgentTransport } from './sessionMcpClient.testkit';
+import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createSessionDaemonAuthorityFixture } from './sessionDaemonAuthority.testkit';
 import { SESSION_MCP_BEARER_ENV, SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalContext';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
@@ -441,4 +447,78 @@ describe('Session MCP through the native holder relay', () => {
             await bridge.happierMcpServer.stop();
         }
     }, 60_000);
+
+    it.runIf(process.platform !== 'win32')('returns a typed timeout from a stalled Desktop Action and serves the next call over the same stdio', async () => {
+        const sessionId = 'session-mcp-desktop-deadline';
+        const applied = { ok: true as const, result: { v: 1, execution: { ok: true, result: { applied: true } } } };
+        const desktopReply = Promise.withResolvers<typeof applied>();
+        const priorTimeout = process.env.HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS;
+        let stall = false;
+        let desktopStalled = false;
+        const executor = createActionExecutor({
+            ...createUnavailableActionTransportDeps(),
+            clientActionExecute: createClientActionReverseDispatcher(() => ({
+                hasConnectedClientRpcHandler: method => method === DESKTOP_UI_ACTION_CLIENT_RPC_METHOD,
+                callConnectedClientRpc: async (method, request, options) => {
+                    expect(method).toBe(DESKTOP_UI_ACTION_CLIENT_RPC_METHOD);
+                    expect(UiActionDispatchRequestV1Schema.parse(request)).toMatchObject({
+                        actionId: 'desktop.notch.set', input: { state: 'rest' },
+                    });
+                    options.onIssued();
+                    if (!stall) return applied;
+                    desktopStalled = true;
+                    return await desktopReply.promise;
+                },
+            })),
+        });
+        const daemon = await createSessionDaemonAuthorityFixture({
+            sessionId,
+            execute: operation => executor.execute(operation.actionId, operation.input, {
+                authority: 'account_automation', surface: operation.surface, defaultSessionId: sessionId,
+                actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+            }),
+        });
+        const bridge = await startSessionMcp(sessionId, {
+            getActiveTurnAdmissionWitness: () => ({
+                turnId: 'desktop-turn', inputId: 'desktop-input', userMessageSeq: 1, userMessageSeqs: [1],
+                callerPermissionMode: 'yolo', agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+            }),
+        });
+        const agent = new Client({ name: 'relay-agent-desktop-deadline', version: '1' });
+        const transport = sessionMcpAgentTransport(bridge.mcpServers.happier!);
+        let stderr = '';
+        transport.child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+        const exited = once(transport.child, 'close');
+        void exited.catch(() => undefined);
+        const call = { name: 'action_execute', arguments: { actionId: 'desktop.notch.set', input: { state: 'rest' } } };
+        try {
+            await agent.connect(transport);
+            const control = await agent.callTool(call);
+            expect(control.isError, JSON.stringify(control)).toBe(false);
+
+            stall = true;
+            vi.stubEnv('HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS', '1000');
+            reloadConfiguration();
+            const timedOut = await agent.callTool(call, undefined, { timeout: 10_000 });
+            expect(desktopStalled).toBe(true);
+            vi.stubEnv('HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS', priorTimeout);
+            reloadConfiguration();
+
+            const next = await agent.callTool({ name: 'action_spec_get', arguments: { id: 'desktop.notch.set' } });
+            expect(next.isError).toBe(false);
+            expect(transport.child.exitCode).toBeNull();
+            transport.child.stdin.end();
+            const [code, signal] = await exited;
+            expect({ code, signal, stderr }).toEqual({ code: 0, signal: null, stderr: '' });
+            expect(timedOut).toMatchObject({ isError: true, structuredContent: { code: ErrorCode.RequestTimeout } });
+        } finally {
+            desktopReply.resolve(applied);
+            vi.stubEnv('HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS', priorTimeout);
+            reloadConfiguration();
+            await agent.close().catch(() => undefined);
+            await bridge.happierMcpServer.stop();
+            await daemon.close();
+        }
+    }, 30_000);
 });

@@ -6195,6 +6195,11 @@ A long arbitrary command, contributed effect, explicit wait or external transpor
 may still outlast a vendor's tool timeout. Such paths require an owner decision
 about their existing lifecycle; MCP does not manufacture an operation record.
 
+If a forwarded tool call reaches the Happier MCP bridge deadline, its tool
+result carries `isError: true` and `structuredContent.code` with the MCP
+request-timeout code (`-32001`). The timeout applies to that call. The Session's
+stdio relay can serve the next request while the Agent keeps the connection open.
+
 ### Transport and header refusals (0.3 development source)
 
 `not_authenticated` means Home answered an authentication refusal (HTTP 401/403).
