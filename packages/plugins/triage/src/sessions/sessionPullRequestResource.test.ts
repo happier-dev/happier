@@ -719,7 +719,12 @@ describe('the composed Session PR Resource', () => {
             }, { ...source, contributor: { pluginId: 'acme.other', contributionId: 'other' },
                 descriptor: { ...source.descriptor, displayName: 'Other source', settingsPageId: 'other-sources' },
             }] }), dispose() {} }) },
-            actions: { execute: async () => {
+            actions: { execute: async (actionId: string) => {
+                if (actionId === 'tasks.internal.list') return {
+                    status: 'ok', scope: { serverId: 'server-a', accountId: 'account-a' },
+                    todos: [], undoneOrder: [], completedOrder: [],
+                };
+                if (actionId !== 'connectedServices.accounts.list') throw new Error(`Unexpected Action ${actionId}`);
                 accountReads++;
                 if (identityCase === 'unavailable') throw new PluginError({ code: 'unsupported_action' });
                 return { accounts: [first, second, third].slice(0, instances.length).map((instance, index) => ({
