@@ -16403,6 +16403,7 @@ const spanish: TeamsTranslationRoot = {
             archiveDescription: 'Archivar quita el equipo de las vistas activas y detiene el acceso basado en el equipo. Se conservan sus miembros, grupos e historial, y se puede restaurar.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Sesiones nuevas",
+            reviewDefaultsSection: "Revisiones nuevas",
             sharingSection: 'Compartir',
             sharingDescription: 'Se aplica desde ahora. Nada de lo ya compartido cambia.',
             option: {
@@ -16419,6 +16420,9 @@ const spanish: TeamsTranslationRoot = {
                 sessionsPrivate: "Empiezan privadas; cada persona elige qué comparte con este equipo.",
                 sessionsShared: "Empiezan compartidas con este equipo; cada persona puede mantener una privada.",
                 sessionsAlwaysShared: "Cada sesión nueva se comparte con este equipo.",
+                reviewsPrivate: "Empiezan privadas; cada persona elige qué compartir con este equipo.",
+                reviewsShared: "Empiezan compartidas con este equipo; cada persona puede mantener una revisión privada.",
+                reviewsAlwaysShared: "Cada revisión nueva se comparte con este equipo.",
                 outsideAnyone: "Quien puede compartir una sesión también puede compartirla fuera de este equipo.",
                 outsideAdmins: "Solo los administradores de este equipo pueden compartir una sesión fuera.",
                 outsideNobody: "Las sesiones no se pueden compartir fuera de este equipo.",

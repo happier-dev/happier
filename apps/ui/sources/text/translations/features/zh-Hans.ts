@@ -16342,6 +16342,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             archiveDescription: '归档会将团队移出活动视图，并停止基于团队的访问。其成员、群组和历史记录会保留，且可以恢复。',
             logoSection: '标识',
             sessionDefaultsSection: "新会话",
+            reviewDefaultsSection: "新审查",
             sharingSection: '共享',
             sharingDescription: '从现在起生效。已共享的内容不会改变。',
             option: {
@@ -16358,6 +16359,9 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 sessionsPrivate: "以私密开始；每个人自己选择与此团队共享什么。",
                 sessionsShared: "以共享给此团队开始；每个人都可以将某个会话保持私密。",
                 sessionsAlwaysShared: "每个新会话都会共享给 此团队。",
+                reviewsPrivate: "以私密方式开始；每个人自行选择与此团队共享的内容。",
+                reviewsShared: "开始时与此团队共享；每个人也可以将审查设为私密。",
+                reviewsAlwaysShared: "每个新审查都会与此团队共享。",
                 outsideAnyone: "能共享会话的人也可以在此团队之外共享。",
                 outsideAdmins: "只有此团队的管理员可以在外部共享会话。",
                 outsideNobody: "会话不能在此团队之外共享。",

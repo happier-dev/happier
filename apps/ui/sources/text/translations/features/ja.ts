@@ -16402,6 +16402,7 @@ const japanese: TeamsTranslationRoot = {
             archiveDescription: 'アーカイブするとチームはアクティブな表示から外れ、チームベースのアクセスが停止します。メンバー、グループ、履歴は保持され、復元できます。',
             logoSection: 'ロゴ',
             sessionDefaultsSection: "新しいセッション",
+            reviewDefaultsSection: "新しいレビュー",
             sharingSection: '共有',
             sharingDescription: '今後に適用されます。すでに共有したものは変わりません。',
             option: {
@@ -16418,6 +16419,9 @@ const japanese: TeamsTranslationRoot = {
                 sessionsPrivate: "非公開で始まり、各自がこのチームと共有するものを選びます。",
                 sessionsShared: "このチームと共有して始まり、各自が非公開にできます。",
                 sessionsAlwaysShared: "新しいセッションはすべてこのチームと共有されます。",
+                reviewsPrivate: "非公開で開始し、このチームと共有する内容は各自が選びます。",
+                reviewsShared: "このチームと共有して開始します。各自がレビューを非公開にすることもできます。",
+                reviewsAlwaysShared: "新しいレビューはすべてこのチームと共有されます。",
                 outsideAnyone: "セッションを共有できる人はこのチームの外にも共有できます。",
                 outsideAdmins: "このチームの管理者だけが外部に共有できます。",
                 outsideNobody: "セッションをこのチームの外に共有することはできません。",

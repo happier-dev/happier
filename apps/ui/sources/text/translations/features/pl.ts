@@ -16491,6 +16491,7 @@ const polish: TeamsTranslationRoot = {
             archiveDescription: 'Archiwizacja usuwa zespół z aktywnych widoków i wstrzymuje dostęp oparty na zespole. Członkowie, grupy i historia zostają zachowane, a zespół można przywrócić.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Nowe sesje",
+            reviewDefaultsSection: "Nowe przeglądy",
             sharingSection: 'Udostępnianie',
             sharingDescription: 'Obowiązuje od teraz. Nic już udostępnionego się nie zmienia.',
             option: {
@@ -16507,6 +16508,9 @@ const polish: TeamsTranslationRoot = {
                 sessionsPrivate: "Zaczynają jako prywatne; każdy wybiera, co udostępnia temu zespołowi.",
                 sessionsShared: "Zaczynają jako udostępnione temu zespołowi; każdy może zachować jedną prywatną.",
                 sessionsAlwaysShared: "Każda nowa sesja jest udostępniana temu zespołowi.",
+                reviewsPrivate: "Zaczynają jako prywatne; każda osoba wybiera, co udostępnić temu zespołowi.",
+                reviewsShared: "Zaczynają jako udostępnione temu zespołowi; każda osoba może zachować przegląd jako prywatny.",
+                reviewsAlwaysShared: "Każdy nowy przegląd jest udostępniany temu zespołowi.",
                 outsideAnyone: "Kto może udostępnić sesję, może ją też udostępnić poza tym zespołem.",
                 outsideAdmins: "Tylko administratorzy tego zespołu mogą udostępnić sesję na zewnątrz.",
                 outsideNobody: "Sesji nie można udostępniać poza tym zespołem.",

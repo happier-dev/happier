@@ -16342,6 +16342,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             archiveDescription: '封存會將團隊移出使用中的檢視，並停止以團隊為基礎的存取。其成員、群組與歷史記錄會保留，且可以還原。',
             logoSection: '標誌',
             sessionDefaultsSection: "新工作階段",
+            reviewDefaultsSection: "新審查",
             sharingSection: '共用',
             sharingDescription: '從現在起生效。已共用的內容不會改變。',
             option: {
@@ -16358,6 +16359,9 @@ const traditionalChinese: TeamsTranslationRoot = {
                 sessionsPrivate: "以私人開始；每個人自行選擇與此團隊共用什麼。",
                 sessionsShared: "以共用給此團隊開始；每個人都可以讓某個工作階段保持私人。",
                 sessionsAlwaysShared: "每個新工作階段都會共用給 此團隊。",
+                reviewsPrivate: "以私人方式開始；每個人自行選擇與此團隊共用的內容。",
+                reviewsShared: "開始時與此團隊共用；每個人也可以將審查設為私人。",
+                reviewsAlwaysShared: "每個新審查都會與此團隊共用。",
                 outsideAnyone: "能共用工作階段的人也可以在此團隊之外共用。",
                 outsideAdmins: "只有此團隊的管理員可以在外部共用工作階段。",
                 outsideNobody: "工作階段無法在此團隊之外共用。",

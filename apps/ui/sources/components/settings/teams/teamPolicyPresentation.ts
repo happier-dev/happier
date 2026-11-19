@@ -3,6 +3,7 @@ import type {
     TeamAdmissionModeV1,
     TeamExternalSharingPolicyV1,
     TeamPolicyV1,
+    TeamReviewCreationPolicyV1,
     TeamSessionCreationPolicyV1,
 } from '@happier-dev/protocol/teams';
 
@@ -13,11 +14,8 @@ import { t } from '@/text';
  * The words for a Team's sharing policy, shared by the Settings page that changes it and the
  * Overview row that summarizes it, so the two can never name the same choice differently.
  */
-export type TeamPolicyField = Readonly<{
-    sessionCreationPolicy: TeamSessionCreationPolicyV1;
-    externalSharingPolicy: TeamExternalSharingPolicyV1;
-    defaultSessionHistoryAccess: SessionHistoryAccessV1;
-}>;
+export type TeamPolicyField = Readonly<Pick<TeamPolicyV1,
+    'sessionCreationPolicy' | 'reviewCreationPolicy' | 'externalSharingPolicy' | 'defaultSessionHistoryAccess'>>;
 
 /** Short segment labels; the row's line beneath says what the chosen one means. */
 export function sessionCreationLabel(policy: TeamSessionCreationPolicyV1): string {
@@ -56,6 +54,19 @@ export function sessionCreationConsequence(policy: TeamSessionCreationPolicyV1):
             return t('teams.settings.consequence.sessionsShared');
         case 'team_required':
             return t('teams.settings.consequence.sessionsAlwaysShared');
+    }
+}
+
+export function reviewCreationConsequence(policy: TeamReviewCreationPolicyV1 | undefined): string | undefined {
+    switch (policy) {
+        case 'private_default':
+            return t('teams.settings.consequence.reviewsPrivate');
+        case 'team_default':
+            return t('teams.settings.consequence.reviewsShared');
+        case 'team_required':
+            return t('teams.settings.consequence.reviewsAlwaysShared');
+        case undefined:
+            return undefined;
     }
 }
 

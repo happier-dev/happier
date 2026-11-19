@@ -16524,6 +16524,7 @@ const french: TeamsTranslationRoot = {
             archiveDescription: 'L’archivage retire l’équipe des vues actives et arrête les accès basés sur l’équipe. Ses membres, groupes et historique sont conservés, et elle peut être restaurée.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Nouvelles sessions",
+            reviewDefaultsSection: "Nouvelles revues",
             sharingSection: 'Partage',
             sharingDescription: 'S’applique à partir de maintenant. Rien de déjà partagé ne change.',
             option: {
@@ -16540,6 +16541,9 @@ const french: TeamsTranslationRoot = {
                 sessionsPrivate: "Les sessions démarrent en privé ; chacun choisit ce qu’il partage avec cette équipe.",
                 sessionsShared: "Les sessions démarrent partagées avec cette équipe ; chacun peut en garder une privée.",
                 sessionsAlwaysShared: "Chaque nouvelle session est partagée avec cette équipe.",
+                reviewsPrivate: "Elles commencent privées ; chacun choisit quoi partager avec cette équipe.",
+                reviewsShared: "Elles commencent partagées avec cette équipe ; chacun peut garder une revue privée.",
+                reviewsAlwaysShared: "Chaque nouvelle revue est partagée avec cette équipe.",
                 outsideAnyone: "Quiconque peut partager une session peut aussi la partager hors de cette équipe.",
                 outsideAdmins: "Seuls les admins de cette équipe peuvent partager une session à l’extérieur.",
                 outsideNobody: "Les sessions ne peuvent pas être partagées hors de cette équipe.",

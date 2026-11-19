@@ -16481,6 +16481,7 @@ const catalan: TeamsTranslationRoot = {
             archiveDescription: 'Arxivar treu l’equip de les vistes actives i atura l’accés basat en l’equip. Es conserven els membres, els grups i l’historial, i es pot restaurar.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Sessions noves",
+            reviewDefaultsSection: "Revisions noves",
             sharingSection: 'Compartir',
             sharingDescription: 'S’aplica des d’ara. No canvia res del que ja s’ha compartit.',
             option: {
@@ -16497,6 +16498,9 @@ const catalan: TeamsTranslationRoot = {
                 sessionsPrivate: "Comencen privades; cada persona tria què comparteix amb aquest equip.",
                 sessionsShared: "Comencen compartides amb aquest equip; cada persona en pot mantenir una de privada.",
                 sessionsAlwaysShared: "Cada sessió nova es comparteix amb aquest equip.",
+                reviewsPrivate: "Comencen privades; cadascú tria què comparteix amb aquest equip.",
+                reviewsShared: "Comencen compartides amb aquest equip; cadascú pot mantenir una revisió privada.",
+                reviewsAlwaysShared: "Cada revisió nova es comparteix amb aquest equip.",
                 outsideAnyone: "Qui pot compartir una sessió també la pot compartir fora d’aquest equip.",
                 outsideAdmins: "Només els administradors d’aquest equip poden compartir una sessió fora.",
                 outsideNobody: "Les sessions no es poden compartir fora d’aquest equip.",

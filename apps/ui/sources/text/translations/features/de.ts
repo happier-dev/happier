@@ -16282,6 +16282,7 @@ const german: TeamsTranslationRoot = {
             archiveDescription: 'Beim Archivieren verschwindet das Team aus den aktiven Ansichten und teambasierter Zugriff endet. Mitglieder, Gruppen und Verlauf bleiben erhalten, und es kann wiederhergestellt werden.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Neue Sessions",
+            reviewDefaultsSection: "Neue Reviews",
             sharingSection: 'Teilen',
             sharingDescription: 'Gilt ab jetzt. Bereits Geteiltes ändert sich nicht.',
             option: {
@@ -16298,6 +16299,9 @@ const german: TeamsTranslationRoot = {
                 sessionsPrivate: "Privat starten; jede Person wählt, was sie mit diesem Team teilt.",
                 sessionsShared: "Mit diesem Team geteilt starten; jede Person kann eine privat halten.",
                 sessionsAlwaysShared: "Jede neue Sitzung wird mit diesem Team geteilt.",
+                reviewsPrivate: "Starten privat; jede Person entscheidet, was sie mit diesem Team teilt.",
+                reviewsShared: "Starten mit diesem Team geteilt; jede Person kann ein Review privat halten.",
+                reviewsAlwaysShared: "Jedes neue Review wird mit diesem Team geteilt.",
                 outsideAnyone: "Wer eine Sitzung teilen kann, darf sie auch außerhalb dieses Teams teilen.",
                 outsideAdmins: "Nur Admins dieses Teams können eine Sitzung außerhalb teilen.",
                 outsideNobody: "Sitzungen können nicht außerhalb dieses Teams geteilt werden.",

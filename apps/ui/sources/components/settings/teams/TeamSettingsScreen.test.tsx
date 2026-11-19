@@ -149,7 +149,8 @@ async function waitForTestId(
     testID: string,
 ): Promise<void> {
     await vi.waitFor(() => {
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(testID);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids, ids.join(', ')).toContain(testID);
     });
 }
 
@@ -430,20 +431,23 @@ describe('TeamSettingsScreen', () => {
         expect(ids).not.toContain('team-settings-archive');
     });
 
-    it('shows a viewer who can change nothing who can, and the values as text rather than dimmed controls', async () => {
+    it.each([undefined, 'team_required'] as const)('shows a viewer who can change nothing the published policy as text (%s)', async (reviewCreationPolicy) => {
         const serverId = await addHomeWithTeam(teamSummaryFixture({
             viewerRole: 'member',
             capabilities: teamCapabilitiesFixture({}),
+            policy: teamPolicyFixture({ reviewCreationPolicy }),
         }));
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-read-only');
 
         const ids = collectRenderedTestIds(screen.tree.toJSON());
-        for (const row of ['team-settings-session-creation', 'team-settings-external-sharing', 'team-settings-history-default']) {
+        for (const row of ['team-settings-session-creation', 'team-settings-review-creation', 'team-settings-external-sharing', 'team-settings-history-default']) {
             expect(ids).toContain(row);
             expect(ids.filter((id) => id.startsWith(`${row}:`))).toEqual([]);
         }
+        expect(screen.getTextContent())
+            .toContain(reviewCreationPolicy === undefined ? 'common.unknown' : 'teams.settings.option.alwaysShared');
         expect(ids).toContain('team-settings-name-fact');
         expect(ids).not.toContain('team-settings-archive');
     });
@@ -472,6 +476,37 @@ describe('TeamSettingsScreen', () => {
         // A history-default change must not ride along: it would look like a
         // rewrite of existing membership horizons.
         expect(request).not.toHaveProperty('defaultSessionHistoryAccess');
+    });
+
+    it('changes Review creation policy independently and retains the published choice after refusal for retry', async () => {
+        const team = teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ managePolicy: true }),
+            policy: teamPolicyFixture({ reviewCreationPolicy: 'private_default', sessionCreationPolicy: 'team_default' }),
+        });
+        const serverId = await addHomeWithTeam(team);
+        const screen = await renderSettings(serverId);
+        await waitForTestId(screen, 'team-settings-review-creation:private_default');
+        await screen.pressByTestIdAsync('team-settings-review-creation:private_default');
+        expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
+
+        harness.answer(serverId, TEAM_POLICY_PATH, { status: 403, body: { error: 'team_forbidden' } });
+        await screen.pressByTestIdAsync('team-settings-review-creation:team_default');
+        await waitForTestId(screen, 'team-settings-policy-error');
+        expect(screen.findByTestId('team-settings-review-creation:private_default')?.props.accessibilityState)
+            .toMatchObject({ checked: true });
+        expect(screen.findByTestId('team-settings-session-creation:team_default')?.props.accessibilityState)
+            .toMatchObject({ checked: true });
+
+        harness.answer(serverId, TEAM_POLICY_PATH, { body: { ...team,
+            policy: { ...team.policy, reviewCreationPolicy: 'team_required' } } });
+        await screen.pressByTestIdAsync('team-settings-review-creation:team_required');
+        await vi.waitFor(() => expect(screen.findByTestId('team-settings-review-creation:team_required')?.props.accessibilityState)
+            .toMatchObject({ checked: true }));
+        expect(harness.requestsFor(TEAM_POLICY_PATH).map(request => request.input)).toEqual([
+            { v: 1, teamId: 'team-1', reviewCreationPolicy: 'team_default' },
+            { v: 1, teamId: 'team-1', reviewCreationPolicy: 'team_required' },
+        ]);
+        expect(screen.findByTestId('team-settings-policy-error')).toBeNull();
     });
 
     it('closes the same-frame duplicate policy window before the busy state renders', async () => {
@@ -504,6 +539,10 @@ describe('TeamSettingsScreen', () => {
 
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-session-creation:private_default');
+        for (const option of ['private_default', 'team_default', 'team_required']) {
+            expect(screen.findByTestId(`team-settings-review-creation:${option}`)?.props.accessibilityState)
+                .toMatchObject({ checked: false });
+        }
 
         const selectedChoices = [
             ['team-settings-session-creation:team_default', 'teams.settings.sessionDefaultsSection'],
@@ -669,7 +708,7 @@ describe('TeamSettingsScreen', () => {
         await act(async () => releaseRemoval());
     });
 
-    it('confirms an explicit Ask policy change locally and saves it without a self-approval Artifact', async () => {
+    it.each(['external-sharing:disabled', 'review-creation:team_required'])('confirms an explicit Ask policy change locally and saves it without a self-approval Artifact (%s)', async (choice) => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ managePolicy: true, archiveTeam: true }),
         });
@@ -682,8 +721,8 @@ describe('TeamSettingsScreen', () => {
         });
 
         const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-settings-external-sharing:disabled');
-        await screen.pressByTestIdAsync('team-settings-external-sharing:disabled');
+        await waitForTestId(screen, `team-settings-${choice}`);
+        await screen.pressByTestIdAsync(`team-settings-${choice}`);
 
         await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);

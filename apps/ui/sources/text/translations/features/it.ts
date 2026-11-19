@@ -16467,6 +16467,7 @@ const italian: TeamsTranslationRoot = {
             archiveDescription: 'L’archiviazione toglie il team dalle viste attive e interrompe l’accesso basato sul team. Membri, gruppi e cronologia vengono conservati ed è possibile ripristinarlo.',
             logoSection: 'Logo',
             sessionDefaultsSection: "Nuove sessioni",
+            reviewDefaultsSection: "Nuove revisioni",
             sharingSection: 'Condivisione',
             sharingDescription: 'Si applica da ora. Nulla di già condiviso cambia.',
             option: {
@@ -16483,6 +16484,9 @@ const italian: TeamsTranslationRoot = {
                 sessionsPrivate: "Partono private; ognuno sceglie cosa condividere con questo team.",
                 sessionsShared: "Partono condivise con questo team; ognuno può tenerne una privata.",
                 sessionsAlwaysShared: "Ogni nuova sessione è condivisa con questo team.",
+                reviewsPrivate: "Iniziano private; ogni persona sceglie cosa condividere con questo team.",
+                reviewsShared: "Iniziano condivise con questo team; ogni persona può mantenere privata una revisione.",
+                reviewsAlwaysShared: "Ogni nuova revisione viene condivisa con questo team.",
                 outsideAnyone: "Chi può condividere una sessione può condividerla anche fuori da questo team.",
                 outsideAdmins: "Solo gli admin di questo team possono condividere una sessione all’esterno.",
                 outsideNobody: "Le sessioni non possono essere condivise fuori da questo team.",

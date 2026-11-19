@@ -468,6 +468,7 @@ export const english = {
             archiveDescription: 'Archiving takes this Team out of active views and stops its Team-based access. Its members, Groups and history are kept, and you can restore it.',
             logoSection: 'Logo',
             sessionDefaultsSection: "New sessions",
+            reviewDefaultsSection: "New reviews",
             sharingSection: 'Sharing',
             sharingDescription: 'Applies from now on. Nothing already shared changes.',
             option: {
@@ -484,6 +485,9 @@ export const english = {
                 sessionsPrivate: "Start private; each person chooses what to share with this Team.",
                 sessionsShared: "Start shared with this Team; each person can keep one private.",
                 sessionsAlwaysShared: "Every new session is shared with this Team.",
+                reviewsPrivate: "Start private; each person chooses what to share with this Team.",
+                reviewsShared: "Start shared with this Team; each person can keep a review private.",
+                reviewsAlwaysShared: "Every new review is shared with this Team.",
                 outsideAnyone: "Anyone who can share a session may also share it outside this Team.",
                 outsideAdmins: "Only this Team’s admins can share a session outside it.",
                 outsideNobody: "Sessions can’t be shared outside this Team.",

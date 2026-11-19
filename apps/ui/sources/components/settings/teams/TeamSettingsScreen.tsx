@@ -2,10 +2,13 @@ import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     TEAM_NAME_MAX_LENGTH_V1,
+    TeamExternalSharingPolicyV1Schema,
+    TeamResourceCreationPolicyV1Schema,
     validateTeamDescriptionV1,
     validateTeamNameV1,
     type TeamAdmissionModeV1,
     type TeamExternalSharingPolicyV1,
+    type TeamReviewCreationPolicyV1,
     type TeamSessionCreationPolicyV1,
     type SessionHistoryAccessV1,
 } from '@happier-dev/protocol/teams';
@@ -47,6 +50,7 @@ import {
     externalSharingLabel,
     historyConsequence,
     historyLabel,
+    reviewCreationConsequence,
     sessionCreationConsequence,
     sessionCreationLabel,
     sessionHistoryChoiceOptions,
@@ -58,17 +62,8 @@ const TEAM_DEFAULTS_SCOPE = Object.freeze({ kind: 'team' as const });
 /** The size of the Team mark on a read-only logo row. */
 const READ_ONLY_LOGO_SIZE = 32;
 
-const SESSION_CREATION_OPTIONS: readonly TeamSessionCreationPolicyV1[] = Object.freeze([
-    'private_default',
-    'team_default',
-    'team_required',
-]);
-
-const EXTERNAL_SHARING_OPTIONS: readonly TeamExternalSharingPolicyV1[] = Object.freeze([
-    'allowed',
-    'team_admins_only',
-    'disabled',
-]);
+const RESOURCE_CREATION_OPTIONS = TeamResourceCreationPolicyV1Schema.options;
+const EXTERNAL_SHARING_OPTIONS = TeamExternalSharingPolicyV1Schema.options;
 
 const TeamIdentitySection = React.memo(function TeamIdentitySection(props: Readonly<{
     context: TeamSectionContext;
@@ -404,7 +399,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
     }, [context]);
 
     // A segmented control reports its current option too; only a different choice is a change.
-    const choose = <K extends 'sessionCreationPolicy' | 'externalSharingPolicy' | 'defaultSessionHistoryAccess'>(
+    const choose = <K extends keyof TeamPolicyField>(
         field: K,
         value: TeamPolicyField[K],
     ) => {
@@ -443,6 +438,17 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                             showChevron={false}
                         />
                         <Item
+                            testID="team-settings-review-creation"
+                            title={t('teams.settings.reviewDefaultsSection')}
+                            subtitle={reviewCreationConsequence(policy.reviewCreationPolicy)}
+                            subtitleLines={0}
+                            detail={policy.reviewCreationPolicy === undefined
+                                ? t('common.unknown')
+                                : sessionCreationLabel(policy.reviewCreationPolicy)}
+                            mode="info"
+                            showChevron={false}
+                        />
+                        <Item
                             testID="team-settings-external-sharing"
                             title={t('teams.settings.sharingOutsideTeam')}
                             subtitle={externalSharingConsequence(policy.externalSharingPolicy)}
@@ -467,7 +473,7 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                             testID="team-settings-session-creation"
                             title={t('teams.settings.sessionDefaultsSection')}
                             subtitleLines={0}
-                            options={SESSION_CREATION_OPTIONS.map((option) => ({
+                            options={RESOURCE_CREATION_OPTIONS.map((option) => ({
                                 id: option,
                                 label: sessionCreationLabel(option),
                                 description: sessionCreationConsequence(option),
@@ -476,6 +482,21 @@ const TeamPolicySections = React.memo(function TeamPolicySections(props: Readonl
                             onChange={(option) => choose('sessionCreationPolicy', option)}
                             disabled={!canEdit}
                             testIDPrefix="team-settings-session-creation"
+                        />
+                        <SegmentedChoiceItem<TeamReviewCreationPolicyV1>
+                            testID="team-settings-review-creation"
+                            title={t('teams.settings.reviewDefaultsSection')}
+                            subtitle={policy.reviewCreationPolicy === undefined ? t('common.unknown') : undefined}
+                            subtitleLines={0}
+                            options={RESOURCE_CREATION_OPTIONS.map((option) => ({
+                                id: option,
+                                label: sessionCreationLabel(option),
+                                description: reviewCreationConsequence(option),
+                            }))}
+                            value={policy.reviewCreationPolicy ?? null}
+                            onChange={(option) => choose('reviewCreationPolicy', option)}
+                            disabled={!canEdit}
+                            testIDPrefix="team-settings-review-creation"
                         />
                         <SegmentedChoiceItem<TeamExternalSharingPolicyV1>
                             testID="team-settings-external-sharing"
