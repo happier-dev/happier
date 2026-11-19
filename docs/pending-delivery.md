@@ -1025,16 +1025,20 @@ Managed-Machine power is separate from the Session automatic-resume preference.
 The existing per-Machine `wakeOnAcceptedMessage` choice defaults ON for eligible
 stopped-cloud input; its exact protected managed wake target remains the owner of
 placement. An authorized running Account daemon consumes that target through the
-same power Action. Opted-out input or an Account with no running daemon waits;
-opening, viewing and prefetching never request power. An explicit app Send reviews
-its wake child under the original Action. Existing-Session input invokes that
-exact child after enqueue ACK without a second review. New-Session Send uses
+same power Action. Already-queued input waits in Pending when automatic wake is
+unavailable. For a new ordinary public Send to an asleep, controller-backed
+Machine, a disabled preference yields `target_unavailable` before Home takes input
+custody. Opening, viewing and prefetching never request power. An explicit app Send
+that needs an approved wake reviews its wake child under the original Action.
+Existing-Session input invokes that exact child after enqueue ACK without a
+second review. New-Session Send uses
 the verified Session-spawn Action as its accepted input before the Session exists;
 the server keeps the encrypted first-message content opaque.
 Null-controller resources use the canonical managed-role custodian decision;
 paired resources retain their existing controller admission for manual power and
-finite Actions other than Session spawn. Owner-enabled accepted input may borrow that controller's wake when its
-requester has Can use on the exact guest Machine; it grants no controller or
+finite Actions outside the Session spawn and ordinary Send paths. Owner-enabled
+accepted input may borrow that controller's wake when its requester has Can use
+on the exact guest Machine; it grants no controller or
 manual-power access. Unattended input uses the existing policy Action and Ask,
 not a second Send review.
 

@@ -74,7 +74,7 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import { measure } from './managedProjectionVolume.testkit';
 import { eventRouter } from '@/app/events/eventRouter';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
-import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { preparePlainAccountApiTokenLabel, prepareE2eeAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { reportManagedIntent } from './managedMutations';
 
@@ -1157,21 +1157,25 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { tokenAdmission.mockRestore(); }
     });
 
-    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage', 'session-input-use', 'session-input-opted-out'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
+    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage', 'session-input-use', 'session-input-opted-out', 'owner-send-opted-out'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
         const test = await setup();
-        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const ownerSendOptedOut = disposition === 'owner-send-opted-out';
+        const requester = ownerSendOptedOut ? test.account : await db.account.create({ data: { encryptionMode: 'plain' } });
         const sessionInput = disposition.startsWith('session-input-');
-        for (const machine of sessionInput ? [test.guest] : [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
-            actorAccountId: test.account.id, machineId: machine.id,
-            principal: { kind: 'account', accountId: requester.id }, level: sessionInput ? 'view' : 'admin',
-        }));
-        if (disposition === 'session-input-opted-out') await db.managedMachine.update({
+        if (!ownerSendOptedOut) {
+            for (const machine of sessionInput ? [test.guest] : [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
+                actorAccountId: test.account.id, machineId: machine.id,
+                principal: { kind: 'account', accountId: requester.id }, level: sessionInput ? 'view' : 'admin',
+            }));
+        }
+        if (disposition === 'session-input-opted-out' || ownerSendOptedOut) await db.managedMachine.update({
             where: { id: test.row.id }, data: { wakeOnAcceptedMessage: false },
         });
         const root = await auth.mintExternalActionExecutionAuthorization({ accountId: requester.id,
             authentication: { kind: 'account', tokenEpoch: requester.tokenEpoch }, serverIdentityId: homeId,
-            machineId: test.guest.id, actionId: sessionInput ? SESSION_SPAWN_NEW_ACTION_ID_V1 : 'projects.script.run', requestId: test.requestId,
-            ...(sessionInput ? { machineRuntimeDemand: 'required' as const } : {}),
+            machineId: test.guest.id, requestId: test.requestId,
+            actionId: ownerSendOptedOut ? SESSION_MESSAGE_SEND_ACTION_ID_V1 : sessionInput ? SESSION_SPAWN_NEW_ACTION_ID_V1 : 'projects.script.run',
+            ...(sessionInput || ownerSendOptedOut ? { machineRuntimeDemand: 'required' as const } : {}),
             requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: test.guest.id } });
         if (disposition === 'wrong-requester') await db.machineGrant.deleteMany({ where: { principalKind: 'account',
             machineId: { in: [test.guest.id, test.controller.id] }, accountId: requester.id,
@@ -1183,7 +1187,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const forwardRpc = vi.fn(async (request: { callParams: unknown }) => {
             const wake = ManagedFiniteWakeRequestV1Schema.parse(request.callParams);
             expect(wake.actionOrigin.binding.accountId).toBe(requester.id);
-            await test.check(wake.actionOrigin);
+            if (!ownerSendOptedOut) await test.check(wake.actionOrigin);
             expect(await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, wake))).not.toBeNull();
             return { ok: true as const, result: { ok: true, result: {
                 kind: 'accepted', managedId: test.row.id, intentRevision: 1, operation: { operationId: 'native-policy' },
@@ -1193,8 +1197,12 @@ describe('finite managed wake original Action authority (real storage)', () => {
             actionOrigin: disposition === 'wrong-root' ? { ...root, binding: { ...root.binding, requestId: randomUUID() } } : root,
             forwardRpc });
         const allowed = disposition === 'owner' || disposition === 'session-input-use';
+        if (ownerSendOptedOut) {
+            const custody = await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: root }));
+            expect.soft(custody?.target).toBeUndefined();
+        }
+        expect.soft(forwardRpc).toHaveBeenCalledTimes(allowed ? 1 : 0);
         expect(result.kind).toBe(allowed ? 'ready' : 'unavailable');
-        expect(forwardRpc).toHaveBeenCalledTimes(allowed ? 1 : 0);
     });
 
     it('retains the exact original finite PAT grant and mode instead of requiring a native power grant', async () => {

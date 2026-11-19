@@ -19,12 +19,14 @@ import { ManagedMachineError, hasBoundManagedLifecycle, projectManagedMachine, r
 type WakeActor = Readonly<{ actorAccountId: string; machineId: string }>;
 type WakeMachine = Machine & { account: Prisma.AccountGetPayload<{ select: { status: true } }> };
 
-/** Owner-enabled accepted input borrows native wake; manual power retains Manage admission. */
+/** Ordinary Sends honor the wake preference; explicit power authority remains role-based. */
 export function hasManagedWakeAuthority(controllerRole: 'manage' | 'use' | null, wakeOnAcceptedMessage: boolean,
     origin: ManagedWakeTargetV1['origin']['kind'], finiteActionId?: string): boolean {
+    if (origin === 'finite-command' && finiteActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
+        return wakeOnAcceptedMessage;
+    }
     return controllerRole === 'manage' || wakeOnAcceptedMessage && (origin === 'session-input'
-        || origin === 'finite-command' && finiteActionId !== undefined
-            && (isSessionSpawnNewActionIdV1(finiteActionId) || finiteActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1));
+        || origin === 'finite-command' && finiteActionId !== undefined && isSessionSpawnNewActionIdV1(finiteActionId));
 }
 
 function projectWakeBinding(homeId: string, row: StoredManagedMachine | undefined, guest: WakeMachine | undefined,

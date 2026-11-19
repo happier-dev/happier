@@ -38,8 +38,12 @@ it('preserves owner-enabled input wake for Use-only public Send without granting
     expect(hasManagedWakeAuthority('use', true, 'finite-command', 'execution.run.start')).toBe(false);
 });
 
-it.each([true, false].flatMap(managed => (['default', 'enqueue', 'send_now'] as const).map(kind => ({ managed, kind }))))(
-    'admits public Session Send through Home and wakes only an asleep managed guest (managed=$managed, input=$kind)', async ({ managed, kind }) => {
+it.each([
+    ...[true, false].flatMap(managed => (['default', 'enqueue', 'send_now'] as const)
+        .map(kind => ({ managed, kind, wakeOnAcceptedMessage: true }))),
+    { managed: true, kind: 'default' as const, wakeOnAcceptedMessage: false },
+])(
+    'admits public Session Send through Home and wakes only an opted-in managed guest (managed=$managed, input=$kind, wake=$wakeOnAcceptedMessage)', async ({ managed, kind, wakeOnAcceptedMessage }) => {
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey;
     const delivered: unknown[] = [];
@@ -123,7 +127,7 @@ it.each([true, false].flatMap(managed => (['default', 'enqueue', 'send_now'] as 
             allocation: 'bound', creationState: 'active', desired: 'stop', intentRevision: 2,
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Send-now guest', choices: {} },
             resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native' } },
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage,
             observation: { availability: 'present', power: 'stopped', storage: 'retained', observedAt: Date.now() } } }) : null;
         managedId = row?.id ?? '';
         await db.machine.update({ where: { id: guest.id }, data: {
@@ -195,20 +199,21 @@ it.each([true, false].flatMap(managed => (['default', 'enqueue', 'send_now'] as 
             try {
                 const result = await runWithServerHttpBaseUrl(server.baseUrl,
                     () => executor.execute('session.message.send', input, { surface: 'cli' }));
-                if (managed) {
-                expect(result, JSON.stringify({ result, effects, requests: server.readRequestCosts() }))
-                    .toMatchObject({ ok: true, result: { status: 'accepted', localId: 'send-now-input' } });
-                expect(delivered).toEqual(['session.message.send']);
-                expect(effects).toEqual(['controller-wake', 'send-now']);
-                const admitted = await db.session.findUniqueOrThrow({ where: { id: session.id } });
-                expect(admitted).toMatchObject({ pendingCount: 1, pendingActivationStatus: 'waiting',
-                    pendingActivationRequestId: input.localId });
-                expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } }))
-                    .toMatchObject([{ localId: input.localId, status: 'queued' }]);
+                if (managed && wakeOnAcceptedMessage) {
+                    expect(result, JSON.stringify({ result, effects, requests: server.readRequestCosts() }))
+                        .toMatchObject({ ok: true, result: { status: 'accepted', localId: 'send-now-input' } });
+                    expect(delivered).toEqual(['session.message.send']);
+                    expect(effects).toEqual(['controller-wake', 'send-now']);
+                    const admitted = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+                    expect(admitted).toMatchObject({ pendingCount: 1, pendingActivationStatus: 'waiting',
+                        pendingActivationRequestId: input.localId });
+                    expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } }))
+                        .toMatchObject([{ localId: input.localId, status: 'queued' }]);
                 } else {
-                expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
-                expect(delivered).toEqual([]);
-                expect(effects).toEqual([]);
+                    expect.soft(effects).toEqual([]);
+                    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+                    expect(delivered).toEqual([]);
+                    expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
                 }
             } finally { connectGuest = undefined; await machineClient.shutdown(); }
         });
