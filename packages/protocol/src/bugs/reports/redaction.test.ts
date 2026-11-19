@@ -287,7 +287,7 @@ describe('compile failures keep the names they have to state', () => {
     expect(redactBugReportSensitiveText(`credential ${key} rejected`)).toBe(`credential ${key} rejected`);
     expect(redactBugReportSensitiveText(`aws_secret_access_key=${key}`)).toBe('aws_secret_access_key: [REDACTED]');
     expect(redactBugReportSensitiveText(`AWS_SECRET_ACCESS_KEY: ${key}`)).toBe('AWS_SECRET_ACCESS_KEY: [REDACTED]');
-    expect(redactBugReportSensitiveText(`{"secret":"${key}"}`)).toBe('{"secret": "[REDACTED]"}');
+    expect(redactBugReportSensitiveText(`{"secret":"${key}"}`)).toBe('{"secret":"[REDACTED]"}');
   });
 });
 
@@ -306,7 +306,7 @@ describe('JSON Web Tokens in diagnostic text', () => {
     expect(redactBugReportSensitiveText(`x-happier-auth-${jwt}`)).toBe('x-happier-auth-[REDACTED]');
     expect(redactBugReportSensitiveText(`payload.${jwt}`)).toBe('payload.[REDACTED]');
     expect(redactBugReportSensitiveText(`${jwt}-`)).toBe('[REDACTED]');
-    expect(redactBugReportSensitiveText(`{"idToken":"${jwt}"}`)).toBe('{"idToken": "[REDACTED]"}');
+    expect(redactBugReportSensitiveText(`{"idToken":"${jwt}"}`)).toBe('{"idToken":"[REDACTED]"}');
   });
 
   it('leaves base64url text that is not a three-segment token intact', () => {
@@ -405,9 +405,9 @@ describe('redaction stays linear on adversarial diagnostic text', () => {
 
   it('still redacts a terminated quoted secret field and leaves its key visible', () => {
     expect(redactBugReportSensitiveText('{"password":"hunter2","port":5432}'))
-      .toBe('{"password": "[REDACTED]","port":5432}');
+      .toBe('{"password":"[REDACTED]","port":5432}');
     expect(redactBugReportSensitiveText('{"client_secret":"a\\"b\\\\c"}'))
-      .toBe('{"client_secret": "[REDACTED]"}');
+      .toBe('{"client_secret":"[REDACTED]"}');
   });
 
   it('redacts a quoted secret value of any length, not only a bounded prefix of one', () => {
@@ -418,7 +418,7 @@ describe('redaction stays linear on adversarial diagnostic text', () => {
       const redacted = redactBugReportSensitiveText(`{"client_secret":"${secret}"}`);
 
       expect(redacted).not.toContain(secret);
-      expect(redacted).toBe('{"client_secret": "[REDACTED]"}');
+      expect(redacted).toBe('{"client_secret":"[REDACTED]"}');
     }
   });
 
@@ -667,6 +667,117 @@ describe('identifiers that must never be mistaken for secrets', () => {
     ].join('\n');
 
     expect(redactBugReportSensitiveText(text)).toBe(text);
+  });
+});
+
+describe('every rule redacts its secret in every context a transcript produces', () => {
+  const jwt = 'eyJFakeHeader01.FakePayload01.FakeSignature01';
+  // [rule, label, value, part that must be absent, readable part that must stay].
+  // Every value is a fake built from its rule's own shape. A label row is
+  // written `label=value` (`label: value` for header labels), a bare row alone.
+  const rules: readonly (readonly [string, string | null, string, string, string | null])[] = [
+    ['URL credential query', null, 'https://api.example.test/v1?access_token=fakeQueryValue01', 'fakeQueryValue01', 'api.example.test'],
+    ['URL userinfo', null, 'https://fakeuser:fakeUserinfoPw01@git.example.test/r.git', 'fakeUserinfoPw01', 'git.example.test'],
+    ['quoted credential assignment', 'secretKey', '"fakeSecretKeyValue01"', 'fakeSecretKeyValue01', 'secretKey'],
+    ['unquoted credential assignment', 'secretKey', 'fakeSecretKeyValue02', 'fakeSecretKeyValue02', 'secretKey'],
+    ['authorization bearer', 'authorization', 'bearer fakeAuthBearer01', 'fakeAuthBearer01', 'authorization'],
+    ['authorization basic', 'authorization', 'basic ZmFrZUJhc2ljMDE=', 'ZmFrZUJhc2ljMDE', 'authorization'],
+    ['bearer', 'header', 'Bearer fakeBearerValue01', 'fakeBearerValue01', 'Bearer'],
+    ['quoted secret field', '"token"', '"fakeQuotedToken01"', 'fakeQuotedToken01', 'token'],
+    ['cookie', 'cookie', 'sid=fakeCookieValue01', 'fakeCookieValue01', 'cookie'],
+    ['x-api-key', 'x-api-key', 'fakeXApiKey01', 'fakeXApiKey01', 'x-api-key'],
+    ['api key label family', 'client_secret', 'fakeClientSecret01', 'fakeClientSecret01', 'client_secret'],
+    ['npmrc', '_authToken', 'fakeNpmrcValue01', 'fakeNpmrcValue01', '_authToken'],
+    ['AWS label', 'aws_secret_access_key', 'fakeAwsSecret01', 'fakeAwsSecret01', 'aws_secret_access_key'],
+    ['password, token and secret label', 'password', 'fakePasswordValue01', 'fakePasswordValue01', 'password'],
+    ['JSON Web Token', null, jwt, 'FakeSignature01', null],
+    ['Account API bearer', null, `hap_v1_0f1e2d3c-4b5a-4987-a654-3210fedcba98_${'Zz09_-'.repeat(7)}Q`, 'Zz09_-Zz09_-Zz09_-Zz09', null],
+    ['Account API credential', null, `hapc_v1_${'eyJ2IjoxfQ'.repeat(4)}`, 'eyJ2IjoxfQeyJ2IjoxfQ', null],
+    ['AWS access key id', null, 'AKIAFAKEFAKEFAKEFAKE', 'FAKEFAKEFAKEFAKE', null],
+    ['GitHub token', null, 'ghp_FakeFakeFakeFakeFake0123', 'FakeFakeFakeFakeFake0123', null],
+    ['GitHub fine-grained token', null, 'github_pat_Fake_Fake_Fake_Fake_Fake', 'Fake_Fake_Fake_Fake_Fake', null],
+    ['GitLab token', null, 'glpat-Fake-Fake-Fake-Fake-Fake', 'Fake-Fake-Fake-Fake-Fake', null],
+    ['npm token', null, 'npm_FakeFakeFakeFakeFake01', 'FakeFakeFakeFakeFake01', null],
+    ['Docker token', null, 'dckr_pat_FakeFakeFakeFakeFake', 'FakeFakeFakeFakeFake', null],
+    ['model-hub token', null, 'hf_FakeFakeFakeFakeFake01', 'FakeFakeFakeFakeFake01', null],
+    ['model-provider key', null, 'sk-fake-fake-fake-fake-fake', 'fake-fake-fake-fake-fake', null],
+    ['Slack token', null, 'xoxb-0000-fake-fake-fake', '0000-fake-fake-fake', null],
+    ['Slack webhook', null, 'https://hooks.slack.com/services/T0FAKE/B0FAKE/fakefakefake', 'T0FAKE/B0FAKE/fakefakefake', 'hooks.slack.com/services/'],
+    ['Stripe secret key', null, 'sk_live_FakeFakeFakeFake01', 'FakeFakeFakeFake01', null],
+    ['Google API key', null, `AIza${'Fake'.repeat(8)}Fak`, `${'Fake'.repeat(8)}Fak`, null],
+    ['Google OAuth token', null, 'ya29.Fake.Fake.Fake.Fake.Fake', 'Fake.Fake.Fake.Fake.Fake', null],
+    ['PEM private key', null, '-----BEGIN RSA PRIVATE KEY-----\nFakeKeyBodyLine01\n-----END RSA PRIVATE KEY-----', 'FakeKeyBodyLine01', 'BEGIN RSA PRIVATE KEY'],
+  ];
+  type Row = readonly [string, string | null, string, ...unknown[]];
+  const headerLabels = new Set(['authorization', 'cookie', 'x-api-key']);
+  const written = ([, label, value]: Row): string => (
+    label === null ? value : `${label}${headerLabels.has(label) ? ': ' : '='}${value}`
+  );
+  const unquoted = (text: string): string => text.replace(/^"(.*)"$/su, '$1');
+  const field = ([, label, value]: Row): Record<string, string> => (
+    label === null ? { output: value } : { [unquoted(label)]: unquoted(value) }
+  );
+  const assigned = (separator: string) => ([, label, value]: Row): string => `run ${label ?? 'SECRET_ENV'}${separator}${value} done`;
+  const contexts: readonly (readonly [string, (row: Row) => string])[] = [
+    ['raw', (row) => `run failed: ${written(row)} next`],
+    ['start of text', (row) => `${written(row)} next`],
+    ['end of text', (row) => `run failed: ${written(row)}`],
+    ['after a newline', (row) => `a\n${written(row)}\nb`],
+    ['after an escaped newline', (row) => JSON.stringify(`a\n${written(row)}\nb`)],
+    ['after an escaped tab', (row) => JSON.stringify(`a\t${written(row)}\tb`)],
+    ['after an escaped carriage return', (row) => JSON.stringify(`a\r${written(row)}\rb`)],
+    ['JSON field', (row) => JSON.stringify(field(row))],
+    ['JSON encoded once', (row) => JSON.stringify(JSON.stringify(field(row)))],
+    ['JSON encoded twice', (row) => JSON.stringify(JSON.stringify(JSON.stringify(field(row))))],
+    ['after a colon', assigned(':')],
+    ['after a colon and space', assigned(': ')],
+    ['after an equals sign', assigned('=')],
+    ['after a spaced equals sign', assigned(' = ')],
+  ];
+  // An npmrc credential is only ever written with `=`.
+  const appliesTo = (rule: string, context: string): boolean => !(rule === 'npmrc' && context.includes('colon'));
+
+  it.each(rules.flatMap((rule) => contexts
+    .filter(([context]) => appliesTo(rule[0], context))
+    .map(([context, render]) => [rule[0], context, render(rule), rule[3], rule[4]] as const)))(
+    '%s: %s',
+    (_rule, _context, input, secret, readable) => {
+      const redacted = redactBugReportSensitiveText(input);
+      expect(redacted).not.toContain(secret);
+      if (readable !== null) expect(redacted).toContain(readable);
+    },
+  );
+
+  const ordinary: readonly Row[] = [
+    ['prose', null, 'the build finished in 40 seconds'],
+    ['count field', 'tokenCount', '3'],
+    ['contact field', 'secretary', 'bob'],
+    ['public key field', 'publicKey', 'public-terminal-key'],
+    ['session count', 'sessionCount', '7'],
+    ['subresource integrity', null, 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='],
+    ['Stripe publishable key', null, 'pk_live_FakeFakeFakeFake01'],
+    ['Account API token display prefix', null, 'hap_v1_0000abcd'],
+    ['base64url prose', null, 'eyJhbGciOiJIUzI1NiJ9.short.tooshort'],
+    ['uuid', null, '3f2504e0-4f89-11d3-9a0c-0305e82c3301'],
+    ['Windows path', null, 'C:\\Users\\alice\\notes.txt'],
+  ];
+  it.each(ordinary.flatMap((row) => contexts.map(([context, render]) => [row[0], context, render(row)] as const)))(
+    'keeps %s in %s',
+    (_kind, _context, input) => {
+      expect(redactBugReportSensitiveText(input)).toBe(input);
+    },
+  );
+
+  it('reads a JSON line escape before a key both ways, and lets an ordinary key give up its value', () => {
+    expect(redactBugReportSensitiveText('C:\\temp\\recoveryKey=fakeRecovery01')).toBe('C:\\temp\\recoveryKey=[REDACTED]');
+    expect(redactBugReportSensitiveText('error: machineKey=fakeMachine01')).toBe('error: machineKey=[REDACTED]');
+  });
+
+  it('stays linear when every ordinary key is followed by another assignment', () => {
+    const startedAt = Date.now();
+    redactBugReportSensitiveText('a:'.repeat(500_000));
+    redactBugReportSensitiveText('a:"'.repeat(500_000));
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 });
 

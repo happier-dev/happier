@@ -30,28 +30,21 @@ function startsSecretText(text: string, index: number): boolean {
 const ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN = secretTextPattern(ACCOUNT_API_TOKEN_BEARER_V1_SOURCE, 'g');
 const ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN = secretTextPattern(`${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}[A-Za-z0-9_-]+`, 'g');
 
-/**
- * Arbitrary agent, plugin and provider text reaches this redactor, so the value
- * scan must stay linear on input that opens a quoted secret and never closes it.
- * The two value branches are disjoint — an escape pair always starts with a
- * backslash and the ordinary branch excludes one — so each position has exactly
- * one viable parse instead of the two that made an unterminated run of escapes
- * explode combinatorially. Disjointness alone buys that linearity: giving up on
- * an unterminated value costs one constant-work step per position either way.
- * The repetition therefore stays unbounded, because a bound only decides how
- * long a secret has to be before it is emitted verbatim. The trailing `\\?`
- * preserves the previous lenient reading of a malformed final escape.
- */
-const QUOTED_SECRET_FIELD_PATTERN =
-  /(["'])(authorization|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|session(?:id)?|password|cookie|passphrase|private[_-]?key|token|secret)\1\s*:\s*(["'])(?:\\.|(?!\3)[^\\\r\n])*\\?\3/gi;
+// The labels the label rules below name. A quoted value under one of them is
+// redacted by the assignment scanner too, because a quote, escaped or not,
+// stands between such a label and its `:` or `=` in JSON.
+const LABELLED_SECRET_KEY_SOURCE = String.raw`api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|session(?:id)?|passphrase|private[_-]?key`;
+const NPMRC_SECRET_KEY_SOURCE = String.raw`_(?:authToken|auth|password)`;
+const AWS_SECRET_KEY_SOURCE = String.raw`aws[_-]?(?:secret[_-]?access[_-]?key|session[_-]?token)`;
+const SECRET_WORD_KEY_SOURCE = String.raw`password|passphrase|private[_-]?key|token|secret`;
+const LABELLED_SECRET_KEY = new RegExp(
+  `^(?:${[LABELLED_SECRET_KEY_SOURCE, NPMRC_SECRET_KEY_SOURCE, AWS_SECRET_KEY_SOURCE, SECRET_WORD_KEY_SOURCE].join('|')})$`,
+  'i',
+);
 
-// This only recognizes an assignment's syntactic key. Whether that key is a
-// credential is decided by the shared segment-aware classifier below, so
-// `tokenCount` and `secretary` remain ordinary diagnostic fields.
-const DIAGNOSTIC_UNQUOTED_ASSIGNMENT_PATTERN =
-  /(^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{0,127})(\s*[:=]\s*)((?:bearer|basic)\s+[^\s&]+|[^\s"'&]+)/giu;
+const UNQUOTED_CREDENTIAL_VALUE = /(?:bearer|basic)\s+[^\s&]+|[^\s"'&]+/iuy;
 
-const DIAGNOSTIC_URL_PATTERN = /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>]+/giu;
+const DIAGNOSTIC_URL_PATTERN = secretTextPattern(String.raw`[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>]+`, 'giu');
 const DIAGNOSTIC_URL_CREDENTIAL_SUFFIXES = new Set([
   'auth',
   'authentication',
@@ -93,84 +86,138 @@ function redactSensitiveDiagnosticUrls(input: string): string {
   });
 }
 
-function redactSegmentAwareCredentialAssignments(input: string): string {
-  return input.replace(
-    DIAGNOSTIC_UNQUOTED_ASSIGNMENT_PATTERN,
-    (match, prefix: string, key: string, separator: string) => (
-      isBaseCredentialDiagnosticKey(key) && !match.endsWith('[REDACTED]')
-        ? `${prefix}${key}${separator}[REDACTED]`
-        : match
-    ),
-  );
+/**
+ * The one reading of a quote in diagnostic text. A transcript JSON-escapes the
+ * text it carries, once or more, so the quote around a key or value arrives as
+ * `"`, `\"` or `\\\"`: a run of backslashes and then the quote character.
+ * Returns that quote when its backslash run starts at `index`.
+ */
+function readQuote(text: string, index: number): { token: string; quote: string; depth: number } | undefined {
+  let cursor = index;
+  while (text.charCodeAt(cursor) === 92) cursor += 1;
+  const quote = text[cursor];
+  if (quote !== '"' && quote !== "'") return undefined;
+  return { token: text.slice(index, cursor + 1), quote, depth: cursor - index };
 }
 
-function redactQuotedCredentialAssignments(input: string): string {
+/**
+ * Where a quoted value opened by `open` ends: the offset after its closing quote,
+ * or the end of the text when it never closes, so a truncated value surrenders
+ * nothing. Inside the value one more escaping level applies, so a quote preceded
+ * by `depth` backslashes, plus any whole number of escaped backslash pairs at that
+ * level (`2 * depth + 2` each), closes it; any other run escapes the quote into
+ * the value. Every character is visited once, so an unterminated run of escapes
+ * stays linear, and the value has no length bound: a bound only decides how
+ * long a secret must be before it is emitted verbatim.
+ */
+function findQuotedValueEnd(text: string, from: number, open: { quote: string; depth: number }): number {
+  let cursor = from;
+  while (cursor < text.length) {
+    const run = cursor;
+    while (text.charCodeAt(cursor) === 92) cursor += 1;
+    if (cursor >= text.length) return text.length;
+    if (text[cursor] === open.quote && (cursor - run) % (2 * open.depth + 2) === open.depth) return cursor + 1;
+    cursor += 1;
+  }
+  return text.length;
+}
+
+function isKeyCharacter(character: string | undefined): boolean {
+  return character !== undefined && /[A-Za-z0-9_-]/.test(character);
+}
+
+// A key is a maximal run of key characters, so it starts at the shared
+// start-of-secret boundary except after a hyphen, which belongs to the run.
+function startsCredentialKey(text: string, index: number): boolean {
+  return /[A-Za-z_]/.test(text[index] ?? '') && text[index - 1] !== '-' && startsSecretText(text, index);
+}
+
+/**
+ * Redacts the value of a credential assignment: a key, optionally quoted, then
+ * `:` or `=`, then a quoted or unquoted value. The key only marks the candidate;
+ * whether it names a credential is decided by the shared segment-aware
+ * classifier, so `tokenCount` and `secretary` remain ordinary fields. A quoted
+ * value is also redacted under any label a label rule below names.
+ *
+ * A non-credential key gives up its value to the scan, so `failed: secretKey=…`
+ * still reaches `secretKey`. After a JSON line escape the boundary holds at the
+ * escape letter and after it; the letter's reading is tried first, the escaped
+ * one next.
+ */
+function redactCredentialAssignments(input: string): string {
   if (!input.includes('=') && !input.includes(':')) return input;
-  const isKeyStart = (character: string): boolean => {
-    const code = character.charCodeAt(0);
-    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-  };
-  const isKeyCharacter = (character: string): boolean => {
-    const code = character.charCodeAt(0);
-    return isKeyStart(character) || (code >= 48 && code <= 57) || code === 45 || code === 95;
-  };
-  const isSpacing = (character: string): boolean => {
-    const code = character.charCodeAt(0);
+  const isSpacing = (character: string | undefined): boolean => {
+    const code = character === undefined ? -1 : character.charCodeAt(0);
     return code === 32 || (code >= 9 && code <= 13);
+  };
+  // The classifier costs about a microsecond per key and a log repeats its keys,
+  // so each distinct key is judged once per text.
+  const verdicts = new Map<string, boolean>();
+  const isCredentialKey = (key: string): boolean => {
+    let verdict = verdicts.get(key);
+    if (verdict === undefined) {
+      verdict = isBaseCredentialDiagnosticKey(key);
+      verdicts.set(key, verdict);
+    }
+    return verdict;
   };
   let output = '';
   let copyFrom = 0;
   let index = 0;
 
   while (index < input.length) {
-    const previous = index === 0 ? '' : input[index - 1]!;
-    if (
-      !isKeyStart(input[index]!)
-      || (previous.length > 0 && isKeyCharacter(previous))
-    ) {
+    if (!startsCredentialKey(input, index)) {
       index += 1;
+      while (isKeyCharacter(input[index]) && !startsCredentialKey(input, index)) index += 1;
       continue;
     }
 
     let keyEnd = index + 1;
-    while (keyEnd < input.length && isKeyCharacter(input[keyEnd]!)) keyEnd += 1;
+    while (isKeyCharacter(input[keyEnd])) keyEnd += 1;
     const key = input.slice(index, keyEnd);
+    const next = startsCredentialKey(input, index + 1) ? index + 1 : keyEnd;
     if (key.length > 128) {
-      index = keyEnd;
+      index = next;
       continue;
     }
 
-    let separator = keyEnd;
-    if ((previous === '"' || previous === "'") && input[separator] === previous) separator += 1;
-    while (separator < input.length && isSpacing(input[separator]!)) separator += 1;
+    let separator = readQuote(input, keyEnd)?.token.length ?? 0;
+    separator += keyEnd;
+    while (isSpacing(input[separator])) separator += 1;
     if (input[separator] !== ':' && input[separator] !== '=') {
-      index = keyEnd;
+      index = next;
       continue;
     }
-    let quoteAt = separator + 1;
-    while (quoteAt < input.length && isSpacing(input[quoteAt]!)) quoteAt += 1;
-    const quote = input[quoteAt];
-    if (quote !== '"' && quote !== "'") {
-      index = keyEnd;
-      continue;
-    }
-    if (!isBaseCredentialDiagnosticKey(key)) {
-      index = keyEnd;
-      continue;
-    }
+    let valueStart = separator + 1;
+    while (isSpacing(input[valueStart])) valueStart += 1;
+    const open = readQuote(input, valueStart);
 
-    let valueEnd = quoteAt + 1;
-    while (valueEnd < input.length) {
-      if (input[valueEnd] === '\\') {
-        valueEnd = Math.min(input.length, valueEnd + 2);
+    if (open) {
+      if (!isCredentialKey(key) && !LABELLED_SECRET_KEY.test(key)) {
+        index = next;
         continue;
       }
-      if (input[valueEnd] === quote) break;
-      valueEnd += 1;
+      const valueFrom = valueStart + open.token.length;
+      output += `${input.slice(copyFrom, valueFrom)}[REDACTED]${open.token}`;
+      copyFrom = findQuotedValueEnd(input, valueFrom, open);
+      index = copyFrom;
+      continue;
     }
 
-    output += `${input.slice(copyFrom, quoteAt + 1)}[REDACTED]${quote}`;
-    copyFrom = valueEnd < input.length ? valueEnd + 1 : input.length;
+    // Classify before reading the value: an unquoted value can run to the end of
+    // the text, and reading it for every ordinary key would rescan that text.
+    if (!isCredentialKey(key)) {
+      index = next;
+      continue;
+    }
+    UNQUOTED_CREDENTIAL_VALUE.lastIndex = valueStart;
+    const value = UNQUOTED_CREDENTIAL_VALUE.exec(input)?.[0];
+    if (!value || value.endsWith('[REDACTED]')) {
+      index = next;
+      continue;
+    }
+    output += `${input.slice(copyFrom, valueStart)}[REDACTED]`;
+    copyFrom = valueStart + value.length;
     index = copyFrom;
   }
 
@@ -352,23 +399,18 @@ function redactJsonWebTokensInBase64UrlRun(run: string, text: string, runStart: 
 }
 
 function redactKnownSensitiveText(input: string): string {
-  return redactSegmentAwareCredentialAssignments(
-    redactQuotedCredentialAssignments(redactSensitiveDiagnosticUrls(input))
+  return redactCredentialAssignments(
+    redactSensitiveDiagnosticUrls(input)
       .replace(secretTextPattern(String.raw`authorization\s*:\s*bearer\s+[^\r\n]+`, 'gi'), 'authorization: bearer [REDACTED]')
       .replace(secretTextPattern(String.raw`authorization\s*:\s*basic\s+[^\r\n]+`, 'gi'), 'authorization: basic [REDACTED]'),
   )
     .replace(secretTextPattern(String.raw`bearer\s+[A-Za-z0-9._~+/=-]+`, 'gi'), 'Bearer [REDACTED]')
-    .replace(
-      QUOTED_SECRET_FIELD_PATTERN,
-      (_match, keyQuote: string, key: string, valueQuote: string) =>
-        `${keyQuote}${key}${keyQuote}: ${valueQuote}[REDACTED]${valueQuote}`,
-    )
     .replace(secretTextPattern(String.raw`(cookie|set-cookie)\s*:\s*[^\r\n]+`, 'gi'), (_match, key: string) => `${key.toLowerCase()}: [REDACTED]`)
     .replace(secretTextPattern(String.raw`x-api-key\s*:\s*[^\r\n]+`, 'gi'), 'x-api-key: [REDACTED]')
-    .replace(secretTextPattern(String.raw`(api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|session(?:id)?|passphrase|private[_-]?key)\s*[:=]\s*[^\s&]+`, 'gi'), (_match, key: string) => `${key}: [REDACTED]`)
+    .replace(secretTextPattern(String.raw`(${LABELLED_SECRET_KEY_SOURCE})\s*[:=]\s*[^\s&]+`, 'gi'), (_match, key: string) => `${key}: [REDACTED]`)
     // Legacy npmrc credentials carry no value prefix of their own, and the leading
     // underscore keeps the generic `password`/`token` rules from ever reaching them.
-    .replace(secretTextPattern(String.raw`(_(?:authToken|auth|password))\s*=\s*\S+`, 'gi'), (_match, key: string) => `${key}=[REDACTED]`)
+    .replace(secretTextPattern(String.raw`(${NPMRC_SECRET_KEY_SOURCE})\s*=\s*\S+`, 'gi'), (_match, key: string) => `${key}=[REDACTED]`)
     // `scheme://user:secret@host` puts a live credential in an otherwise ordinary
     // clone/fetch/registry failure. Only the userinfo component is replaced, so the
     // host and path that make the failure diagnosable survive. The scheme length is
@@ -377,11 +419,11 @@ function redactKnownSensitiveText(input: string): string {
     // containing its own `@` is redacted whole instead of leaking its tail; each
     // scan is bounded by the next `/`, which is also what separates two schemes.
     .replace(
-      /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/]+@/gi,
+      secretTextPattern(String.raw`[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/]+@`, 'gi'),
       (match) => `${match.slice(0, match.indexOf('://') + 3)}[REDACTED]@`,
     )
     .replace(
-      secretTextPattern(String.raw`(aws[_-]?(?:secret[_-]?access[_-]?key|session[_-]?token))\s*[:=]\s*[^\s&]+`, 'gi'),
+      secretTextPattern(String.raw`(${AWS_SECRET_KEY_SOURCE})\s*[:=]\s*[^\s&]+`, 'gi'),
       (_match, key: string) => `${key}: [REDACTED]`,
     )
     .replace(
@@ -447,7 +489,7 @@ function redactKnownSensitiveText(input: string): string {
     // rule above; a label-free one is now reported verbatim.
     // A Saved Secret reference (`happier:shared-secret:v1:<resource>`) names stored
     // material; it is not the material, and rewriting it breaks every reuse.
-    .replace(secretTextPattern(String.raw`(?<!happier:shared-)(password|passphrase|private[_-]?key|token|secret)\s*[:=]\s*[^\s&]+`, 'gi'), (_match, key: string) => `${key}: [REDACTED]`);
+    .replace(secretTextPattern(String.raw`(?<!happier:shared-)(${SECRET_WORD_KEY_SOURCE})\s*[:=]\s*[^\s&]+`, 'gi'), (_match, key: string) => `${key}: [REDACTED]`);
 }
 
 /**
