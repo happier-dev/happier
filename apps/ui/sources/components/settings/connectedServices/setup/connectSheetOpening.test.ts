@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isConnectSheetKeyRequest, isConnectSheetNpmRegistryRequest, resolveConnectSheetMachineChip, resolveConnectSheetOpening, resolveConnectSheetTarget } from './connectSheetOpening';
+import { isConnectSheetKeyRequest, isConnectSheetNpmRegistryRequest, resolveConnectSheetOpening, resolveConnectSheetTarget } from './connectSheetOpening';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const otherService = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
@@ -114,16 +114,4 @@ describe('Connect sheet opening choice', () => {
             .toEqual({ initialMode: 'new', preselected: null, offerSaved: false, savedKeys: [] });
     });
 
-});
-
-describe('Connect sheet machine chip', () => {
-    it('keeps a shown chip’s place only where it shares the title’s row', () => {
-        // The chosen method signs in on a machine: the chip shows, on any card.
-        expect(resolveConnectSheetMachineChip({ needed: true, shownBefore: false, compact: true })).toBe('shown');
-        // A wide band keeps the place (the title and subtitle do not rewrap between methods).
-        expect(resolveConnectSheetMachineChip({ needed: false, shownBefore: true, compact: false })).toBe('reserved');
-        // A phone puts the chip on its own row under the subtitle: an empty row there is only a gap.
-        expect(resolveConnectSheetMachineChip({ needed: false, shownBefore: true, compact: true })).toBeNull();
-        expect(resolveConnectSheetMachineChip({ needed: false, shownBefore: false, compact: false })).toBeNull();
-    });
 });

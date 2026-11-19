@@ -17,7 +17,6 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { presentConnectedAccountNames } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
-import { useDeviceType } from '@/utils/platform/responsive';
 
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 
@@ -35,7 +34,7 @@ import type {
   ConnectSheetContentProps,
   ConnectSheetKeyRequest,
 } from './ConnectedServiceSetupModal';
-import { isConnectSheetKeyRequest, resolveConnectSheetMachineChip } from './connectSheetOpening';
+import { isConnectSheetKeyRequest } from './connectSheetOpening';
 import { useConnectAccountSheetModel } from './useConnectAccountSheetModel';
 import { useConnectKeySheetModel } from './useConnectKeySheetModel';
 import { ConnectNpmRegistrySheetContent } from '../npm/ConnectNpmRegistrySheetContent';
@@ -248,28 +247,19 @@ function ConnectAccountSheetLeaf(
   // and handed to the sign-in below. Read only while the chosen method needs a machine (58c).
   const targetSelection = model.targetSelection;
   const showTargetSelector = mode === 'new' && model.machineRequired;
-  const [chipShown, setChipShown] = React.useState(showTargetSelector);
-  if (showTargetSelector && !chipShown) setChipShown(true);
-  const compact = useDeviceType() === 'phone';
-  const chip = resolveConnectSheetMachineChip({ needed: showTargetSelector, shownBefore: chipShown, compact });
-  const machineChip = React.useMemo(() => chip !== null ? (
-    <View
-      style={showTargetSelector ? null : styles.reservedChip}
-      pointerEvents={showTargetSelector ? 'auto' : 'none'}
-      aria-hidden={!showTargetSelector}
-      importantForAccessibility={showTargetSelector ? 'auto' : 'no-hide-descendants'}
-    >
-      <MachineAdministrationTargetSelector
-        selection={targetSelection}
-        resolveCandidateAvailability={model.machineAvailability}
-        disabled={Boolean(purposeRequest) || !showTargetSelector}
-        presentation="chip"
-        // The account works on every machine; the chip only picks where this sign-in runs.
-        chipLabel={t('connectedServicesSetup.signInOn')}
-        testIDPrefix={showTargetSelector ? 'connected-service-setup-target' : 'connected-service-setup-target-reserved'}
-      />
-    </View>
-  ) : null, [chip, showTargetSelector, purposeRequest, targetSelection, model.machineAvailability]);
+  // Only a method that signs in on a machine draws the chip; one that needs none holds no empty place for it, so its
+  // subtitle takes the band's width (LABPARITY-ACCEPT-F fix 4: a rewrap between methods beats a ragged band).
+  const machineChip = React.useMemo(() => showTargetSelector ? (
+    <MachineAdministrationTargetSelector
+      selection={targetSelection}
+      resolveCandidateAvailability={model.machineAvailability}
+      disabled={Boolean(purposeRequest)}
+      presentation="chip"
+      // The account works on every machine; the chip only picks where this sign-in runs.
+      chipLabel={t('connectedServicesSetup.signInOn')}
+      testIDPrefix="connected-service-setup-target"
+    />
+  ) : null, [showTargetSelector, purposeRequest, targetSelection, model.machineAvailability]);
 
   // A repair names its account once, as the band's quiet second line under "Sign in to … again" (owner 11-01):
   // who it is, never a card of its own.
@@ -464,9 +454,6 @@ const styles = StyleSheet.create((theme) => ({
   rows: {
     gap: theme.space.s2,
     marginHorizontal: -theme.space.s8,
-  },
-  reservedChip: {
-    opacity: 0,
   },
   actions: {
     flexDirection: 'row',

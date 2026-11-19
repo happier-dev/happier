@@ -417,6 +417,9 @@ it('clears the Connect sheet Machine chip when the selected mode is Account plac
             await vi.waitFor(() => {
                 const chip = screen.findHostByTestId('connected-service-setup-target.chip');
                 expect(chip !== null).toBe(!placement.modeIds.includes(modeId));
+                // LABPARITY-ACCEPT-F fix 4: a method with no chip holds no empty place for one, so its
+                // subtitle takes the band's width instead of wrapping beside a hidden chip.
+                expect(screen.findHostByTestId('connected-service-setup-target-reserved.chip')).toBeNull();
             });
         }
     } finally { await screen.unmount(); }

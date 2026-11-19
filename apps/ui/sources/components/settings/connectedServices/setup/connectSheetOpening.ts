@@ -3,7 +3,6 @@ import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { ConnectSheetAccountRequest, ConnectSheetRequest, ConnectSheetKeyRequest, ConnectSheetNpmRegistryRequest } from './ConnectedServiceSetupModal';
 import type { ConnectedServiceSetupTarget } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { resolveHappierModalHeaderLayout } from '@happier-dev/plugin-ui/presentation';
 
 type SavedKey = Readonly<{ ref: string; kind?: 'apiKey' | 'token' | 'password' | 'other' | null }>;
 
@@ -35,18 +34,6 @@ export function isConnectSheetNpmRegistryRequest(request: ConnectSheetRequest): 
  * list; an account or registry sheet scrolls its body under the band. Native cards pick their body (still View or
  * ScrollView) once, at presentation, so the presenter and the heading both read it here.
  */
-/**
- * The band's machine chip (lab crConnect). Once a method has shown it, a method that needs no machine keeps its
- * place, empty, so the title and subtitle do not rewrap between methods; only where the chip shares the title's
- * row. A phone's band gives the chip its own row ({@link resolveHappierModalHeaderLayout}), and an empty row
- * there is only a gap above the method.
- */
-export function resolveConnectSheetMachineChip(input: Readonly<{ needed: boolean; shownBefore: boolean; compact: boolean }>): 'shown' | 'reserved' | null {
-    if (input.needed) return 'shown';
-    if (!input.shownBefore) return null;
-    return resolveHappierModalHeaderLayout({ compact: input.compact, hasTitle: true, hasActions: true }) === 'row' ? 'reserved' : null;
-}
-
 export function resolveConnectSheetBodyScroll(request: ConnectSheetRequest): 'auto' | 'none' {
     return isConnectSheetKeyRequest(request) ? 'none' : 'auto';
 }
