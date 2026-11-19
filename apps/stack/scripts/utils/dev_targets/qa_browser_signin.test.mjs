@@ -65,7 +65,7 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
   };
 
   if (restored) { view = 'home'; location.pathname = '/'; }
-  if (step === 'account') { view = 'account'; location.pathname = '/settings/account'; }
+  if (step === 'account' && !restored) { view = 'account'; location.pathname = '/settings/account'; }
   const previous = new Map(Object.keys(context).map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   Object.assign(globalThis, context);
   try {
@@ -167,7 +167,7 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false, signinResponses = [] } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, accountRedirectedHome = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false, signinResponses = [] } = {}) {
   const controller = new AbortController();
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
@@ -205,7 +205,7 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           }
         }
         if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'account') {
-          void observe({ step: 'account', accountReady: !accountPending,
+          void observe({ step: 'account', restored: accountRedirectedHome, accountReady: !accountPending,
             homeUnavailable: !accountReady || (transientHomeUnavailable && !this.profileFinished),
           }).then(({ result }) => {
             // No identity or error DOM means the page-side observer stays pending.
@@ -297,6 +297,12 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
   });
 }
+
+test('reports the verified Account when Account settings returns to wide Home', async () => {
+  assert.deepEqual(await profileSignin({ accountRedirectedHome: true }), {
+    ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl,
+  });
+});
 
 test('names the Home sign-in response status behind a restore form error', async () => {
   assert.deepEqual(await profileSignin({ restoreOutcome: 'restore_failed', signinResponses: [

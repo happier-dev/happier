@@ -38,8 +38,9 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
   };
   if (step === 'home') return await waitFor(home);
   if (step === 'account') return await waitFor(() => {
-    if (document.querySelector('[data-testid="home-unreachable"]')) return 'account_unavailable';
-    return document.querySelector('[data-testid="settings-account-identity"]') ? 'account' : null;
+    const homeState = home();
+    if (homeState === 'home_unavailable') return 'account_unavailable';
+    return homeState ?? (document.querySelector('[data-testid="settings-account-identity"]') ? 'account' : null);
   });
   let confirmedDialog;
   const blockingDialog = () => {
@@ -350,11 +351,15 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         profile = JSON.parse(body);
       } catch { throw failure('account_unavailable', 'profile_json_invalid'); }
       if (typeof profile?.id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(profile.id)) throw failure('account_unavailable', 'profile_id_invalid');
-      if (await step('account') !== 'account') throw failure('account_unavailable', 'account_page_unavailable');
+      // Account settings can return to Home during startup without mounting its identity header.
+      const accountView = await step('account');
+      if (accountView !== 'account' && accountView !== 'home') throw failure('account_unavailable', 'account_page_unavailable');
       const accountIdPrefix = profile.id.slice(0, 8);
       observingAccount = false;
-      await navigate('/');
-      if (await step('home') !== 'home') throw failure('home_unavailable');
+      if (accountView === 'account') {
+        await navigate('/');
+        if (await step('home') !== 'home') throw failure('home_unavailable');
+      }
       return { ok: true, accountIdPrefix, homeOrigin: profileRequest.origin };
     })();
     return await Promise.race([restored, client.disconnected]);
