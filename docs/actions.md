@@ -7308,18 +7308,15 @@ content-plane owner applies Sessions' existing reading coat once for every main
 area while the picture is shown; individual pages do not select another coat.
 This is the development contract; page
 composition and the place picker are integrated by the Home atmosphere UI lane.
-The saved picture reference remains the person's choice. Home's hourly idle
-resettle derives the shown built-in picture from that choice and its optional
-`picture.selectedAtMs`; it never writes Account settings. Picking, Shuffle and
-the picture-reference Action record a deliberate selection time, so the chosen
-picture appears first. Full-object Home and Project mutations also anchor a changed
-picture source/reference at the mutation owner; presentation-only edits retain
-the selection time. Home and inheriting readers share one admitted display sample,
-including a Look editor opened later while writing withholds a resettle. The sample
-advances on a deliberate selection, an admitted resettle or a fresh arrival, with
-no polling or automatic Settings writes. Older stored choices without a time use the Unix epoch
-for the same deterministic sequence. Own pictures, contributed pictures and
-explicit Project overrides keep their selected picture. Look's picker shows
+The saved picture reference remains the person's choice. Home and inheriting
+surfaces share a display sample for the signed-in Account. The first display of
+a new built-in choice starts its hourly idle rotation on that device.
+The sample advances on an admitted resettle or a fresh arrival in the same run.
+Relaunching starts with the saved picture again, and devices can show different
+points in the rotation. Stored legacy timestamps are dropped on read. Choosing
+the same picture again and automatic rotation leave Account settings untouched.
+Own pictures, contributed pictures and explicit Project overrides keep their
+selected picture. Look's picker shows
 the saved choice; its per-picture controls and credit describe the shown picture.
 Glass preset and intensity retain their
 existing `appearance.glassPreset` and `appearance.glassIntensity` bindings.

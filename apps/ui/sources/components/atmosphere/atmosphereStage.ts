@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { HomeAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { AtmosphereBackdrop } from './atmosphereBandBoundary';
 import { atmosphereSurfaceKey, type AtmosphereSurface } from './resolveAtmosphere';
 
@@ -238,15 +240,16 @@ let resettle: AtmosphereResettle | null = null;
 let nextResettleId = 1;
 let resettlePaused = true;
 const resettleListeners = new Set<() => void>();
-// One admitted clock sample for the current Home selection, including readers mounted later.
-// The last reader leaving ends this arrival; a later arrival samples the current window afresh.
-let displaySample: Readonly<{ selection: string; nowMs: number }> | null = null;
+export type AtmosphereRotationAnchor = Readonly<{ epochMs: number }>;
+type AtmosphereDisplaySample = Readonly<{ anchor: AtmosphereRotationAnchor; nowMs: number }>;
+// Navigation can end the display sample while the current choice keeps its epoch.
+let displayChoice: { selection: string; anchor: AtmosphereRotationAnchor; sample: AtmosphereDisplaySample | null } | null = null;
 const displayListeners = new Set<() => void>();
 function subscribeDisplaySample(listener: () => void) {
   displayListeners.add(listener);
   return () => {
     displayListeners.delete(listener);
-    if (displayListeners.size === 0) displaySample = null;
+    if (displayListeners.size === 0 && displayChoice) displayChoice.sample = null;
   };
 }
 const subscribeNoDisplaySample = () => () => {};
@@ -258,7 +261,7 @@ export const atmosphereResettleFact = {
   get: () => resettle,
   announce(localId: string, reducedMotion: boolean) {
     resettle = { id: nextResettleId++, localId, reducedMotion };
-    if (displaySample) displaySample = { ...displaySample, nowMs: Date.now() };
+    if (displayChoice?.sample) displayChoice.sample = { anchor: displayChoice.anchor, nowMs: Date.now() };
     displayListeners.forEach(listener => listener());
     resettleListeners.forEach(listener => listener());
   },
@@ -273,13 +276,22 @@ export const atmosphereResettleFact = {
 };
 
 /** Selection changes and admitted resettles advance the shared sample; previews and later mounts do not. */
-export function useAtmosphereDisplaySample(selection: string | null): number {
+export function useAtmosphereDisplaySample(home: HomeAtmosphere, scope: AccountSettingsScope | null, shown: boolean): AtmosphereDisplaySample | null {
+  const ref = home.picture.ref;
+  const selection = JSON.stringify([scope?.serverId, scope?.accountId, home.source, ref.kind,
+    ref.kind === 'builtin' ? ref.id : ref.localId]);
+  const demanded = shown && home.source === 'picture' && ref.kind === 'builtin';
   const read = React.useCallback(() => {
-    if (selection === null) return 0;
-    if (displaySample?.selection !== selection) displaySample = { selection, nowMs: Date.now() };
-    return displaySample.nowMs;
-  }, [selection]);
-  return React.useSyncExternalStore(selection === null ? subscribeNoDisplaySample : subscribeDisplaySample, read, read);
+    if (displayChoice && displayChoice.selection !== selection) displayChoice = null;
+    if (!demanded) return null;
+    if (!displayChoice) {
+      const nowMs = Date.now();
+      const anchor = { epochMs: nowMs };
+      displayChoice = { selection, anchor, sample: { anchor, nowMs } };
+    }
+    return displayChoice.sample ??= { anchor: displayChoice.anchor, nowMs: Date.now() };
+  }, [selection, demanded]);
+  return React.useSyncExternalStore(demanded ? subscribeDisplaySample : subscribeNoDisplaySample, read, read);
 }
 
 /** Home's current playback posture; this stays paused when its admission leaf leaves Home. */

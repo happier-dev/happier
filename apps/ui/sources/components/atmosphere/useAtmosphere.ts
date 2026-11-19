@@ -41,20 +41,18 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
         // Identity is the qualified route/context key, not an object allocated by its caller.
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [surfaceKey, profile, place, project?.serverId, project?.projectKey]);
-    const scope = getStorage()(state => state.settingsScope);
-    const homeRef = home.picture.ref;
-    const homePictureKey = homeRef.kind === 'builtin' ? homeRef.id : homeRef.localId;
     // A gesture changes the effective presentation, not the authored Home arrival's lifetime.
     const inheritsHome = getStorage()(state => {
         if (typeof surface === 'object' && 'publicProfile' in surface) return false;
         const authored = project ? readProjectAtmosphere(state, project) : undefined;
         return authored === undefined || authored === 'home';
     });
-    const selection = resolvedContext && inheritsHome && isAtmosphereShown(target, projectOverride && projectOverride !== 'home'
-        ? { ...projectOverride, moments: home.moments } : home) && home.source === 'picture' && homeRef.kind === 'builtin'
-        ? JSON.stringify([scope?.serverId, scope?.accountId, home.source, homeRef.kind, homePictureKey, home.picture.selectedAtMs]) : null;
-    const nowMs = useAtmosphereDisplaySample(selection);
-    const settings = React.useMemo(() => selectAtmosphereSettings(target, home, projectOverride, nowMs), [target, home, projectOverride, nowMs]);
+    const scope = getStorage()(state => state.settingsScope);
+    const sample = useAtmosphereDisplaySample(home, scope, resolvedContext && inheritsHome && isAtmosphereShown(target, projectOverride && projectOverride !== 'home'
+        ? { ...projectOverride, moments: home.moments } : home));
+    const rotationElapsedMs = sample ? sample.nowMs - sample.anchor.epochMs : 0;
+    const settings = React.useMemo(() => selectAtmosphereSettings(target, home, projectOverride, rotationElapsedMs),
+        [target, home, projectOverride, rotationElapsedMs]);
     const demanded = resolvedContext && isAtmosphereShown(target, settings);
     const localId = demanded ? atmospherePictureLocalId(settings) : null;
     const pictureRef = settings.picture.ref;
@@ -66,12 +64,12 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
 
     const shown = React.useRef<ResolvedAtmosphere<(typeof pictures)[number]> | null>(null);
     const resolved = React.useMemo(() => resolveAtmosphere({ surface: target, home: resolvedContext ? home : { ...home, source: 'none' },
-        projectOverride: resolvedContext ? projectOverride : undefined, pictures, nowMs,
+        projectOverride: resolvedContext ? projectOverride : undefined, pictures, rotationElapsedMs,
         pictureRecord: stored.status === 'present' ? stored.record : undefined,
         shownPicture: shown.current, readingPicture: stored.status === 'loading',
         pictureAcquisitionFailed: builtin !== undefined && failedAcquisition === builtin,
         glassEnvironment: { reduceTransparency: environmentReduceTransparency },
-        reduceTransparency, reducedMotion }), [target, home, projectOverride, pictures, stored, localId, nowMs, resolvedContext, builtin, failedAcquisition,
+        reduceTransparency, reducedMotion }), [target, home, projectOverride, pictures, stored, localId, rotationElapsedMs, resolvedContext, builtin, failedAcquisition,
         environmentReduceTransparency, reduceTransparency, reducedMotion]);
     // The display read already established cache availability. Acquire only a missing/mismatched
     // picture after that read settles; a cache hit needs no second IndexedDB read or preparation.

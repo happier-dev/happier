@@ -41,20 +41,20 @@ export function isAtmosphereShown(surface: AtmosphereTarget, settings: HomeAtmos
         && (settings.source !== 'planet' || place !== 'sessions' && place !== 'pages');
 }
 
-/** The same saved choice and wall-clock window select the same released picture on every device. */
-export function homeIdleResettlePicture(home: HomeAtmosphere, nowMs: number): Extract<AtmospherePresentation['picture']['ref'], { kind: 'builtin' }> | null {
+/** A display rotates its chosen built-in picture by elapsed time since the local choice first appeared. */
+export function homeIdleResettlePicture(home: HomeAtmosphere, rotationElapsedMs: number): Extract<AtmospherePresentation['picture']['ref'], { kind: 'builtin' }> | null {
     if (home.source !== 'picture' || home.picture.ref.kind !== 'builtin' || home.moments.idleResettle === false) return null;
     // Device-specific plugin catalogs never change this shared sequence; contributed pictures keep their selection.
     const chosenId = home.picture.ref.id;
     const index = ATMOSPHERE_PICTURES.findIndex(picture => picture.id === chosenId);
     if (index < 0) return null;
-    const window = Math.floor(Math.max(0, nowMs - (home.picture.selectedAtMs ?? 0)) / MOMENT_TRIGGER_WINDOWS_MS.resettle);
+    const window = Math.floor(Math.max(0, rotationElapsedMs) / MOMENT_TRIGGER_WINDOWS_MS.resettle);
     return { kind: 'builtin', id: ATMOSPHERE_PICTURES[(index + window) % ATMOSPHERE_PICTURES.length]!.id };
 }
 
 /** Projects inherit moment switches from Home; their presentation override is otherwise complete. */
 export function selectAtmosphereSettings(surface: AtmosphereTarget, home: HomeAtmosphere,
-    projectOverride?: 'home' | ProjectAtmosphere, nowMs = Date.now()): HomeAtmosphere {
+    projectOverride?: 'home' | ProjectAtmosphere, rotationElapsedMs = 0): HomeAtmosphere {
     if (typeof surface === 'object' && 'publicProfile' in surface) {
         return { ...atmospherePresentation(surface.publicProfile), showOn: [], moments: {} };
     }
@@ -62,7 +62,7 @@ export function selectAtmosphereSettings(surface: AtmosphereTarget, home: HomeAt
         return { ...projectOverride, moments: home.moments };
     }
     if (!isAtmosphereShown(surface, home)) return home;
-    const ref = homeIdleResettlePicture(home, nowMs);
+    const ref = homeIdleResettlePicture(home, rotationElapsedMs);
     return !ref || home.picture.ref.kind === 'builtin' && ref.id === home.picture.ref.id
         ? home : { ...home, picture: { ...home.picture, ref } };
 }
@@ -85,10 +85,10 @@ export function resolveAtmosphere<TPicture extends BuiltinPicture>(input: Readon
     glassEnvironment: GlassMaterialEnvironment;
     reduceTransparency: boolean;
     reducedMotion: boolean;
-    /** Mounted consumers hold an admitted wall-clock sample between idle resettles. */
-    nowMs?: number;
+    /** Mounted consumers hold the admitted elapsed rotation time between idle resettles. */
+    rotationElapsedMs?: number;
 }>): ResolvedAtmosphere<TPicture> {
-    let settings = selectAtmosphereSettings(input.surface, input.home, input.projectOverride, input.nowMs);
+    let settings = selectAtmosphereSettings(input.surface, input.home, input.projectOverride, input.rotationElapsedMs);
     const profile = typeof input.surface === 'object' && 'publicProfile' in input.surface;
     let fallbackReason: ResolvedAtmosphere['fallbackReason'] = null;
     let builtinPicture: TPicture | null = null;

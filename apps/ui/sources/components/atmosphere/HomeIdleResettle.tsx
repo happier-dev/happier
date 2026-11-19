@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { useAtmosphereMoment } from './atmosphereMoments';
-import { atmosphereResettleFact, useAtmosphereComposerEmpty } from './atmosphereStage';
+import { atmosphereResettleFact, useAtmosphereComposerEmpty, useAtmosphereDisplaySample } from './atmosphereStage';
 import { useIdleResettle } from './homeAtmosphereMoments';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useSetting } from '@/sync/store/hooks';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { pictureStore } from './pictureStore';
 import type { BuiltinPicture } from './pictureStore.types';
 import { useAtmospherePictureCatalog } from './useAtmospherePictureCatalog';
@@ -26,6 +27,8 @@ export function HomeIdleResettle(props: Readonly<{
     const active = useHostActivelyViewed();
     const value = useSetting('homeAtmosphere');
     const pictures = useAtmospherePictureCatalog();
+    const scope = getStorage()(state => state.settingsScope);
+    const sample = useAtmosphereDisplaySample(value, scope, props.picture !== null);
     const idle = empty && !props.writing && !props.sending;
     const visible = props.focused && active;
     React.useEffect(() => {
@@ -41,6 +44,7 @@ export function HomeIdleResettle(props: Readonly<{
         visible,
         reducedMotion: moment.reducedMotion,
         value,
+        anchor: sample?.anchor ?? null,
         pictures,
         ensure: ensurePicture,
     });

@@ -4,7 +4,7 @@ import { BUILT_IN_SETTINGS_METADATA_V1 } from './builtInSettingsMetadata.js';
 import type { z } from '../../zodRuntimePolicy.js';
 import type { TeamSettingBindingV1 } from './settingsOwnerActions.js';
 import { readPortableAccountSettingBindingV1 } from './accountSettingBindings.js';
-import { applyAtmosphereLayoutDefault, recordAtmospherePictureSelection, type HomeAtmosphere } from '../../account/settings/homeAtmosphere.js';
+import { applyAtmosphereLayoutDefault, type HomeAtmosphere } from '../../account/settings/homeAtmosphere.js';
 import { readCollectionSpaceDeletionApprovalV1 } from './collectionSpaceApproval.js';
 import { getFeatureAliases, isFeatureId } from '../../features/catalog.js';
 
@@ -314,11 +314,6 @@ export function buildBuiltInAccountSettingMutationV1(declaration: AccountSetting
   if (parsed.success && binding.key === 'homeAtmosphere' && binding.path?.join('.') === 'picture.layout') {
     // This key's current owner snapshot and the parsed next value are HomeAtmosphere documents.
     return { homeAtmosphere: applyAtmosphereLayoutDefault(current as HomeAtmosphere, parsed.data as HomeAtmosphere) };
-  }
-  if (parsed.success && binding.key === 'homeAtmosphere'
-      && (binding.path?.join('.') === 'picture.ref' || binding.path?.join('.') === 'source' && stored === 'picture')) {
-    // The key selects the HomeAtmosphere definition above; its full strict parser just admitted this value.
-    return { homeAtmosphere: recordAtmospherePictureSelection(parsed.data as HomeAtmosphere) };
   }
   return parsed.success ? { [binding.key]: parsed.data } : null;
 }

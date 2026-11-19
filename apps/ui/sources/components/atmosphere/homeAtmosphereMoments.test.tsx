@@ -428,15 +428,15 @@ describe('session-finished ripple playback', () => {
 
 describe('idle resettle (Home owner, fake clock)', () => {
   const pictures = ATMOSPHERE_PICTURES;
+  const epochMs = 1_800_000_000_000;
   const pictureHome: HomeAtmosphere = {
     ...DEFAULT_HOME_ATMOSPHERE,
     source: 'picture',
-    picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: 1_800_000_000_000 },
   };
   type Input = Parameters<typeof useIdleResettle>[0];
 
   async function mountResettle(overrides: Partial<Input> = {}) {
-    vi.setSystemTime(pictureHome.picture.selectedAtMs!);
+    vi.setSystemTime(epochMs);
     const ensured: string[] = [];
     const base: Input = {
       enabled: true,
@@ -445,6 +445,7 @@ describe('idle resettle (Home owner, fake clock)', () => {
       visible: true,
       reducedMotion: false,
       value: pictureHome,
+      anchor: { epochMs },
       pictures,
       ensure: async (picture) => {
         ensured.push(picture.id);
@@ -574,8 +575,8 @@ describe('idle resettle (Home owner, fake clock)', () => {
     await home.advance(HOUR_MS);
     const manual = pictures.at(-1)!;
     const value: HomeAtmosphere = { ...pictureHome, picture: { ...pictureHome.picture,
-      selectedAtMs: Date.now(), ref: { kind: 'builtin', id: manual.id } } };
-    await home.set({ picture: manual.id, value });
+      ref: { kind: 'builtin', id: manual.id } } };
+    await home.set({ picture: manual.id, value, anchor: { epochMs: Date.now() } });
     await act(async () => { finishDownload(); });
     expect(atmosphereResettleFact.get()).toBeNull();
   });

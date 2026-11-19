@@ -1,5 +1,5 @@
 import { releaseLook, type AtmosphereLookPicture } from '@happier-dev/brand/atmosphere';
-import { DEFAULT_HOME_ATMOSPHERE, HomeAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, recordAtmospherePictureSelection, applyAtmosphereLayoutDefault,
+import { DEFAULT_HOME_ATMOSPHERE, HomeAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, applyAtmosphereLayoutDefault,
     type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation } from '@happier-dev/protocol/account/settings/accountSettings';
 import { buildBuiltInAccountSettingMutationV1, parseBuiltInAccountSettingValueV1,
     readBuiltInAccountSettingValueV1, readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
@@ -31,18 +31,6 @@ export function normalizeProjectAtmosphere(value: ProjectAtmosphere): ProjectAtm
     return { ...value, looks: normalizeAtmosphereLooks(value.looks) };
 }
 
-/** Full-object mutation invariant; presentation edits and explicit same-picture reselections keep their time. */
-export function recordChangedAtmospherePictureSelection<T extends AtmospherePresentation>(current: AtmospherePresentation, next: T): T {
-    next = applyAtmosphereLayoutDefault(current, next);
-    const previous = current.picture.ref;
-    const ref = next.picture.ref;
-    const samePicture = previous.kind === 'builtin'
-        ? ref.kind === 'builtin' && previous.id === ref.id
-        : ref.kind === 'user' && previous.localId === ref.localId;
-    return next.source === 'picture' && (current.source !== 'picture' || !samePicture)
-        ? recordAtmospherePictureSelection(next) : next;
-}
-
 /** Shared declaration parsing/editing with contextual storage owned by the captured controller. */
 export function readAtmospherePresentationSetting(value: AtmospherePresentation, anchor: string): unknown {
     const declaration = readBuiltInSettingDeclarationV1(anchor);
@@ -53,7 +41,7 @@ export function readAtmospherePresentationSetting(value: AtmospherePresentation,
 export function editAtmospherePresentationSetting(current: AtmospherePresentation, anchor: string, value: unknown): AtmospherePresentation | null {
     if (anchor === 'appearance.homeAtmosphere') {
         const parsed = AtmospherePresentationSchema.safeParse(value);
-        return parsed.success ? recordChangedAtmospherePictureSelection(current,
+        return parsed.success ? applyAtmosphereLayoutDefault(current,
             { ...parsed.data, looks: normalizeAtmosphereLooks(parsed.data.looks) }) : null;
     }
     const declaration = readBuiltInSettingDeclarationV1(anchor);
@@ -88,7 +76,7 @@ export function homeAtmosphereStorageBinding(anchor: 'appearance.homeAtmosphere'
         },
         mutate: (settings, value) => {
             const parsed = HomeAtmosphereSchema.safeParse(isLooks ? { ...settings.homeAtmosphere, looks: value } : value);
-            return parsed.success ? { homeAtmosphere: normalizeHomeAtmosphere(recordChangedAtmospherePictureSelection(settings.homeAtmosphere, parsed.data)) } : null;
+            return parsed.success ? { homeAtmosphere: normalizeHomeAtmosphere(applyAtmosphereLayoutDefault(settings.homeAtmosphere, parsed.data)) } : null;
         },
     };
 }
@@ -156,7 +144,7 @@ export async function invokeAtmospherePictureOperation(operation: 'add' | 'remov
             const draft = context.services?.publicProfileAtmosphereDraft;
             if (!draft?.isCurrent() || draft.serverId !== context.target.serverId) return { status: 'cancelled' };
             await draft.update(value => context.isCurrent() && draft.isCurrent()
-                ? recordChangedAtmospherePictureSelection(value, select(value)) : value);
+                ? select(value) : value);
         } else if (context.target?.kind === 'project' && projectRows) {
             const { mutateProjectAtmosphereSetting } = await import('./projectAtmosphereSettings');
             const result = await mutateProjectAtmosphereSetting({ rows: projectRows, scope: context.accountScope, target: context.target,
@@ -165,7 +153,7 @@ export async function invokeAtmospherePictureOperation(operation: 'add' | 'remov
                 ? 'project_account_mutation_conflict' : 'project_account_unavailable' };
         } else {
             await context.mutateSettings(settings => ({ homeAtmosphere:
-                recordChangedAtmospherePictureSelection(settings.homeAtmosphere, select(settings.homeAtmosphere)) }));
+                select(settings.homeAtmosphere) }));
         }
         if (!context.isCurrent()) return { status: 'cancelled' };
         return { status: 'completed', value: { localId } };

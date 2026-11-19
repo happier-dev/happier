@@ -994,7 +994,6 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
-                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
                     look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
@@ -3366,7 +3365,6 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
-                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
                     look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
@@ -3437,7 +3435,6 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
-                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
                     look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
@@ -3508,7 +3505,6 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
-                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
                     look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
@@ -3681,7 +3677,6 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
-                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
                     look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;

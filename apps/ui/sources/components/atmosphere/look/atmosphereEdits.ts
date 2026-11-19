@@ -5,7 +5,6 @@ import {
   type AtmosphereRememberedLooks,
 } from '@happier-dev/brand/atmosphere';
 import {
-  recordAtmospherePictureSelection,
   type AtmosphereLookOverride,
   type AtmospherePresentation,
 } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -91,18 +90,11 @@ export function withPicture<T extends AtmospherePresentation>(
   atmosphere: T,
   ref: PictureRef,
 ): T {
-  const next = {
+  return {
     ...atmosphere,
-    source: 'picture' as const,
+    source: 'picture',
     picture: { ...atmosphere.picture, ref },
   };
-  const previous = atmosphere.picture.ref;
-  const reselected = atmosphere.source === 'picture' && (previous.kind === 'builtin'
-    ? ref.kind === 'builtin' && previous.id === ref.id
-    : ref.kind === 'user' && previous.localId === ref.localId);
-  // A same-picture click is explicit intent even though a full-object comparison sees no new choice.
-  // Changed selections are stamped once by the mutation owner, including Action-only callers.
-  return reselected ? recordAtmospherePictureSelection(next) : next;
 }
 
 /** Another built-in picture, excluding the shown one while preserving the saved selection's intent. */

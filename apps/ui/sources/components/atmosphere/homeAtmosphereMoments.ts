@@ -17,7 +17,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import type { StorageState } from '@/sync/store/types';
 import { getActiveServerSnapshot, subscribeActiveServer, type ActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { atmosphereResettleFact } from './atmosphereStage';
+import { atmosphereResettleFact, type AtmosphereRotationAnchor } from './atmosphereStage';
 import { builtinPictureLocalId } from './ensureBuiltinPicture';
 import { homeIdleResettlePicture } from './resolveAtmosphere';
 import { createSessionFinishedRippleObserver, type SessionTurnState } from './sessionFinishedRippleObserver';
@@ -165,25 +165,22 @@ export function useIdleResettle(
     visible: boolean;
     reducedMotion: boolean;
     value: HomeAtmosphere;
+    anchor: AtmosphereRotationAnchor | null;
     pictures: readonly AtmospherePicture[];
     ensure: (picture: AtmospherePicture) => Promise<unknown>;
   }>,
 ): void {
-  const selectedAtMs = input.value.picture.selectedAtMs ?? 0;
-  const choice = input.value.picture.ref;
-  const choiceKey = choice.kind === 'builtin' ? choice.id : choice.localId;
-  const [openedAt] = React.useState(Date.now);
-  const windowStart = (nowMs: number) => selectedAtMs
-    + Math.floor(Math.max(0, nowMs - selectedAtMs) / MOMENT_TRIGGER_WINDOWS_MS.resettle) * MOMENT_TRIGGER_WINDOWS_MS.resettle;
-  const last = React.useRef({ selectedAtMs, choiceKey, at: windowStart(openedAt) });
-  if (last.current.selectedAtMs !== selectedAtMs || last.current.choiceKey !== choiceKey) {
-    last.current = { selectedAtMs, choiceKey, at: windowStart(Date.now()) };
-  }
+  const { anchor } = input;
+  const epochMs = anchor?.epochMs ?? 0;
+  const windowStart = (nowMs: number) => epochMs
+    + Math.floor(Math.max(0, nowMs - epochMs) / MOMENT_TRIGGER_WINDOWS_MS.resettle) * MOMENT_TRIGGER_WINDOWS_MS.resettle;
+  const last = React.useRef<{ anchor: AtmosphereRotationAnchor | null; at: number }>({ anchor: null, at: 0 });
+  if (last.current.anchor !== anchor) last.current = { anchor, at: windowStart(Date.now()) };
   const latest = React.useRef(input);
   latest.current = input;
   const armed =
     input.enabled && input.picture !== null && input.idle && input.visible
-      && homeIdleResettlePicture(input.value, Date.now()) !== null;
+      && anchor !== null && homeIdleResettlePicture(input.value, 0) !== null;
   React.useEffect(() => {
     if (!armed) return;
     let cancelled = false;
@@ -211,14 +208,14 @@ export function useIdleResettle(
       last.current.at = windowStart(decision.lastTriggeredAtMs);
       arm();
       const { value, pictures, ensure, picture } = latest.current;
-      const ref = homeIdleResettlePicture(value, Date.now());
+      const ref = homeIdleResettlePicture(value, Date.now() - epochMs);
       const next = ref ? pictures.find(picture => picture.id === ref.id) : undefined;
       if (!next || next.id === picture) return;
       // A failed download keeps the picture on screen; the next window tries again.
       void ensure(next).then(
         () => {
           if (cancelled || !latest.current.enabled || !latest.current.idle || !latest.current.visible) return;
-          const current = homeIdleResettlePicture(latest.current.value, Date.now());
+          const current = homeIdleResettlePicture(latest.current.value, Date.now() - epochMs);
           if (current?.id !== next.id) return;
           atmosphereResettleFact.announce(
             builtinPictureLocalId(next.id),
@@ -233,6 +230,6 @@ export function useIdleResettle(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [armed, input.picture, selectedAtMs, choiceKey]);
+  }, [armed, input.picture, anchor, epochMs]);
   React.useEffect(() => () => atmosphereResettleFact.clear(), []);
 }

@@ -98,14 +98,14 @@ describe('deliberate atmosphere picture selection', () => {
     expect(buildBuiltInAccountSettingMutationV1(declaration, stored, ['home', 'unsupported-place'])).toBeNull();
   });
 
-  it('starts the shared window on picture selection and preserves it on presentation-only edits', () => {
+  it('writes only the authored picture preference', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(1_800_000_000_000);
     try {
       const declaration = readBuiltInSettingDeclarationV1('appearance.atmospherePictureRef')!;
       const baseline = accountSettingsParse({});
       const mutation = buildBuiltInAccountSettingMutationV1(declaration, baseline, { kind: 'builtin', id: 'calm-sea' });
-      expect(mutation?.homeAtmosphere).toMatchObject({ picture: { ref: { kind: 'builtin', id: 'calm-sea' }, selectedAtMs: Date.now() } });
+      expect(mutation?.homeAtmosphere).toEqual({ ...baseline.homeAtmosphere, picture: { ...baseline.homeAtmosphere.picture, ref: { kind: 'builtin', id: 'calm-sea' } } });
       const changed = accountSettingsParse({ ...baseline, ...mutation });
       const layout = readBuiltInSettingDeclarationV1('appearance.atmospherePictureLayout')!;
       expect(buildBuiltInAccountSettingMutationV1(layout, changed, 'wallpaper')?.homeAtmosphere)

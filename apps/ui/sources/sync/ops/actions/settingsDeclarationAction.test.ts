@@ -721,20 +721,15 @@ describe('Home atmosphere picture and Project mutations', () => {
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
             value: projectAtmosphereEdit(settingsDefaults.homeAtmosphere, undefined, current => ({ ...current, source: 'none' })) } })).toMatchObject({ value: { source: 'none' } });
         expect(row.content).toMatchObject({ t: 'plain', v: { value: { pinned: true, label: 'Keep me', atmosphere: { source: 'none' } } } });
-        const selectedAtMs = 1_800_000_000_000;
-        const clock = vi.spyOn(Date, 'now').mockReturnValue(selectedAtMs);
-        onTestFinished(() => clock.mockRestore());
         const chosen = { ...atmosphere, source: 'picture', picture: { ...atmosphere.picture,
             ref: { kind: 'builtin', id: 'calm-sea' } } };
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
-            value: chosen } })).toMatchObject({ value: { picture: { selectedAtMs } } });
-        clock.mockReturnValue(selectedAtMs + 3_600_000);
+            value: chosen } })).toMatchObject({ value: { source: 'picture' } });
+        expect(row.content).toMatchObject({ t: 'plain', v: { value: { atmosphere: { source: 'picture', picture: chosen.picture } } } });
+        expect(row.content).not.toHaveProperty('v.value.atmosphere.picture.selectedAtMs');
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
-            value: { ...chosen, picture: { ...chosen.picture, selectedAtMs, layout: 'wallpaper' } } } }))
-            .toMatchObject({ value: { picture: { layout: 'wallpaper', selectedAtMs } } });
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.projectAtmosphere', target,
-            value: { ...chosen, picture: { ...chosen.picture, selectedAtMs, ref: { kind: 'builtin', id: 'dune-grass' } } } } }))
-            .toMatchObject({ value: { picture: { ref: { kind: 'builtin', id: 'dune-grass' }, selectedAtMs: selectedAtMs + 3_600_000 } } });
+            value: { ...chosen, picture: { ...chosen.picture, layout: 'wallpaper' } } } }))
+            .toMatchObject({ value: { picture: { layout: 'wallpaper' } } });
         expect(await owner.action({ actionId: 'settings.reset', input: { anchor: 'appearance.projectAtmosphere', target } }))
             .toEqual({ anchor: 'appearance.projectAtmosphere', value: 'home' });
         // The same Project row/CAS owner selects acquired bytes; it must never select them in Home.

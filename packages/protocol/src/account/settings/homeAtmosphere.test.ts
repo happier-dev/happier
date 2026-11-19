@@ -3,12 +3,11 @@ import { DEFAULT_HOME_ATMOSPHERE, HomeAtmosphereSchema, ProjectAtmosphereSchema 
 import { accountSettingsParse } from './accountSettings.js';
 
 describe('Home atmosphere Fade contract', () => {
-    it('round-trips a deliberate selection time while accepting pictures saved before it existed', () => {
-        const selected = { ...DEFAULT_HOME_ATMOSPHERE, picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: 1_800_000_000_000 } };
-        expect(HomeAtmosphereSchema.safeParse(selected).success).toBe(true);
-        expect(accountSettingsParse({ homeAtmosphere: selected }).homeAtmosphere).toEqual(selected);
-        expect(accountSettingsParse({ homeAtmosphere: DEFAULT_HOME_ATMOSPHERE }).homeAtmosphere).toEqual(DEFAULT_HOME_ATMOSPHERE);
-        expect(HomeAtmosphereSchema.safeParse({ ...selected, picture: { ...selected.picture, selectedAtMs: -1 } }).success).toBe(false);
+    it('drops the legacy selection time on stored reads while retaining the chosen picture and layout', () => {
+        const value = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', picture: { ref: { kind: 'builtin', id: 'calm-sea' }, layout: 'wallpaper' } };
+        const legacy = { ...value, picture: { ...value.picture, selectedAtMs: 1_800_000_000_000 } };
+        expect(accountSettingsParse({ homeAtmosphere: legacy }).homeAtmosphere).toEqual(value);
+        expect(HomeAtmosphereSchema.safeParse(legacy).success).toBe(false);
     });
     it('admits the dissolve style and rejects numeric fade on Home and Project writes', () => {
         const value = { ...DEFAULT_HOME_ATMOSPHERE, looks: { sky: { dissolve: 'rows' } } };

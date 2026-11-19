@@ -395,7 +395,7 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
         const next = ATMOSPHERE_PICTURES[1]!;
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             homeAtmosphere: { ...settingsParse({}).homeAtmosphere, source: 'picture',
-                picture: { ...settingsParse({}).homeAtmosphere.picture, selectedAtMs: epoch } },
+                picture: settingsParse({}).homeAtmosphere.picture },
         }) });
         const { useProjectAtmosphereEditor } = await import('./useProjectAtmosphereEditor');
         const { LookPopover } = await import('./LookChip');
@@ -441,7 +441,7 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
         const next = ATMOSPHERE_PICTURES[1]!;
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             homeAtmosphere: { ...settingsParse({}).homeAtmosphere, source: 'picture',
-                picture: { ...settingsParse({}).homeAtmosphere.picture, selectedAtMs: epoch } },
+                picture: settingsParse({}).homeAtmosphere.picture },
         }) });
         const { AtmosphereLayer } = await import('../AtmosphereLayer');
         const { atmosphereStageStore, useAtmosphereComposerText } = await import('../atmosphereStage');
@@ -506,42 +506,36 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
         }
     });
 
-    it.each(['stale', 'absent'] as const)('anchors a new whole-object picture choice with %s time and retains the time on presentation edits', async time => {
-        const epoch = 1_800_000_000_000;
+    it('writes only changed picture preferences through settings.set', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-            homeAtmosphere: { ...settingsParse({}).homeAtmosphere, source: 'picture',
-                picture: { ...settingsParse({}).homeAtmosphere.picture, selectedAtMs: epoch } },
+            homeAtmosphere: { ...settingsParse({}).homeAtmosphere, source: 'picture' },
         }) });
         try {
-            const now = epoch + 3_600_000;
-            vi.spyOn(Date, 'now').mockReturnValue(now);
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-            const { selectAtmosphereSettings } = await import('../resolveAtmosphere');
             const executor = createDefaultActionExecutor();
             const before = account.persistedSettings.homeAtmosphere;
-            const { selectedAtMs: _selected, ...picture } = before.picture;
             const wanted = { kind: 'builtin' as const, id: ATMOSPHERE_PICTURES[1]!.id };
             const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: account.scope.serverId };
-            expect(await executor.execute('settings.set', { anchor: 'appearance.homeAtmosphere', value: {
-                ...before, picture: { ...picture, ref: wanted, ...(time === 'stale' ? { selectedAtMs: epoch } : {}) },
-            } }, context)).toMatchObject({ ok: true });
-            const chosen = account.persistedSettings.homeAtmosphere;
-            expect(selectAtmosphereSettings('home', chosen, undefined, now).picture.ref).toEqual(wanted);
-            expect(chosen.picture.selectedAtMs).toBe(now);
-            vi.spyOn(Date, 'now').mockReturnValue(now + 3_600_000);
-            expect(await executor.execute('settings.set', { anchor: 'appearance.homeAtmosphere', value: {
-                ...chosen, picture: { ...chosen.picture, layout: 'wallpaper' },
-            } }, context)).toMatchObject({ ok: true });
-            expect(account.persistedSettings.homeAtmosphere.picture).toMatchObject({ ref: wanted, layout: 'wallpaper', selectedAtMs: now });
-        } finally { standardCleanup(); vi.restoreAllMocks(); await account.dispose(); }
+            const next = { ...before, picture: { ...before.picture, ref: wanted } };
+            const set = (value: typeof next) => executor.execute('settings.set',
+                { anchor: 'appearance.homeAtmosphere', value }, context);
+            expect(await set(next)).toMatchObject({ ok: true });
+            expect(account.persistedSettings.homeAtmosphere.picture).toEqual(next.picture);
+            expect(account.settingsWrites).toHaveLength(1);
+            expect(await set(next)).toMatchObject({ ok: true });
+            expect(account.settingsWrites).toHaveLength(1);
+            const wallpaper = { ...next, picture: { ...next.picture, layout: 'wallpaper' as const } };
+            expect(await set(wallpaper)).toMatchObject({ ok: true });
+            expect(account.persistedSettings.homeAtmosphere.picture).toEqual(wallpaper.picture);
+        } finally { standardCleanup(); await account.dispose(); }
     });
 
     it('advances idle windows without real Settings writes and agrees with a newly mounted Home', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
             homeAtmosphere: { ...settingsParse({}).homeAtmosphere, source: 'picture',
-                picture: { ...settingsParse({}).homeAtmosphere.picture, selectedAtMs: 1_800_000_000_000 } },
+                picture: settingsParse({}).homeAtmosphere.picture },
         }) });
         const shown = new Map<string, string | null>();
         const hour = 3_600_000;

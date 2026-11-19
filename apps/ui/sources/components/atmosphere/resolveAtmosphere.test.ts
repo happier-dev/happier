@@ -32,20 +32,19 @@ describe('effective atmosphere owner', () => {
         }
     });
     it('derives the hourly built-in picture from the saved choice without changing it, across independent readers', () => {
-        const selectedAtMs = 1_800_000_000_000;
-        const chosen = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture' as const,
-            picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs } };
-        const at = (nowMs: number) => selectAtmosphereSettings('home', chosen, undefined, nowMs);
-        expect(at(selectedAtMs).picture.ref).toEqual(chosen.picture.ref);
-        expect(at(selectedAtMs + 3_600_000).picture.ref).toEqual({ kind: 'builtin', id: ATMOSPHERE_PICTURES[1]!.id });
-        expect(at(selectedAtMs + 2 * 3_600_000).picture.ref).toEqual({ kind: 'builtin', id: ATMOSPHERE_PICTURES[2]!.id });
-        expect(at(selectedAtMs + 2 * 3_600_000).picture.ref).toEqual(at(selectedAtMs + 2 * 3_600_000 + 900).picture.ref);
+        const chosen = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture' as const };
+        const hour = 3_600_000;
+        const at = (elapsedMs: number) => selectAtmosphereSettings('home', chosen, undefined, elapsedMs);
+        expect(at(0).picture.ref).toEqual(chosen.picture.ref);
+        expect(at(hour).picture.ref).toEqual({ kind: 'builtin', id: ATMOSPHERE_PICTURES[1]!.id });
+        expect(at(2 * hour).picture.ref).toEqual({ kind: 'builtin', id: ATMOSPHERE_PICTURES[2]!.id });
+        expect(at(2 * hour).picture.ref).toEqual(at(2 * hour + 900).picture.ref);
         expect(chosen.picture.ref).toEqual(DEFAULT_HOME_ATMOSPHERE.picture.ref);
-        expect(selectAtmosphereSettings('new-session', chosen, undefined, selectedAtMs + 3_600_000).picture.ref).toEqual(at(selectedAtMs + 3_600_000).picture.ref);
-        expect(selectAtmosphereSettings('home', { ...chosen, moments: { idleResettle: false } }, undefined, selectedAtMs + 3_600_000).picture.ref).toEqual(chosen.picture.ref);
+        expect(selectAtmosphereSettings('new-session', chosen, undefined, hour).picture.ref).toEqual(at(hour).picture.ref);
+        expect(selectAtmosphereSettings('home', { ...chosen, moments: { idleResettle: false } }, undefined, hour).picture.ref).toEqual(chosen.picture.ref);
         const surface = { project: { serverId: 'home', projectKey: 'project' } };
-        expect(selectAtmosphereSettings(surface, chosen, chosen, selectedAtMs + 3_600_000).picture.ref).toEqual(chosen.picture.ref);
-        expect(selectAtmosphereSettings(surface, chosen, 'home', selectedAtMs + 3_600_000).picture.ref).toEqual(at(selectedAtMs + 3_600_000).picture.ref);
+        expect(selectAtmosphereSettings(surface, chosen, chosen, hour).picture.ref).toEqual(chosen.picture.ref);
+        expect(selectAtmosphereSettings(surface, chosen, 'home', hour).picture.ref).toEqual(at(hour).picture.ref);
     });
     it('resolves a profile candidate independently of Home and never substitutes missing reviewed pixels', () => {
         const { moments: _moments, showOn: _showOn, ...presentation } = home;

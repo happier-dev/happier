@@ -169,7 +169,7 @@ describe('Atmosphere input locality', () => {
         await pictureStore.put({ localId: `builtin:${picture.id}`, kind: 'builtin', data: new Blob(['pixels']), source: picture.src });
         storage.setState(state => ({ settings: { ...state.settings, homeAtmosphere: {
             ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', showOn: ['home'],
-            picture: { ref: { kind: 'builtin', id: picture.id }, layout: 'wallpaper', selectedAtMs: epoch },
+            picture: { ref: { kind: 'builtin', id: picture.id }, layout: 'wallpaper' },
         } } }));
         const transaction = vi.spyOn(IDBDatabase.prototype, 'transaction');
         let shown: ReturnType<typeof useAtmosphere> | undefined;
@@ -204,8 +204,8 @@ describe('Atmosphere input locality', () => {
     it('samples a fresh arrival after the last Home reader leaves without keeping a clock alive', async () => {
         const epoch = 1_800_000_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(epoch);
-        storage.setState(state => ({ settings: { ...state.settings, homeAtmosphere: {
-            ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: epoch },
+        storage.setState(state => ({ settingsScope: { serverId: 'sample-home', accountId: 'remount' }, settings: { ...state.settings, homeAtmosphere: {
+            ...DEFAULT_HOME_ATMOSPHERE, source: 'picture',
         } } }));
         for (const picture of ATMOSPHERE_PICTURES.slice(0, 2)) await pictureStore.put({ localId: `builtin:${picture.id}`,
             kind: 'builtin', data: new Blob(['pixels']), source: picture.src });
@@ -232,7 +232,7 @@ describe('Atmosphere input locality', () => {
         const scope = { serverId: 'sample-home', accountId: 'sample-account-a' };
         vi.spyOn(Date, 'now').mockReturnValue(epoch);
         storage.setState(state => ({ settingsScope: scope, settings: { ...state.settings, homeAtmosphere: {
-            ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: epoch },
+            ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', picture: { ...DEFAULT_HOME_ATMOSPHERE.picture },
         } } }));
         let shown: ReturnType<typeof useAtmosphere> | undefined;
         function Probe() { shown = useAtmosphere('home'); return null; }
@@ -245,20 +245,20 @@ describe('Atmosphere input locality', () => {
             expect(shown?.builtinPicture?.id).toBe(ATMOSPHERE_PICTURES[0]!.id);
             vi.spyOn(Date, 'now').mockReturnValue(epoch + 3_600_000);
             await act(async () => { storage.setState({ settingsScope: { ...scope, accountId: 'sample-account-b' } }); });
-            await act(async () => { await pictureStore.get('builtin:' + ATMOSPHERE_PICTURES[1]!.id); });
-            expect(shown?.builtinPicture?.id).toBe(ATMOSPHERE_PICTURES[1]!.id);
+            await act(async () => { await pictureStore.get('builtin:' + ATMOSPHERE_PICTURES[0]!.id); });
+            expect(shown?.builtinPicture?.id).toBe(ATMOSPHERE_PICTURES[0]!.id);
         } finally {
             await screen?.unmount(); vi.restoreAllMocks();
             for (const picture of ATMOSPHERE_PICTURES.slice(0, 2)) await pictureStore.remove('builtin:' + picture.id);
         }
     });
 
-    it('keeps explicit Project and profile pictures fixed without retaining a departed Home arrival', async () => {
+    it('keeps explicit Project and profile pictures fixed while retaining the local Home rotation epoch', async () => {
         const epoch = 1_800_000_000_000;
         const scope = { serverId: 'sample-home', accountId: 'sample-account' };
         const project = { serverId: scope.serverId, projectKey: 'explicit-sample-project' };
         const home = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture' as const,
-            picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: epoch } };
+            picture: { ...DEFAULT_HOME_ATMOSPHERE.picture } };
         storage.setState(state => ({ settingsScope: scope, profileScope: scope, settings: { ...state.settings, homeAtmosphere: home },
             projectAccountRows: { scope, status: 'ready', coverage: 'complete', workspaceRefs: [], relationships: [],
                 organizations: [{ key: { kind: 'project-organization', ...project }, revision: 1,

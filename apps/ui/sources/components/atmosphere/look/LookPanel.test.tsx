@@ -87,12 +87,10 @@ describe('Look panel writes', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('anchors Shuffle when the saved choice differs from the shown picture and is picked again', async () => {
-    const epoch = 1_800_000_000_000;
-    vi.spyOn(Date, 'now').mockReturnValue(epoch + 3_600_000);
+  it('keeps the picture preference when Shuffle lands on the saved choice', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     const initial: HomeAtmosphere = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture',
-      picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, selectedAtMs: epoch } };
+      picture: DEFAULT_HOME_ATMOSPHERE.picture };
     let saved = initial;
     const binding = homeAtmosphereStorageBinding('appearance.homeAtmosphere');
     if (binding.scope !== 'account' || !('mutate' in binding)) throw new Error('Missing Home mutation owner');
@@ -113,8 +111,7 @@ describe('Look panel writes', () => {
     try {
       screen = await renderScreen(<Editor />);
       await screen.pressByTestIdAsync('look-shuffle');
-      expect(saved.picture.ref).toEqual(initial.picture.ref);
-      expect(saved.picture.selectedAtMs).toBe(epoch + 3_600_000);
+      expect(saved.picture).toEqual(initial.picture);
     } finally { await screen?.unmount(); vi.restoreAllMocks(); }
   });
 
