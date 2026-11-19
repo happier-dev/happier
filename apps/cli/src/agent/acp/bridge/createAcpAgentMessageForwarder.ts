@@ -54,7 +54,15 @@ export function createAcpAgentMessageForwarder(params: {
 
   const forward = (msg: AgentMessage): void => {
     switch (msg.type) {
-      case 'event':
+      case 'event': {
+        if (msg.name !== 'thinking' || !msg.payload || typeof msg.payload !== 'object') return;
+        const payload = msg.payload;
+        const text = 'textDelta' in payload && typeof payload.textDelta === 'string'
+          ? payload.textDelta
+          : 'text' in payload && typeof payload.text === 'string' ? payload.text : '';
+        if (text) send(withSidechain({ type: 'thinking', text }));
+        return;
+      }
       case 'status':
       case 'permission-response':
       case 'model-output':

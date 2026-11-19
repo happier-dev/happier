@@ -3,6 +3,21 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { createAcpAgentMessageForwarder } from '../createAcpAgentMessageForwarder';
 
 describe('createAcpAgentMessageForwarder', () => {
+  it.each([{ textDelta: 'Reviewing slice 1/2: authentication\n' }, { text: 'Reviewed slice 1/2: authentication\n' }])(
+    'preserves native review progress as sidechain thinking (%j)', payload => {
+      const sent: ACPMessageData[] = [];
+      const forwarder = createAcpAgentMessageForwarder({
+        sendAcp: (_provider, body) => { sent.push(body); },
+        provider: 'slices', sidechainId: 'review-run', makeId: () => 'progress',
+      });
+      forwarder.forward({ type: 'event', name: 'thinking', payload });
+      forwarder.forward({ type: 'event', name: 'available_commands_update', payload: { text: 'not progress' } });
+      forwarder.forward({ type: 'model-output', textDelta: '{"findings":[]}' });
+      expect(sent).toEqual([{ type: 'thinking', text: 'textDelta' in payload ? payload.textDelta : payload.text,
+        sidechainId: 'review-run' }]);
+    },
+  );
+
   it('does not forward event messages', () => {
     const sendAcp = vi.fn();
     const forwarder = createAcpAgentMessageForwarder({
