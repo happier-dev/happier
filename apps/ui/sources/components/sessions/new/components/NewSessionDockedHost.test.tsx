@@ -600,12 +600,26 @@ describe('web shell Docked composer', () => {
     await act(async () => screen.unmount());
   });
 
-  it('names the draft by the first line of its prompt in the delete confirmation', async () => {
-    const { screen, state } = await openDockedDraft('Review happier-dev/triage-qa-sandbox#4\nCheck the tests.');
+  it('names the attached PR and the first prompt line in the draft delete confirmation', async () => {
+    const { screen, state } = await openDockedDraft('Review the branch\nCheck the tests.');
     const { presentActionApproval } = await import('@/components/approvals/actionApprovalPresentation');
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { writeNewSessionDraft, writeSessionDraftLocalSupplement } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const scope = getActiveServerAccountScope();
+    if (!scope) throw new Error('Expected the restored Account scope');
     const draftId = state().draftId;
+    await act(async () => {
+      writeNewSessionDraft({ scope, draftId, materializationIntent: 'seeded', patch: { authoring: { sessionName: 'Saved review' } } });
+      writeSessionDraftLocalSupplement({ scope, address: { kind: 'newSession', draftId }, patch: {
+        newSessionLocalState: { composerAttachmentSeeds: [{
+          instanceId: 'entry-seed', pluginId: 'happier.triage', attachmentLocalId: 'entry',
+          value: { key: 'entry:4', value: { v: 1 }, presentation: { label: 'happier-dev/triage-qa-sandbox#4' } },
+        }] },
+      } });
+    });
     const confirmation = presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId }, kind: 'confirmation' });
-    expect(confirmation.title).toContain('Review happier-dev/triage-qa-sandbox#4');
+    expect(confirmation.title).toContain('happier-dev/triage-qa-sandbox#4');
+    expect(confirmation.title).toContain('Review the branch');
     expect(confirmation.title).not.toContain('Check the tests.');
     expect(JSON.stringify(confirmation)).not.toContain(draftId);
     await screen.unmount();

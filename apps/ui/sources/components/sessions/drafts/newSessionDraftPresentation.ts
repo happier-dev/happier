@@ -54,7 +54,7 @@ function safeFinalPathSegment(value: unknown): string | null {
     return readNonblankString(segments[segments.length - 1]);
 }
 
-function firstPromptLine(value: string): string | null {
+export function readNewSessionDraftFirstPromptLine(value: string): string | null {
     for (const line of value.split(/\r?\n/)) {
         const promptLine = readNonblankString(stripMarkdown(line));
         if (promptLine) return promptLine;
@@ -125,7 +125,7 @@ export function buildNewSessionDraftTitle(
     draft: Pick<NewSessionDraftProjection, 'document'>,
     prompt: string,
 ): string {
-    return readNewSessionDraftIdentity(draft.document).name ?? firstPromptLine(prompt) ?? readAutomationName(draft)
+    return readNewSessionDraftIdentity(draft.document).name ?? readNewSessionDraftFirstPromptLine(prompt) ?? readAutomationName(draft)
         ?? safeFinalPathSegment(readAuthoringValue(draft, 'directory')) ?? t('sessionDrafts.untitled');
 }
 
