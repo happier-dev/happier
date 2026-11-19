@@ -6,7 +6,7 @@ import {
   createDeploymentEnvironmentHeaderV1,
   createDeploymentReceiptDetailV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -127,7 +127,7 @@ async function renderRestore(answer: Answer) {
     ],
     ownership: { environmentId, prefix: 'app' },
     retention: { kind: 'keepEverything' },
-  };
+  } satisfies NonNullable<DeploymentEnvironmentContentV1['backup']>;
   const base = createDeploymentReceiptDetailV1();
   const content = DeploymentOwnServerContentV1Schema.parse({
     ...base.content,
@@ -174,7 +174,7 @@ async function renderRestore(answer: Answer) {
       }),
       readEnvironment: async () => ({
         ok: true,
-        value: withBackup as typeof detail,
+        value: withBackup,
       }),
       listHistory: async () => ({
         ok: true,
@@ -205,7 +205,9 @@ async function renderRestore(answer: Answer) {
       demand={shown}
       phone={false}
       review={{ pendingId: null, request() {}, open() {} }}
+      setBindings={null}
       onBack={() => {}}
+      onNavigate={() => {}}
       restore={restore}
     />
     </ModalProvider>,

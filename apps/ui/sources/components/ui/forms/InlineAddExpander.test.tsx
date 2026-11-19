@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
-import { renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '../lists/uiListsTestHelpers';
 import { InlineAddExpander } from './InlineAddExpander';
 
@@ -10,6 +12,54 @@ import { InlineAddExpander } from './InlineAddExpander';
 installUiListsCommonModuleMocks();
 
 describe('InlineAddExpander', () => {
+    it('keeps compact Save and Cancel buttons with 44px touch targets and blocks disabled Save', async () => {
+        vi.stubGlobal('matchMedia', (query: string) => ({
+            matches: query === '(pointer: coarse)' || query === '(hover: none)',
+        }));
+        const onSave = vi.fn();
+        const onCancel = vi.fn();
+        try {
+            const screen = await renderScreen(
+                <InlineAddExpander isOpen onOpenChange={() => {}} title="Add variable" trigger={null}
+                    onSave={onSave} onCancel={onCancel} saveDisabled saveLabel="Save" cancelLabel="Cancel"
+                    saveTestID="add-save" cancelTestID="add-cancel">
+                    {React.createElement('Text', null, 'Variable fields')}
+                </InlineAddExpander>,
+            );
+            try {
+                const save = screen.findHostByTestId('add-save');
+                const cancel = screen.findHostByTestId('add-cancel');
+                const height = HAPPIER_PAGE_METRICS.controlHeightPx;
+                for (const button of [save, cancel]) {
+                    if (!button) throw new Error('Missing inline action button');
+                    expect(StyleSheet.flatten(button.props.style)?.minHeight).toBeUndefined();
+                    expect(button.findAll((node) => typeof node.type === 'string'
+                        && StyleSheet.flatten(node.props.style)?.minHeight === height)).toHaveLength(1);
+
+                    // The host renderer has no layout engine. Report the compact pill's measured box.
+                    await act(async () => invokeTestInstanceHandler(button, 'onLayout', {
+                        nativeEvent: { layout: { width: 80, height } },
+                    }));
+                    const [frame] = button.findAll((node) => typeof node.type === 'string'
+                        && node.props.dataSet?.happierHitArea === 'true');
+                    const extension = frame
+                        ? -frame.props.style.top - frame.props.style.bottom
+                        : button.props.hitSlop?.top + button.props.hitSlop?.bottom;
+                    expect(height + extension).toBe(44);
+                }
+                expect(save?.props.accessibilityState.disabled).toBe(true);
+                await pressTestInstanceAsync(save, 'Save');
+                await pressTestInstanceAsync(cancel, 'Cancel');
+                expect(onSave).not.toHaveBeenCalled();
+                expect(onCancel).toHaveBeenCalledOnce();
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('lets a section own the trigger without duplicating it inside the form, preserving save and cancel', async () => {
         const onSave = vi.fn();
         const onCancel = vi.fn();

@@ -43,7 +43,7 @@ it('offers Move for a stored definition through Environment Settings without rea
         content: { ...base.content, definition: { kind: 'stored', contentRevision: 1,
             composeDigest: `sha256:${'a'.repeat(64)}`, document: 'services:\n  app:\n    image: app:1\n',
             publicFiles: [], services: [], profiles: [] } } });
-    const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [] };
+    const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [], builtInUrls: [] };
     const scope = { serverId, accountId: 'account-owner', projectSourceId: detail.environment.projectSourceId };
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const controller = createDeploymentReadControllerV1({ scope, transport: {
@@ -57,8 +57,7 @@ it('offers Move for a stored definition through Environment Settings without rea
         demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
         lifetime={lifetime} editing={{ actions: createDeploymentActions(lifetime, scope.projectSourceId), serverId,
             review: { pendingId: null, request() {}, open() {} }, onChanged() {} }} /></ItemList>);
-    // Settings summarizes the stored definition; Move opens with its editor (PAGE-ACCEPT-176 D7).
-    await screen.pressByTestIdAsync('project-deployments.environment.definition.move');
+    // Settings already owns the editor and exposes its Move action.
     expect(screen.findByTestId('project-deployments.environment.moveRepository.open')).not.toBeNull();
     expect(homes.requestsFor(`/v1/projects/sources/${detail.environment.projectSourceId}`)).toHaveLength(0);
     expect(screen.findByTestId('project-deployments.environment.moveRepository.path.input')).toBeNull();
@@ -75,7 +74,7 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         document: 'services:\n  app:\n    image: app:3\n', publicFiles: [{ path: 'app.conf', content: 'version=3' }], services: [], profiles: [] };
     const stored = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }),
         content: { ...base.content, name: 'Production App', definition } });
-    const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [] };
+    const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [], builtInUrls: [] };
     const scope = { serverId, accountId: 'account-owner', projectSourceId: detail.environment.projectSourceId };
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' };
@@ -220,7 +219,6 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         lifetime={lifetime} editing={{ actions: createDeploymentActions(lifetime, source.id), serverId,
             review: { pendingId: null, request() {}, open() {} }, onChanged: changed }} /></ItemList>);
     const id = 'project-deployments.environment.moveRepository';
-    await screen.pressByTestIdAsync('project-deployments.environment.definition.move');
     await screen.pressByTestIdAsync(`${id}.open`);
     if (creating) {
         await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.createRepository`), node => node !== null); });

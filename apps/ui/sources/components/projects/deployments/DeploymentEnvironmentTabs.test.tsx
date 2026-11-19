@@ -1627,7 +1627,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
       readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
     } });
-    const readInitial = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+    const readInitial = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [], builtInUrls: [] };
     let changeDetail: React.Dispatch<React.SetStateAction<typeof readInitial>> = () => {};
     function Harness() {
       const [detail, setDetail] = React.useState(readInitial);
