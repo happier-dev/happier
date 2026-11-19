@@ -799,9 +799,11 @@ export function supportsAccountPendingForSessionInput(input: Readonly<{
   idempotencyKey?: string;
   toolAnswerDelivery?: unknown;
 }>): boolean {
+  const observesReply = input.cliSession?.role === 'recipient'
+    && input.request?.v === 1 && input.request.producer === 'cli';
   return (!input.cliSession || input.cliSession.role === 'recipient'
     || input.cliSession.role === 'owner' && input.cliSession.pairedTerminal === true)
-    && (input.reply === undefined || input.reply === 'none')
+    && (input.reply === undefined || input.reply === 'none' || observesReply && input.reply === 'wait')
     && input.wait !== true
     && input.recipient === undefined
     && input.attachments === undefined
@@ -812,7 +814,10 @@ export function supportsAccountPendingForSessionInput(input: Readonly<{
       && input.structuredInput.composerAttachments === undefined
       && input.structuredInput.sessionAttachments === undefined
       && input.structuredInput.reviewComments === undefined))
-    && (!input.request || (!input.request.replyIntent && !requiresAuthenticatedMachineAdmissionForSessionInput(input.request)));
+    && (!input.request || (
+      (!input.request.replyIntent || observesReply && input.request.replyIntent.mode === 'wait')
+      && !requiresAuthenticatedMachineAdmissionForSessionInput(input.request)
+    ));
 }
 
 /**

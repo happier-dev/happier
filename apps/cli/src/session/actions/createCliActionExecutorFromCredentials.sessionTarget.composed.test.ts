@@ -312,9 +312,10 @@ describe('original CLI Session Action delivery', () => {
     });
 
     it.each([
-        { login: 'account login with an explicit Machine', terminal: false },
-        { login: 'ordinary terminal login', terminal: true },
-    ])('opens Team-only E2EE detail and sends as the authenticated member with $login', async ({ terminal }) => {
+        { login: 'account login with an explicit Machine', terminal: false, reply: 'none' },
+        { login: 'ordinary terminal login', terminal: true, reply: 'none' },
+        { login: 'ordinary terminal reply-wait', terminal: true, reply: 'wait' },
+    ] as const)('opens Team-only E2EE detail and sends as the authenticated member with $login', async ({ terminal, reply }) => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-team-send-' }, async () => {
             const accountId = 'team-member';
             const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
@@ -340,6 +341,11 @@ describe('original CLI Session Action delivery', () => {
                 expect(new Headers(options?.headers).get('Authorization')).toBe(`Bearer ${token}`);
                 return Response.json({ features: { sharing: { session: { enabled: true } } }, capabilities: {} });
             });
+            const localId = 'team-input';
+            const inputPath = `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`;
+            const replyPath = `${inputPath}/reply`;
+            const replyProgress = { v: 1, mode: 'wait', disposition: 'observing', outcome: { kind: 'pass' } };
+            const deliveryOrder: string[] = [];
             vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
                 const { pathname, searchParams } = new URL(url);
                 if (pathname === `/v2/sessions/${sessionId}`) {
@@ -347,6 +353,18 @@ describe('original CLI Session Action delivery', () => {
                     return searchParams.get('accessProjectionVersion') === '1'
                         ? { status: 200, data: { session } }
                         : { status: 404, data: { error: 'session-not-found' } };
+                }
+                if (reply === 'wait') {
+                    if (pathname === `/v2/sessions/${sessionId}/messages/reply-capability`) {
+                        expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                        return { status: 200, data: { v: 1, protocolVersions: [1] } };
+                    }
+                    if (pathname === inputPath) return { status: 404, data: { error: 'message-not-found' } };
+                    if (pathname === replyPath) {
+                        expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                        deliveryOrder.push('reply-read');
+                        return { status: 200, data: { v: 1, status: 'available', progress: replyProgress } };
+                    }
                 }
                 if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -358,14 +376,21 @@ describe('original CLI Session Action delivery', () => {
             });
             const machineId = 'team-session-publisher';
             const actionId = 'session.message.send';
-            const input = { sessionId, message: 'Team-only input', reply: 'none', localId: 'team-input',
+            const input = { sessionId, message: 'Team-only input', reply, localId,
                 requestedAction: { v: 1, kind: 'enqueue' } };
             const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
                 if (url.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
                 expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                if (reply === 'wait' && url === `https://home.test${replyPath}`) {
+                    expect(body).toEqual({ kind: 'inline' });
+                    deliveryOrder.push('reply-inline');
+                    return { status: 200, data: { v: 1, ok: true, progress: { ...replyProgress, disposition: 'inline' } } };
+                }
                 if (terminal) {
                     expect(url).toBe(`https://home.test/v2/sessions/${sessionId}/pending`);
                     expect(body).toMatchObject({ localId: input.localId, requestedAction: input.requestedAction });
+                    if (reply === 'wait') expect(body).toHaveProperty('reply.mode', 'wait');
+                    deliveryOrder.push('pending');
                     expect(body).not.toHaveProperty('targetMachineId');
                     const opened = decryptSessionPayload({ ctx, ciphertextBase64: body.ciphertext });
                     expect(opened).toMatchObject({ content: { text: input.message } });
@@ -396,8 +421,10 @@ describe('original CLI Session Action delivery', () => {
                 .toMatchObject({ ok: true, result: { session: { id: sessionId } } });
             const result = await executor.execute(actionId, input, { surface: 'cli' });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
-                result: { status: 'accepted', localId: input.localId } });
-            expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toHaveLength(1);
+                result: reply === 'wait' ? { status: 'replied', localId, outcome: { kind: 'pass' } }
+                    : { status: 'accepted', localId } });
+            if (reply === 'wait') expect(deliveryOrder).toEqual(['pending', 'reply-read', 'reply-inline']);
+            else expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toHaveLength(1);
         });
     });
 });

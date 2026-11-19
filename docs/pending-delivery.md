@@ -1291,6 +1291,11 @@ binding before writing. A missing binding returns
 `session_input_machine_binding_unavailable` to the owner. This leaves
 Session history readable and allows a new Send after access is restored.
 
+A shared Session editor can Send with `reply: wait` from the CLI. Home
+retains the original input through Account Pending, and the CLI observes
+that exact input's reply using the submitting Account. Ending observation
+leaves accepted input in place.
+
 The authenticated input-admission receipt records who submitted an accepted human input. Pending admission derives it from the request's Session access decision, resolved once before publication locks. Authenticated queue edits and delivery-recovery mutations retain that admission through their transaction; access withdrawal refuses the next request. Direct authenticated input uses the same admission builder; runtime observations and transcript-only Voice writes do not become human-authored merely because their message role is `user`.
 
 `SessionPendingMessage.authorAccountId` and `SessionMessage.authorAccountId` are nullable relational projections of that receipt. The committed projection supports historical-contribution filtering before Session pagination. It does not grant access, assign responsibility, create a participant roster, or enroll anyone for notifications. Pending materialization and provider-anchor rejoin retain the original receipt and refuse a conflicting non-null author projection. Deleting an Account clears its foreign-key projection while preserving the immutable receipt.
