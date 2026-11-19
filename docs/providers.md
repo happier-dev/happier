@@ -3320,6 +3320,11 @@ Grok families. Antigravity rows keep their separate route identities because
 their owner metadata names the gateway. Live model lists carry an upstream
 reference only when the producer supplies one.
 
+The native catalogs declare exact upstream IDs for DeepSeek V4 Pro, the
+listed MiniMax models in both regions, and the listed Z.AI Coding Plan
+models. DeepSeek Flash remains a separate route because its moving alias does
+not establish equivalence to another catalog's pinned model.
+
 New Session favorites use the existing Account preference. Starring a model can
 save its current Thinking level and restore it when the route still supports
 it. Changing Thinking changes the session. Updating the favorite saves the

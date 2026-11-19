@@ -24,9 +24,9 @@ describe('ZAI_PROVIDER_CONTRIBUTION', () => {
       catalog: {
         source: 'static',
         staticModels: [
-          { id: 'glm-5.2', name: 'GLM-5.2' },
-          { id: 'glm-5-turbo', name: 'GLM-5 Turbo' },
-          { id: 'glm-4.7', name: 'GLM-4.7' },
+          { id: 'glm-5.2', name: 'GLM-5.2', upstreamRef: { vendor: 'zai', vendorModelId: 'glm-5.2' } },
+          { id: 'glm-5-turbo', name: 'GLM-5 Turbo', upstreamRef: { vendor: 'zai', vendorModelId: 'glm-5-turbo' } },
+          { id: 'glm-4.7', name: 'GLM-4.7', upstreamRef: { vendor: 'zai', vendorModelId: 'glm-4.7' } },
         ],
       },
       legacyProfileMigrations: [{
