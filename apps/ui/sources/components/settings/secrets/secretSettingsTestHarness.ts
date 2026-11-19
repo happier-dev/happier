@@ -106,6 +106,8 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     sharedEnabled?: boolean;
     plaintextStorageEnabled?: boolean;
     settings?: Settings;
+    /** Initial Home revision, including a fresh Account's version zero. */
+    settingsVersion?: number;
     /** Retained/future HTTP source bodies are intentionally wider than the UI projection. */
     rawSettings?: Readonly<Record<string, unknown>>;
     rejectSettingsWrites?: boolean;
@@ -150,7 +152,7 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
             payload: raw, randomBytes: getRandomBytes }),
     } : { t: 'plain', v: raw });
-    let settingsVersion = 1;
+    let settingsVersion = options.settingsVersion ?? 1;
     let referenceGuardRevision = 3;
     let losePromotionResponse = false;
     let loseCreationResponse = false;

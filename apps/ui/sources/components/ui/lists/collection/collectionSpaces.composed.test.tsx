@@ -10,6 +10,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { DEFAULT_WORKFLOW_LIST_FILTER_V1, workflowListFilterFieldsV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
 import { DEFAULT_DISCUSSION_LIST_FILTER_V1, discussionListFilterFieldsV1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
 import { DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1, deploymentEnvironmentListFilterFieldsV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentListFilterV1';
+import { DEFAULT_REVIEW_LIST_FILTER_V1, reviewListFilterFieldsV1 } from '@happier-dev/protocol/reviews/reviewListFilterV1';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -39,12 +40,14 @@ await loadSyncSingletonForTests();
 const originalState = storage.getState();
 afterEach(() => { standardCleanup(); storage.setState(originalState, true); });
 
-async function mountEntity<K extends 'workflow' | 'discussion' | 'deploymentEnvironment', Facts>(input: {
+async function mountEntity<K extends 'workflow' | 'discussion' | 'deploymentEnvironment' | 'review', Facts>(input: {
     kind: K; defaultFilter: CollectionFilterMapV1[K]; narrowed: CollectionFilterMapV1[K];
     registry: EntityFilterRegistryV1<CollectionFilterMapV1[K], Facts>; rows: readonly (Facts & { id: string })[];
+    mode?: 'plain' | 'e2ee';
+    settingsVersion?: number;
 }) {
     let offline = false;
-    const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: ActionsSettingsV1Schema.parse({
+    const account = await createSecretSettingsTestHarness({ mode: input.mode, settingsVersion: input.settingsVersion, settings: settingsParse({ actionsSettingsV1: ActionsSettingsV1Schema.parse({
         v: 1, approvalWaivedSurfaces: { 'settings.invoke': ['ui'] },
     }) }), handleRequest: async (path, init) => {
         if (offline && path === '/v2/account/settings' && init?.method === 'POST') throw new TypeError('Offline');
@@ -117,6 +120,36 @@ describe('saved Space deletion through the mounted Action owner', () => {
 });
 
 describe('shared entity Space presentation through real settings Actions and HTTP persistence', () => {
+    it('persists a filtered Review space across remount and updates its membership mode', async () => {
+        const mounted = await mountEntity({ kind: 'review', defaultFilter: DEFAULT_REVIEW_LIST_FILTER_V1,
+            narrowed: { state: 'failed' }, registry: reviewListFilterFieldsV1,
+            mode: 'e2ee', settingsVersion: 0,
+            rows: [{ id: 'failed', state: 'failed' as const }, { id: 'completed', state: 'completed' as const }] });
+        const { account, screen } = mounted;
+        const savedReviewSpace = () => account.persistedSettings.collectionSpacesV1.spaces.find(space => space.entityKind === 'review');
+        try {
+            // QA Q09: Save as space after filtering to a failed Review on a fresh Account.
+            await act(async () => { mounted.view().update({ filters: { state: 'failed' } }); });
+            expect(mounted.ids()).toEqual(['failed']);
+            await mounted.saveAs();
+            await act(async () => screen.changeTextByTestId('joined-name', 'Release'));
+            await screen.pressByTestIdAsync('joined-submit');
+            await vi.waitFor(() => expect(savedReviewSpace()).toMatchObject({ name: 'Release',
+                filter: { state: 'failed' }, membership: { mode: 'filter_or_manual' } }));
+            expect(screen.findByTestId('joined-form')).toBeNull();
+            await vi.waitFor(() => expect(mounted.view().selectedSpaceId).toBe(savedReviewSpace()?.id));
+            await screen.update(<></>);
+            await screen.update(mounted.element);
+            expect(mounted.view().selectedSpaceId).toBe(savedReviewSpace()?.id);
+            expect(mounted.view().filters).toEqual({ state: 'failed' });
+            expect(mounted.ids()).toEqual(['failed']);
+            await mounted.edit();
+            await screen.pressByTestIdAsync('joined-membership:manual_only');
+            await screen.pressByTestIdAsync('joined-submit');
+            await vi.waitFor(() => expect(savedReviewSpace()?.membership).toEqual({ mode: 'manual_only' }));
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
     const cases = [
         { kind: 'workflow' as const, defaultFilter: DEFAULT_WORKFLOW_LIST_FILTER_V1, narrowed: { view: 'triggered' as const },
             registry: workflowListFilterFieldsV1, rows: [{ id: 'scheduled', triggered: true }, { id: 'ordinary', triggered: false }] },
