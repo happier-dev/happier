@@ -182,15 +182,17 @@ export function createManagedPresetHydrator(input: Readonly<{
         const material = accountKeySnapshot(input.credentials);
         if (!material) throw new ManagedMachineControllerError('credential_unavailable');
         try {
-            const currentness = await fetchAccountEncryptionCurrentness({ token: input.credentials.token,
-                credentials: input.credentials, serverBaseUrl: input.serverUrl, signal });
-            if (currentness.mode !== 'e2ee' || currentness.contentKeyFingerprint !== material.fingerprint) {
+            try {
+                const currentness = await fetchAccountEncryptionCurrentness({ token: input.credentials.token,
+                    credentials: input.credentials, serverBaseUrl: input.serverUrl, signal });
+                if (currentness.mode !== 'e2ee' || currentness.contentKeyFingerprint !== material.fingerprint) {
+                    throw new ManagedMachineControllerError('credential_unavailable');
+                }
+            } catch (error) {
+                if (error instanceof ManagedMachineControllerError) throw error;
                 throw new ManagedMachineControllerError('credential_unavailable');
             }
             return await read({ accountId, accountKey: material.accountKey });
-        } catch (error) {
-            if (error instanceof ManagedMachineControllerError) throw error;
-            throw new ManagedMachineControllerError('credential_unavailable');
         } finally {
             material.accountKey.fill(0);
         }
