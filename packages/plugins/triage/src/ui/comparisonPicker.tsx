@@ -170,4 +170,4 @@ function TriageComparisonPicker(context: RenderContext) {
   </Stack>;
 }
 
-export const renderSurface = defineUiSurface(TriageComparisonPicker);
+export const renderSurface: ReturnType<typeof defineUiSurface> = defineUiSurface(TriageComparisonPicker);
