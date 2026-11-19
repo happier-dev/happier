@@ -183,12 +183,26 @@ function samplePlanetRing(out, grid, planet, palette, foot) {
     }
 }
 
+export function markGlyphTone({ centre, size }, x, y) {
+    return clamp(0.08 + ((y - centre.y) / (size / 2) + 1) * 0.42 - (x - centre.x) / (size / 2) * 0.1);
+}
+
 function sampleMark(out, grid, layer, time, palette) {
-    const { centre, size, retypeS = 1.2, dissolve = 0, turn = 0, fill = 1 } = layer;
+    const { centre, size, retypeS = 1.2, dissolve = 0, turn = 0, fill = 1, cellTimeline } = layer;
     const [cellW, cellH] = grid.cell;
     const radius = size / 2;
     const step = Math.floor(time / retypeS);
     const flip = Math.cos(clamp(turn) * 0.9);
+    if (cellTimeline) {
+        for (let at = 0; at < cellTimeline.length; at += 4) {
+            if (time < cellTimeline[at + 2] || time >= cellTimeline[at + 3]) continue;
+            const x = cellTimeline[at], y = cellTimeline[at + 1];
+            const colour = gradient(palette.body, markGlyphTone(layer, x, y), out.ink);
+            writeSprite(out, (centre.x + (x - centre.x) * flip) * out.dpr, y * out.dpr,
+                digitOf(Math.floor(x * out.dpr / cellW), Math.floor(y * out.dpr / cellH), step), colour, 1);
+        }
+        return;
+    }
     for (let j = 0; j < grid.rows; j++) {
         const y = (j + 0.5) * cellH;
         const fy = (y / out.dpr - centre.y) / radius;
@@ -200,7 +214,7 @@ function sampleMark(out, grid, layer, time, palette) {
             if (distance <= 0 || cellHash(i + 33, j) < dissolve) continue;
             const arrival = distance < 0.05 ? 0.5 * cellHash(i, j + 11) : 0.3 + 0.7 * cellHash(i, j + 11);
             if (fill < arrival) continue;
-            const color = gradient(palette.body, clamp(0.08 + (fy + 1) * 0.42 - fx * 0.1));
+            const color = gradient(palette.body, markGlyphTone(layer, centre.x + fx * radius, y / out.dpr), out.ink);
             writeSprite(out, x, y, digitOf(i, j, step), color, 1);
         }
     }
@@ -216,7 +230,7 @@ function sampleTravellers(out, layer, time, palette) {
         const x = mix(particles[i], particles[i + 2], travel);
         const y = mix(particles[i + 1], particles[i + 3], travel) - Math.sin(Math.PI * p) * particles[i + 6];
         const tone = particles[i + 7];
-        const color = ink === 'sunrise' ? gradient(palette.body, clamp(tone)) : ink;
+        const color = ink === 'sunrise' ? gradient(palette.body, tone, out.ink) : ink;
         writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, 0, Math.floor(time * 6)) + (small ? 10 : 0), color, (color[3] ?? 255) / 255);
     }
 }
@@ -236,7 +250,7 @@ function sampleFront(out, grid, layer, time, palette) {
             const edge = frontEdge(shape, Math.abs(x - ox), Math.abs(y - oy), front, ragged, i, j);
             if (mode === 'decode' && cover && edge >= 0) writeSprite(out, x * out.dpr, y * out.dpr, 20, cover, (cover[3] ?? 255) / 255);
             if (Math.abs(edge) >= band) continue;
-            const color = ink === 'sunrise' ? gradient(palette.body, clamp(y / (out.height / out.dpr))) : ink;
+            const color = ink === 'sunrise' ? gradient(palette.body, y / (out.height / out.dpr), out.ink) : ink;
             const mapped = inkMap?.rgba;
             const index = (j * grid.cols + i) * 4;
             const amount = alpha * (1 - Math.abs(edge) / band) * (mapped && mode === 'eat' ? (mapped[index + 3] ?? 0) / 255 : 1);
@@ -283,6 +297,7 @@ export function inkMapFromImage(pixels, grid) {
 /** One sampler per surface owns reusable sprite storage. Its frames live until the next sample. */
 export function createGlyphFrameSampler() {
     let storage = { at: new Uint16Array(0), glyph: new Uint8Array(0), rgba: new Uint8Array(0) };
+    const ink = [0, 0, 0];
     let previousBody;
     const sampleField = createGlyphFieldSampler();
     return function sample(scene, { time = 0 } = {}) {
@@ -291,9 +306,14 @@ export function createGlyphFrameSampler() {
         const cell = (scene.cell ?? glyphPitch).map((pitch) => Math.max(1, Math.round(pitch * dpr)));
         const cols = Math.ceil(width / cell[0]), rows = Math.ceil(height / cell[1]);
         const grid = { cell, cols, rows, origin: [0, 0] };
-        const capacity = layers.reduce((sum, layer) => sum + (layer.kind === 'field' ? 0 : layer.kind === 'traveller' ? layer.particles.length / 8 : cols * rows * ((layer.kind === 'front' && layer.cover) || (layer.kind === 'planet' && layer.ring) ? 2 : 1)), 0);
+        const capacity = layers.reduce((sum, layer) => {
+            if (layer.kind === 'field') return sum;
+            if (layer.kind === 'traveller') return sum + layer.particles.length / 8;
+            if (layer.kind === 'mark' && layer.cellTimeline) return sum + layer.cellTimeline.length / 4;
+            return sum + cols * rows * ((layer.kind === 'front' && layer.cover) || (layer.kind === 'planet' && layer.ring) ? 2 : 1);
+        }, 0);
         if (capacity > storage.glyph.length) storage = { at: new Uint16Array(capacity * 2), glyph: new Uint8Array(capacity), rgba: new Uint8Array(capacity * 4) };
-        const out = { ...storage, dpr, width, height, count: 0 };
+        const out = { ...storage, ink, dpr, width, height, count: 0 };
         const palette = PLANET_PALETTES[theme];
         let body;
         let field;

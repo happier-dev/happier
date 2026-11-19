@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { glyphFrame, planetGlyphLayer, travellerGlyphLayer, frontGlyphLayer } from './glyph-scene.mjs';
+import { glyphFrame, planetGlyphLayer, travellerGlyphLayer, frontGlyphLayer, markGlyphLayer } from './glyph-scene.mjs';
 import { horizonPlanetGeometry } from './planet-placement.mjs';
 
 const view = { w: 390, h: 844 };
@@ -44,6 +44,19 @@ test('travellers land at the specified endpoint and fronts sample deterministica
     const front = frontGlyphLayer({ shape: 'roundRect', rect: { x: 0, y: 0, width: 80, height: 90 }, front: 48, band: 16, ragged: 8, alpha: 1, ink: [200, 100, 50, 255], mode: 'eat' });
     assert.deepEqual(Array.from(render([particle], 1.5).sprites.at), [126, 180]);
     assert.deepEqual(render([front], 0.12), render([front], 0.12));
+});
+
+test('opening mark cells lock and depart on the same times their travellers are authored against', () => {
+    const layer = markGlyphLayer({ centre: { x: 120, y: 120 }, size: 108, ink: 'sunrise',
+        cellTimeline: new Float32Array([120, 126, 0.5, 1.25, 144, 148, 0.75, 1.5]) });
+    assert.deepEqual(Array.from(render([layer], 0.49).sprites.at), []);
+    assert.deepEqual(Array.from(render([layer], 0.5).sprites.at), [180, 189]);
+    assert.deepEqual(Array.from(render([layer], 0.75).sprites.at), [180, 189, 216, 222]);
+    assert.deepEqual(Array.from(render([layer], 1.25).sprites.at), [216, 222]);
+    assert.deepEqual(Array.from(render([layer], 1.5).sprites.at), []);
+    const turned = render([{ ...layer, turn: 1 }], 1.25);
+    assert.ok(turned.sprites.at[0] < 216 && turned.sprites.at[0] > 180);
+    assert.equal(turned.sprites.at[1], 222);
 });
 
 test('the dot field keeps its stipple as its mask calms, and keeps copy clear', async () => {

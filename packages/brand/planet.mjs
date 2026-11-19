@@ -95,13 +95,16 @@ const smooth = (value) => { const t = clamp(value); return t * t * t * (t * (t *
 const mix = (a, b, t) => a + (b - a) * t;
 const mixRgb = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
 
-function gradient(stops, position) {
+function gradient(stops, position, into) {
   const t = clamp(position);
   for (let index = 1; index < stops.length; index += 1) {
     const [end, to] = stops[index];
     if (t <= end) {
       const [start, from] = stops[index - 1];
-      return mixRgb(from, to, (t - start) / (end - start));
+      const progress = (t - start) / (end - start);
+      if (!into) return mixRgb(from, to, progress);
+      for (let channel = 0; channel < 3; channel++) into[channel] = mix(from[channel], to[channel], progress);
+      return into;
     }
   }
   return stops[stops.length - 1][1];

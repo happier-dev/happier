@@ -19,7 +19,11 @@ export type PlanetGlyphOptions = Readonly<{
     gain?: number;
     ring?: Readonly<{ progress: number }>;
 }>;
-export type MarkGlyphOptions = Readonly<{ centre: GlyphPoint; size: number; ink: 'sunrise'; retypeS?: number; dissolve?: number; turn?: number; fill?: number }>;
+export type MarkGlyphOptions = Readonly<{
+    centre: GlyphPoint; size: number; ink: 'sunrise'; retypeS?: number; dissolve?: number; turn?: number; fill?: number;
+    /** The opening's exact cells, packed as x, y, lock seconds and departure seconds. */
+    cellTimeline?: Float32Array;
+}>;
 export type TravellerGlyphOptions = Readonly<{
     particles: Float32Array; ink: 'sunrise' | GlyphInk; small?: boolean;
     /** Presentation time from the same measured epoch when an in-flight layer is carried across a step. */
@@ -87,6 +91,7 @@ export type GlyphFrame = Readonly<{
 }>;
 export function planetGlyphLayer(options: PlanetGlyphOptions): PlanetGlyphLayer;
 export function markGlyphLayer(options: MarkGlyphOptions): MarkGlyphLayer;
+export function markGlyphTone(layer: Pick<MarkGlyphOptions, 'centre' | 'size'>, x: number, y: number): number;
 export function travellerGlyphLayer(options: TravellerGlyphOptions): TravellerGlyphLayer;
 export function frontGlyphLayer(options: FrontGlyphOptions): FrontGlyphLayer;
 export function inkMapFromBoxes(boxes: readonly (GlyphRect & { ink: GlyphInk })[], grid: GlyphGrid): GlyphInkMap;
