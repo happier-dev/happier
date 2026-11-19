@@ -4,14 +4,13 @@ import {
     type SessionSpawnNewInitialInputDispositionV1,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
-import { readActionOperationSudoPrompt, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { isActionOperationReviewHeld, isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
+import { readActionOperationIntervention, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 
-export type ActionOperationSection = 'inProgress' | 'needsAttention' | 'recent';
 export type ActionOperationStatusTone = 'active' | 'success' | 'danger' | 'muted';
 export type ActionOperationStatusLabel =
     | Readonly<{ kind: 'producer'; value: string }>
@@ -52,20 +51,6 @@ export function readProjectCommandStepExitCode(snapshot: ActionOperationSnapshot
         ? snapshot.domainRef.exitCode : null;
 }
 
-export function classifyActionOperationSection(
-    snapshot: ActionOperationSnapshot,
-    observation: ActionOperationObservation = 'available',
-): ActionOperationSection {
-    if (!isActionOperationTerminal(snapshot.state) && (snapshot.setupReview || isActionOperationReviewHeld(snapshot)
-        || readActionOperationSudoPrompt(snapshot))) return 'needsAttention';
-    if (!isActionOperationTerminal(snapshot.state) && resolveActionOperationObservation(snapshot, observation) === 'unavailable') return 'needsAttention';
-    if (snapshot.actionId.startsWith('sessions.external.') && snapshot.progress?.kind === 'phase'
-        && ['awaiting_user_resume', 'failed', 'reconciliation_required'].includes(snapshot.progress.phase)) return 'needsAttention';
-    if (snapshot.state === 'accepted' || snapshot.state === 'running') return 'inProgress';
-    if (snapshot.state === 'failed' || snapshot.state === 'cancelled') return 'needsAttention';
-    return 'recent';
-}
-
 export function resolveActionOperationStatus(
     snapshot: ActionOperationSnapshot,
     observation: ActionOperationObservation,
@@ -73,7 +58,7 @@ export function resolveActionOperationStatus(
     if (snapshot.state === 'failed') return { tone: 'danger', label: { kind: 'host', value: 'failed' } };
     if (snapshot.state === 'cancelled') return { tone: 'muted', label: { kind: 'host', value: 'cancelled' } };
     if (snapshot.state === 'succeeded') return { tone: 'success', label: { kind: 'host', value: 'succeeded' } };
-    if (snapshot.setupReview || isActionOperationReviewHeld(snapshot) || readActionOperationSudoPrompt(snapshot)) return { tone: 'muted', label: { kind: 'host', value: 'needs_review' } };
+    if (readActionOperationIntervention(snapshot)) return { tone: 'muted', label: { kind: 'host', value: 'needs_review' } };
     // The owner submitted the work and lost its acknowledgement: neither running nor failed, and never a guess.
     if (snapshot.observation?.kind === 'outcome_uncertain') return { tone: 'muted', label: { kind: 'host', value: 'outcome_uncertain' } };
     observation = resolveActionOperationObservation(snapshot, observation);

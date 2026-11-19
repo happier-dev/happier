@@ -70,6 +70,25 @@ afterEach(async () => {
 const { ActionOperationDetailModal } = await import('./ActionOperationDetailModal');
 
 describe('ActionOperationDetailModal', () => {
+    it('opens the exact held Project setup review inside the operation detail', async () => {
+        const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://modal-setup.test', accountId: 'account-1' });
+        const snapshot = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'team-source-setup', revision: 1, actionId: 'projects.prepare',
+            state: 'accepted', scope: { accountId: 'account-1', machineId: 'machine-1' },
+            title: 'Set up a project', createdAt: 100, cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId, machineId: 'machine-1',
+                workspaceRefId: 'checkout', cwd: '/repo',
+                sourceWorkspace: { serverId, machineId: 'machine-1', workspaceId: 'checkout', rootPath: '/repo' } },
+            setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required',
+                reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
+        });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={snapshot.operationId} onClose={vi.fn()} />);
+
+        expect(screen.findByTestId('project-setup-session-review:team-source-setup')).not.toBeNull();
+        expect(screen.findByTestId('action-operation-cancel')).toBeNull();
+    });
+
     it('keeps the Account investigation owner when Inbox opens a failed operation in the shell modal', async () => {
         const [{ AppPaneModalProvider }, { renderScreen: renderRoot }, { openActionOperationDetail }, { AccountNoticeInvestigationBoundary }] = await Promise.all([
             import('@/components/appShell/providers/AppPaneModalProvider'), import('@/dev/testkit'),

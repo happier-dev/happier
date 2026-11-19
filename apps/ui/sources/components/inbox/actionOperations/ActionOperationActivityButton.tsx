@@ -9,7 +9,7 @@ import { AppRailBadge } from '@/components/navigation/shell/appRail/AppRailBadge
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { t } from '@/text';
-import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { classifyActionOperationSection, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -198,8 +198,8 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
 ) {
     const activeCount = props.operations.reduce(
         (count, operation) => count + (
-            (operation.snapshot.state === 'accepted' || operation.snapshot.state === 'running')
-            && operation.observation === 'available'
+            operation.observation === 'available'
+            && classifyActionOperationSection(operation.snapshot, operation.observation, operation.followUpAttention) === 'inProgress'
                 ? 1
                 : 0
         ),

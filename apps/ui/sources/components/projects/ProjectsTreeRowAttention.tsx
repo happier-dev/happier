@@ -11,7 +11,7 @@ import { DeploymentEnvironmentRowEnd, DeploymentEnvironmentStateMark } from './d
 import type { ProjectsTreeAttention, ProjectsTreeRow } from './projectsTreeRows';
 import { useTeamSetupRepositoryProgress } from '@/components/teams/setup/useTeamSetupRepositoryProgress';
 import { resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
-import { readActionOperationTaskQuestion, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { readActionOperationIntervention, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 /**
@@ -76,8 +76,8 @@ function ProjectsTreeSetupStatus(props: Readonly<{ attention: NonNullable<Projec
 function readSetupAttention(operation: ActionOperationProjection | null): ProjectsTreeAttention {
   if (!operation) return null;
   // Only a run in progress speaks here; a settled failure belongs to Activity and the Project's own page.
-  if (resolveActionOperationStatus(operation.snapshot, operation.observation).tone !== 'active') return null;
-  return readActionOperationTaskQuestion(operation.snapshot) !== null ? 'needs-you' : 'working';
+  if (readActionOperationIntervention(operation.snapshot)) return 'needs-you';
+  return resolveActionOperationStatus(operation.snapshot, operation.observation).tone === 'active' ? 'working' : null;
 }
 
 function ProjectsTreeRowAttentionMark(

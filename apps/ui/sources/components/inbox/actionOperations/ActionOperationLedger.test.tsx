@@ -34,6 +34,28 @@ afterEach(async () => {
 });
 
 describe('ActionOperationLedgerView', () => {
+    it('surfaces the retained setup review and opens the held operation from Review', async () => {
+        const snapshot = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'team-source-setup', revision: 1,
+            actionId: 'projects.prepare', state: 'accepted', scope: { accountId: 'account', machineId: 'machine' },
+            title: 'Set up a project', createdAt: 1, cancellation: 'supported',
+            progress: { kind: 'phase', phase: 'setup', label: 'Preparing project' },
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: homeA,
+                machineId: 'machine', workspaceRefId: 'checkout', cwd: '/tmp/team-source',
+                sourceWorkspace: { serverId: homeA, machineId: 'machine', workspaceId: 'checkout', rootPath: '/tmp/team-source' } },
+            setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required',
+                reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
+        });
+        const operation = { serverId: homeA, snapshot, observation: 'available' as const, isUnavailableProjection: false };
+        const onOpenOperation = vi.fn();
+        const screen = await renderScreen(<ActionOperationLedgerView operations={[operation]} onOpenOperation={onOpenOperation} />);
+
+        expect(screen.findByTestId('inbox.section.operations.needsAttention')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Needs you');
+        await screen.pressByTestIdAsync('action-operation-review.team-source-setup');
+        expect(onOpenOperation).toHaveBeenCalledWith(operation);
+    });
+
     it('offers explicit dismissal for terminal failures in Activity as well as Inbox', async () => {
         const onDismiss = vi.fn();
         const failed = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'failed', revision: 1,

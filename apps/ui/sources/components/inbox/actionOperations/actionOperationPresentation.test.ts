@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { classifyActionOperationSection, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
 import {
-    classifyActionOperationSection,
     canRequestActionOperationStop,
     readActionOperationDestinationSessionId,
     readActionOperationDestinationServerId,

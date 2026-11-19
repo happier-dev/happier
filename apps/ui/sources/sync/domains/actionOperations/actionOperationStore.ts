@@ -37,7 +37,7 @@ export function canDismissActionOperation(
     hasFollowUpAttention = false,
 ): boolean {
     if (isActionOperationReviewHeld(snapshot)) return false;
-    return snapshot.state === 'failed' || snapshot.state === 'succeeded' && hasFollowUpAttention
+    return snapshot.state === 'failed' || snapshot.state === 'cancelled' || snapshot.state === 'succeeded' && hasFollowUpAttention
         || !isActionOperationTerminal(snapshot.state) && isUnavailableProjection;
 }
 
@@ -506,7 +506,6 @@ export function createActionOperationStore(): ActionOperationStore {
         },
         markAllTerminalSeen(seenAt = Date.now()) {
             const seenAtByOperationKey = new Map(state.seenAtByOperationKey);
-            const followUpAttentionByRequestKey = new Map(state.followUpAttentionByRequestKey);
             let changed = false;
             for (const [key, operation] of state.operationsByKey) {
                 if (!TERMINAL_STATES.has(operation.snapshot.state)) continue;
@@ -515,17 +514,9 @@ export function createActionOperationStore(): ActionOperationStore {
                     seenAtByOperationKey.set(key, { seenAt, revision: operation.snapshot.revision });
                     changed = true;
                 }
-                const requestId = operation.snapshot.requestId;
-                if (!requestId) continue;
-                const followUpKey = actionOperationRequestAddressKey({
-                    serverId: operation.serverId,
-                    accountId: operation.snapshot.scope.accountId,
-                    requestId,
-                });
-                if (followUpAttentionByRequestKey.delete(followUpKey)) changed = true;
             }
             if (!changed) return false;
-            publish(Object.freeze({ ...state, seenAtByOperationKey, followUpAttentionByRequestKey }));
+            publish(Object.freeze({ ...state, seenAtByOperationKey }));
             return true;
         },
         dismissRecentSucceeded() {
@@ -553,7 +544,7 @@ export function createActionOperationStore(): ActionOperationStore {
                 accountId: operation.scope.accountId, requestId: operation.requestId }) : null;
             const hasFollowUpAttention = followUpKey !== null && state.followUpAttentionByRequestKey.has(followUpKey);
             if (!canDismissActionOperation(operation, state.unavailableOperationKeys.has(key), hasFollowUpAttention)) return false;
-            if (operation.state === 'failed') {
+            if (operation.state === 'failed' || operation.state === 'cancelled') {
                 if (state.dismissedRecentOperationKeys.has(key)) return false;
                 const dismissedRecentOperationKeys = new Set(state.dismissedRecentOperationKeys).add(key);
                 publish(Object.freeze({ ...state, dismissedRecentOperationKeys }));

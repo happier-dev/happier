@@ -840,7 +840,11 @@ describe('action operation store', () => {
         const projected = selectors.selectAll(store.getSnapshot())[0]!;
         expect(projected.snapshot.state).toBe('succeeded');
         expect(projected.followUpAttention).toBe('Session created; setup needs attention');
+        store.markAllTerminalSeen(200);
+        expect(selectors.selectHasUnseenTerminal(store.getSnapshot())).toBe(false);
         expect(selectors.selectHasAttention(store.getSnapshot())).toBe(true);
+        expect(store.dismissOperation(operationAddress(projected.snapshot.operationId))).toBe(true);
+        expect(selectors.selectHasAttention(store.getSnapshot())).toBe(false);
     });
 
     it('projects only response-required operations into Inbox and resolves them through existing lifecycle owners', () => {
@@ -929,6 +933,25 @@ describe('action operation store', () => {
         // Already-seen terminal acknowledgement still clears a later follow-up.
         expect(store.markTerminalSeen(operationAddress('setup'), 200)).toBe(true);
         expect(selectors.selectInbox(store.getSnapshot())).toEqual([]);
+    });
+
+    it.each(['failed', 'cancelled'] as const)('keeps a seen %s row reachable in Activity until it is dismissed', state => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        merge(store, [
+            operation({ operationId: 'attention', state, settledAt: 150,
+                ...(state === 'failed' ? { error: { errorCode: 'failed', error: 'Failed' } } : {}) }),
+            operation({ operationId: 'done', state: 'succeeded', settledAt: 150 }),
+        ]);
+
+        const before = selectors.selectActivitySummary(store.getSnapshot());
+        expect(before).toEqual({ activeCount: 0, hasAttention: true });
+        store.markAllTerminalSeen(200);
+        expect(selectors.selectActivitySummary(store.getSnapshot())).toBe(before);
+        expect(selectors.selectInboxSummary(store.getSnapshot()).count).toBe(0);
+
+        expect(store.dismissOperation(operationAddress('attention'))).toBe(true);
+        expect(selectors.selectActivitySummary(store.getSnapshot())).toEqual({ activeCount: 0, hasAttention: false });
     });
 
     it('projects closed Activity and Inbox state without requiring detail row collections', () => {

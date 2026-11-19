@@ -17,6 +17,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ProjectSetupConsentReviewCard } from '@/components/projects/projectSetup/ProjectSetupSessionReview';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import {
@@ -170,6 +172,11 @@ export const ActionOperationDetailModal = React.memo(
     const isolationCheck = useAgentIsolationRecovery(operation);
     const sessionId = operation?.snapshot.scope.sessionId ?? null;
     const exactServerId = operation?.serverId ?? null;
+    const { binding: setupReviewBinding } = useServerCredentialAccountScopeBinding(
+      operation?.snapshot.setupReview ? exactServerId : null,
+    );
+    const setupReviewScope = setupReviewBinding?.isCurrent()
+      && setupReviewBinding.accountId === operation?.snapshot.scope.accountId ? setupReviewBinding.scope : null;
     const session = useSessionListRenderableWithServerScope(
       exactServerId,
       exactServerId && sessionId ? sessionId : '',
@@ -483,6 +490,16 @@ export const ActionOperationDetailModal = React.memo(
           ))}
         </ItemGroup>
 
+        {snapshot.setupReview && setupReviewScope ? (
+          <ProjectSetupConsentReviewCard
+            operation={operation}
+            scope={setupReviewScope}
+            decided={null}
+            canApprovePermissions
+            onDecided={props.onClose}
+          />
+        ) : null}
+
         {detail.agentIsolationReview ? (
           <AgentIsolationReview
             operation={operation}
@@ -619,7 +636,7 @@ export const ActionOperationDetailModal = React.memo(
         <ActionOperationDetailControls
           operation={operation}
           terminal={terminal}
-          canCancel={Boolean(operation.serverId) && detail.canCancel}
+          canCancel={Boolean(operation.serverId) && detail.canCancel && !setupReviewScope}
           onClose={props.onClose}
           leading={
             <>

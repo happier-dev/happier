@@ -53,6 +53,29 @@ export function readActionOperationTaskQuestion(snapshot: ActionOperationSnapsho
     return readActionOperationTaskQuestionV1(snapshot);
 }
 
+export type ActionOperationSection = 'inProgress' | 'needsAttention' | 'recent';
+
+export function readActionOperationIntervention(snapshot: ActionOperationSnapshotV1): 'review' | 'attendance' | null {
+    if (isActionOperationTerminal(snapshot.state)) return null;
+    if (snapshot.setupReview || isActionOperationReviewHeld(snapshot)) return 'review';
+    return readActionOperationTaskQuestion(snapshot) ? 'attendance' : null;
+}
+
+/** Activity rows and the closed launcher share the same lifecycle classification. */
+export function classifyActionOperationSection(
+    snapshot: ActionOperationSnapshotV1,
+    observation: ActionOperationObservation = 'available',
+    followUpAttention?: string | null,
+): ActionOperationSection {
+    if (followUpAttention || readActionOperationIntervention(snapshot)) return 'needsAttention';
+    if (snapshot.actionId.startsWith('sessions.external.') && snapshot.progress?.kind === 'phase'
+        && ['awaiting_user_resume', 'failed', 'reconciliation_required'].includes(snapshot.progress.phase)) return 'needsAttention';
+    if (!isActionOperationTerminal(snapshot.state)) {
+        return resolveActionOperationObservation(snapshot, observation) === 'unavailable' ? 'needsAttention' : 'inProgress';
+    }
+    return snapshot.state === 'failed' || snapshot.state === 'cancelled' ? 'needsAttention' : 'recent';
+}
+
 export type InboxActionOperationEntry = Readonly<{
     operation: ActionOperationProjection;
     reason: InboxActionOperationReason;
@@ -542,12 +565,6 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     };
 
     const selectHasUnseenTerminal = (state: ActionOperationStoreSnapshot) => selectAll(state).some((operation) => isUnseen(state, operation));
-    const selectHasAttention = (state: ActionOperationStoreSnapshot) => (
-        selectActive(state).length > 0
-        || selectHasUnseenTerminal(state)
-        || selectAll(state).some((operation) => operation.followUpAttention !== null)
-    );
-
     const selectActivitySummary = (state: ActionOperationStoreSnapshot): ActionOperationActivitySummary => {
         if (state === previousActivitySummaryState) return previousActivitySummary;
         let activeCount = 0;
@@ -555,14 +572,10 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         for (const [key, operation] of state.operationsByKey) {
             if (!shouldIncludeOperation(state, key, operation)) continue;
             const snapshot = operation.snapshot;
-            if (!isActionOperationTerminal(snapshot.state)) {
-                hasAttention = true;
-                if (readOperationObservation(state, key, operation) === 'available') activeCount += 1;
-                continue;
-            }
-            if (isUnseen(state, operation) || readFollowUpAttention(state, operation) !== null) {
-                hasAttention = true;
-            }
+            const observation = readOperationObservation(state, key, operation);
+            const section = classifyActionOperationSection(snapshot, observation, readFollowUpAttention(state, operation));
+            if (section === 'inProgress' && observation === 'available') activeCount += 1;
+            if (section !== 'recent' || isUnseen(state, operation)) hasAttention = true;
         }
         previousActivitySummaryState = state;
         if (
@@ -617,7 +630,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectActivitySummary,
         selectInboxSummary,
         selectHasUnseenTerminal,
-        selectHasAttention,
+        selectHasAttention: state => selectActivitySummary(state).hasAttention,
     };
 }
 

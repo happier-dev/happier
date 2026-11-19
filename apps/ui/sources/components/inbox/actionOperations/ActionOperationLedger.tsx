@@ -3,6 +3,7 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { InboxWorkRow } from '../InboxWorkRow';
 import { InboxDismissRowMenu } from '../InboxRowMenu';
@@ -23,7 +24,12 @@ import {
 import { useSessionListHomeObservations } from '@/sync/store/hooks';
 import { useAllActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import { actionOperationStore, isActionOperationReviewHeld, canDismissActionOperation } from '@/sync/domains/actionOperations/actionOperationStore';
-import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import {
+    classifyActionOperationSection,
+    readActionOperationIntervention,
+    type ActionOperationProjection,
+    type ActionOperationSection,
+} from '@/sync/domains/actionOperations/actionOperationSelectors';
 import {
     actionOperationAddress,
     actionOperationAddressKey,
@@ -36,12 +42,10 @@ import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceConte
 
 import { openActionOperation } from './actionOperationPresentationRuntime';
 import {
-    classifyActionOperationSection,
     canRequestActionOperationStop,
     describeActionOperationStatusLabel,
     formatActionOperationAge,
     resolveActionOperationStatus,
-    type ActionOperationSection,
 } from './actionOperationPresentation';
 import { requestAcceptedActionOperationStop, type ActionOperationStopResponse, type ActionOperationStopContext, type ActionOperationStopTarget } from './requestActionOperationStop';
 import { useActionOperationStopControl } from './useActionOperationStopControl';
@@ -112,9 +116,16 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         : null;
     const inboxPresentation = props.presentation === 'inbox';
     const runCard = props.runCard ?? null;
-    const subtitleText = inboxPresentation
-        ? joinHappierFacts(props.operation.followUpAttention ?? statusLabel, sourceTitle)
-        : runCard ? runCard.line ?? sourceTitle : sourceTitle;
+    const intervention = readActionOperationIntervention(snapshot);
+    const canReview = !runCard && intervention !== null;
+    const heldSetup = canReview && snapshot.setupReview !== undefined;
+    const title = runCard?.title ?? (heldSetup
+        ? joinHappierFacts(t('projects.checkouts.settingUp'), statusLabel)
+        : snapshot.title);
+    const subtitleText = canReview && !heldSetup
+        ? joinHappierFacts(statusLabel, sourceTitle)
+        : runCard?.line ?? sourceTitle;
+    const openOperation = () => props.onOpenOperation(props.operation);
     const detailText = runCard ? '' : joinHappierFacts(...(inboxPresentation
         ? [determinateProgress, sourceContext.contextLine]
         : [
@@ -123,7 +134,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             determinateProgress,
             sourceContext.contextLine,
         ]));
-    const active = snapshot.state === 'accepted' || snapshot.state === 'running';
+    const active = classifyActionOperationSection(snapshot, observation, props.operation.followUpAttention) === 'inProgress';
     const canDismiss = Boolean(props.onDismissOperation) && canDismissActionOperation(
         snapshot, props.operation.isUnavailableProjection, Boolean(props.operation.followUpAttention),
     );
@@ -175,7 +186,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     return (
         <Item
             testID={`inbox.action-operation.${snapshot.operationId}`}
-            title={runCard?.title ?? snapshot.title}
+            title={title}
             subtitle={subtitleText}
             detail={detailText || undefined}
             accessibilityLabel={`${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${detailText}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`}
@@ -189,7 +200,15 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
                     size={ICON_SIZE.md}
                     color={iconColor}
                   />}
-            rightElement={canStop ? (
+            rightElement={canReview ? (
+                <RoundButton
+                    testID={`action-operation-review.${snapshot.operationId}`}
+                    size="mini"
+                    display="secondary"
+                    title={t('approvals.review')}
+                    onPress={openOperation}
+                />
+            ) : canStop ? (
                 <TactilePressable
                     testID={`action-operation-stop.${snapshot.operationId}`}
                     accessibilityLabel={t('inbox.actionOperations.cancel.stop')}
@@ -213,7 +232,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             rightElementOutsidePressable={true}
             keepChevronWithRightElement={inboxPresentation && canDismiss}
             showDivider={props.showDivider}
-            onPress={() => props.onOpenOperation(props.operation)}
+            onPress={openOperation}
         />
     );
 });
@@ -296,9 +315,9 @@ export const ActionOperationLedgerView = React.memo(function ActionOperationLedg
             recent: [],
         };
         for (const operation of props.operations) {
-            grouped[operation.followUpAttention
-                ? 'needsAttention'
-                : classifyActionOperationSection(operation.snapshot, operation.observation)].push(operation);
+            grouped[classifyActionOperationSection(
+                operation.snapshot, operation.observation, operation.followUpAttention,
+            )].push(operation);
         }
         const preferredSessionAddress = props.preferredSessionAddress ?? null;
         if (preferredSessionAddress) {
