@@ -3224,6 +3224,8 @@ export async function updatePendingMessageV2(params: {
             body: JSON.stringify(writeBody),
         });
         if (!response.ok) {
+            const code = await readPendingAdmissionRejectionCode(response);
+            if (code) throw createPendingAdmissionRejectionError(code);
             await assertPendingResponseOk(response, 'Failed to update pending message');
         }
         const recordAcceptance = capturePendingSnapshotAcceptance(params.outboxScope, sessionId, recipient);

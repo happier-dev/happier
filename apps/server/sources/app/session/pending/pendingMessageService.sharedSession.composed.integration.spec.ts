@@ -61,6 +61,7 @@ import { sessionPendingRoutes } from "@/app/api/routes/session/pendingRoutes";
 import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
 import { readManagedWakeTargets, assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
 import { registerSessionListingRoutes } from "@/app/api/routes/session/registerSessionListingRoutes";
+import { registerSessionMessageRoutes } from "@/app/api/routes/session/registerSessionMessageRoutes";
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { mapPendingActivationAuthorization, mapPendingActivationFailureDetails } from './pendingActivationAuthorization';
@@ -7275,26 +7276,66 @@ describe("pendingMessageService (shared sessions)", () => {
         if (!list.ok) throw new Error("expected viewer listing");
         expect(list.pending.map(row => row.localId)).toEqual([localId]);
         const pendingBefore = await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } });
-        const stateBefore = await db.session.findUniqueOrThrow({ where: { id: session.id },
-            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true, pendingActivationRequestId: true } });
+        const outsider = await createAccount("outsider");
+        const editor = await createAccount("former-editor");
+        const grant = { sessionId: session.id, ownerId: owner.id, participantId: editor.id };
+        const editorGrant = await shareSession({ ...grant, accessLevel: "edit" });
+        const transcriptInput = { localId: "owner-transcript", ciphertext: "owner-input" };
+        const ownerMessage = await createSessionMessage({ inputAdmission: "authenticatedAccount", authentication,
+            actorUserId: owner.id, sessionId: session.id, ...transcriptInput });
+        expect(ownerMessage).toMatchObject({ ok: true, didWrite: true });
+        const transcriptBefore = await db.sessionMessage.findMany({ where: { sessionId: session.id } });
+        const counters = { pendingCount: true, pendingBlockedCount: true, pendingVersion: true, pendingActivationRequestId: true, seq: true } as const;
+        const stateBefore = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: counters });
+        await withAuthenticatedTestApp(app => {
+            sessionPendingRoutes(app);
+            registerSessionMessageRoutes(app);
+        }, async app => {
+            const send = (accountId: string, target = session.id) => app.inject({
+                method: "POST",
+                url: `/v2/sessions/${target}/pending`,
+                headers: { "x-test-user-id": accountId },
+                payload: { localId: `refused-${randomUUID()}`, ciphertext: "cipher-refused" },
+            });
+            const missing = await send(outsider.id, randomUUID());
+            expect(missing.statusCode).toBe(404);
+            expect(missing.json()).toEqual({ error: "session-not-found" });
+            const denied = await send(outsider.id);
+            expect(denied.statusCode).toBe(missing.statusCode);
+            expect(denied.json()).toEqual(missing.json());
 
-        const enqueueViewer = await enqueuePendingMessage({
-            actorUserId: viewer.id,
-            sessionId: session.id,
-            localId: `v-${randomUUID()}`,
-            ciphertext: "cipher-view",
-        });
-        // Capability-qualified absence and denial share the canonical Pending
-        // privacy projection; a readable Session does not grant input mutation.
-        expect(enqueueViewer).toEqual({ ok: false, error: "session-not-found" });
+            await db.sessionGrant.update({ where: { id: editorGrant.id }, data: { accessLevel: "view" } });
+            for (const accountId of [viewer.id, editor.id]) {
+                const response = await send(accountId);
+                expect(response.statusCode).toBe(403);
+                expect(response.json()).toEqual({ error: "forbidden", code: "session_access_forbidden" });
+            }
+            const edit = await app.inject({
+                method: "PATCH", url: `/v2/sessions/${session.id}/pending/${localId}`,
+                headers: { "x-test-user-id": viewer.id }, payload: { ciphertext: "cipher-a-2" },
+            });
+            expect(edit.statusCode).toBe(403);
+            expect(edit.json()).toEqual({ error: "forbidden", code: "session_access_forbidden" });
 
-        const edit = await updatePendingMessage({
-            actorUserId: viewer.id,
-            sessionId: session.id,
-            localId,
-            ciphertext: "cipher-a-2",
+            for (const input of [transcriptInput, { ...transcriptInput, localId: "viewer-transcript" }]) {
+                const write = (accountId: string, target = session.id) => app.inject({
+                    method: "POST", url: `/v2/sessions/${target}/messages`,
+                    headers: { "x-test-user-id": accountId }, payload: input,
+                });
+                const response = await write(viewer.id);
+                expect(response.statusCode).toBe(403);
+                expect(response.json()).toEqual({ error: "forbidden", code: "session_access_forbidden" });
+                const missingTranscript = await write(outsider.id, randomUUID());
+                const deniedTranscript = await write(outsider.id);
+                expect(missingTranscript.statusCode).toBe(404);
+                expect(deniedTranscript.statusCode).toBe(missingTranscript.statusCode);
+                expect(deniedTranscript.json()).toEqual(missingTranscript.json());
+            }
+            await db.sessionGrant.delete({ where: { id: editorGrant.id } });
+            const withdrawn = await send(editor.id);
+            expect(withdrawn.statusCode).toBe(missing.statusCode);
+            expect(withdrawn.json()).toEqual(missing.json());
         });
-        expect(edit).toEqual({ ok: false, error: "session-not-found" });
 
         const reorder = await reorderPendingMessages({ actorUserId: viewer.id, sessionId: session.id, orderedLocalIds: [localId] });
         expect(reorder).toEqual({ ok: false, error: "session-not-found" });
@@ -7308,8 +7349,8 @@ describe("pendingMessageService (shared sessions)", () => {
         const del = await deletePendingMessage({ actorUserId: viewer.id, sessionId: session.id, localId });
         expect(del).toEqual({ ok: false, error: "session-not-found" });
         expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } })).toEqual(pendingBefore);
-        expect(await db.session.findUniqueOrThrow({ where: { id: session.id },
-            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true, pendingActivationRequestId: true } })).toEqual(stateBefore);
+        expect(await db.sessionMessage.findMany({ where: { sessionId: session.id } })).toEqual(transcriptBefore);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: counters })).toEqual(stateBefore);
         expect(await listPendingMessages({ actorUserId: owner.id, sessionId: session.id, includeDiscarded: true }))
             .toMatchObject({ ok: true, pending: [{ localId, status: "queued", content: { t: "encrypted", c: "cipher-a-1" } }] });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(1);

@@ -304,6 +304,7 @@ export type SessionAccessOperationDecision =
     | Readonly<{ status: "allowed"; access: EffectiveSessionAccess }>
     | Readonly<{ status: "authentication_required" }>
     | Readonly<{ status: "authentication_unavailable" }>
+    | Readonly<{ status: "forbidden" }>
     | Readonly<{ status: "unavailable" }>;
 
 function projectExactSessionRuntimeAccess(
@@ -432,10 +433,21 @@ async function resolveSessionAccessCapabilityDecisionsFromRow(reader: Tx, actor:
     };
     const cappedIndependent = independentAccess ? cap(independentAccess) : null;
     const cappedCollective = access ? cap(access) : null;
+    const destinationSessionId = actor.authentication.contentDisclosureSessionId;
+    // A Send refusal can disclose only the read access already established by this pass.
+    const missingCapability = (request: SessionAccessCapabilityRequest, resolved: EffectiveSessionAccess | null,
+        projected: EffectiveSessionAccess | null): SessionAccessOperationDecision => ({
+        status: request.capability === 'submitAgentInput'
+            && projected?.capabilities.readTranscript === true
+            && resolved?.capabilities.submitAgentInput === false
+            && (!destinationSessionId || destinationSessionId === actor.sessionId)
+            ? 'forbidden' : 'unavailable',
+    });
     let disclosure: Promise<boolean> | undefined;
     const admit = async (resolved: EffectiveSessionAccess, projected: EffectiveSessionAccess, request: SessionAccessCapabilityRequest): Promise<SessionAccessOperationDecision> => {
-        if (request.capability !== undefined && !(exactTokenAction ? resolved : projected).capabilities[request.capability]) return { status: 'unavailable' };
-        const destinationSessionId = actor.authentication.contentDisclosureSessionId;
+        if (request.capability !== undefined && !(exactTokenAction ? resolved : projected).capabilities[request.capability]) {
+            return missingCapability(request, resolved, projected);
+        }
         if (request.capability === 'readTranscript' && destinationSessionId && destinationSessionId !== actor.sessionId) {
             disclosure ??= mayInjectSessionContextInTx(reader, { configuringAccountId: actor.accountId, sourceSessionId: actor.sessionId,
                 destinationSessionId, authentication: actor.authentication }).then(result => result.ok);
@@ -454,9 +466,9 @@ async function resolveSessionAccessCapabilityDecisionsFromRow(reader: Tx, actor:
             continue;
         }
         const relevant = unqualified.filter(({ capabilities }) => request.capability === undefined || capabilities[request.capability]);
-        decisions.push({ status: relevant.some(item => item.status === 'authentication_required') ? 'authentication_required'
+        decisions.push(relevant.some(item => item.status === 'authentication_required') ? { status: 'authentication_required' }
             : relevant.some(item => item.status === 'unavailable') || (request.capability === undefined && contributions.some(item => item.team))
-                ? 'authentication_unavailable' : 'unavailable' });
+                ? { status: 'authentication_unavailable' } : missingCapability(request, access, cappedCollective));
     }
     return decisions;
 }
@@ -561,7 +573,7 @@ export async function resolveEffectiveSessionAccessForSessionsInTx(reader: Tx, i
 }
 export type SessionCapabilityAssertion =
     | { ok: true; access: EffectiveSessionAccess }
-    | { ok: false; reason: "authentication_required" | "authentication_unavailable" | "unavailable" };
+    | { ok: false; reason: Exclude<SessionAccessOperationDecision["status"], "allowed"> };
 export async function assertSessionCapabilityInTx(input: {
     tx: Tx;
     accountId: string;
@@ -579,8 +591,7 @@ export async function assertSessionCapabilityInTx(input: {
         ...(input.row ? { row: input.row } : {}),
     });
     if (decision.status !== "allowed") return { ok: false, reason: decision.status };
-    const access = decision.access;
-    return access?.capabilities[input.capability] ? { ok: true, access } : { ok: false, reason: "unavailable" };
+    return { ok: true, access: decision.access };
 }
 /** Execution-custody operations stay owner-only independently of human capability names. */
 export async function assertSessionOwnerInTx(input: {

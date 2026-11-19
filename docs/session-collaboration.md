@@ -139,6 +139,11 @@ for a released reader while every other rule — runtime-principal currentness, 
 transcript shareability, capability — stays in the same owner. The two seam projections are two
 presentations of one decision, never two admissions.
 
+For Account input, current read access without **Can steer** yields `403` with
+`session_access_forbidden`. Pending enqueue and content edits, plus direct transcript
+writes and their duplicate reconciliation, use the same decision. A caller without
+access receives the endpoint's missing-Session `404`.
+
 The Session share also governs its ephemeral managed Browser: View watches its
 frames and Steer drives it, without a Machine grant. Browser routing consumes
 `resolveSessionAccessForOperation` (`readTranscript` for viewing,

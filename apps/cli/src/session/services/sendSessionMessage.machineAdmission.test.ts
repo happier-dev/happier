@@ -1023,6 +1023,7 @@ describe('sendSessionMessage machine admission', () => {
       code: 'session_input_encryption_mode_mismatch',
     },
     { status: 403, data: { error: 'forbidden' }, code: 'session_input_unauthorized' },
+    { status: 403, data: { error: 'forbidden', code: 'session_access_forbidden' }, code: 'session_access_forbidden' },
     { status: 404, data: { error: 'session-not-found' }, code: 'session_input_target_unavailable' },
   ] as const)(
     'preserves owner-proven HTTP $status pre-write rejection certainty',

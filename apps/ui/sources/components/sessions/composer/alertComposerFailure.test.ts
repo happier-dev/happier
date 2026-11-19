@@ -48,6 +48,15 @@ function openedAlert() {
 }
 
 describe('the composer failure presenter', () => {
+    it('explains how a viewer can get permission to send', () => {
+        const code = 'session_access_forbidden';
+        alertComposerActionResultFailure({ ok: false, errorCode: code, error: code });
+        expect(openedAlert()).toMatchObject({
+            message: t('session.pendingMessages.admissionRejected.steerAccessRequired'),
+            disclosed: { code },
+        });
+    });
+
     it.each([
         ['runner_not_active', 'runnerUnavailableBody'],
         ['unsupported_daemon', 'updateDaemonBody'],

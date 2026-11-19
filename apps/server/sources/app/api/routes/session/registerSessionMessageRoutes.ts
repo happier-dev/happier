@@ -459,6 +459,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     }),
                 400: z.looseObject({ error: z.literal('Invalid parameters'), code: z.optional(z.string()) }),
                 403: z.union([
+                    z.strictObject({ error: z.literal('forbidden'), code: z.literal('session_access_forbidden') }),
                     z.object({ error: z.literal('Forbidden') }),
                     z.strictObject({ error: z.literal(PRESENT_USER_REQUIRED_ERROR) }),
                     z.strictObject({ error: z.literal("credential_scope_denied") }),
@@ -538,7 +539,11 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 return reply.code(400).send(payload);
             }
             if (result.error === "local-id-conflict") return reply.code(400).send({ error: "Invalid parameters", code: "session_input_idempotency_conflict" });
-            if (result.error === "forbidden") return reply.code(403).send({ error: "Forbidden" });
+            if (result.error === "forbidden") {
+                return reply.code(403).send(result.code === "session_access_forbidden"
+                    ? { error: result.error, code: result.code }
+                    : { error: "Forbidden" });
+            }
             if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
             return reply.code(500).send({ error: "Failed to create message" });
         }

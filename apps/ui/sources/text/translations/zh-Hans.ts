@@ -8840,6 +8840,7 @@ export const zhHans: TranslationStructure = {
           invalid: '无法按原样接受这条消息。',
           archived: '此会话已归档，不再接受输入。',
           unauthorized: '你没有向此会话发送消息的权限。',
+          steerAccessRequired: '你无法发送消息。请向会话所有者申请「可指挥」权限。',
           modelNotGranted: '不允许使用所选模型。',
           permissionModeNotGranted: '不允许使用所选权限模式。',
           targetUnavailable: '所选代理对话已不可用。未发送任何内容。',

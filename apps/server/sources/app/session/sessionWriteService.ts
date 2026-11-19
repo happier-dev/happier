@@ -807,7 +807,7 @@ function isTypedSessionMutationContextInput(input: SessionMutationContextInput):
 
 function mapSessionMutationContextFailure(
     input: SessionMutationContextInput,
-    reason: "authentication_required" | "authentication_unavailable" | "unavailable",
+    reason: Extract<SessionCapabilityAssertion, { ok: false }>["reason"],
 ): "forbidden" | "authentication_required" | "authentication_unavailable" | "unavailable" {
     return isTypedSessionMutationContextInput(input) ? reason : "forbidden";
 }
@@ -891,6 +891,17 @@ export async function loadSessionInputMutationContextInTx(tx: Tx, params: { acto
     return loadSessionMutationContextInTx(tx, { ...params, kind: "capability", capability: "submitAgentInput" });
 }
 
+async function loadSessionInputWriteContextInTx(
+    tx: Tx, params: { actorUserId: string; sessionId: string; authentication: SessionAccessAuthentication },
+): Promise<SessionMutationContextResult | { ok: false; error: "forbidden"; code: "session_access_forbidden" }> {
+    const context = await loadSessionMutationContextPreservingAccessFailureInTx(tx, {
+        ...params, kind: "capability", capability: "submitAgentInput", preserveAccessFailure: true,
+    });
+    if (context.ok) return context;
+    if (context.error === "forbidden") return { ok: false, error: "forbidden", code: "session_access_forbidden" };
+    return { ok: false, error: context.error === "unavailable" || context.error === "session-not-found" ? "session-not-found" : "forbidden" };
+}
+
 async function loadSessionMutationContextForCapabilityInTx(
     tx: Tx,
     params: { actorUserId: string; sessionId: string; authentication: SessionAccessAuthentication },
@@ -964,6 +975,7 @@ export type CreateSessionMessageResult =
         recipientCursors: [];
       }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: SessionTranscriptWriteRejectionCode | SessionInputPermissionModesDisjointError["code"] }
+    | { ok: false; error: "forbidden"; code: "session_access_forbidden" }
     | { ok: false; error: "local-id-conflict" };
 
 type CreateSessionMessageParamsBase = Readonly<{
@@ -1438,7 +1450,7 @@ async function createSessionMessageAttempt(
                 }
                 const accessStartedAt = Date.now();
                 const accessResult = params.inputAdmission === "authenticatedAccount"
-                    ? await loadSessionInputMutationContextInTx(tx, {
+                    ? await loadSessionInputWriteContextInTx(tx, {
                         actorUserId,
                         sessionId,
                         authentication: params.authentication,
@@ -1455,7 +1467,7 @@ async function createSessionMessageAttempt(
                         durationMs: Date.now() - totalStartedAt,
                         result: "error",
                     });
-                    return { ok: false, error: accessResult.error };
+                    return accessResult;
                 }
                 access = accessResult;
                 resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
@@ -1683,7 +1695,7 @@ async function createSessionMessageAttempt(
                 return await inTx(async (tx): Promise<SessionWriteInTxResult<CreateSessionMessageResult>> => {
                     const accessStartedAt = Date.now();
                     const access = params.inputAdmission === "authenticatedAccount"
-                        ? await loadSessionInputMutationContextInTx(tx, {
+                        ? await loadSessionInputWriteContextInTx(tx, {
                             actorUserId,
                             sessionId,
                             authentication: params.authentication,
@@ -1700,7 +1712,7 @@ async function createSessionMessageAttempt(
                             durationMs: Date.now() - totalStartedAt,
                             result: "error",
                         });
-                        return { ok: false as const, error: access.error };
+                        return access;
                     }
 
                     const existing = await tx.sessionMessage.findUnique({

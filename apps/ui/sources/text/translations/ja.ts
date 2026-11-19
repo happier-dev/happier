@@ -9462,6 +9462,7 @@ localTailscale: {
           invalid: 'このままではメッセージを受け付けられませんでした。',
           archived: 'このセッションはアーカイブ済みで、入力を受け付けません。',
           unauthorized: 'このセッションに送信する権限がありません。',
+          steerAccessRequired: 'メッセージを送信できません。セッションの所有者に「指示可」の権限をリクエストしてください。',
           modelNotGranted: '選択したモデルは許可されていません。',
           permissionModeNotGranted: '選択した権限モードは許可されていません。',
           targetUnavailable: '選択したエージェント会話は利用できなくなりました。何も送信されていません。',

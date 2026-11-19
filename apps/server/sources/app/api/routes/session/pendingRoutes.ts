@@ -661,7 +661,9 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                     if (code) payload.code = code;
                     return reply.code(400).send(payload);
                 }
-                if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
+                if (res.error === "forbidden") {
+                    return reply.code(403).send({ error: res.error, ...(res.code ? { code: res.code } : {}) });
+                }
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
                 if (res.error === "not-found") return reply.code(404).send({ error: res.error });
                 if (res.error === "local-id-conflict") return reply.code(409).send({ error: res.error });

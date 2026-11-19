@@ -17,6 +17,7 @@ import {
     assertSessionOwnerInTx,
     resolveStructuralSessionAccess,
     resolveSessionAccessForOperation,
+    type SessionAccessOperationDecision,
     buildSessionAccessProjectionSelect,
     readSessionAccessProjectionContextInTx,
     SESSION_ACCESS_SESSION_BATCH_SIZE,
@@ -358,16 +359,21 @@ export type PendingSessionAuthenticationError = Extract<
 type PendingSessionAccessError = "session-not-found" | PendingSessionAuthenticationError;
 
 /**
- * Pending is a Session-access consumer. Preserve the canonical credential
- * continuation while keeping ordinary absence/denial indistinguishable from a
- * missing Session.
+ * Preserve the credential continuation and missing-Session fallback shared by
+ * Pending reads and queue controls. Input admission also exposes a typed refusal.
  */
 function projectPendingSessionAccessError(
-    status: "authentication_required" | "authentication_unavailable" | "unavailable",
+    status: Exclude<SessionAccessOperationDecision["status"], "allowed">,
 ): PendingSessionAccessError {
     if (status === "authentication_required") return "session_access_authentication_required";
     if (status === "authentication_unavailable") return "session_access_authentication_unavailable";
     return "session-not-found";
+}
+
+function projectPendingInputAccessFailure(status: Exclude<SessionAccessOperationDecision["status"], "allowed">) {
+    return status === "forbidden"
+        ? { ok: false, error: "forbidden", code: "session_access_forbidden" } as const
+        : { ok: false, error: projectPendingSessionAccessError(status) } as const;
 }
 
 async function projectPendingMessageRows(reader: Pick<Tx, "account">, rows: readonly PendingMessageRowRaw[]): Promise<PendingMessageRow[]> {
@@ -670,7 +676,7 @@ export type EnqueuePendingMessageResult =
     | {
         ok: false;
         error: PendingSessionAccessError | "forbidden" | "invalid-params" | "internal";
-        code?: EncryptionPolicyRejectionCode;
+        code?: EncryptionPolicyRejectionCode | "session_access_forbidden";
         admissionRejectionCode?: SessionInputAdmissionRejectionCodeV1;
       }
     | { ok: false; error: "transaction-unavailable"; retryAfterMs: number; correlationId?: string };
@@ -761,8 +767,7 @@ export async function enqueuePendingMessage(
         authentication: params.authentication,
         capability: "submitAgentInput",
     });
-    if (decision.status !== "allowed") return { ok: false, error: projectPendingSessionAccessError(decision.status) };
-    if (!decision.access.capabilities.submitAgentInput) return { ok: false, error: "forbidden" };
+    if (decision.status !== "allowed") return projectPendingInputAccessFailure(decision.status);
     let executionRunFrontier: ExecutionRunFollowFrontierWitness | undefined;
     const original = params.followDeliveryV1?.original;
     if (original && isRunFollowOriginalV1(original) && original.source.kind === 'execution_run') {
@@ -2767,7 +2772,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
 
 export type UpdatePendingMessageResult =
     | { ok: true; localId: string; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; recipientCursors: RecipientCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
-    | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "not-found" | "local-id-conflict" | "pending-mutation-conflict" | "delivery-settlement-conflict" | "internal"; code?: EncryptionPolicyRejectionCode | SessionInputPermissionModesDisjointError["code"] };
+    | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "not-found" | "local-id-conflict" | "pending-mutation-conflict" | "delivery-settlement-conflict" | "internal"; code?: EncryptionPolicyRejectionCode | SessionInputPermissionModesDisjointError["code"] | "session_access_forbidden" };
 
 export type UpdatePendingRequestedActionResult =
     | {
@@ -3116,8 +3121,7 @@ export async function updatePendingMessage(params: {
         authentication: params.authentication,
         capability: "submitAgentInput",
     });
-    if (accessDecision.status !== "allowed") return { ok: false, error: projectPendingSessionAccessError(accessDecision.status) };
-    if (!accessDecision.access.capabilities.submitAgentInput) return { ok: false, error: "forbidden" };
+    if (accessDecision.status !== "allowed") return projectPendingInputAccessFailure(accessDecision.status);
 
     try {
         return await inTx(async (tx) => pendingPublicationResult<UpdatePendingMessageResult>(async () => {

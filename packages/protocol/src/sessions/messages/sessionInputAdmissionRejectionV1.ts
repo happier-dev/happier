@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import type { SessionAccessErrorCodeV1 } from '../access/sessionAccessOperationsV1.js';
 
 /**
  * Dependency-light owner for rejection codes shared by Session input and
@@ -12,6 +13,7 @@ export const SESSION_INPUT_ADMISSION_REJECTION_CODES_V1 = [
   'permission_mode_not_granted',
   'session_input_archived',
   'session_input_unauthorized',
+  'session_access_forbidden' satisfies SessionAccessErrorCodeV1,
   'session_input_target_unavailable',
   'session_input_machine_binding_unavailable',
   'session_input_muted',
