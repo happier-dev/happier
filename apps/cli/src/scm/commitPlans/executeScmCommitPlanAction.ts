@@ -1,5 +1,6 @@
 import { ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
 import { ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 import type { ScmActionId, ScmCommitPlanApplication, ScmDiffSummaryResult, ScmDiffSummaryResultResponse, ScmDiffSummaryResultFailure, ScmCommitCreateResponse } from '@happier-dev/protocol';
 import { scmDiffSummaryResultStore, type ScmDiffSummaryResultScope, type ScmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { captureScmPendingTree, readCapturedScmComparison } from '../comparisons/captureScmComparison';
@@ -173,7 +174,7 @@ export async function executeScmCommitPlanAction(params: Params): Promise<ScmDif
   const saved = await store.read(scope);
   if (!saved.success) return saved;
   const stale = conflict(saved.result, request.expectedRevision); if (stale) return stale;
-  if (saved.result.output.comparison?.source.kind !== 'workingTree') return failure('source_not_pending', 'Historical comparisons cannot authorize local commits.');
+  if (!saved.result.output.comparison || !scmComparisonSourceSupportsCommitPlan(saved.result.output.comparison.source)) return failure('source_not_pending', 'Only whole working-tree comparisons can authorize local commits.');
   if (params.actionId === 'scm.diffSummary.commitPlan.accept' && isScmCommitPlanApplicationLocked(saved.result.application)) {
     return failure('application_locked', 'Resolve the current accepted application before accepting another revision.', saved.result.revision);
   }

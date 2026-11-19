@@ -98,6 +98,21 @@ function createGitBackend(snapshot: ScmStatusSnapshotResponse['snapshot']): ScmB
 }
 
 describe('resolveReviewScmScope', () => {
+  it.each(['included', 'pending'] as const)('preserves the captured %s area in review scope', async area => {
+    const comparison = ScmComparisonSchema.parse({ id: 'selected-area', source: { kind: 'workingTree', area },
+      repository: { rootPath: '/captured-repo' }, endpoints: { before: 'before', after: 'after' },
+      inventory: { state: 'complete', reasons: [], files: [{ path: 'selected.ts', changeKind: 'modified',
+        binary: false, generated: false, lockfile: false,
+        evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] }] } });
+    const scope = await resolveReviewScmScope({ cwd: '/ambient-repo', registry: createScmBackendRegistry([]),
+      intentInput: { comparisonId: comparison.id, comparison } });
+    expect(scope).toMatchObject({ status: 'supported', selectedPaths: ['selected.ts'],
+      changedPaths: [{ hasCommittedDelta: area === 'included', hasUncommittedDelta: area === 'pending',
+        diff: { committedAvailable: area === 'included', uncommittedAvailable: area === 'pending' } }],
+      committedPaths: area === 'included' ? [{ path: 'selected.ts' }] : [],
+      uncommittedPaths: area === 'pending' ? [{ path: 'selected.ts' }] : [],
+    });
+  });
   it.each(['selectedPaths', 'selectedFiles'])('refuses repository scope with %s at direct scope admission', async key => {
     const scope = await resolveReviewScmScope({ cwd: '/repo', registry: createScmBackendRegistry([]),
       intentInput: { scope: 'repository', [key]: ['src/auth.ts'] } });

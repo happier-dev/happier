@@ -9,7 +9,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, normalizeScmDiffSummaryModelOutput, ScmReviewExplanationTargetsSchema, ScmReviewExplanationRequesterSchema, ScmDiffSummaryModelOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditSchema, ScmWalkthroughProvenanceSchema, ScmDiffSummarySavedResultItemSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
-import { scmComparisonSourceMatches } from '@happier-dev/protocol/scm/comparison';
+import { scmComparisonSourceMatches, scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffSummaryResultListInput } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { ScmCommitPlanAcceptanceSchema, ScmCommitPlanApplicationSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
 import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryModelOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResult, ScmDiffSummaryResultEdit, ScmDiffSummaryResultResponse, ScmDiffSummaryResultFailure, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryGeneratorSelection, ScmDiffSummarySavedResultItem, ScmCommitPlanAcceptance, ScmCommitPlanApplication } from '@happier-dev/protocol';
@@ -565,7 +565,8 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
         if (input.stopIds && ((outputs.length > 0 && !outputs.includes('walkthrough')) || input.stopIds.some((id) => !stored.result.output.outputs?.walkthrough?.value?.stops.some((stop) => stop.id === id)))) {
           return failure('invalid_edit', 'Targeted stops must exist in the saved walkthrough.');
         }
-        if (outputs.includes('commitPlan') && stored.result.output.comparison?.source.kind !== 'workingTree') return failure('invalid_edit', 'Commit proposals require a pending comparison.');
+        if (outputs.includes('commitPlan') && (!stored.result.output.comparison
+          || !scmComparisonSourceSupportsCommitPlan(stored.result.output.comparison.source))) return failure('invalid_edit', 'Commit proposals require a whole working-tree comparison.');
         const explanation = input.reviewExplanation ? explanationRequestSchema.parse(input.reviewExplanation) : undefined;
         if (explanation && (outputs.length !== 1 || outputs[0] !== 'walkthrough' || !input.stopIds
           || explanation.targets.length !== input.stopIds.length || explanation.targets.some(target => !input.stopIds!.includes(target.stopId)))) {
@@ -718,7 +719,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
         const stale = conflict(stored, input.expectedRevision); if (stale) return stale;
         if (isScmCommitPlanApplicationLocked(stored.result.application)) return failure('application_locked', 'The accepted application must be resolved first.', stored.result.revision);
         const comparison = stored.result.output.comparison;
-        if (comparison?.source.kind !== 'workingTree') return failure('source_not_pending', 'Only pending changes can authorize commits.');
+        if (!comparison || !scmComparisonSourceSupportsCommitPlan(comparison.source)) return failure('source_not_pending', 'Only whole working-tree comparisons can authorize commits.');
         const plan = stored.result.output.outputs?.commitPlan;
         if (plan?.state !== 'complete' || !plan.value) return failure('plan_unavailable', 'A complete editable proposal is required.');
         const acceptance = ScmCommitPlanAcceptanceSchema.parse(input.acceptance);

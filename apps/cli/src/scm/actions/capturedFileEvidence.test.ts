@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { randomUUID } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -14,14 +15,73 @@ import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/register
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
 import { configuration } from '@/configuration';
-import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
 import { deleteCapturedScmComparison, readCapturedScmComparison } from '../comparisons/captureScmComparison';
-import { readStoredScmComparison } from '../comparisons/comparisonStorage';
+import { readStoredScmComparison, resolveStoredScmComparisonPath } from '../comparisons/comparisonStorage';
 import { executeScmActionOperation } from './executeScmActionOperation';
+import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEvidence';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 
 describe('captured file Action evidence', () => {
-  it('reads a staged rename through an explicit selector that legacy file readers refuse', async () => {
+  it('authorizes the retained source Session before disclosing comparisonId-only turn evidence', async () => runWithScmAccountScope('captured-file-evidence-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-id-source-' });
+    const sessionId = randomUUID();
+    let comparisonId: string | undefined;
+    try {
+      await retainRepositoryCheckpointTurnEvidence({ cwd: fixture.rootPath, scopeId: `${sessionId}:${fixture.rootPath}`, turnChangeSet: {
+        sessionId, turnId: 'private-turn', seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 }, status: 'completed',
+        provider: 'agent', derivedAt: 1, files: [{ filePath: fixture.trackedPath, changeKind: 'modified',
+          source: 'provider_tool', confidence: 'exact', provider: 'agent', unifiedDiff: '@@ -1 +1 @@\n-before\n+private retained content\n' }],
+      } });
+      const captured = ScmComparisonCaptureOutputSchema.parse(await executeScmActionOperation({
+        actionId: 'scm.diffSummary.capture', workingDirectory: fixture.rootPath, authorizeSession: async () => true,
+        input: { cwd: fixture.rootPath, sessionId, source: { kind: 'turnCheckpoint', sessionId,
+          turnId: 'private-turn', evidenceMode: 'agent_reported' } },
+      }));
+      if (!captured.success) throw new Error(captured.error);
+      comparisonId = captured.comparison.id;
+      const scopes: Array<string | undefined> = [];
+      const read = (allow: boolean, source?: unknown) => executeScmActionOperation({ actionId: 'scm.diffSummary.capture',
+        workingDirectory: fixture.rootPath, input: { cwd: fixture.rootPath, sessionId, comparisonId, ...(source ? { source } : {}) },
+        authorizeSession: async admittedSession => { scopes.push(admittedSession); return allow; } });
+      const denied = await read(false);
+      expect(denied).toMatchObject({ success: false });
+      expect(denied).not.toHaveProperty('comparison');
+      expect(JSON.stringify(denied)).not.toContain('private retained content');
+      expect(scopes).toEqual([sessionId]);
+      scopes.length = 0;
+      const opened = ScmComparisonCaptureOutputSchema.parse(await read(true));
+      expect(opened).toEqual(captured);
+      expect(scopes).toEqual([sessionId]);
+      expect(await read(true, { kind: 'workingTree' })).toMatchObject({ success: false });
+    } finally {
+      if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId, sessionId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  }));
+  it('opens comparisonId-only retained evidence without replacing it with current working-copy bytes', async () => runWithScmAccountScope('captured-file-evidence-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-id-only-' });
+    const sessionId = randomUUID();
+    let comparisonId: string | undefined;
+    const execute = (input: unknown) => executeScmActionOperation({ actionId: 'scm.diffSummary.capture', input,
+      workingDirectory: fixture.rootPath, authorizeSession: async () => true });
+    try {
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'retained source bytes\n');
+      const captured = ScmComparisonCaptureOutputSchema.parse(await execute({ cwd: fixture.rootPath,
+        sessionId, source: { kind: 'workingTree', area: 'pending' } }));
+      if (!captured.success) throw new Error(captured.error);
+      comparisonId = captured.comparison.id;
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'later working-copy bytes\n');
+      const retained = ScmComparisonCaptureOutputSchema.parse(await execute({ cwd: fixture.rootPath, sessionId, comparisonId }));
+      expect(retained).toEqual(captured);
+      expect(JSON.stringify(retained)).toContain('retained source bytes');
+      expect(JSON.stringify(retained)).not.toContain('later working-copy bytes');
+      await expect(execute({ cwd: fixture.rootPath, sessionId })).rejects.toThrow();
+    } finally {
+      if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId, sessionId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  }));
+  it('reads a staged rename through an explicit selector that legacy file readers refuse', async () => runWithScmAccountScope('captured-file-evidence-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-rename-read-' });
     const registration = createGitScmBackendRuntimeRegistration();
     const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
@@ -49,9 +109,9 @@ describe('captured file Action evidence', () => {
       expect(reply).toMatchObject({ success: true, diff: expect.stringContaining('-Fixture line 11\n+Fixture edited rename line') });
       expect(reply.diff).not.toContain('+Fixture line 1\n');
     } finally { await rm(fixture.rootPath, { recursive: true, force: true }); }
-  });
+  }));
 
-  it('restores and edits saved results without transferring patches, retaining exact file evidence for pinned reads and undo', async () => {
+  it('restores and edits saved results without transferring patches, retaining exact file evidence for pinned reads and undo', async () => runWithScmAccountScope('captured-file-evidence-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-saved-capture-' });
     const sessionId = randomUUID();
     let comparisonId: string | undefined;
@@ -99,9 +159,9 @@ describe('captured file Action evidence', () => {
       if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId, sessionId });
       await rm(fixture.rootPath, { recursive: true, force: true });
     }
-  });
+  }));
 
-  it('admits repository-scoped captured bytes through the retained-scope owner', async () => {
+  it('admits repository-scoped captured bytes through the retained-scope owner', async () => runWithScmAccountScope('captured-file-evidence-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-captured-repository-' });
     let comparisonId: string | undefined;
     try {
@@ -121,9 +181,9 @@ describe('captured file Action evidence', () => {
       if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId });
       await rm(fixture.rootPath, { recursive: true, force: true });
     }
-  });
+  }));
 
-  it('opens retained bytes after worktree mutation and refuses missing, mismatched or denied captures', async () => {
+  it('opens retained bytes after worktree mutation and refuses missing, mismatched or denied captures', async () => runWithScmAccountScope('captured-file-evidence-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-captured-file-' });
     const sessionId = randomUUID();
     const file = join(fixture.rootPath, fixture.trackedPath);
@@ -155,8 +215,8 @@ describe('captured file Action evidence', () => {
         captured: { ...input.captured, comparisonId: 'invalid' } })).rejects.toThrow();
       expect(await readFile(file, 'utf8')).toBe('later live bytes\n');
       // A real retained-record boundary fixture models an existing partial source patch.
-      const storedPath = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons',
-        encodeRepositoryCheckpointScope(sessionId), `${comparisonId}.json`);
+      const storedPath = resolveStoredScmComparisonPath({ activeServerDir: configuration.activeServerDir,
+        sessionId, comparisonId });
       const stored: unknown = await readStoredScmComparison(storedPath);
       const record = z.looseObject({ comparison: ScmComparisonSchema }).parse(stored);
       const partial = record.comparison.inventory.files.find(entry => entry.path === fixture.trackedPath)!;
@@ -176,5 +236,5 @@ describe('captured file Action evidence', () => {
       if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId, sessionId });
       await rm(fixture.rootPath, { recursive: true, force: true });
     }
-  });
+  }));
 });

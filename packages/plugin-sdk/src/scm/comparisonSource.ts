@@ -7,7 +7,7 @@ export type ScmComparisonSource =
     | { kind: 'turnCheckpoint'; sessionId?: string; turnId?: string; checkpointReceiptId?: string;
         evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' }
     | { kind: 'session'; sessionId: string }
-    | { kind: 'workingTree' }
+    | { kind: 'workingTree'; area?: 'both' | 'included' | 'pending' }
     | { kind: 'branch'; head: string; base: string }
     | { kind: 'commit'; commit: string; parent?: string }
     | ScmRevisionRangeV1

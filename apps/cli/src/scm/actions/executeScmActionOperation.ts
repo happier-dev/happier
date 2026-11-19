@@ -327,24 +327,29 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
             const request = params.input as ScmComparisonCaptureInput;
             const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
             if (!authorized.ok) return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: authorized.error };
-            const sourceSessionId = typeof request.source.sessionId === 'string' ? request.source.sessionId : undefined;
-            if (!await admitReviewScope(params, { cwd: authorized.cwd,
-                ...(request.sessionId ? { sessionId: request.sessionId } : {}), ...(sourceSessionId ? { sourceSessionId } : {}) })) {
-                return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'Comparison evidence is unavailable for this caller.' };
-            }
+            const unavailable = { success: false as const, errorCode: 'DIFF_UNAVAILABLE' as const,
+                error: 'Comparison evidence is unavailable for this caller.' };
+            const admitSource = (source: ScmComparison['source']) => admitReviewScope(params, { cwd: authorized.cwd,
+                ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+                ...(typeof source.sessionId === 'string' ? { sourceSessionId: source.sessionId } : {}) });
+            if (!request.comparisonId && !await admitSource(request.source!)) return unavailable;
             try {
                 if (request.comparisonId && request.projection) {
-                    return await readCapturedScmComparisonPage({ ...request, comparisonId: request.comparisonId,
+                    const page = await readCapturedScmComparisonPage({ ...request, comparisonId: request.comparisonId,
                         cwd: authorized.cwd, projection: request.projection });
+                    if (page.success && !await admitSource(page.comparison.source)) return unavailable;
+                    return page;
                 }
                 const captured = request.comparisonId
                     ? await readCapturedScmComparison({ ...request, comparisonId: request.comparisonId, cwd: authorized.cwd })
                     : await captureScmComparison({ ...request, cwd: authorized.cwd,
+                    source: request.source!, // The fresh-capture schema requires a source.
                     signal: params.signal,
                     ...(params.registry ? { registry: params.registry } : {}),
                     ...(params.readComparisonTranscriptPage ? { readTranscriptPage: params.readComparisonTranscriptPage } : {}),
                     ...(params.readPullRequestComparisonPage ? { readPullRequestComparisonPage: params.readPullRequestComparisonPage } : {}),
                 });
+                if (request.comparisonId && !await admitSource(captured.comparison.source)) return unavailable;
                 return projectCapturedComparison(captured, request.projection);
             } catch (error) {
                 const code = error && typeof error === 'object' && 'code' in error

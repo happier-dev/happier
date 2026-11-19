@@ -9,14 +9,26 @@ import { resolveSessionIdFromInput } from '../sessionScope.js';
 import { readReviewRunActionPayload } from '../executionRuns.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import type { ReviewRoundComparisonCaptureV1 } from '../../../reviews/reviewArtifactV1.js';
+import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
+import { RpcError } from '../../../rpc/errors.js';
 
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
-  sessionId: string | null, actionId: ActionId): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
+  sessionId: string | null, actionId: ActionId,
+  executeHostChild: RoundActionInvocation['executeHostChild']): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
+  if (sessionId) {
+    const knownMachineId = (sessionId === ctx.defaultSessionId ? ctx.defaultSessionMachineId : undefined)
+      ?? await deps.resolveApiTokenGrantSessionMachineId?.({ actionId, sessionId, context: ctx });
+    if (knownMachineId) return { kind: 'machine', machineId: knownMachineId };
+    const response = await executeHostChild('session.status.get', { sessionId, live: false }, ctx);
+    if (!response.ok) throw new Error(response.error, { cause: response });
+    const status = SessionStatusResultSchema.safeParse(response.result);
+    if (!status.success || status.data.session.id !== sessionId) throw new RpcError('invalid_action_output', 'invalid_action_output');
+    if (!status.data.session.machineId) throw new RpcError('workspace_unavailable', 'workspace_unavailable');
+    return { kind: 'machine', machineId: status.data.session.machineId };
+  }
   if (ctx.externalActionTarget?.kind === 'machine') return ctx.externalActionTarget;
-  const machineId = ctx.executionRunTargetMachineId
-    ?? (sessionId ? await deps.resolveApiTokenGrantSessionMachineId?.({ actionId, sessionId, context: ctx }) : undefined)
-    ?? ctx.agentStartContext?.baseline.machineId ?? ctx.defaultSessionMachineId;
+  const machineId = ctx.executionRunTargetMachineId ?? ctx.agentStartContext?.baseline.machineId ?? ctx.defaultSessionMachineId;
   return machineId ? { kind: 'machine', machineId } : undefined;
 }
 
@@ -35,8 +47,10 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
     return { ok: true, result: await prepareReviewRoundV1(input, {
       reviewRecords: records, cwd: inv.ctx.agentStartContext?.baseline.directory,
-      comparisonTarget: await resolveReviewComparisonTargetV1(inv.deps, inv.ctx,
-        resolveSessionIdFromInput(input.reviewInput, inv.ctx), inv.actionId),
+      comparisonTarget: input.previousRoundContext && input.reviewInput.scope !== 'repository'
+        ? await resolveReviewComparisonTargetV1(inv.deps, inv.ctx,
+          resolveSessionIdFromInput(input.reviewInput, inv.ctx), inv.actionId, inv.executeHostChild)
+        : undefined,
       startedAt: Date.now(), signal: inv.ctx.signal,
       captureComparison: async request => {
         const capture = await inv.executeHostChild('scm.diffSummary.capture', request, inv.ctx);

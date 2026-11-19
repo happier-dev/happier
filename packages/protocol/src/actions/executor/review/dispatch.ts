@@ -26,7 +26,10 @@ import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } f
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 import { dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
-import { ScmComparisonSourceSchema } from '../../../scm/comparison.js';
+import type { ScmComparison } from '../../../scm/comparison.js';
+import { ScmComparisonCaptureOutputSchema } from '../../../scm/diffSummary.js';
+import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
+import { resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
 import { dispatchReviewSettlementAction } from './settlement.js';
 
 export function reviewScopeForInput(input: unknown): ReviewEngineScope {
@@ -276,15 +279,42 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         ctx.signal?.throwIfAborted();
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
-        const reviewInput = data as ReviewStartInput;
+        let reviewInput = data as ReviewStartInput;
+        let initialComparison: ScmComparison | undefined;
+        let selectedSource = reviewInput.reviewRound ? undefined : resolveReviewComparisonSourceV1(reviewInput);
+        const needsComparison = !reviewInput.reviewRound && Boolean(selectedSource || reviewInput.comparisonId);
+        let comparisonCwd = reviewInput.cwd ?? (sessionId && sessionId !== ctx.defaultSessionId ? undefined : ctx.agentStartContext?.baseline.directory);
+        const comparisonTarget = needsComparison
+          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId, executeHostChild) : undefined;
+        if (needsComparison && !comparisonCwd) {
+          const response = await executeHostChild('scm.status.snapshot', { ...(sessionId ? { sessionId } : {}), detail: 'facts' }, ctx);
+          if (!response.ok) return response;
+          const status = ScmStatusSnapshotResponseSchema.safeParse(response.result);
+          if (!status.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          if (!status.data.success) return { ok: false, errorCode: status.data.errorCode ?? 'workspace_unavailable',
+            error: status.data.error ?? 'workspace_unavailable' };
+          comparisonCwd = status.data.snapshot?.repo.rootPath ?? undefined;
+        }
+        if (needsComparison && (!comparisonCwd || !comparisonTarget)) {
+          return { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' };
+        }
+        if (needsComparison && comparisonCwd && (!reviewInput.comparisonId || !selectedSource)) {
+          const response = await executeHostChild('scm.diffSummary.capture', { cwd: comparisonCwd,
+            ...(selectedSource ? { source: selectedSource } : {}),
+            ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+            ...(sessionId ? { sessionId } : {}) }, ctx);
+          if (!response.ok) return response;
+          const captured = ScmComparisonCaptureOutputSchema.safeParse(response.result);
+          if (!captured.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          if (!captured.data.success) return { ok: false, errorCode: captured.data.errorCode, error: captured.data.error };
+          initialComparison = captured.data.comparison;
+          selectedSource = initialComparison.source;
+          reviewInput = { ...reviewInput, source: initialComparison.source, comparisonId: initialComparison.id };
+        }
         const subjectKind = reviewInput.scmPullRequestReviewScope ? 'pull_request'
           : reviewInput.comparisonId ? 'comparison' : 'repository';
-        const selectedSource = ScmComparisonSourceSchema.safeParse(reviewInput.source);
-        const comparisonCwd = reviewInput.cwd ?? ctx.agentStartContext?.baseline.directory;
-        const comparisonTarget = reviewInput.comparisonId
-          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId) : undefined;
-        const comparisonCapture = reviewInput.comparisonId && selectedSource.success && comparisonCwd && comparisonTarget
-          ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource.data,
+        const comparisonCapture = reviewInput.comparisonId && selectedSource && comparisonCwd && comparisonTarget
+          ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource,
             comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
         if (requiresReviewWorkflowCompositionV1(reviewInput)) {
           // Workflow execution may happen on another host or after a restart.
@@ -318,7 +348,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               reviewedFingerprint: null, results: [] } };
           }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
-          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, undefined, comparisonCapture?.input);
+          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, initialComparison, comparisonCapture?.input);
           const started = await executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
             source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, ctx);
           if (!started.ok) {

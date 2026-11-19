@@ -23,6 +23,40 @@ describe('personal reviewed marks', () => {
 });
 
 describe('comparison evidence and analysis contracts', () => {
+  it('reads an exact retained comparison without guessing its source while fresh capture still requires one', () => {
+    expect(diffSummary.ScmComparisonCaptureInputSchema.safeParse({ cwd: '/repo', comparisonId: 'a'.repeat(64) }).success).toBe(true);
+    expect(diffSummary.ScmComparisonCaptureInputSchema.safeParse({ cwd: '/repo' }).success).toBe(false);
+    expect(diffSummary.ScmComparisonCaptureInputSchema.safeParse({ cwd: '/repo', comparisonId: 'invalid' }).success).toBe(false);
+  });
+  it('keeps included and pending captures distinct while preserving the legacy whole-worktree identity', () => {
+    const sources = ['included', 'pending', 'both'].map(area =>
+      diffSummary.ScmComparisonSourceSchema.parse({ kind: 'workingTree', area }));
+    const legacy = diffSummary.ScmComparisonSourceSchema.parse({ kind: 'workingTree' });
+    const [included, pending, both] = sources;
+    if (!included || !pending || !both) throw new Error('Missing working-tree selectors');
+    const key = (source: diffSummary.ScmComparisonSource) => diffSummary.buildScmComparisonSourceKey({ cwd: '/repo', source });
+    const identity = (source: diffSummary.ScmComparisonSource) => diffSummary.buildScmComparisonIdentity({
+      source, repositoryRootPath: '/repo', beforeOid: 'before', afterOid: 'after', indexOid: 'index',
+    });
+    expect(new Set(sources.map(key)).size).toBe(3);
+    expect(new Set(sources.map(identity)).size).toBe(3);
+    expect(key(both)).toBe(key(legacy));
+    expect(identity(both)).toBe(identity(legacy));
+    expect(diffSummary.scmComparisonSourceMatches(included, pending)).toBe(false);
+    expect(diffSummary.scmComparisonSourceMatches(legacy, pending)).toBe(false);
+    expect(diffSummary.scmComparisonSourceMatches(both, legacy)).toBe(true);
+  });
+  it.each(['included', 'pending'] as const)('keeps a %s-only review capture out of whole-worktree commit proposals', area => {
+    const source = diffSummary.ScmComparisonSourceSchema.parse({ kind: 'workingTree', area });
+    const comparison: diffSummary.ScmComparison = { id: 'subset', source,
+      repository: { rootPath: '/repo' }, endpoints: { before: 'before', after: 'after' },
+      inventory: { state: 'complete', reasons: [], files: [] } };
+    expect(diffSummary.ScmDiffSummaryGenerateInputSchema.safeParse({ cwd: '/repo', source, outputs: ['commitPlan'] }).success).toBe(false);
+    expect(() => diffSummary.normalizeScmDiffSummaryModelOutput({ commitPlan: { groups: [], leftOutChangeRefs: [] } }, { comparison })).toThrow();
+    const whole = { ...comparison, source: { kind: 'workingTree' as const } };
+    expect(diffSummary.ScmDiffSummaryGenerateInputSchema.safeParse({ cwd: '/repo', source: whole.source, outputs: ['commitPlan'] }).success).toBe(true);
+    expect(() => diffSummary.normalizeScmDiffSummaryModelOutput({ commitPlan: { groups: [], leftOutChangeRefs: [] } }, { comparison: whole })).not.toThrow();
+  });
   it('qualifies contextual turn selectors while retaining an explicit source Session as authority', () => {
     const context = { cwd: '/repo', sessionId: 'session', turnId: 'turn', checkpointReceiptId: 'receipt', turnEvidenceMode: 'checkpoint' };
     const resolved = { kind: 'turnCheckpoint' as const, sessionId: 'session', turnId: 'turn', checkpointReceiptId: 'receipt', evidenceMode: 'checkpoint' as const };

@@ -20,6 +20,7 @@ import type { SessionTranscriptGetItem } from '../actions/specs/session/transcri
 import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
 import { ReviewRequestedReviewerInputV1Schema } from './reviewHumanV1.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
+import type { ScmDiffArea } from '../scm/workingSnapshot.js';
 
 /** Admitted source evidence carried only by the host's live launch context. */
 export type ReviewTranscriptEvidence = Readonly<{
@@ -37,6 +38,15 @@ export type ReviewTranscriptEvidence = Readonly<{
 
 export const ReviewChangeTypeSchema = lazyZodSchema(() => z.enum(['all', 'committed', 'uncommitted']));
 export type ReviewChangeType = z.infer<typeof ReviewChangeTypeSchema>;
+
+/** Review's historical change-type vocabulary selects the SCM owner's index layers. */
+export function reviewWorkingTreeAreaV1(changeType: ReviewChangeType): ScmDiffArea {
+  switch (changeType) {
+    case 'committed': return 'included';
+    case 'uncommitted': return 'pending';
+    case 'all': return 'both';
+  }
+}
 
 export const ReviewBaseSchema = lazyZodSchema(() => z.union([
   z.looseObject({ kind: z.literal('none') }),

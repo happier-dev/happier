@@ -1,5 +1,5 @@
 import { createGitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
-import { buildScmComparisonIdentity } from '@happier-dev/protocol/scm/comparison';
+import { buildScmComparisonIdentity, scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 import { applyHunks, parseUnifiedDiffHunks, type Hunk, type HunkLine } from '@happier-dev/protocol/diff/hunks';
 import type { ScmChangeOccurrence, ScmComparison } from '@happier-dev/protocol';
 import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
@@ -291,7 +291,7 @@ export async function materializeScmCommitPlan(input: Readonly<{
     groups: readonly Readonly<{ id: string; changeRefs: readonly string[] }>[];
 }>): Promise<Readonly<{ baseTreeOid: string; indexTreeOid: string; steps: readonly Readonly<{ groupId: string; targetTreeOid: string }>[] }>> {
     const { cwd, comparison } = input;
-    if (comparison.source.kind !== 'workingTree' || comparison.inventory.state !== 'complete') {
+    if (!scmComparisonSourceSupportsCommitPlan(comparison.source) || comparison.inventory.state !== 'complete') {
         throw new ScmCommitPlanMaterializationConflict('unrepresentable_selection', 'Only a complete pending comparison can authorize a commit plan');
     }
     const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();

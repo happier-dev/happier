@@ -3,7 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
 import { ScmBackendPreferenceSchema } from './backendIdentity.js';
-import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparison } from './comparison.js';
+import { ScmComparisonSchema, ScmComparisonSourceSchema, scmComparisonSourceSupportsCommitPlan, type ScmComparison } from './comparison.js';
 import { ReviewLaunchFailureSchema } from '../reviews/reviewLaunchFailure.js';
 import { ReviewPublicationEvidenceSchema } from '../reviews/reviewPublicationEvidence.js';
 import { ExecutionRunTransportErrorCodeSchema } from '../execution/runs/runPrimitives.js';
@@ -110,7 +110,7 @@ export const ScmDiffSummaryGenerateInputSchema = lazyZodSchema(() => z.strictObj
         path: ['checkpointReceiptId'],
       });
     }
-    if (value.outputs?.includes('commitPlan') && value.source.kind !== 'workingTree') {
+    if (value.outputs?.includes('commitPlan') && !scmComparisonSourceSupportsCommitPlan(value.source)) {
       ctx.addIssue({ code: "custom", path: ['outputs'], message: 'Commit plans require a pending working-tree comparison' });
     }
     if (value.outputs && new Set(value.outputs).size !== value.outputs.length) {
@@ -130,24 +130,30 @@ export type ScmDiffSummaryGenerateInput =
 
 /** Capture current evidence, or read an exact retained comparison without model admission. */
 // Retain concrete identity for shared Control input JSON Schema references.
-export const ScmComparisonCaptureInputSchema = lazyZodSchema(() => z.strictObject({
-  cwd: z.string().check(z.minLength(1)), sessionId: z.optional(z.string().check(z.minLength(1))),
-  comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
-  projection: z.optional(z.strictObject({ kind: z.literal('index'),
-    cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
-    limit: z.optional(z.number().check(z.int(), z.positive())),
-    path: z.optional(z.string().check(z.minLength(1))),
-  })),
-  backendPreference: z.optional(ScmBackendPreferenceSchema), source: ScmDiffSummarySourceSchema,
-  turnId: z.optional(z.string().check(z.minLength(1))), checkpointReceiptId: z.optional(z.string().check(z.minLength(1))),
-  turnEvidenceMode: z.optional(ScmDiffSummaryTurnEvidenceModeSchema),
-}).check(z.superRefine((value, ctx) => {
-  const { comparisonId: _comparisonId, projection: _projection, ...selectors } = value;
-  const parsed = ScmDiffSummaryGenerateInputSchema.safeParse(selectors);
-  if (!parsed.success) for (const issue of parsed.error.issues) {
-    ctx.addIssue({ code: "custom", message: issue.message, path: issue.path });
-  }
-})));
+export function createScmComparisonCaptureInputSchema<TSessionId extends z.ZodMiniType>(sessionId: TSessionId) {
+  return z.strictObject({
+    cwd: z.string().check(z.minLength(1)), sessionId: z.optional(sessionId),
+    comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
+    projection: z.optional(z.strictObject({ kind: z.literal('index'),
+      cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
+      limit: z.optional(z.number().check(z.int(), z.positive())),
+      path: z.optional(z.string().check(z.minLength(1))),
+    })),
+    backendPreference: z.optional(ScmBackendPreferenceSchema), source: z.optional(ScmDiffSummarySourceSchema),
+    turnId: z.optional(z.string().check(z.minLength(1))), checkpointReceiptId: z.optional(z.string().check(z.minLength(1))),
+    turnEvidenceMode: z.optional(ScmDiffSummaryTurnEvidenceModeSchema),
+  }).check(z.superRefine((value, ctx) => {
+    if (value.comparisonId && !value.source) return;
+    const { comparisonId: _comparisonId, projection: _projection, ...selectors } = value;
+    // Public selectors are resolved by Action admission before this same check sees a concrete Session.
+    const parsed = ScmDiffSummaryGenerateInputSchema.safeParse({ ...selectors,
+      sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined });
+    if (!parsed.success) for (const issue of parsed.error.issues) {
+      ctx.addIssue({ code: "custom", message: issue.message, path: issue.path });
+    }
+  }));
+}
+export const ScmComparisonCaptureInputSchema = lazyZodSchema(() => createScmComparisonCaptureInputSchema(z.string().check(z.minLength(1))));
 export type ScmComparisonCaptureInput = z.infer<typeof ScmComparisonCaptureInputSchema>;
 
 export const ScmDiffSummaryCostMetadataSchema = lazyZodSchema(() => z.looseObject({
@@ -351,7 +357,7 @@ export function normalizeScmDiffSummaryModelOutput(value: unknown, params: Reado
     output.walkthrough = { ...output.walkthrough, stops: output.walkthrough.stops.map((stop, index) => ({ ...stop, changeRefs: resolved[index] })), otherChangeRefs: resolved[resolved.length - 1] };
   }
   if (output.commitPlan) {
-    if (comparison.source.kind !== 'workingTree') throw new Error('Historical comparisons cannot authorize commit proposals');
+    if (!scmComparisonSourceSupportsCommitPlan(comparison.source)) throw new Error('Commit proposals require a whole working-tree comparison');
     uniqueIds(output.commitPlan.groups.map((group) => group.id));
     const resolved = resolveGroup([...output.commitPlan.groups.map((group) => group.changeRefs), output.commitPlan.leftOutChangeRefs]);
     output.commitPlan = { ...output.commitPlan, groups: output.commitPlan.groups.map((group, index) => ({ ...group, changeRefs: resolved[index] })), leftOutChangeRefs: resolved[resolved.length - 1] };

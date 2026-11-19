@@ -193,7 +193,10 @@ describe('canonical review Run comments', () => {
     const next = await readCapturedScmComparison({ cwd: fixture.rootPath, sessionId: 'session-1', comparisonId: nextInput.comparisonId });
     expect(JSON.stringify(next?.comparison.inventory)).toContain('second round();');
     expect(await records.read('stable-review')).toMatchObject({ rounds: [
-      { ordinal: 1, comparisonId: first.comparison.id }, { ordinal: 2, comparisonId: nextInput.comparisonId },
+      { ordinal: 1, comparisonId: first.comparison.id }, { ordinal: 2, comparisonId: nextInput.comparisonId,
+        comparisonCapture: { target: { kind: 'machine', machineId: 'machine-1' }, input: {
+          cwd: fixture.rootPath, sessionId: 'session-1', source: { kind: 'workingTree' }, comparisonId: nextInput.comparisonId,
+        } } },
     ] });
     expect({ creates, updates }).toEqual({ creates: 1, updates: 1 });
   }));

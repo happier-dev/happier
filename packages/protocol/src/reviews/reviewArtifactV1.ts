@@ -20,6 +20,7 @@ export const ReviewRoundComparisonCaptureV1Schema = lazyZodSchema(() => z.strict
   target: ExternalActionTargetV1Schema._zod.def.options[0],
   input: z.safeExtend(ScmComparisonCaptureInputSchema, {
     comparisonId: z.nonoptional(ScmComparisonCaptureInputSchema.shape.comparisonId),
+    source: z.nonoptional(ScmComparisonCaptureInputSchema.shape.source),
     projection: z.optional(z.never()),
   }),
 }));

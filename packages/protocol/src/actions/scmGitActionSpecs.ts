@@ -34,7 +34,7 @@ import {
 import {
   ScmDiffSummaryGenerateInputSchema,
   ScmDiffSummaryGenerateOutputSchema,
-  ScmComparisonCaptureInputSchema,
+  createScmComparisonCaptureInputSchema,
   ScmComparisonCaptureOutputSchema,
 } from '../scm/diffSummary.js';
 import {
@@ -161,6 +161,7 @@ function defineScmActionSpec<
 const SessionScmStatusInputSchema = lazyZodSchema(() => z.extend(scm.ScmStatusSnapshotRequestSchema, {
   sessionId: z.optional(SessionTargetV1Schema),
 }));
+const SessionScmComparisonCaptureInputSchema = lazyZodSchema(() => createScmComparisonCaptureInputSchema(SessionTargetV1Schema));
 const SessionScmPullInputSchema = lazyZodSchema(() => z.extend(scm.ScmRemoteRequestSchema, {
   sessionId: z.optional(SessionTargetV1Schema),
 }));
@@ -1488,7 +1489,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
   ScmActionSpecDefinition<'scm.hostingRepository.get', typeof ScmHostingRepositoryGetRequestV1Schema, typeof ScmHostingRepositoryGetResponseV1Schema>,
   ScmActionSpecDefinition<'scm.hostingRepository.describePublishTargets', typeof ScmHostingRepositoryDescribePublishTargetsRequestSchema, typeof ScmHostingRepositoryDescribePublishTargetsResponseSchema>,
   ScmActionSpecDefinition<'scm.hostingRepository.publish', typeof ScmHostingRepositoryPublishRequestSchema, typeof ScmHostingRepositoryPublishResponseSchema>,
-  ScmActionSpecDefinition<'scm.diffSummary.capture', typeof ScmComparisonCaptureInputSchema, typeof ScmComparisonCaptureOutputSchema>,
+  ScmActionSpecDefinition<'scm.diffSummary.capture', typeof SessionScmComparisonCaptureInputSchema, typeof ScmComparisonCaptureOutputSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.draftPullRequest', typeof ScmDiffSummaryGenerateInputSchema, typeof ScmDiffSummaryGenerateOutputSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.generate', typeof ScmDiffSummaryGenerateInputSchema, typeof ScmDiffSummaryGenerateOutputSchema>,
 ] = lazyActionSpecArray(() => [
@@ -1767,6 +1768,8 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
   }),
   defineScmActionSpec({
     id: 'scm.diffSummary.capture', approval: {result: 'required'},
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
+    executionPlacementForInput: sessionScmExecutionPlacement,
     examples: { voice: { argsExample: '{"cwd":"/repo","source":{"kind":"workingTree"}}' } },
     title: 'Capture source-control comparison',
     description: 'Read comparison inventory and evidence without starting model analysis.',
@@ -1775,12 +1778,12 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     cli: { commands: [{ path: ['scm', 'diff-summary', 'capture'], visibility: 'canonical' }] },
     sideEffectClass: 'read',
-    inputSchema: ScmComparisonCaptureInputSchema,
+    inputSchema: SessionScmComparisonCaptureInputSchema,
     outputSchema: ScmComparisonCaptureOutputSchema,
     inputHints: { title: 'Capture comparison', fields: [
       { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
       { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
-      { path: 'source.kind', title: 'Comparison source', widget: 'text', required: true },
+      { path: 'source.kind', title: 'Comparison source', widget: 'text' },
     ] },
   }),
   defineScmActionSpec({

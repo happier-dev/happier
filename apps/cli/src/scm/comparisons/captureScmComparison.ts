@@ -619,13 +619,15 @@ async function captureComparison(input: CaptureScmComparisonInput): Promise<Capt
       const index = await runGitCheckpointCommand({ cwd: rootPath, args: ['write-tree'] });
       if (!index.success || !index.stdout.trim()) throw new Error(index.stderr || 'Staged comparison endpoint is unavailable');
       indexOid = index.stdout.trim();
-      after = await snapshot();
-      const staged = await readGitComparisonFiles({ cwd: rootPath, before, after: index.stdout.trim() });
-      const unstaged = await readGitComparisonFiles({ cwd: rootPath, before: index.stdout.trim(), after });
-      files = [...staged.files.map((file) => ({ ...file, layer: 'staged' as const })),
-        ...unstaged.files.map((file) => ({ ...file, layer: file.beforeBlobId ? 'unstaged' as const : 'untracked' as const }))];
-      reasons.push(...staged.reasons, ...unstaged.reasons);
-      if (!staged.enumerationComplete || !unstaged.enumerationComplete) state = files.length ? 'incomplete' : 'unavailable';
+      const area = source.area ?? 'both';
+      after = area === 'included' ? indexOid : await snapshot();
+      if (area === 'pending') before = indexOid;
+      const staged = area === 'pending' ? undefined : await readGitComparisonFiles({ cwd: rootPath, before, after: indexOid });
+      const unstaged = area === 'included' ? undefined : await readGitComparisonFiles({ cwd: rootPath, before: indexOid, after });
+      files = [...(staged?.files ?? []).map((file) => ({ ...file, layer: 'staged' as const })),
+        ...(unstaged?.files ?? []).map((file) => ({ ...file, layer: file.beforeBlobId ? 'unstaged' as const : 'untracked' as const }))];
+      reasons.push(...(staged?.reasons ?? []), ...(unstaged?.reasons ?? []));
+      if (staged?.enumerationComplete === false || unstaged?.enumerationComplete === false) state = files.length ? 'incomplete' : 'unavailable';
     }
     if (source.kind !== 'workingTree' && source.kind !== 'pullRequest' && before && after) {
       const read = await readGitComparisonFiles({ cwd: rootPath, before, after, env: rangeEnvironment });

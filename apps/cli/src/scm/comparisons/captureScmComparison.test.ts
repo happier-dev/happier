@@ -18,6 +18,28 @@ describe('captured SCM comparison storage', () => {
   const directories: string[] = [];
   afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
+  it('captures only the selected working-tree area with matching retained endpoints', async () => runWithScmAccountScope('capture-comparison-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-review-area-' });
+    directories.push(fixture.rootPath);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'included contents\n');
+    await writeFile(join(fixture.rootPath, 'included.txt'), 'included only\n');
+    git('add', fixture.trackedPath, 'included.txt');
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'pending contents\n');
+    await writeFile(join(fixture.rootPath, 'pending.txt'), 'pending only\n');
+    const included = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree', area: 'included' } });
+    const pending = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree', area: 'pending' } });
+    expect(included.comparison.inventory.state).toBe('complete');
+    expect(pending.comparison.inventory.state).toBe('complete');
+    expect(included.comparison.inventory.files.map(file => file.path).sort()).toEqual([fixture.trackedPath, 'included.txt'].sort());
+    expect(pending.comparison.inventory.files.map(file => file.path).sort()).toEqual([fixture.trackedPath, 'pending.txt'].sort());
+    expect(git('show', `${included.comparison.endpoints.after}:${fixture.trackedPath}`)).toBe('included contents');
+    expect(git('show', `${pending.comparison.endpoints.before}:${fixture.trackedPath}`)).toBe('included contents');
+    expect(git('show', `${pending.comparison.endpoints.after}:${fixture.trackedPath}`)).toBe('pending contents');
+    await expect(readCapturedScmComparison({ cwd: fixture.rootPath, comparisonId: included.comparison.id,
+      source: { kind: 'workingTree', area: 'pending' } })).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+  }));
+
   it('captures exact immutable endpoints and their net diff without substituting a merge base or HEAD', async () => runWithScmAccountScope('capture-comparison-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-exact-range-' });
     directories.push(fixture.rootPath);

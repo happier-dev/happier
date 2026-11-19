@@ -307,6 +307,16 @@ ceiling; request selectors do not grant access. Session-origin requests use the
 same workspace binding for both reads. The existing Session-namespace fallback
 to repository-level captures is intentionally preserved.
 
+Review admission captures its selected working-tree area once: `included` for
+staged changes, `pending` for unstaged and untracked changes, or `both`. Omitted
+area retains the existing whole-worktree identity. A retained `comparisonId`
+can be opened without resupplying its source; the SCM admission owner authorizes
+the stored source Session before returning evidence. An explicit source must
+still match the retained selector. New rounds preserve that selector and capture
+new endpoints in the same Review. Commit proposals require a `both` comparison;
+a staged-only or pending-only Review capture cannot authorize a whole-worktree
+commit plan.
+
 The complete JSON reply fits `WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES`
 from Protocol's workspace-files transport budget, derived from the current
 V2 socket floor shared with server admission after authenticated RPC, cipher
@@ -791,7 +801,7 @@ context, without giving prose or proposals Git authority.
 
 | Source | Captured comparison |
 | --- | --- |
-| `workingTree` | Captured HEAD to pending content, retaining staged/index, unstaged and untracked layers. Only this source can authorize commit proposals. |
+| `workingTree` | With absent `area` or `area: 'both'`, captured HEAD to working-copy content, retaining staged/index, unstaged and untracked layers. `included` captures HEAD to index; `pending` captures index to working copy. Only the whole-worktree form can authorize commit proposals. |
 | `session` | Initial pre-dispatch checkpoint to a newly captured worktree endpoint. Initial dirt is the baseline; a later edit and reversion disappears from the net diff. |
 | `turnCheckpoint` | Canonical start/final checkpoint receipts for the selected turn. Explicit `agent_reported` mode instead retains tool fragments and reports incomplete repository coverage. |
 | `branch` | Resolved merge-base of base/head to the resolved head. Pending work is not included. |
@@ -1485,8 +1495,10 @@ writer correction does not claim to fix that separate path.
 
 Model output is ordered message/rationale groups plus explicit left-out occurrence
 refs, never executable patches or implicit approval. The revisioned result owner
-validates membership and disjointness. Only a current `workingTree` comparison on
-a backend advertising safe-plan capabilities is admissible.
+validates membership and disjointness. Only a current whole-worktree `workingTree`
+comparison on a backend advertising safe-plan capabilities is admissible. The
+comparison owner's `scmComparisonSourceSupportsCommitPlan` decision excludes
+included-only and pending-only review captures from every proposal consumer.
 
 Accept binds result revision, exact repository/comparison, parent/ref, groups,
 messages and exclusions through shared Action confirmation. The host

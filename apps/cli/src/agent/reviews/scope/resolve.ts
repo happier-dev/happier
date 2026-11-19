@@ -1,5 +1,5 @@
 import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
-import { hasConflictingReviewScope, ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { hasConflictingReviewScope, reviewWorkingTreeAreaV1, ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { ScmComparisonSchema, ScmRevisionRangeV1Schema } from '@happier-dev/protocol/scm/comparison';
 import { resolveScmPullRequestReviewScope } from '@happier-dev/protocol/reviews/scmPullRequestScope';
 import { ScmEntryKindSchema } from '@happier-dev/protocol/scm/workingSnapshot';
@@ -175,10 +175,11 @@ function selectPathsForChangeType(input: Readonly<{
   changedPaths: readonly ReviewScmScopePathV1[];
 }>): readonly string[] {
   if (input.explicitPaths.length > 0) return input.explicitPaths;
-  if (input.changeType === 'committed') {
+  const area = reviewWorkingTreeAreaV1(input.changeType);
+  if (area === 'included') {
     return input.committedPaths.map((entry) => entry.path);
   }
-  if (input.changeType === 'all') {
+  if (area === 'both') {
     return input.changedPaths.map((entry) => entry.path);
   }
   return input.uncommittedPaths.map((entry) => entry.path);
@@ -218,13 +219,15 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     }
     const selectedPaths = [...new Set(requestedPaths.length ? requestedPaths : filesByPath.keys())];
     const workingTree = comparison.source.kind === 'workingTree';
+    const committed = !workingTree || comparison.source.area === 'included';
+    const uncommitted = workingTree && comparison.source.area !== 'included';
     const changedPaths = selectedPaths.map(path => {
       const file = filesByPath.get(path)!;
       const available = file.evidence.state === 'available' && file.binary === false;
       const kind = ScmEntryKindSchema.safeParse(file.changeKind);
       return { path, previousPath: file.previousPath ?? null, kind: kind.success ? kind.data : 'modified' as const,
-        hasCommittedDelta: !workingTree, hasUncommittedDelta: workingTree,
-        diff: { committedAvailable: !workingTree && available, uncommittedAvailable: workingTree && available,
+        hasCommittedDelta: committed, hasUncommittedDelta: uncommitted,
+        diff: { committedAvailable: committed && available, uncommittedAvailable: uncommitted && available,
           isBinary: file.binary === true } };
     });
     return ReviewScmScopeV1Schema.parse({ kind: 'review_scm_scope.v1', scope: 'changes', status: 'supported',

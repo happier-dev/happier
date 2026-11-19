@@ -56,7 +56,7 @@ describe('SCM Action parity', () => {
     expect(isScmRunStartRpcPurpose('scm.diffSummary.result.read', 'execution.run.start', method)).toBe(false);
   });
 
-  it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get', 'scm.suggestion.apply'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {
+  it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get', 'scm.suggestion.apply', 'scm.diffSummary.capture'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {
     type Deps = import('./executor/types.js').ActionExecutorDeps;
     const calls: unknown[] = [];
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'scm.remote.pull': ['cli'], 'scm.suggestion.apply': ['cli'] } });
@@ -72,7 +72,8 @@ describe('SCM Action parity', () => {
       },
     } as unknown as Deps);
     const input = { sessionId: { selector: 'self' as const, of: 'bound-reference' }, cwd: '/authored/path',
-      ...(actionId === 'scm.remote.pull' ? { remote: 'origin', branch: 'topic' }
+      ...(actionId === 'scm.diffSummary.capture' ? { source: { kind: 'workingTree' as const } }
+        : actionId === 'scm.remote.pull' ? { remote: 'origin', branch: 'topic' }
         : actionId === 'scm.suggestion.apply' ? { suggestions: [{ path: 'file.ts', commitOid: 'a'.repeat(40),
           startLine: 1, endLine: 1, originalLines: ['old'], replacement: 'new', outdated: false }] }
         : actionId === 'scm.pullRequest.get' ? { prReference: { url: 'https://github.com/acme/widgets/pull/12' } } : {}) };

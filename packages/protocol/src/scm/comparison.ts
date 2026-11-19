@@ -7,9 +7,10 @@ export { ScmFileViewedStateV1Schema, ScmFileViewedReadResultV1Schema, ScmFileVie
 export type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from './fileViewed.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
+import type { ScmDiffArea } from './workingSnapshot.js';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolJsonValue, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '../plugins/actions/protocolComposableSchema.js';
 
-/** Views of one comparison; Commits is available only for pending working-tree changes. */
+/** Views of one comparison; Commits requires a complete working-tree capture. */
 export const SCM_COMPARISON_VIEWS = ['files', 'walkthrough', 'commits'] as const;
 export type ScmComparisonView = (typeof SCM_COMPARISON_VIEWS)[number];
 
@@ -36,7 +37,11 @@ export const ScmComparisonSourceProtocolSchema = defineProtocolUnion([
     ]).optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('session'), sessionId: sourceIdentity }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('workingTree') }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('workingTree'),
+    // Canonical literals, not a projected Zod enum: contribution points embed this
+    // source, and only canonical schemas keep their semantics admissible.
+    area: defineProtocolUnion([defineProtocolLiteral('included'), defineProtocolLiteral('pending'),
+      defineProtocolLiteral('both')]).optional() }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('branch'), head: sourceIdentity, base: sourceIdentity }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('commit'), commit: sourceIdentity, parent: sourceIdentity.optional() }, { policy: 'closed' }),
   ScmRevisionRangeV1ProtocolSchema,
@@ -54,11 +59,18 @@ export const ScmComparisonSourceProtocolSchema = defineProtocolUnion([
 export type ScmComparisonSource = ProtocolSchemaOutput<typeof ScmComparisonSourceProtocolSchema> & Readonly<{ [key: string]: ProtocolJsonValue }>;
 export const ScmComparisonSourceSchema: z.ZodMiniType<ScmComparisonSource, ProtocolSchemaInput<typeof ScmComparisonSourceProtocolSchema>> = asProtocolZod(ScmComparisonSourceProtocolSchema);
 
+/** Commit proposals materialize both retained index layers against the captured HEAD. */
+export function scmComparisonSourceSupportsCommitPlan(source: Readonly<{
+  kind: ScmComparisonSource['kind']; area?: ScmDiffArea;
+}>): boolean {
+  return source.kind === 'workingTree' && (source.area ?? 'both') === 'both';
+}
+
 /** Selector matching shared by saved-result queries and comparison view selection. */
 export function scmComparisonSourceMatches(selector: ScmComparisonSource, source: ScmComparisonSource,
   basis?: Readonly<{ baseOid?: string; headOid?: string }>): boolean {
   switch (selector.kind) {
-    case 'workingTree': return source.kind === 'workingTree';
+    case 'workingTree': return source.kind === 'workingTree' && (selector.area ?? 'both') === (source.area ?? 'both');
     case 'session': return source.kind === 'session' && selector.sessionId === source.sessionId;
     case 'turnCheckpoint': return source.kind === 'turnCheckpoint'
       && Boolean(selector.turnId || selector.checkpointReceiptId)
@@ -159,7 +171,7 @@ export function buildScmComparisonIdentity(input: Readonly<{
       ? { kind: source.kind, locator: { providerId: source.locator.providerId,
         repository: source.locator.repository, number: source.locator.number,
         ...(source.locator.sourceAction ? { action: source.locator.sourceAction.action } : {}) } }
-      : source;
+      : source.kind === 'workingTree' && source.area === 'both' ? { kind: source.kind } : source;
   const descriptor = [
     input.repositoryRootPath, sourceIdentity,
     input.beforeOid ?? null, input.afterOid ?? null, input.indexOid ?? null,
@@ -180,7 +192,8 @@ export function buildScmComparisonSourceKey(input: Readonly<{
   switch (source.kind) {
     case 'turnCheckpoint': return JSON.stringify([source.kind, source.sessionId ?? input.sessionId ?? null, source.turnId ?? input.turnId ?? null, source.checkpointReceiptId ?? input.checkpointReceiptId ?? null, source.evidenceMode ?? input.turnEvidenceMode ?? 'reconciled']);
     case 'session': return JSON.stringify([source.kind, source.sessionId]);
-    case 'workingTree': return JSON.stringify([source.kind, input.cwd]);
+    case 'workingTree': return JSON.stringify(source.area && source.area !== 'both'
+      ? [source.kind, input.cwd, source.area] : [source.kind, input.cwd]);
     case 'branch': return JSON.stringify([source.kind, input.cwd, source.head, source.base]);
     case 'commit': return JSON.stringify([source.kind, input.cwd, source.commit, source.parent ?? null]);
     case 'revisionRange': return JSON.stringify([source.kind, input.cwd, source.baseOid, source.headOid]);

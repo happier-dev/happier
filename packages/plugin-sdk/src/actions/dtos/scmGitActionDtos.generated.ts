@@ -136,6 +136,7 @@ export type ScmGitActionInputById = {
                 evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
             } | {
                 kind: 'workingTree';
+                area?: 'both' | 'included' | 'pending';
             };
             path: string;
             sessionId?: string | undefined;
@@ -316,6 +317,7 @@ export type ScmGitActionInputById = {
                     evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
                 } | {
                     kind: 'workingTree';
+                    area?: 'both' | 'included' | 'pending';
                 };
                 comparisonId?: string | undefined;
                 sessionId?: string | undefined;
