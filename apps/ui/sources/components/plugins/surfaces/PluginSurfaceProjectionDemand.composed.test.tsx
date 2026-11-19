@@ -65,6 +65,8 @@ import { usePluginUiProjectionCurrentness, PLUGIN_UI_SECTIONS } from '@/sync/dom
 import { pluginUiSections, REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry,
     readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -382,11 +384,11 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
 
 /** The measured 20-Machine cold fleet; only the Socket and HTTP transports are substituted. */
 async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; machineOnly?: boolean;
-    channels?: boolean; writeAction?: boolean; inventoryGate?: Promise<void>; projectionGate?: Promise<void> }> = {}) {
+    channels?: boolean; writeAction?: boolean; reviewTask?: boolean; inventoryGate?: Promise<void>; projectionGate?: Promise<void> }> = {}) {
     const { PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
     const accountId = 'source-fleet-account';
     const serverIdentityId = 'srv_source_fleet';
-    const pluginId = options.channels ? CHANNELS_MANIFEST.id : 'acme.triage';
+    const pluginId = options.channels ? CHANNELS_MANIFEST.id : options.reviewTask ? TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 : 'acme.triage';
     const pluginVersion = options.channels ? CHANNELS_MANIFEST.version : '1.0.0';
     const channelUiEntries = options.channels
         ? projectPluginPortableUiDeclarationsV1(PluginManifestV2Schema.parse(CHANNELS_MANIFEST)) : {};
@@ -414,7 +416,12 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
             projection: rememberProjection(machine.id, PluginProjectionV2Schema.parse({ v: 2, generation: 7,
                 installedPackagesById: { [pluginId]: { id: pluginId, displayName: options.channels ? CHANNELS_MANIFEST.displayName : `Triage on ${machine.id}`, version: pluginVersion,
                     enabled: true, source: { kind: 'localPath', locator: `/src/${machine.id}/triage` }, occurrenceId: widget.occurrenceId, executionOrigin, sourceCustody } },
-                ...(options.writeAction ? { actionsById: { [`${pluginId}/write`]: { id: 'write', pluginId, title: 'Write',
+                ...(options.reviewTask ? { actionsById: { [`${pluginId}/tasks/open-create-v1`]: {
+                    id: 'tasks/open-create-v1', pluginId, title: 'Create task', executionOrigin, occurrenceId: widget.occurrenceId,
+                    execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'activate' },
+                        platforms: ['web', 'ios', 'android'] },
+                    scopes: ['global', 'session', 'message'], surfaces: ['ui'], dangerLevel: 'safe', available: true,
+                } } } : options.writeAction ? { actionsById: { [`${pluginId}/write`]: { id: 'write', pluginId, title: 'Write',
                     executionOrigin, occurrenceId: widget.occurrenceId, execution: { target: 'daemon' },
                     scopes: ['global'], surfaces: ['ui'], dangerLevel: 'writesRemote', confirmation: { title: 'Review write' }, available: true } } } : {}),
                 familiesById: options.channels ? { pluginUi: { family: 'pluginUi', entriesById: Object.fromEntries(
@@ -541,8 +548,9 @@ it('discovers a Machine-only source from the presented Connect target with no Ac
     }
 });
 
-it.each(['surface', 'Action control'] as const)('asks only the presented %s origin for packages and UI in a cold 20-Machine source fleet', async presentation => {
-    const { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId } = await serveSourceFleet({ writeAction: true });
+it.each(['surface', 'Action control', 'Review New Task control'] as const)('asks only the presented %s origin for packages and UI in a cold 20-Machine source fleet', async presentation => {
+    const reviewTask = presentation === 'Review New Task control';
+    const { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId } = await serveSourceFleet({ writeAction: !reviewTask, reviewTask });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
     const controlLifetime = new AbortController();
     try {
@@ -575,14 +583,20 @@ it.each(['surface', 'Action control'] as const)('asks only the presented %s orig
         }, { actionControlSubscription: { retain() {}, publish() {} } });
         tree = await renderWithAppProviders(<AppShellPluginUiProjectionProvider>
             {presentation === 'Action control' ? <MountedPluginActionControls controls={controls} />
+                : reviewTask ? <ReviewFindingRow taskScope={lifetime.scope} onCreateTask={async () => {}} density="page" rowId="saved-finding"
+                    finding={{ id: 'finding', title: 'A defect', summary: 'A finding', category: 'correctness', severity: 'high' }}
+                    attribution={null} reviewers={[]} original={null} divided={false} decision={null}
+                    decisionDisabled={false} decisionNote={null} onDecide={() => {}} followUp={null} threadEntries={[]}
+                    pendingQuestion={null} expanded onToggleExpanded={() => {}} askContext={null} onAsk={async () => false} />
                 : <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} />}
         </AppShellPluginUiProjectionProvider>);
+        const actionId = `${pluginId}/${reviewTask ? 'tasks/open-create-v1' : 'write'}`;
         // Account descriptors rank placement intent before exact runtime admission.
         // Unopened alternative origins do not acquire Machine projections.
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             const projection = readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true });
-            expect(readPluginUiContributionOrigin(projection?.actionsById[`${pluginId}/write`]))
+            expect(readPluginUiContributionOrigin(projection?.actionsById[actionId]))
                 .toMatchObject({ phase: 'current', interactionEnabled: true });
         });
         await flushHookEffects({ cycles: 3 });

@@ -4,7 +4,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -27,6 +30,7 @@ import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/s
 import { REVIEW_SEVERITY_COLUMN_WIDTH_PX, ReviewSeverityLabel } from '@/components/sessions/reviews/findings/ReviewSeverity';
 import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type ReviewFindingDecision = 'accept' | 'reject' | 'defer';
 export const REVIEW_FINDING_DECISIONS: readonly ReviewFindingDecision[] = ['accept', 'reject', 'defer'];
@@ -71,6 +75,12 @@ export const ReviewFindingDecisionControl = React.memo(function ReviewFindingDec
     );
 });
 
+function ReviewFindingTaskProjectionDemand({ scope }: Readonly<{ scope: ServerAccountScope }>) {
+    // The selected-origin demand reads the active Home's Machine candidates.
+    const isActiveScope = useAppShellPluginUiProjection(value => areServerAccountScopesEqual(value.accountLifetime?.scope, scope));
+    return isActiveScope ? <PluginSurfaceProjectionDemand pluginId={TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1} accountScope={scope} /> : null;
+}
+
 /** One finding: severity, what and where, what changed after a question, your decision, its thread. */
 export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Readonly<{
     /** The row's id within its review: what its controls and callbacks are keyed by. */
@@ -107,6 +117,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     onAsk: (rowId: string, messageMarkdown: string) => Promise<boolean>;
     /** Opens the existing Tasks draft for this saved canonical finding. */
     onCreateTask?: (rowId: string) => Promise<void>;
+    taskScope?: ServerAccountScope | null;
     /** The finding's standing words from their owners (round status, already there), after who found it. */
     facts?: readonly string[];
 }>) {
@@ -129,8 +140,11 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
         </View>
     ) : null;
     const taskControl = props.onCreateTask ? (
-        <TextLinkButton testID={`review-finding-task:${rowId}`} label={t('runPage.review.createTask')}
-            size="meta" onPress={() => props.onCreateTask?.(rowId)} />
+        <>
+            {props.taskScope ? <ReviewFindingTaskProjectionDemand scope={props.taskScope} /> : null}
+            <TextLinkButton testID={`review-finding-task:${rowId}`} label={t('runPage.review.createTask')}
+                size="meta" onPress={() => props.onCreateTask?.(rowId)} />
+        </>
     ) : null;
 
     if (props.density === 'page') {

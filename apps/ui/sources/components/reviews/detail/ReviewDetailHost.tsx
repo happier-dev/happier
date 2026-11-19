@@ -355,7 +355,7 @@ export function ReviewDetailHost(props: Readonly<{
                   decision={canEdit ? row.decision : null} decisionDisabled={!row.decidable} decisionNote={null}
                   onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={null}
                   expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
-                  onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined}
+                  onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
                   facts={reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound,
                     scopeAttribution: commentById.get(row.rowId)?.scopeAttribution })} /> : null;
               }} /> : null}

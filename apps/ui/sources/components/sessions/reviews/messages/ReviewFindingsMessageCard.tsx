@@ -432,6 +432,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                     askContext={row.askContext!}
                                     onAsk={model.onAsk}
                                     onCreateTask={canAct && row.taskOrigin ? model.onCreateTask : undefined}
+                                    taskScope={scope}
                                 />
                             );
                         })}
