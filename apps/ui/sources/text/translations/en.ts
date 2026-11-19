@@ -6197,6 +6197,8 @@ const enSettingsDesktop = {
     dockFloating: "Floating",
     notchOpenWindowFailed: "Couldn’t open a window for this Bot.",
     notchAllowOnce: "Allow once",
+    notchAlwaysAllowHere: "Always allow here",
+    notchAlwaysAllowEverywhere: "Always allow everywhere",
     notchAlwaysAllow: "Always allow",
     notchEditFile: "Edit a file",
     notchWriteFile: "Write a file",

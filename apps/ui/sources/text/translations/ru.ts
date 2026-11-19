@@ -5552,6 +5552,8 @@ export const ru: TranslationStructure = {
       dockFloating: "Свободно",
       notchOpenWindowFailed: "Не удалось открыть окно для этого бота.",
       notchAllowOnce: "Разрешить один раз",
+      notchAlwaysAllowHere: "Всегда разрешать здесь",
+      notchAlwaysAllowEverywhere: "Всегда разрешать везде",
       notchAlwaysAllow: "Всегда разрешать",
       notchEditFile: "Изменить файл",
       notchWriteFile: "Записать файл",

@@ -6150,6 +6150,8 @@ localTailscale: {
       dockFloating: "フローティング",
       notchOpenWindowFailed: "この Bot のウインドウを開けませんでした。",
       notchAllowOnce: "今回のみ許可",
+      notchAlwaysAllowHere: "ここでは常に許可",
+      notchAlwaysAllowEverywhere: "どこでも常に許可",
       notchAlwaysAllow: "常に許可",
       notchEditFile: "ファイルを編集",
       notchWriteFile: "ファイルを書き込む",

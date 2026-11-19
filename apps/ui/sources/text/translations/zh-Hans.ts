@@ -5562,6 +5562,8 @@ export const zhHans: TranslationStructure = {
       dockFloating: "浮动",
       notchOpenWindowFailed: "无法为此 Bot 打开窗口。",
       notchAllowOnce: "允许一次",
+      notchAlwaysAllowHere: "在此始终允许",
+      notchAlwaysAllowEverywhere: "在所有地方始终允许",
       notchAlwaysAllow: "始终允许",
       notchEditFile: "编辑文件",
       notchWriteFile: "写入文件",

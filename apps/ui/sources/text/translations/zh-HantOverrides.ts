@@ -4929,6 +4929,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 		            dockFloating: "浮動",
 		            notchOpenWindowFailed: "無法為此 Bot 開啟視窗。",
 		            notchAllowOnce: "允許一次",
+		            notchAlwaysAllowHere: "在此一律允許",
+		            notchAlwaysAllowEverywhere: "在所有地方一律允許",
 		            notchAlwaysAllow: "一律允許",
 		            notchEditFile: "編輯檔案",
 		            notchWriteFile: "寫入檔案",
