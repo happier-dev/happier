@@ -131,7 +131,8 @@ function createScmBackendRuntimeServices(
     return { readEnvironment: sessionProcessEnvironment, runCommand, runCommandStreaming: runCommand,
         get projectFilesSource() {
             const project = scmRpcOperationContextStorage.getStore()?.managedProject;
-            return project ? project.repository : readHostedSessionScope()?.projectFilesSource;
+            if (!project) return readHostedSessionScope()?.projectFilesSource;
+            return project.kind === 'recorded' ? project.repository : undefined;
         },
         get repositoryTransport() { return {
             requiresConnectedAccount: currentWorkspaceSource().kind === 'target',

@@ -44,6 +44,7 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import { configuration } from '@/configuration';
 import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
+import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
 import { isExecutionRunInRequesterAccountScope } from '@/agent/runtime/bridges/executionRun/requesterScope';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveScmHostingRepositoryAddress } from '@/scm/hostingProviders/resolveAddress';
@@ -935,6 +936,12 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
             }));
         }
         case 'scm.remote.push': {
+            if (scmRpcOperationContextStorage.getStore()?.managedProject?.kind === 'missing') {
+                const errorCode = SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED;
+                return { success: false, errorCode, outcome: {
+                    v: 1, kind: 'needs_input', errorCode, nextActions: [{ kind: 'connect_repository' }],
+                } } satisfies scm.ScmRemoteResponse;
+            }
             const request = params.input as scm.ScmRemoteRequest;
             return runMutation(async () => runScmRoute<scm.ScmRemoteRequest, scm.ScmRemoteResponse>({
                 request,

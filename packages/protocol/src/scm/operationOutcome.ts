@@ -32,7 +32,7 @@ export const ScmOperationReconciliationSchema = lazyZodSchema(() => z.discrimina
 export type ScmOperationReconciliation = z.infer<typeof ScmOperationReconciliationSchema>;
 
 export const ScmOperationNextActionSchema = lazyZodSchema(() => z.union([
-  z.strictObject({ kind: z.enum(['refresh', 'retry', 'resolve_conflicts', 'continue', 'skip', 'abort', 'reconcile_index', 'choose_dirty_policy', 'choose_reconcile', 'configure_upstream', 'authenticate']) }),
+  z.strictObject({ kind: z.enum(['refresh', 'retry', 'resolve_conflicts', 'continue', 'skip', 'abort', 'reconcile_index', 'choose_dirty_policy', 'choose_reconcile', 'configure_upstream', 'authenticate', 'connect_repository']) }),
   z.strictObject({ kind: z.literal('open_url'), url: z.string().check(z.minLength(1)) }),
 ]));
 export type ScmOperationNextAction = z.infer<typeof ScmOperationNextActionSchema>;

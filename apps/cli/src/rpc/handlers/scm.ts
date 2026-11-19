@@ -99,7 +99,7 @@ import { projectScmStatusSnapshot } from './scmStatusSnapshotProjection';
 import { ScmHistoryEntriesRequestSchema, type ScmHistoryEntriesRequest, type ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
+import { scmRpcOperationContextStorage, type ManagedProjectRepository } from '@/scm/rpc/operationContext';
 
 import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
@@ -132,7 +132,6 @@ import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceD
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 import { runWithScmAccountScope } from '@/scm/accountScope';
-import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export function registerScmHandlers(
@@ -150,7 +149,7 @@ export function registerScmHandlers(
         selectWorkspaceSource?: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource | Promise<WorkspaceSource>;
         admitWorkspaceSource?: FilesystemEffectAdmission['rpc'];
         readManagedProjectRepository?: (workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>, context: RpcHandlerContext)
-            => Promise<ProjectSourceRepositorySelectorV1 | undefined>;
+            => Promise<ManagedProjectRepository>;
         /** The filesystem admission's requester decision, shared so SCM runs where that person may run. */
         resolveRequester?: (context: RpcHandlerContext) => Promise<FilesystemEffectRequester>;
         /** The member execution owner (as bash, Project Open and Sync use it). */
@@ -311,8 +310,8 @@ export function registerScmHandlers(
                     const failure = await deps.admitWorkspaceSource(context, selected);
                     if (failure) return refused(failure.errorCode);
                 }
-                const managedProject = managed && handledPush
-                    ? { repository: context ? await deps?.readManagedProjectRepository?.(managed.target, context) : undefined }
+                const managedProject: ManagedProjectRepository | undefined = managed && handledPush
+                    ? (context ? await deps?.readManagedProjectRepository?.(managed.target, context) : undefined) ?? { kind: 'unavailable' }
                     : undefined;
                 return runWithWorkspaceSourceDemand(selected, () => {
                     const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });

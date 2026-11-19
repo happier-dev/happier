@@ -2211,16 +2211,17 @@ export class ApiMachineClient {
             resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
             readManagedProjectRepository: async (workspace, ingress) => {
                 const accountId = ingress.machineAdmission?.actorAccountId;
-                if (!accountId) return undefined;
+                if (!accountId) return { kind: 'unavailable' };
                 const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, accountId);
-                if (!runtime) return undefined;
+                if (!runtime) return { kind: 'unavailable' };
                 const accepted = await this.readAcceptedManagedWorkspaceRef(runtime, workspace, ingress.signal, 'project').catch(() => null);
-                if (!accepted) return undefined;
+                if (!accepted) return { kind: 'unavailable' };
                 const { projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
                 const { resolveProjectContextSourceV1 } = await import('@happier-dev/protocol/projects/projectListProjectionV1');
                 const source = resolveProjectContextSourceV1({ projectRef: projectWorkspaceRefV1(accepted.ref),
                     workspaceRefs: accepted.workspaceRefs, organizationPresent: false });
-                if (source.kind !== 'source') return undefined;
+                if (source.kind === 'personal') return { kind: 'missing' };
+                if (source.kind !== 'source') return { kind: 'unavailable' };
                 const { createCliProjectSourceActionDeps } = await import('@/session/actions/projectSourceActionDeps');
                 const projectSources = createCliProjectSourceActionDeps({ serverHttpBaseUrl: runtime.serverHttpBaseUrl,
                     admitAccount: async serverId => serverId === runtime.serverId && await runtime.isCurrent() ? null
@@ -2229,7 +2230,9 @@ export class ApiMachineClient {
                 });
                 const result = await projectSources.projectSourcesRead!({ serverId: runtime.serverId, sourceId: source.sourceId },
                     { authority: ingress.callerAuthority, signal: ingress.signal });
-                return result.ok ? result.source.repository : undefined;
+                if (!result.ok) return { kind: 'unavailable' };
+                const repository = result.source.repository;
+                return repository ? { kind: 'recorded', repository } : { kind: 'missing' };
             },
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,

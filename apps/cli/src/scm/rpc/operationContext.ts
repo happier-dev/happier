@@ -4,11 +4,14 @@ import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/pr
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
+export type ManagedProjectRepository = Readonly<{ kind: 'recorded'; repository: ProjectSourceRepositorySelectorV1 }>
+  | Readonly<{ kind: 'missing' | 'unavailable' }>;
+
 export const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
   context: RpcHandlerContext;
   workingDirectory: string;
   accessPolicy: FilesystemAccessPolicy;
-  managedProject?: Readonly<{ repository?: ProjectSourceRepositorySelectorV1 }>;
+  managedProject?: ManagedProjectRepository;
   workAdmissions?: ReadonlyMap<string, ScmWorkEvidenceAdmission['admissions'][number] | null>;
 }>>();
 

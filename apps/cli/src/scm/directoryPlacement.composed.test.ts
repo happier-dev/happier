@@ -64,9 +64,11 @@ it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
             const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
                 resolveWorkspaceTarget: resolveSessionTargetWorkspace });
             const handlers = new Map<string, RpcHandler>();
-            let recordedSource = source.repository;
+            const repository = source.repository!;
+            let repositoryRead: 'recorded' | 'missing' | 'unavailable' = 'recorded';
             const deps = { registry, machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource,
-                admitWorkspaceSource: admission.rpc, readManagedProjectRepository: async () => recordedSource };
+                admitWorkspaceSource: admission.rpc, readManagedProjectRepository: async () => repositoryRead === 'recorded'
+                    ? { kind: 'recorded' as const, repository } : { kind: repositoryRead } };
             registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, rootPath, deps);
             const context: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
                 machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'controller',
@@ -75,8 +77,12 @@ it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
                 target: workspace, input: { cwd: rootPath, remote: 'origin', branch: 'main', outcomeVersion: 1 } }, context);
             const changed = await push();
             expect(changed, JSON.stringify(changed)).toMatchObject({ success: false, errorCode: 'SCM_SOURCE_CHANGED' });
-            recordedSource = undefined;
-            await expect(push()).resolves.toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
+            repositoryRead = 'missing';
+            await expect(push()).resolves.toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED',
+                outcome: { v: 1, kind: 'needs_input', nextActions: [{ kind: 'connect_repository' }] } });
+            repositoryRead = 'unavailable';
+            await expect(push()).resolves.toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED',
+                outcome: { v: 1, kind: 'needs_input', nextActions: [{ kind: 'authenticate' }] } });
         } finally {
             lifetime.abort();
             await Promise.all(holderExits);
