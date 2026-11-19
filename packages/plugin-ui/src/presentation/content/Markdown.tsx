@@ -14,6 +14,8 @@ export type MarkdownInlineReference = Readonly<{
   background: string;
   severity?: ReviewFinding['severity'];
   glyph?: HappierIconName;
+  /** An Agent the reference names (an `@Session` chip's target): its mark leads in the glyph's ink, else `glyph`. */
+  agentId?: string;
   /** Resolved by the caller; Markdown never fetches a reference thumbnail. */
   thumbnail?: HappierRenderableImageSource;
 }>;

@@ -42,6 +42,11 @@ export type InlineMessageReference = Readonly<{
     glyph: NonNullable<MarkdownInlineReference['glyph']>;
     path?: string;
     sessionId?: string;
+    /**
+     * The Agent mark a reference leads with when no live Session identity supplies one (a native
+     * child's agent is its parent's provider). A `sessionId` target's live Agent wins.
+     */
+    agentId?: string;
     attachmentId?: string;
     mediaId?: string;
     imageNumber?: number;

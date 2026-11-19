@@ -125,6 +125,8 @@ import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLo
 import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 
+const NO_AGENT_INLINE_PICTURES: ReadonlyArray<Readonly<{ path: string; numberKey: string }>> = Object.freeze([]);
+
 const TRANSCRIPT_SELECTION_CHECKBOX_ANCHOR_TOP = 0;
 // The jump-landing ring inherits the radius of the element it paints, so each
 // archetype hands its own corner radius to the shared attention surface.
@@ -1606,6 +1608,14 @@ function AgentTextBlock(props: {
     enabled: messageDisplay.text !== null && !shouldRenderStreamingPlain,
   });
   const structuredReferencesDeferred = structuredReferenceProjectionDeferred.row;
+  // An agent's own `@Session` references draw as the same inline chips as a user's.
+  const { inlineReferences: agentInlineReferences } = useMessageInlineReferences({
+    projection: structuredReferenceProjectionDeferred,
+    pictures: NO_AGENT_INLINE_PICTURES,
+    serverId: props.serverId,
+    openPath: handleOpenAgentSessionMediaPath,
+    surface: 'agent',
+  });
   const agentSessionMediaMeta = React.useMemo(() => readTranscriptSessionMediaMeta(props.message.meta), [props.message.meta]);
 
   // L7: an interactive transcript (one that can navigate) offers Second opinion and Discuss… on a committed answer.
@@ -1756,6 +1766,7 @@ function AgentTextBlock(props: {
                     selectable={true}
                     profile="assistant"
                     textStyle={styles.transcriptMarkdownText}
+                    inlineReferences={agentInlineReferences}
                   />
                 </PeerMessageRow>
               ) : shouldRenderStreamingMarkdown ? (
@@ -1797,6 +1808,7 @@ function AgentTextBlock(props: {
                       profile={props.message.isThinking ? 'thinking' : 'assistant'}
                       textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
                       staticRenderPlaceholderEnabled={staticRenderPlaceholderEnabled}
+                      inlineReferences={agentInlineReferences}
                   />
               )
             )

@@ -3,6 +3,7 @@ import { parseMentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRe
 import type { IconName } from '@/components/ui/icons/Icon';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
+import { resolveAgentIconSvgDataUri } from '@/agents/registry/AgentIcon';
 
 /**
  * The glyph a reference chip leads with, decided once for the composer and the transcript.
@@ -36,4 +37,17 @@ export function resolveReferenceChipIconName(
       // A caller's own citation (a plugin's Markdown scheme) leads with a glyph only when it names one.
       return input.glyph ? resolvePluginUiIconName(input.glyph) : null;
   }
+}
+
+/**
+ * A Session chip leads with its Agent's own mark: `url(...)` for the chip's glyph mask, so the mark
+ * takes the chip's glyph ink like every other lead (no brand colour, no tile). Null when the Agent
+ * has no SVG mark; the chip then keeps its Session glyph.
+ */
+export function readReferenceChipAgentMarkCssUrl(
+  agentId: string,
+  theme: Parameters<typeof resolveAgentIconSvgDataUri>[1],
+): string | null {
+  const uri = resolveAgentIconSvgDataUri(agentId, theme, 'black');
+  return uri ? `url("${uri}")` : null;
 }

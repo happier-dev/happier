@@ -425,30 +425,42 @@ export function useSessionReferenceTarget(
   sessionId: string,
   serverId?: string | null,
 ): SessionReferenceTarget {
+  const normalizedServerId = normalizeTrimmedString(serverId);
+  const activeServerId = useActiveServerSnapshot(!normalizedServerId).serverId;
+  return getStorage()(
+    useShallow((state) => selectSessionReferenceTarget(state, sessionId, serverId, activeServerId)),
+  );
+}
+
+/**
+ * {@link useSessionReferenceTarget}'s projection, for a caller that holds several references in one
+ * subscription (a message's inline `@Session` chips). `activeServerId` qualifies an unqualified address.
+ */
+export function selectSessionReferenceTarget(
+  state: StorageState,
+  sessionId: string,
+  serverId: string | null | undefined,
+  activeServerId: string | null | undefined,
+): SessionReferenceTarget {
   const normalizedSessionId = normalizeSessionId(sessionId);
   const normalizedServerId = normalizeTrimmedString(serverId);
-  const activeServerId = normalizeTrimmedString(useActiveServerSnapshot(!normalizedServerId).serverId);
-  const lookupServerId = normalizedServerId || activeServerId;
-  return getStorage()(
-    useShallow((state) => {
-      const exactRow = lookupServerId && normalizedSessionId
-        ? findSessionListLookupSession(state, {
-            serverId: lookupServerId,
-            sessionId: normalizedSessionId,
-          })?.session ?? null
-        : null;
-      return {
-        // A current exact row is positive evidence that this Home's target exists,
-        // even if the active-Home compatibility deletion map holds the same bare id.
-        deleted: exactRow
-          ? false
-          : isSessionRetiredForServer(state.deletedSessionIds, normalizedSessionId, lookupServerId),
-        metadata: exactRow?.metadata
-          ?? (!normalizedServerId ? state.sessions[normalizedSessionId]?.metadata : null)
-          ?? null,
-      };
-    }),
-  );
+  const lookupServerId = normalizedServerId || normalizeTrimmedString(activeServerId);
+  const exactRow = lookupServerId && normalizedSessionId
+    ? findSessionListLookupSession(state, {
+        serverId: lookupServerId,
+        sessionId: normalizedSessionId,
+      })?.session ?? null
+    : null;
+  return {
+    // A current exact row is positive evidence that this Home's target exists,
+    // even if the active-Home compatibility deletion map holds the same bare id.
+    deleted: exactRow
+      ? false
+      : isSessionRetiredForServer(state.deletedSessionIds, normalizedSessionId, lookupServerId),
+    metadata: exactRow?.metadata
+      ?? (!normalizedServerId ? state.sessions[normalizedSessionId]?.metadata : null)
+      ?? null,
+  };
 }
 
 type SessionForkSupportSourceCacheEntry = Readonly<{

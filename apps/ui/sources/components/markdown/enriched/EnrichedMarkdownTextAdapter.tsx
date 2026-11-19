@@ -5,7 +5,7 @@ import { INLINE_REFERENCE_HREF_PREFIX_V1 } from '@happier-dev/protocol/runtime/i
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useIconSvgCssUrlReader } from '@/components/ui/icons/iconSvgMarkup';
-import { resolveReferenceChipIconName } from '@/components/ui/referenceChip/referenceChipIcon';
+import { readReferenceChipAgentMarkCssUrl, resolveReferenceChipIconName } from '@/components/ui/referenceChip/referenceChipIcon';
 import { referenceChipLinkRule, type ReferenceChipInks } from '@/components/ui/referenceChip/referenceChipStyles';
 import { nativeReferenceChipColor, nativeReferenceChipGlyph } from '@/components/ui/referenceChip/nativeReferenceChip';
 import { NATIVE_REFERENCE_CHIP_ANATOMY } from '@/components/ui/forms/multiTextInputTypography';
@@ -152,6 +152,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
  */
 function useWebInlineReferenceStyle(scope: string, references: ReadonlyMap<string, MarkdownInlineReference>, ink: string, inks: ReferenceChipInks): void {
     const readIconSvgCssUrl = useIconSvgCssUrlReader(Platform.OS === 'web' && references.size > 0);
+    const { theme } = useUnistyles();
     const css = React.useMemo(() => [...(Platform.OS === 'web' ? references.entries() : [])].map(([href, reference]) => {
         const selector = `[data-happier-md-refs="${scope}"] a[href="${href.replace(/["\\]/g, (char) => `\\${char}`)}"]`;
         if (!reference.severity) {
@@ -161,7 +162,8 @@ function useWebInlineReferenceStyle(scope: string, references: ReadonlyMap<strin
                 background: reference.background,
                 inks,
                 thumbnailUri: reference.thumbnail?.uri ?? null,
-                glyphUrl: icon ? readIconSvgCssUrl(icon) : null,
+                glyphUrl: (reference.agentId ? readReferenceChipAgentMarkCssUrl(reference.agentId, theme) : null)
+                    ?? (icon ? readIconSvgCssUrl(icon) : null),
             });
         }
         const rule = `${selector} {`
@@ -174,7 +176,7 @@ function useWebInlineReferenceStyle(scope: string, references: ReadonlyMap<strin
             ? `${rule}\n${selector}::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 4px;`
                 + ` margin-right: 5px; vertical-align: 1px; background-color: ${reference.foreground}; }`
             : rule;
-    }).join('\n'), [ink, inks, references, scope, readIconSvgCssUrl]);
+    }).join('\n'), [ink, inks, references, scope, readIconSvgCssUrl, theme]);
     React.useLayoutEffect(() => {
         if (Platform.OS !== 'web' || typeof document === 'undefined' || !css) return undefined;
         const style = document.createElement('style');
