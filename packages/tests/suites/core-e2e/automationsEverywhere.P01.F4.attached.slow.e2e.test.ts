@@ -9,6 +9,7 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema, AutomationActionAdmitResultV1Schema } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { WorkflowRunListResultV1Schema, WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { AutomationDefinitionDetailSchema, buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { fetchJson } from '../../src/testkit/http';
@@ -59,8 +60,11 @@ describe('Automations everywhere: selected attached summaries', () => {
     const ownerId = readAccountIdFromToken(owner.credentials.token);
     const readerId = readAccountIdFromToken(reader.credentials.token);
     const subject = { kind: 'machine', serverId: fixture.serverId, machineId: machine.target.machineId };
-    expect(await owner.execute('machines.access.grant.set', { ...machine.target,
-      principal: { kind: 'account', accountId: readerId }, level: 'view' })).toMatchObject({ ok: true });
+    const machineGrant = await owner.executeAsPerson('machines.access.grant.set', { ...machine.target,
+      principal: { kind: 'account', accountId: readerId }, level: 'view' });
+    expect(machineGrant, JSON.stringify(machineGrant)).toMatchObject({
+      ok: true, result: { kind: 'saved' },
+    });
     const privateTitle = 'Never disclose this private workflow title';
     const privateInstruction = 'Private author instruction, never a summary field';
     const visible: string[] = [];
@@ -75,16 +79,35 @@ describe('Automations everywhere: selected attached summaries', () => {
           blocks: [{ kind: 'step', id: 'check', document: { text: privateInstruction,
             references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
         } })).toMatchObject({ ok: true });
-      const linked = await owner.execute('workflow.trigger.add', { workflow: workflowId,
+      const linked = await owner.executeReviewed('workflow.trigger.add', { workflow: workflowId,
         project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
         trigger: { kind: 'action', enabled: index !== 1, phase: 'after', actionIds: ['machines.command.run'],
           ...(index === 5 ? {} : { subject }) } });
       expect(linked.ok, JSON.stringify(linked)).toBe(true);
       if (!linked.ok) throw new Error(`Selected trigger creation refused (${linked.errorCode})`);
       const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
+      if (index === 0) {
+        const storedResponse = await fetchJson<unknown>(`${fixture.server.baseUrl}/v3/automations/${saved.set.automationId}`, {
+          headers: { Authorization: `Bearer ${owner.credentials.token}`,
+            ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
+        });
+        expect(storedResponse.status).toBe(200);
+        const stored = AutomationDefinitionDetailSchema.parse(storedResponse.data);
+        const trigger = stored.triggers.find(row => row.id === saved.triggerId);
+        expect(trigger?.kind).toBe('action');
+        if (trigger?.kind !== 'action' || 'consentFor' in trigger) throw new Error('Authored Action trigger unavailable');
+        expect({ workflowDefinitionId: stored.workflowDefinitionId, reachesOthers: trigger.reachesOthers,
+          subjectKind: trigger.subjectKind, subjectKey: trigger.subjectKey }).toEqual({
+          workflowDefinitionId: workflowId, reachesOthers: true, subjectKind: subject.kind,
+          subjectKey: automationSubjectKeyV1(subject),
+        });
+      }
       if (index < 3) {
-        expect(await owner.execute('artifact.access.grants.set', { artifactId: workflowId,
-          principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' })).toMatchObject({ ok: true });
+        const workflowGrant = await owner.executeAsPerson('artifact.access.grants.set', { artifactId: workflowId,
+          principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' });
+        expect(workflowGrant, JSON.stringify(workflowGrant)).toMatchObject({
+          ok: true, result: { artifactId: workflowId, changed: true },
+        });
         // Existing Artifact read prepares the real E2EE recipient envelope.
         expect(await owner.execute('workflow.definition.get', { definitionId: workflowId })).toMatchObject({ ok: true });
         visible.push(saved.triggerId!);
