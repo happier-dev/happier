@@ -220,6 +220,7 @@ mod tests {
                     surface: DesktopActivityOverlaySurface::Collapsed,
                     camera_center: None,
                     camera_offset: 0.,
+                    paint_insets: Default::default(),
                 },
                 None,
                 Some(Point {
@@ -258,6 +259,7 @@ mod tests {
             surface: super::super::DesktopActivityOverlaySurface::Collapsed,
             camera_center: None,
             camera_offset: 0.,
+            paint_insets: Default::default(),
         }
     }
 

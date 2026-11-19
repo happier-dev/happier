@@ -20,6 +20,7 @@ import { nonScrollingClipStyle } from '@/components/ui/surfaces/nonScrollingClip
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { buildGlassCastShadow, resolveBoxShadowPaintInsets } from '@/shadowElevation';
 
 import type { DesktopActivityOverlayFrame } from '../../runtime/desktopActivityOverlayBridge';
 import {
@@ -51,6 +52,8 @@ export type NotchPresentFrame = Readonly<{
   settled: boolean;
   /** Where the native material stands while the island rests. */
   material: ReturnType<typeof resolveNotchMaterialRect>;
+  /** How far the island's cast shadow paints past it; native frames the window to hold it, input stays the island. */
+  paintInsets: ReturnType<typeof resolveBoxShadowPaintInsets>;
 }>;
 
 export type NotchStandardLayout = Readonly<{
@@ -97,6 +100,10 @@ type ShoulderPlacement = Readonly<{
 }>;
 
 const SHOULDER_UNIT_PATH = buildNotchShoulderPath(1);
+
+/** The body casts `glass.castShadow`; its reach is read from that same recipe (it is one geometry in both themes). */
+const CAST_SHADOW_PAINT_INSETS = resolveBoxShadowPaintInsets(buildGlassCastShadow(true));
+const NO_PAINT_INSETS = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 
 /**
  * The island's plane paint (lab R6): the body fills with it, and every mark standing on the plane cuts its
@@ -228,15 +235,17 @@ export function NotchShape(
   };
 
   const { onPresent } = props;
+  const castsShadow = !isNotchEdgeDock(props.dock) || props.form === 'open';
+  const paintInsets = castsShadow ? CAST_SHADOW_PAINT_INSETS : NO_PAINT_INSETS;
   const present = React.useCallback(
     // Nothing is framed until the content has been measured: native needs a real extent.
     (settled: boolean) =>
       body.width > 0 && body.height > 0
-        ? onPresent({ extent, cameraOffset, settled, material: resolveNotchMaterialRect(props.dock, body, extent, shoulder, corner) })
+        ? onPresent({ extent, cameraOffset, settled, material: resolveNotchMaterialRect(props.dock, body, extent, shoulder, corner), paintInsets })
         : undefined,
     // The frame is read when motion asks for it, never on its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onPresent, extent.width, extent.height, body.width, body.height, cameraOffset, props.dock, shoulder, corner],
+    [onPresent, extent.width, extent.height, body.width, body.height, cameraOffset, props.dock, shoulder, corner, paintInsets],
   );
 
   const motion = useNotchMotion({
@@ -361,7 +370,7 @@ export function NotchShape(
   const openLayerStyle = useAnimatedStyle(() => ({
     opacity: motion.openOpacity.value,
   }));
-  const castShadow = floating || props.form === 'open';
+  const castShadow = castsShadow;
   const openMaxHeight = Math.max(0, windowHeight - statusRowOffset - 2 * padY * openShoulder);
 
   return (

@@ -300,6 +300,7 @@ pub(super) fn frame_input(
         camera_center:selected.display_context.as_ref().filter(|d|d.has_physical_notch && d.is_builtin_display)
             .map(|_|selected.rect.x+selected.rect.width/2.),
         camera_offset:present.extent.camera_offset,
+        paint_insets:present.extent.paint_insets,
     }
 }
 
@@ -498,6 +499,7 @@ mod tests {
                 height: 0.,
                 camera_offset: 0.,
                 screen_bounds: None,
+                paint_insets: Default::default(),
             },
             settled: true,
         };

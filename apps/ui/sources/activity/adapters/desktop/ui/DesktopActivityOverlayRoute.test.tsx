@@ -11,6 +11,8 @@ import type {
     DesktopActivityOverlayPresent,
     DesktopActivityOverlayWindowStatePayload,
 } from '../runtime/desktopActivityOverlayBridge';
+import { buildGlassCastShadow, resolveBoxShadowPaintInsets } from '@/shadowElevation';
+
 import { DesktopActivityOverlayRoute } from './DesktopActivityOverlayRoute';
 import { resolveDesktopActivityOverlayCardActionInstanceTestID } from './shared/desktopActivityOverlaySelectors.mjs';
 
@@ -382,6 +384,18 @@ describe('DesktopActivityOverlayRoute', () => {
             actionIdentifier: 'overlay-set-expanded',
             data: { expanded: true },
         });
+    });
+
+    it('tells native how far the open island\'s cast shadow reaches, from the shadow it draws', async () => {
+        // A window cut at the island clipped the shadow into a hard grey band (owner 11-19).
+        const screen = await renderRoute(createWindowState());
+        const lastInsets = () => presentDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]?.extent?.paintInsets;
+        expect(lastInsets() ?? { top: 0, right: 0, bottom: 0, left: 0 }).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+        await act(async () => { screen.pressByTestId('desktop-activity-overlay-collapsed'); });
+        await flushHookEffects();
+        expect(notchForm(screen)).toBe('open');
+        expect(lastInsets()).toEqual(resolveBoxShadowPaintInsets(buildGlassCastShadow(true)));
+        expect(lastInsets()).toEqual({ top: 24, right: 28, bottom: 32, left: 28 });
     });
 
     it('balances detail demand once for Action opens, native closes and repeated presentation requests', async () => {

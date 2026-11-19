@@ -26,6 +26,7 @@ pub fn desktop_activity_overlay_move<R: Runtime>(
             height: 0.,
             camera_offset: 0.,
             screen_bounds: None,
+            paint_insets: Default::default(),
         });
         let present = guard
             .present

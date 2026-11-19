@@ -312,6 +312,7 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                 width: frame.extent.width,
                 height: frame.extent.height,
                 cameraOffset: frame.cameraOffset,
+                paintInsets: frame.paintInsets,
                 ...(bounds ? { screenBounds: { x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h } } : {}),
             },
             settled,

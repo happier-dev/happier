@@ -262,6 +262,23 @@ export function buildGlassCastShadow(dark: boolean): string {
 }
 
 /**
+ * How far a single CSS box shadow paints past its box on each side: blur plus spread, shifted by the offset.
+ * A window or clip that holds the box must reach this far, or the shadow is cut into a hard edge (the desktop
+ * notch's window, owner 11-19). Reads the same recipe the surface draws, so the two cannot drift.
+ */
+export function resolveBoxShadowPaintInsets(shadow: string): Readonly<{ top: number; right: number; bottom: number; left: number }> {
+    const lengths = shadow.replace(/rgba?\([^)]*\)|#[0-9a-f]+/gi, ' ').match(/-?\d+(?:\.\d+)?(?=px|\b)/g)?.map(Number) ?? [];
+    const [x = 0, y = 0, blur = 0, spread = 0] = lengths;
+    const reach = Math.max(0, blur + spread);
+    return {
+        top: Math.max(0, reach - y),
+        right: Math.max(0, reach + x),
+        bottom: Math.max(0, reach + y),
+        left: Math.max(0, reach - x),
+    };
+}
+
+/**
  * Cast shadow style for a floating glass surface (`GlassPanel`).
  *
  * iOS keeps the soft native `shadow*` props (the tuned, device-validated look).

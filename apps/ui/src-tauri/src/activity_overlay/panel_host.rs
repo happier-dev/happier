@@ -223,6 +223,7 @@ mod tests {
                             surface: super::super::DesktopActivityOverlaySurface::Expanded,
                             camera_center: camera.then_some(-360.),
                             camera_offset: 18.,
+                            paint_insets: Default::default(),
                         };
                         let frame = frame_plan(input);
                         let bounds_top = if dock == Dock::Top { top } else { visible.y };

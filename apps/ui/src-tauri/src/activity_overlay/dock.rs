@@ -12,6 +12,17 @@ pub(crate) enum Dock {
     Floating,
 }
 
+/// How far the island's paint reaches past it (its cast shadow), as the renderer measures it from the
+/// shadow it draws. The window frame makes room for it; input stays the island.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PaintInsets {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FrameInput {
     pub dock: Dock,
@@ -24,6 +35,7 @@ pub(crate) struct FrameInput {
     pub surface: DesktopActivityOverlaySurface,
     pub camera_center: Option<f64>,
     pub camera_offset: f64,
+    pub paint_insets: PaintInsets,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -182,8 +194,9 @@ pub(crate) fn frame_plan(input: FrameInput) -> Frame {
         width,
         height,
     };
-    // Layer bounds extend the window, never the docked island or its anchor.
-    let rect = envelope(island, input.screen_bounds, false);
+    // Layer bounds extend the window, never the docked island or its anchor. So does the island's cast
+    // shadow, on every side free of the screen edge: input stays the island (`island_rect`).
+    let rect = envelope(paint_rect(island, input.paint_insets, input.dock), input.screen_bounds, false);
     let island_center = match input.dock {
         Dock::Top => Point {
             x: anchor.x,
@@ -211,6 +224,18 @@ pub(crate) fn frame_plan(input: FrameInput) -> Frame {
             island_rect: Rect { x: island.x - rect.x, y: island.y - rect.y, ..island },
             screen_origin: None,
         },
+    }
+}
+
+fn paint_rect(island: Rect, insets: PaintInsets, dock: Dock) -> Rect {
+    let left = if dock == Dock::Left { 0. } else { insets.left };
+    let right = if dock == Dock::Right { 0. } else { insets.right };
+    let top = if dock == Dock::Top { 0. } else { insets.top };
+    Rect {
+        x: island.x - left,
+        y: island.y - top,
+        width: island.width + left + right,
+        height: island.height + top + insets.bottom,
     }
 }
 
@@ -251,6 +276,35 @@ mod tests {
             surface: DesktopActivityOverlaySurface::Expanded,
             camera_center: None,
             camera_offset: 0.,
+            paint_insets: PaintInsets::default(),
+        }
+    }
+    #[test]
+    fn the_window_makes_room_for_the_cast_shadow_while_input_stays_the_island() {
+        // The island casts `0 4px 28px` (top 24, right 28, bottom 32, left 28). A window cut at the island
+        // clipped that shadow into a hard grey rectangle (owner 11-19).
+        let shadow = PaintInsets { top: 24., right: 28., bottom: 32., left: 28. };
+        for dock in [Dock::Left, Dock::Right, Dock::Top, Dock::Floating] {
+            let bare = frame_plan(FrameInput { surface: DesktopActivityOverlaySurface::Pinned, ..input(dock) });
+            let lit = frame_plan(FrameInput { surface: DesktopActivityOverlaySurface::Pinned, paint_insets: shadow, ..input(dock) });
+            let island = Rect { x: bare.rect.x + bare.presentation.island_rect.x, y: bare.rect.y + bare.presentation.island_rect.y,
+                ..bare.presentation.island_rect };
+            // The island itself, and so the input rect, does not move or grow.
+            assert_eq!(lit.presentation.island_rect.width, island.width, "{dock:?}");
+            assert_eq!(lit.presentation.island_rect.height, island.height, "{dock:?}");
+            assert_eq!(lit.rect.x + lit.presentation.island_rect.x, island.x, "{dock:?}");
+            assert_eq!(lit.rect.y + lit.presentation.island_rect.y, island.y, "{dock:?}");
+            // The frame holds the shadow on every side free of the screen edge; the docked side stays flush.
+            let (left, right, top) = match dock {
+                Dock::Left => (0., shadow.right, shadow.top),
+                Dock::Right => (shadow.left, 0., shadow.top),
+                Dock::Top => (shadow.left, shadow.right, 0.),
+                Dock::Floating => (shadow.left, shadow.right, shadow.top),
+            };
+            assert!(lit.rect.x <= island.x - left, "{dock:?} left");
+            assert!(lit.rect.x + lit.rect.width >= island.x + island.width + right, "{dock:?} right");
+            assert!(lit.rect.y <= island.y - top, "{dock:?} top");
+            assert!(lit.rect.y + lit.rect.height >= island.y + island.height + shadow.bottom, "{dock:?} bottom");
         }
     }
     #[test]

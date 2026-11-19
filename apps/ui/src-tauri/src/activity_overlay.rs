@@ -198,6 +198,9 @@ pub struct DesktopActivityOverlayExtent {
     /// Additional measured layer bounds in logical screen coordinates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_bounds: Option<Rect>,
+    /// How far the island's cast shadow reaches past it; the window frame makes room for it.
+    #[serde(default)]
+    pub paint_insets: dock::PaintInsets,
 }
 
 #[cfg(desktop)]
@@ -504,6 +507,8 @@ pub fn desktop_activity_overlay_present<R: Runtime>(
     if !extent.width.is_finite() || !extent.height.is_finite() || !extent.camera_offset.is_finite()
         || extent.screen_bounds.is_some_and(|rect| !rect.x.is_finite() || !rect.y.is_finite()
             || !rect.width.is_finite() || !rect.height.is_finite() || rect.width <= 0. || rect.height <= 0.)
+        || [extent.paint_insets.top, extent.paint_insets.right, extent.paint_insets.bottom, extent.paint_insets.left]
+            .iter().any(|inset| !inset.is_finite() || *inset < 0.)
         || (payload.surface != DesktopActivityOverlaySurface::Hidden && (extent.width <= 0. || extent.height <= 0.)) {
         return Err("Desktop activity overlay extent must be finite and positive".to_string());
     }

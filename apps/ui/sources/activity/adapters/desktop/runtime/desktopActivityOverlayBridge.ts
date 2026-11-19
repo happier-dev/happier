@@ -29,6 +29,8 @@ export type DesktopActivityOverlayExtent = Readonly<{
     cameraOffset?: number;
     /** Additional layer bounds in logical screen coordinates (the Session window rect's units). */
     screenBounds?: DesktopActivityOverlayRect;
+    /** How far the island's cast shadow paints past it; native frames the window to hold it, never to take input. */
+    paintInsets?: Readonly<{ top: number; right: number; bottom: number; left: number }>;
 }>;
 export type DesktopActivityOverlayPresent = Readonly<{
     surface: NotchSurface;
