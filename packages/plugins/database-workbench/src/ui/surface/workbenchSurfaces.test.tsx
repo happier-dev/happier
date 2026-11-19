@@ -373,6 +373,29 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('names a staged row by its key in review, digits ungrouped as the table shows them', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'review-key', mountNonce: 'review-key' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: true }, overlays: true }),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor], true) },
+    });
+    try {
+      await settle(20);
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: '48212' })); });
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'Delete row' }));
+      await settle(10);
+      await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
+      await settle(10);
+      expect(await fixture.getByText('Delete row')).toBeTruthy();
+      expect(await fixture.queryByText('48,212')).toBeUndefined();
+      expect(await fixture.getByText('48212')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it('keeps reference navigation beside an editable text foreign-key cell', async () => {
     const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
     const fixture = await createPluginUiTestkit({

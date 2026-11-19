@@ -130,7 +130,8 @@ function RowDetail(
   const identity = props.row.identity;
   const label = identity
     ? identity.key
-        .map((cell) => presentCell(cell.value, translate).text)
+        // A key names its row: digits ungrouped, as the table shows it.
+        .map((cell) => presentCell(cell.value, translate, { identifier: true }).text)
         .join(' · ')
     : props.row.rowKey;
   const stage = React.useCallback(
