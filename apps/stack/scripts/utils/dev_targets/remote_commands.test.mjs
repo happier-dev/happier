@@ -1002,7 +1002,7 @@ test('measured native workload reservations round the recorded peak without a bl
   // and step10-dependency-install-topological-setup-measurement.log;
   // entry-loads-footprint-1029/measure-v{2,4}.log; custody cold raw
   // .project/tmp/validation-cost-1024-go-cold-corrected.jsonl, SUMMARY.
-  for (const [className, peakKiB] of [
+  for (const [className, peakKiB, margin = 1] of [
     ['native-source-test', 103824],
     ['native-custody', 366000],
     ['dependency-install', 2374684],
@@ -1016,13 +1016,13 @@ test('measured native workload reservations round the recorded peak without a bl
     ['entry-loads', 2361852],
     // Successful isolated source server build, admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
     ['source-bundle', 11856864],
-    // 2026-11-04 admission holder tree RSS; compile-reservation-peaks-1104/holder-snapshot.json.
-    ['compilation', 38992620],
+    // 2026-11-19 completed controller scopes, with the cold compilation margin.
+    ['compilation', 11_364_896, 1.5],
     // Live tsrs UI VmHWM sum plus measured within-holder RSS range.
     ['compilation-ui-tsrs', 9477228 + 41512],
   ]) {
     await t.test(className, () => {
-      const expectedKiB = Math.ceil(peakKiB / (1024 * 1024)) * 1024 * 1024;
+      const expectedKiB = Math.ceil(peakKiB * margin / (1024 * 1024)) * 1024 * 1024;
       assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(className), expectedKiB, className);
       if (process.platform === 'win32') return;
       const native = spawnSync('/bin/sh', ['-c', `${renderNativeCommandPolicy()}\nheavyweight_memory_floor_kib "$1"`, 'floor', className], { encoding: 'utf8' });
