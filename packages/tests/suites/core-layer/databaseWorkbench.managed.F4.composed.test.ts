@@ -22,7 +22,7 @@ import {
     type DatabaseActionIdV1,
 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
-import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -48,7 +48,7 @@ import { waitFor } from '../../src/testkit/timing';
 // A failure before those positive controls is a setup blocker, not valid RED.
 it.each(['neon', 'supabase'] as const)('F4 selects %s preview/production without a neighboring fallback', async provider => {
   const testDir = await mkdtemp(join(tmpdir(), `happier-dbw-${provider}-`));
-  const boundary = await startDeploymentProvidersHttp();
+  const boundary = await startDeploymentProvidersHttp({ seedManagedProjects: true });
   let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchFixture>> | undefined;
   try {
     fixture = await startDatabaseWorkbenchFixture({ testDir, serverEnv: { ...boundary.env, NODE_ENV: process.env.NODE_ENV, HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
@@ -121,11 +121,18 @@ it.each(['neon', 'supabase'] as const)('F4 selects %s preview/production without
       const principal = { kind: 'account' as const, accountId,
         purpose: { consumer: { pluginId, localId: 'projects-link' }, purpose: 'deploy-manage' },
         target: { kind: 'account' as const, account: connected.account } };
-      const linked = await invoke('action.invoke', { action: { pluginId, localId: 'projects-link' }, input: {
+      const platformProjectId = provider === 'neon' ? boundary.neon.projectId : boundary.supabase.projectRef;
+      const branchId = provider === 'neon' ? branch.neonId : branch.supabaseRef;
+      // projects-link inspects a provider target. The later deployment Link
+      // Action changes state and carries its own review.
+      const inspected = await account.execute('action.invoke', { action: { pluginId, localId: 'projects-link' }, input: {
         v: 1, ...address, expectedRevision: environment.revision, credentialRef: connected.account, credentialPrincipal: principal,
         providerAccountId: provider === 'neon' ? boundary.neon.organizationId : boundary.supabase.organizationSlug,
-        providerEnvironment: { kind: 'custom', id: provider === 'neon' ? branch.neonId : branch.supabaseRef },
-        ...(provider === 'neon' ? { projectId: boundary.neon.projectId, branchId: branch.neonId } : { projectRef: branch.supabaseRef }) } });
+        providerEnvironment: { kind: 'custom', id: branchId },
+        ...(provider === 'neon' ? { projectId: platformProjectId, branchId } : { projectRef: platformProjectId }) } },
+        { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId } });
+      if (!inspected.ok) throw new Error(`F4 provider target inspection refused (${inspected.errorCode})`);
+      const linked = inspected.result;
       if (!linked || typeof linked !== 'object' || Array.isArray(linked)
         || !('providerIdentity' in linked) || !('providerEnvironment' in linked)) throw new Error('F4 provider link omitted its result');
       const linkContent = DeploymentTargetLinkContentV1Schema.parse({ credentialPrincipal: principal,
@@ -156,8 +163,8 @@ it.each(['neon', 'supabase'] as const)('F4 selects %s preview/production without
       }
       const expectedTarget = DatabaseManagedDeploymentTargetV1Schema.parse({ kind: 'managed_deployment',
         environment: { ...address, projectSourceId: source.source.id }, targetLinkId: link.targetLinkId,
-        contribution: { pluginId, contributionId: 'database' }, platformProjectId: linkContent.providerIdentity.providerResourceId,
-        branchId: linkContent.providerIdentity.providerEnvironment, database: provider === 'neon' ? 'neondb' : 'postgres' });
+        contribution: { pluginId, contributionId: 'database' }, platformProjectId, branchId,
+        database: provider === 'neon' ? 'neondb' : 'postgres' });
       const discovered = DatabaseTargetsListResultV1Schema.parse(await invokeDatabase(DATABASE_TARGETS_LIST_ACTION_ID_V1, { scope }));
       const selectedDescriptor = discovered.targets.find(descriptor => descriptor.target.kind === 'managed_deployment'
         && descriptor.target.targetLinkId === link.targetLinkId);

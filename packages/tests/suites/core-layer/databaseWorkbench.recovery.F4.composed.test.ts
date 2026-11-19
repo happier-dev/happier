@@ -266,9 +266,11 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             failedHttpRequests: failedHttpRequests(),
         })}`).toBe(true);
         if (!semantic.ok) return;
+        // The authorized caller receives typed result cells. Approval history
+        // projects confidential inputs at its own storage boundary.
         expect(DatabaseOperationResultV1Schema.parse(semantic.result)).toMatchObject({ ok: true, operation: 'statement.run',
-            results: [{ rows: [{ cells: [{ type: 'text', value: '[REDACTED]' }, { type: 'null' },
-                { type: 'text', value: 'before-control' }, { type: 'text', value: '[REDACTED]' }] }], completeness: { complete: true } }] });
+            results: [{ rows: [{ cells: [{ type: 'text', value: marker }, { type: 'null' },
+                { type: 'text', value: 'before-control' }, { type: 'integer', value: '9007199254740993' }] }], completeness: { complete: true } }] });
         // executeReviewed decides the daemon-held target Ask as the present person (UI person path).
         const written = await owner.executeReviewed('action.invoke', {
             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) },

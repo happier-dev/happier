@@ -22,7 +22,7 @@ undici.fetch = (input, init) => {
  * Home HTTP, Action admission, credential custody and plugin execution stay real.
  * Contracts: Vercel REST v2/v9/v11/v13, Cloudflare v4 Workers, Neon API v2,
  * as characterized by the bundled providers' HTTP contract tests. */
-export async function startDeploymentProvidersHttp() {
+export async function startDeploymentProvidersHttp({ seedManagedProjects = false } = {}) {
   const vercel = { teamId: 'team_journey', projectId: 'prj_journey', deploymentId: 'dpl_journey', name: 'journey-vercel' };
   const cloudflare = { accountId: 'a'.repeat(32), tokenId: 'b'.repeat(32), projectId: 'c'.repeat(32), deploymentId: 'journey-build', name: 'journey-worker',
     triggerUuid: 'journey-trigger', versionId: 'journey-version', zoneId: 'e'.repeat(32) };
@@ -124,17 +124,19 @@ export async function startDeploymentProvidersHttp() {
         if (method === 'GET' && path === `${selectedBranchPath}/endpoints`) return ok({ endpoints: [{ id: neon.endpointId,
           project_id: neon.projectId, branch_id: neon.branchId, type: 'read_write', host: 'ep-journey.eu-central-1.aws.neon.tech' }] });
         if (method === 'GET' && path === `${selectedBranchPath}/databases`) return ok({ databases: [{ name: 'neondb', branch_id: neon.branchId }] });
-        for (const branch of managedBranches) {
-          const base = `/api/v2/projects/${neon.projectId}/branches/${branch.neonId}`;
-          if (method === 'GET' && path === base) return ok({ branch: { id: branch.neonId, project_id: neon.projectId,
-            name: branch.name, current_state: 'ready', default: branch.name === 'production', protected: branch.name === 'production' } });
+        const branches = managedBranches.map(branch => ({ id: branch.neonId, project_id: neon.projectId,
+          name: branch.name, current_state: 'ready', default: branch.name === 'production', protected: branch.name === 'production' }));
+        if (method === 'GET' && path === `/api/v2/projects/${neon.projectId}/branches`) return ok({ branches });
+        for (const branch of branches) {
+          const base = `/api/v2/projects/${neon.projectId}/branches/${branch.id}`;
+          if (method === 'GET' && path === base) return ok({ branch });
           if (method === 'GET' && path === `${base}/endpoints`) return ok({ endpoints: [{ id: `ep-${branch.name}`,
-            project_id: neon.projectId, branch_id: branch.neonId, type: 'read_write', host: `ep-journey.${branch.name}.aws.neon.tech` }] });
-          if (method === 'GET' && path === `${base}/databases`) return ok({ databases: [{ name: 'neondb', branch_id: branch.neonId }] });
+            project_id: neon.projectId, branch_id: branch.id, type: 'read_write', host: `ep-journey.${branch.name}.aws.neon.tech` }] });
+          if (method === 'GET' && path === `${base}/databases`) return ok({ databases: [{ name: 'neondb', branch_id: branch.id }] });
         }
         if (method === 'GET' && path === `/api/v2/organizations/${neon.organizationId}`) return ok({ id: neon.organizationId, name: 'Journey organization', plan: 'launch' });
         if (method === 'GET' && path === '/api/v2/regions') return ok({ regions: [{ region_id: 'aws-eu-central-1', name: 'Frankfurt' }] });
-        if (method === 'GET' && path === '/api/v2/projects') return ok({ projects: [] });
+        if (method === 'GET' && path === '/api/v2/projects') return ok({ projects: seedManagedProjects ? [project] : [] });
         if (method === 'POST' && path === '/api/v2/projects') return ok({
           project: { id: neon.projectId, org_id: neon.organizationId, name: 'Journey Neon project', region_id: 'aws-eu-central-1', pg_version: 17 },
           branch: { id: neon.branchId, project_id: neon.projectId, name: 'main', current_state: 'ready', default: true, protected: false },
@@ -169,12 +171,15 @@ export async function startDeploymentProvidersHttp() {
       }
       if (url.hostname === 'api.supabase.com') {
         if (method === 'GET' && path === '/v1/organizations') return ok([{ slug: supabase.organizationSlug, name: 'Journey organization' }]);
+        const project = (branch: (typeof managedBranches)[number]) => ({ ref: branch.supabaseRef, organization_slug: supabase.organizationSlug,
+          name: branch.name, status: 'ACTIVE_HEALTHY', database: { version: '17' } });
+        if (method === 'GET' && path === '/v1/projects') return ok(seedManagedProjects
+          ? managedBranches.filter(branch => branch.supabaseRef === supabase.projectRef).map(project) : []);
         if (method === 'GET' && path === `/v1/projects/${supabase.projectRef}/branches`) return ok(managedBranches.map(branch => ({
           id: `branch-${branch.name}`, project_ref: branch.supabaseRef, parent_project_ref: supabase.projectRef,
           name: branch.name, persistent: branch.name === 'production', preview_project_status: 'ACTIVE_HEALTHY' })));
         for (const branch of managedBranches) {
-          if (method === 'GET' && path === `/v1/projects/${branch.supabaseRef}`) return ok({ ref: branch.supabaseRef,
-            organization_slug: supabase.organizationSlug, name: branch.name, status: 'ACTIVE_HEALTHY', database: { version: '17' } });
+          if (method === 'GET' && path === `/v1/projects/${branch.supabaseRef}`) return ok(project(branch));
           if (method === 'POST' && path === `/v1/projects/${branch.supabaseRef}/database/query/read-only`) {
             // The external fixture models the Management API query body.
             const body = JSON.parse(request.body) as { query: string };
