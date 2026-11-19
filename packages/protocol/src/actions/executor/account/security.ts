@@ -1,5 +1,7 @@
 import type { PluginAccountDataEraseActionInputV1Schema } from '../../../plugins/data/accountEraseV1.js';
 import { completeActionResult } from '../resultProjection.js';
+import { ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1 } from '../../actionIds.js';
+import { ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1 } from '../../actionIds.js';
 import type { AccountApiTokensCreateActionInputV1Schema, AccountApiTokensUpdateActionInputV1Schema } from '../../../auth/accountApiTokens.js';
 import type { AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordRemoveRequestV1Schema } from '../../../auth/accountSecurity.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
@@ -11,6 +13,20 @@ import type { AdmittedActionInputById } from '../../actionSpecs.js';
 
 export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'parsed' | 'ctx' | 'options'>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, parsed, ctx, options } = inv;
+
+      if (actionId === ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1) {
+        if (!deps.accountTerminalsApproveAction) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        return completeActionResult({ status: await deps.accountTerminalsApproveAction(ctx.signal) });
+      }
+
+      if (actionId === ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1) {
+        if (!deps.accountDevicesApproveAction) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        return completeActionResult({ approved: await deps.accountDevicesApproveAction() });
+      }
 
       if (actionId === 'account.plugins.data.erase') {
         if (!deps.accountPluginDataEraseAction) {

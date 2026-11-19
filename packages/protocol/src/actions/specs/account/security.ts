@@ -1,4 +1,7 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
+import { z } from '../../../zodRuntimePolicy.js';
+import { ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1 } from '../../actionIds.js';
+import { ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1 } from '../../actionIds.js';
 import { AccountHistoricalEncryptionKeyForgetInputV1Schema, AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverInputV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '../../../auth/accountSecurity.js';
 import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1 } from '../../../auth/accountSecurity.js';
 import { PluginAccountDataEraseActionInputV1Schema, PluginAccountDataEraseActionOutputV1Schema } from '../../../plugins/data/accountEraseV1.js';
@@ -10,6 +13,34 @@ import type { PreNormalizedActionSpec } from '../definition.js';
 
 function createAccountSecurityActionSpecs() {
   return Object.freeze([
+  {
+    id: ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1,
+    executionPlacement: 'client',
+    approval: { result: 'none' },
+    title: 'Connect this terminal?',
+    description: 'Connect a terminal to the current Account after the person approves its pairing request.',
+    safety: 'danger',
+    sideEffectClass: 'write',
+    placements: [],
+    surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false },
+    // The confirmation owns the scoped request and retains its secret locally.
+    inputSchema: z.strictObject({}),
+    outputSchema: z.strictObject({ status: z.enum(['approved', 'already_authorized', 'not_found']) }),
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1,
+    executionPlacement: 'client',
+    approval: { result: 'none' },
+    title: 'Approve new device',
+    description: 'Add a new device to the current Account after the person confirms its pairing request.',
+    safety: 'danger',
+    sideEffectClass: 'write',
+    placements: [],
+    surfaces: { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false },
+    // The confirming client holds the invite and its secret in the local attempt.
+    inputSchema: z.strictObject({}),
+    outputSchema: z.strictObject({ approved: z.boolean() }),
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'account.plugins.data.erase', executionPlacement: 'account', approval: {result: 'required'},
     bindings: { mcpToolName: 'account_plugins_data_erase' },

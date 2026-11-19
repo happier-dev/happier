@@ -317,6 +317,8 @@ export type SessionOrganizationAppearanceActionId = typeof SESSION_ORGANIZATION_
 export function isSessionOrganizationAppearanceActionId(value: string): value is SessionOrganizationAppearanceActionId {
   return (SESSION_ORGANIZATION_APPEARANCE_ACTION_IDS as readonly string[]).includes(value);
 }
+export const ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1 = 'account.devices.approve' as const;
+export const ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1 = 'account.terminals.approve' as const;
 export const ACCOUNT_API_TOKENS_CREATE_ACTION_ID_V1 = 'account.apiTokens.create' as const;
 export const ACCOUNT_API_TOKENS_UPDATE_ACTION_ID_V1 = 'account.apiTokens.update' as const;
 export function isAccountApiTokenLabelActionIdV1(actionId: string): boolean {
@@ -953,6 +955,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'account.sessions.signOutEverywhere',
   ],
   account_security: [
+    ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1,
+    ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1,
     'account.encryption.historicalKey.forget',
     'account.encryption.automationTemplates.recover',
     'account.security.get',

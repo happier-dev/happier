@@ -451,7 +451,7 @@ export const ACTION_SPEC_FAMILY_IDS: readonly (readonly string[])[] = [
   ["action.operations.list", "action.operations.get", "action.operations.cancel", "action.operations.task.respond", "projects.execution.output.read", "projects.execution.output.open", "projects.execution.output.copy"],
   ["machines.pools.list", "machines.pools.get", "machines.pools.create", "machines.pools.update", "machines.pools.delete", "machines.pools.resolve"],
   ["sessions.runner.activation.create", "sessions.runner.activation.get", "sessions.runner.activation.cancel"],
-  ["account.plugins.data.erase", "account.sessions.signOutEverywhere", "account.encryption.automationTemplates.recover", "account.encryption.historicalKey.forget", "account.security.get", "account.password.enroll", "account.password.change", "account.password.remove", "account.email.change.request", "account.apiTokens.create", "account.apiTokens.list", "account.apiTokens.update", "account.apiTokens.revoke", "account.apiTokens.revokeAll"],
+  ["account.terminals.approve", "account.devices.approve", "account.plugins.data.erase", "account.sessions.signOutEverywhere", "account.encryption.automationTemplates.recover", "account.encryption.historicalKey.forget", "account.security.get", "account.password.enroll", "account.password.change", "account.password.remove", "account.email.change.request", "account.apiTokens.create", "account.apiTokens.list", "account.apiTokens.update", "account.apiTokens.revoke", "account.apiTokens.revokeAll"],
   ["action.spec.search", "action.spec.get"],
   ["wait"],
   ["notifications.notify_me"],

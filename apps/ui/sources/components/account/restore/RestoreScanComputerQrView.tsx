@@ -6,6 +6,8 @@ import { useRouter } from 'expo-router';
 import { useIsFocused, usePreventRemove } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
@@ -36,6 +38,7 @@ import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabe
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
+import { PairingCountdown } from '@/components/auth/pairing/PairingCountdown';
 import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { trackAccountRestored, trackAuthEnrollmentTransientRetry } from '@/track';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -230,6 +233,16 @@ type ScannerEnrollmentResult =
     | 'update_required'
     | 'update_required';
 
+type RequesterApproval = Readonly<{
+    invite: Extract<HomeQrInviteV2, { direction: 'requester_displays' }>;
+    profile: ServerProfile;
+    descriptor: HomeQrInviteV2['home'];
+}>;
+
+function formatApprovalExpiry(time: string): string {
+    return t('connect.deviceApprovalExpiresIn', { time });
+}
+
 export const RestoreScanComputerQrView = React.memo(function RestoreScanComputerQrView(props: RestoreScanComputerQrViewProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -254,6 +267,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     // How the code being processed arrived; an expired one is replaced by the same route.
     const [inviteOrigin, setInviteOrigin] = React.useState<'scanned' | 'link'>('scanned');
     const [activeInvite, setActiveInvite] = React.useState<HomeQrInviteV2 | null>(null);
+    const [pendingRequesterApproval, setPendingRequesterApproval] = React.useState<RequesterApproval | null>(null);
     const [navigationLocked, setNavigationLocked] = React.useState(false);
     const [shellNavigationRequested, setShellNavigationRequested] = React.useState(false);
     const [desktopEnrollment, setDesktopEnrollment] = React.useState<Readonly<{
@@ -433,39 +447,10 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         }
     }, [auth.refreshFromActiveServer, isCurrentAttempt]);
 
-    const processPairingLink = React.useCallback(
-        async (rawUrl: string) => {
-            const link = classifyScannedLink(rawUrl);
-            if (link.kind === 'account_connect') {
-                const action = await promptAccountConnectApprovalRequired({ showQr: Boolean(props.onShowQrInstead) });
-                if (action === 'showQr') {
-                    openShowQrInstead();
-                }
-                return;
-            }
-            if (link.kind === 'legacy_pairing') {
-                const action = await promptLegacyPairingUpdateRequired();
-                if (action === 'cancel') handleBack();
-                return;
-            }
-            if (link.kind === 'team_join') {
-                // A pasted Team join link is a way into a Home too; its join screen owns the rest.
-                router.push(link.path);
-                return;
-            }
-            if (link.kind === 'terminal_connect') {
-                const result = await openTerminalConnectApproval(link.terminal, { navigate: router.push, refreshAuth: auth.refreshFromActiveServer });
-                if (result === 'expired') {
-                    setExpiredTerminalLink(true);
-                    setEnrollmentResult('expired');
-                }
-                return;
-            }
-            if (link.kind !== 'home_qr_invite') {
-                setEnrollmentResult('invalid_request');
-                return;
-            }
-
+    const processHomeQrInvite = React.useCallback(
+        async (link: RequesterApproval | Readonly<{
+            invite: Extract<HomeQrInviteV2, { direction: 'trusted_home_displays' }>;
+        }>) => {
             const attempt = beginEnrollmentAttempt(link.invite);
             if (!attempt) return;
 
@@ -481,146 +466,150 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     return;
                 }
 
-                if (link.invite.direction === 'requester_displays') {
-                    // The enrolled scanner resolves the trusted Home from its stored registry by
-                    // the invite identity. Focus is neither a selector nor a fallback.
-                    const storedProfileResolution = resolveServerProfileForPortableIdentity(
-                        link.invite.home.homeServerIdentityId,
-                    );
-                    const storedProfile = storedProfileResolution.kind === 'resolved'
-                        ? storedProfileResolution.profile
-                        : null;
-                    const storedDescriptor = storedProfile
-                        ? buildHomeConnectionDescriptorForProfile(storedProfile)
-                        : null;
-                    if (
-                        !storedProfile
-                        || !storedDescriptor
-                        || storedProfile.serverIdentityId !== link.invite.home.homeServerIdentityId
-                        || storedDescriptor.homeServerIdentityId !== link.invite.home.homeServerIdentityId
-                    ) {
-                        publishTerminalResult('wrong_target');
-                        return;
-                    }
-                    const transportResolution = await resolveHomeEnrollmentTransport(storedDescriptor);
-                    if (!isCurrentAttempt(attempt.id)) {
-                        if (transportResolution.ok) await transportResolution.transport.close().catch(() => {});
-                        return;
-                    }
-                    if (!transportResolution.ok) {
-                        publishTerminalResult('retryable_error');
-                        return;
-                    }
-                    target = { ...transportResolution.transport, serverId: storedProfile.id };
-                    const targetFeatureSnapshot = await probeServerFeaturesAtUrl({
-                        endpointUrl: target.endpointUrl,
-                        runtimeOrigin: target.runtimeOrigin,
-                        ...(target.homeCarrier ? { homeCarrier: target.homeCarrier } : {}),
-                        serverId: storedProfile.id,
-                        force: true,
+                if ('profile' in link) {
+                    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+                    if (!isCurrentAttempt(attempt.id)) return;
+                    const runRequesterApproval = async () => {
+                        const transportResolution = await resolveHomeEnrollmentTransport(link.descriptor);
+                        if (!isCurrentAttempt(attempt.id)) {
+                            if (transportResolution.ok) await transportResolution.transport.close().catch(() => {});
+                            return;
+                        }
+                        if (!transportResolution.ok) {
+                            publishTerminalResult('retryable_error');
+                            return;
+                        }
+                        const approvalTarget = { ...transportResolution.transport, serverId: link.profile.id };
+                        target = approvalTarget;
+                        const targetFeatureSnapshot = await probeServerFeaturesAtUrl({
+                            endpointUrl: approvalTarget.endpointUrl,
+                            runtimeOrigin: approvalTarget.runtimeOrigin,
+                            ...(approvalTarget.homeCarrier ? { homeCarrier: approvalTarget.homeCarrier } : {}),
+                            serverId: link.profile.id,
+                            force: true,
+                            signal: attempt.controller.signal,
+                        });
+                        if (!isCurrentAttempt(attempt.id)) return;
+                        if (targetFeatureSnapshot.status === 'error') {
+                            publishTerminalResult(targetFeatureSnapshot.reason === 'identity_conflict'
+                                ? 'wrong_target'
+                                : isServerFeaturesProbeRetryable(targetFeatureSnapshot)
+                                    ? 'retryable_error'
+                                    : 'invalid_request');
+                            return;
+                        }
+                        if (targetFeatureSnapshot.status === 'unsupported') {
+                            publishTerminalResult('update_required');
+                            return;
+                        }
+                        if (targetFeatureSnapshot.serverIdentityId !== link.descriptor.homeServerIdentityId) {
+                            publishTerminalResult('wrong_target');
+                            return;
+                        }
+                        if (admitDirectHomeQrV2(targetFeatureSnapshot.features).kind !== 'admitted') {
+                            publishTerminalResult('update_required');
+                            return;
+                        }
+
+                        const qrSecret = decodeBase64(link.invite.qrSecretBase64Url, 'base64url');
+                        let startFailures = 0;
+                        while (true) {
+                            const started = await pairingStart({
+                                direction: 'requester_displays',
+                                secretHash: encodeBase64(deriveHomeQrRendezvousVerifierV2(qrSecret), 'base64url'),
+                                pairId: link.invite.pairId,
+                                expiresAtMs: link.invite.expiresAtMs,
+                            }, approvalTarget, { signal: attempt.controller.signal }).finally(async () => {
+                                // A transport abort can hide a start that reached the Home.
+                                // Reuse the same best-effort cancellation of this known pair id.
+                                if (!isCurrentAttempt(attempt.id)) {
+                                    await consumeReversePairingRow(link.invite.pairId, approvalTarget);
+                                }
+                            });
+                            if (!isCurrentAttempt(attempt.id)) {
+                                return;
+                            }
+                            if (started.ok) break;
+                            if (!isTransientEnrollmentStatus(started.status)) {
+                                publishTerminalResult('retryable_error');
+                                return;
+                            }
+                            startFailures += 1;
+                            if (!await waitForEnrollmentRetry({
+                                expiresAtMs: link.invite.expiresAtMs,
+                                failureCount: startFailures,
+                                signal: attempt.controller.signal,
+                            })) {
+                                if (isCurrentAttempt(attempt.id)) {
+                                    publishTerminalResult('expired');
+                                }
+                                return;
+                            }
+                        }
+
+                        // The one approver completion loop (shared with the Home-displayed
+                        // QR): poll the row, verify the requester's proof against the key
+                        // this QR pinned, complete on the Home, reject what fails. It owns
+                        // the row's cancel consume through this attempt's signal.
+                        const outcome = await runDirectHomeQrCompletion({
+                            direction: link.invite.direction,
+                            pairId: link.invite.pairId,
+                            homeServerIdentityId: link.invite.home.homeServerIdentityId,
+                            qrSecret,
+                            issuedAtMs: link.invite.issuedAtMs,
+                            expiresAtMs: link.invite.expiresAtMs,
+                            expectedRequesterPublicKey: decodeBase64(link.invite.requesterPublicKeyBase64Url, 'base64url'),
+                            adapters: {
+                                ...createTrustedHomeQrCompletionAdapters({
+                                    target: approvalTarget,
+                                    // Home-authority commit boundary: no cancel past this point.
+                                    onCompleting: () => {
+                                        if (!isCurrentAttempt(attempt.id)) return;
+                                        attempt.cancellable = false;
+                                        setNavigationLocked(true);
+                                        setPhase('securing');
+                                    },
+                                }),
+                                // This attempt's `finally` owns the transport.
+                                close: async () => undefined,
+                            },
+                            signal: attempt.controller.signal,
+                        }).completion;
+                        if (!isCurrentAttempt(attempt.id)) return;
+                        switch (outcome.kind) {
+                            case 'completed':
+                                publishTerminalResult('succeeded');
+                                return;
+                            case 'expired':
+                            case 'invalid_request':
+                                publishTerminalResult(outcome.kind);
+                                return;
+                            case 'failed':
+                                publishTerminalResult('retryable_error');
+                                return;
+                            case 'cancelled':
+                                return;
+                        }
+                    };
+                    // This executor owns only this press. Pairing material stays in the
+                    // attempt closure, outside the Action input and observations.
+                    const executor = createActionExecutor({
+                        accountDevicesApproveAction: async () => {
+                            await runRequesterApproval();
+                            return terminalResult === 'succeeded';
+                        },
+                    });
+                    const approval = await executor.execute(ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1, {}, {
+                        surface: 'ui',
+                        authority: 'present_user',
+                        // This screen just obtained the person's Approve press.
+                        bypassApprovals: true,
                         signal: attempt.controller.signal,
                     });
-                    if (!isCurrentAttempt(attempt.id)) return;
-                    if (targetFeatureSnapshot.status === 'error') {
-                        publishTerminalResult(targetFeatureSnapshot.reason === 'identity_conflict'
-                            ? 'wrong_target'
-                            : isServerFeaturesProbeRetryable(targetFeatureSnapshot)
-                                ? 'retryable_error'
-                                : 'invalid_request');
-                        return;
+                    if (!approval.ok && isCurrentAttempt(attempt.id)) {
+                        publishTerminalResult('retryable_error');
                     }
-                    if (targetFeatureSnapshot.status === 'unsupported') {
-                        publishTerminalResult('update_required');
-                        return;
-                    }
-                    if (targetFeatureSnapshot.serverIdentityId !== storedDescriptor.homeServerIdentityId) {
-                        publishTerminalResult('wrong_target');
-                        return;
-                    }
-                    if (admitDirectHomeQrV2(targetFeatureSnapshot.features).kind !== 'admitted') {
-                        publishTerminalResult('update_required');
-                        return;
-                    }
-
-                    const qrSecret = decodeBase64(link.invite.qrSecretBase64Url, 'base64url');
-                    let startFailures = 0;
-                    while (true) {
-                        const started = await pairingStart({
-                            direction: 'requester_displays',
-                            secretHash: encodeBase64(deriveHomeQrRendezvousVerifierV2(qrSecret), 'base64url'),
-                            pairId: link.invite.pairId,
-                            expiresAtMs: link.invite.expiresAtMs,
-                        }, target, { signal: attempt.controller.signal }).finally(async () => {
-                            // A transport abort can hide a start that reached the Home.
-                            // Reuse the same best-effort cancellation of this known pair id.
-                            if (!isCurrentAttempt(attempt.id)) {
-                                await consumeReversePairingRow(link.invite.pairId, target);
-                            }
-                        });
-                        if (!isCurrentAttempt(attempt.id)) {
-                            return;
-                        }
-                        if (started.ok) break;
-                        if (!isTransientEnrollmentStatus(started.status)) {
-                            publishTerminalResult('retryable_error');
-                            return;
-                        }
-                        startFailures += 1;
-                        if (!await waitForEnrollmentRetry({
-                            expiresAtMs: link.invite.expiresAtMs,
-                            failureCount: startFailures,
-                            signal: attempt.controller.signal,
-                        })) {
-                            if (isCurrentAttempt(attempt.id)) {
-                                publishTerminalResult('expired');
-                            }
-                            return;
-                        }
-                    }
-
-                    // The one approver completion loop (shared with the Home-displayed
-                    // QR): poll the row, verify the requester's proof against the key
-                    // this QR pinned, complete on the Home, reject what fails. It owns
-                    // the row's cancel consume through this attempt's signal.
-                    const outcome = await runDirectHomeQrCompletion({
-                        direction: link.invite.direction,
-                        pairId: link.invite.pairId,
-                        homeServerIdentityId: link.invite.home.homeServerIdentityId,
-                        qrSecret,
-                        issuedAtMs: link.invite.issuedAtMs,
-                        expiresAtMs: link.invite.expiresAtMs,
-                        expectedRequesterPublicKey: decodeBase64(link.invite.requesterPublicKeyBase64Url, 'base64url'),
-                        adapters: {
-                            ...createTrustedHomeQrCompletionAdapters({
-                                target,
-                                // Home-authority commit boundary: no cancel past this point.
-                                onCompleting: () => {
-                                    if (!isCurrentAttempt(attempt.id)) return;
-                                    attempt.cancellable = false;
-                                    setNavigationLocked(true);
-                                    setPhase('securing');
-                                },
-                            }),
-                            // This attempt's `finally` owns the transport.
-                            close: async () => undefined,
-                        },
-                        signal: attempt.controller.signal,
-                    }).completion;
-                    if (!isCurrentAttempt(attempt.id)) return;
-                    switch (outcome.kind) {
-                        case 'completed':
-                            publishTerminalResult('succeeded');
-                            return;
-                        case 'expired':
-                        case 'invalid_request':
-                            publishTerminalResult(outcome.kind);
-                            return;
-                        case 'failed':
-                            publishTerminalResult('retryable_error');
-                            return;
-                        case 'cancelled':
-                            return;
-                    }
+                    return;
                 }
 
                 let transportFailureCount = 0;
@@ -907,8 +896,74 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 }
             }
         },
-        [auth.refreshFromActiveServer, beginEnrollmentAttempt, classifyScannedLink, completeEnrollment, handleBack, isCurrentAttempt, openRetainedHomeOrReturnToShell, openShowQrInstead, props.entryIntent, props.expectedHomeServerIdentityId, props.onCredentials, props.onAuthenticated, props.onShowQrInstead, router],
+        [beginEnrollmentAttempt, completeEnrollment, isCurrentAttempt, openRetainedHomeOrReturnToShell, props.entryIntent, props.expectedHomeServerIdentityId, props.onCredentials, props.onAuthenticated],
     );
+
+    const processPairingLink = React.useCallback(
+        async (rawUrl: string) => {
+            const link = classifyScannedLink(rawUrl);
+            if (link.kind === 'account_connect') {
+                const action = await promptAccountConnectApprovalRequired({ showQr: Boolean(props.onShowQrInstead) });
+                if (action === 'showQr') {
+                    openShowQrInstead();
+                }
+                return;
+            }
+            if (link.kind === 'legacy_pairing') {
+                const action = await promptLegacyPairingUpdateRequired();
+                if (action === 'cancel') handleBack();
+                return;
+            }
+            if (link.kind === 'team_join') {
+                // A pasted Team join link is a way into a Home too; its join screen owns the rest.
+                router.push(link.path);
+                return;
+            }
+            if (link.kind === 'terminal_connect') {
+                const result = await openTerminalConnectApproval(link.terminal, { navigate: router.push, refreshAuth: auth.refreshFromActiveServer });
+                if (result === 'expired') {
+                    setExpiredTerminalLink(true);
+                    setEnrollmentResult('expired');
+                }
+                return;
+            }
+            if (link.kind !== 'home_qr_invite') {
+                setEnrollmentResult('invalid_request');
+                return;
+            }
+
+            const invite = link.invite;
+            if (invite.direction === 'requester_displays') {
+                // Show the Home this device already trusts. The link names its identity
+                // but cannot choose the transport or the account receiving the approval.
+                const resolution = resolveServerProfileForPortableIdentity(invite.home.homeServerIdentityId);
+                const profile = resolution.kind === 'resolved' ? resolution.profile : null;
+                const descriptor = profile ? buildHomeConnectionDescriptorForProfile(profile) : null;
+                setActiveInvite(invite);
+                if (!profile || !descriptor || profile.serverIdentityId !== invite.home.homeServerIdentityId
+                    || descriptor.homeServerIdentityId !== invite.home.homeServerIdentityId) {
+                    setEnrollmentResult('wrong_target');
+                    return;
+                }
+                setEnrollmentResult(null);
+                setPendingRequesterApproval({ invite, profile, descriptor });
+                return;
+            }
+            await processHomeQrInvite({ invite });
+        },
+        [auth.refreshFromActiveServer, classifyScannedLink, handleBack, openShowQrInstead, processHomeQrInvite, props.onShowQrInstead, router],
+    );
+
+    const approveRequester = React.useCallback(async () => {
+        if (!pendingRequesterApproval) return;
+        setPendingRequesterApproval(null);
+        await processHomeQrInvite(pendingRequesterApproval);
+    }, [pendingRequesterApproval, processHomeQrInvite]);
+
+    const cancelRequesterApproval = React.useCallback(() => {
+        setPendingRequesterApproval(null);
+        setActiveInvite(null);
+    }, []);
 
     const processedInitialPairingLinkRef = React.useRef<string | null>(null);
     React.useEffect(() => {
@@ -920,6 +975,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             || !isFocused
             || pairingState !== 'enabled'
             || phase !== 'idle'
+            || pendingRequesterApproval
             || processedInitialPairingLinkRef.current === initialPairingLink
         ) {
             return;
@@ -927,7 +983,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         processedInitialPairingLinkRef.current = initialPairingLink;
         setInviteOrigin('link');
         void processPairingLink(initialPairingLink);
-    }, [isFocused, pairingState, phase, processPairingLink, props.initialPairingLink]);
+    }, [isFocused, pairingState, pendingRequesterApproval, phase, processPairingLink, props.initialPairingLink]);
 
     React.useEffect(() => {
         return () => {
@@ -1052,6 +1108,42 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             }} />
         </View></View>;
         return embedded ? frame : <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>{frame}</ScrollView>;
+    }
+
+    if (pendingRequesterApproval) {
+        const { invite, profile, descriptor } = pendingRequesterApproval;
+        const frame = (
+            <View style={containerStyle}>
+                <View style={contentWrapperStyle}>
+                    <Text style={subtitleStyle}>
+                        {t('connect.confirmDeviceApproval', {
+                            device: invite.requestedDeviceLabel ? `“${invite.requestedDeviceLabel}”` : t('homeDeviceApproval.deviceFallback'),
+                            home: profile.name || formatHomeEnrollmentTargetLabel(descriptor),
+                        })}
+                    </Text>
+                    <PairingCountdown
+                        testID="restore-enrollment-approval-expiry"
+                        expiresAtMs={invite.expiresAtMs}
+                        formatLabel={formatApprovalExpiry}
+                        style={subtitleStyle}
+                    />
+                    <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
+                        <View style={embedded ? styles.embeddedFooterButton : styles.footerButton}>
+                            <RoundButton
+                                testID="restore-enrollment-approve"
+                                size={embedded ? 'large' : 'normal'}
+                                title={t('homeDeviceApproval.approve')}
+                                action={approveRequester}
+                            />
+                        </View>
+                        {renderAlternative('restore-enrollment-cancel', t('common.cancel'), cancelRequesterApproval)}
+                    </View>
+                </View>
+            </View>
+        );
+        return embedded ? frame : (
+            <ScrollView style={scrollViewStyle} contentContainerStyle={{ flexGrow: 1 }}>{frame}</ScrollView>
+        );
     }
 
     if (phase === 'idle' && !enrollmentResult) {

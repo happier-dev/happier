@@ -156,6 +156,12 @@ export type AccountSecurityActionInputById = {
         v: 1;
         email: string;
     };
+    readonly "account.terminals.approve": Record<string, never> & {
+        clientId?: string | undefined;
+    };
+    readonly "account.devices.approve": Record<string, never> & {
+        clientId?: string | undefined;
+    };
 };
 export type AccountSecurityActionResultById = {
     readonly "account.encryption.automationTemplates.recover": {
@@ -194,5 +200,11 @@ export type AccountSecurityActionResultById = {
     readonly "account.email.change.request": {
         v: 1;
         status: 'verification_sent';
+    };
+    readonly "account.terminals.approve": {
+        status: 'already_authorized' | 'approved' | 'not_found';
+    };
+    readonly "account.devices.approve": {
+        approved: boolean;
     };
 };

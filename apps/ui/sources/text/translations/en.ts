@@ -3463,6 +3463,9 @@ const enConnect = {
   requestingDeviceLabel: 'New device',
   approveNewDeviceTitle: 'Approve new device',
   approveNewDeviceSubtitle: 'Add the new device to your Home',
+  confirmDeviceApproval: ({ device, home }: { device: string; home: string }) =>
+    `Add ${device} to your Account on ${home}?`,
+  deviceApprovalExpiresIn: ({ time }: { time: string }) => `Code expires in ${time}`,
   thisDevice: 'This device',
   startAgain: 'Start again',
   pairingRejectedBody:

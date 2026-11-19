@@ -3194,6 +3194,12 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<AccountSessionsSignOutEverywhereActionOutputV1>;
 
+  /** Local effect captured by the device approval screen after the person's press. */
+  accountDevicesApproveAction?: () => Promise<boolean>;
+
+  /** Local effect captured by the terminal confirmation after the person's press. */
+  accountTerminalsApproveAction?: (signal?: AbortSignal) => Promise<'approved' | 'already_authorized' | 'not_found'>;
+
   /**
    * Current-Account API-token lifecycle owners. Transport derives the Account
    * from verified provenance; callers can select only token-local input.

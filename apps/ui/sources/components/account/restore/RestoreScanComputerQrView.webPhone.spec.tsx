@@ -11,6 +11,7 @@ import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/
 import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -21,13 +22,22 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 
 const boundary = vi.hoisted(() => ({
     focused: true, replace: vi.fn(), preventRemove: vi.fn(), alert: vi.fn(async (..._args: unknown[]) => {}),
+    params: {} as Record<string, string>,
+    desktopStartupLinks: null as string[] | null,
     restored: vi.fn(), retried: vi.fn(), permission: { granted: true, status: 'granted', canAskAgain: true, expires: 'never' },
     requestPermission: vi.fn(async () => ({ granted: true })),
 }));
 installTokenStorageWebPlatformMocks();
 installTokenStorageTestIsolation('restore_scan_web_phone', { preserveGenerations: true });
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
-    .createExpoRouterMock({ router: { replace: boundary.replace } }).module);
+    .createExpoRouterMock({ router: { replace: boundary.replace }, params: () => boundary.params }).module);
+vi.mock('@/utils/web/reactDomCjs', async () =>
+    (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+    invokeDesktopHost: async () => boundary.desktopStartupLinks,
+    listenDesktopHostEvent: async () => () => {},
+}));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ spies: { alertAsync: (...args) => boundary.alert(...args) } }).module);
 vi.mock('@react-navigation/native', async () => ({ ...(await import('@/dev/testkit/mocks/reactNavigation'))
@@ -50,6 +60,10 @@ const { disconnectActiveServerConnection } = await import('@/sync/runtime/orches
 const { buildHomeQrInviteDeepLink } = await import('@/auth/pairing/pairingUrl');
 const { encryptBox } = await import('@/encryption/libsodium');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { default: RestoreRoute } = await import('@/app/(app)/restore/index');
+const { redirectSystemPath } = await import('@/app/+native-intent');
+const { installDesktopDeepLinks } = await import('@/desktop/deepLinks/installDesktopDeepLinks');
+const { openMarkdownLinkUrl } = await import('@/components/markdown/enriched/enrichedMarkdownLinkHandling');
 const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
 const { QrCodeScannerView } = await import('@/components/qr/QrCodeScannerView');
 
@@ -57,6 +71,8 @@ const home = HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId
     canonicalServerUrl: 'https://home-b.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home-b.test' }] });
 const homes = createHomeGovernanceHarness();
 const enrolledToken = createAccountTokenForTests('enrolled-home-b');
+const encryptedApprover = { token: createAccountTokenForTests('trusted-home-b'),
+    secret: encodeBase64(new Uint8Array(32).fill(11), 'base64url') };
 type HttpRequest = Readonly<{ url: URL; body: Record<string, unknown>; token: string | null; signal?: AbortSignal | null }>;
 type HttpReply = (request: HttpRequest) => Response | Promise<Response>;
 const requests: HttpRequest[] = [];
@@ -103,6 +119,46 @@ async function mount(props: Partial<React.ComponentProps<typeof RestoreScanCompu
         <RestoreScanComputerQrView entryIntent="add_home" {...props} />
     </AuthProvider>);
 }
+async function mountRestoreRoute(href: string) {
+    const url = new URL(href, 'https://app.test');
+    expect(url.pathname).toBe('/restore');
+    boundary.params = Object.fromEntries(url.searchParams);
+    return renderScreen(<AuthProvider initialCredentials={{ token: createAccountTokenForTests('approver') }}>
+        <RestoreRoute />
+    </AuthProvider>);
+}
+
+async function openRequesterInvite(origin: 'scan' | 'paste' | 'native' | 'desktop' | 'transcript', invite: HomeQrInviteV2) {
+    activeInvite = invite;
+    const link = buildHomeQrInviteDeepLink({ invite });
+    if (origin === 'scan') {
+        const screen = await mount();
+        await scan(screen, invite);
+        return screen;
+    }
+    if (origin === 'paste') {
+        const screen = await mountRestoreRoute('/restore?view=link');
+        await act(async () => screen.findByTestId('restore-pairing-link-input')!.props.onChangeText(link));
+        return screen;
+    }
+    if (origin === 'native') return mountRestoreRoute(redirectSystemPath({ path: link, initial: true }));
+    if (origin === 'desktop') {
+        boundary.desktopStartupLinks = [link];
+        const navigate = vi.fn<(href: string) => void>();
+        const dispose = installDesktopDeepLinks(navigate);
+        try {
+            await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+            return await mountRestoreRoute(navigate.mock.calls[0]![0]);
+        } finally {
+            dispose();
+            boundary.desktopStartupLinks = null;
+        }
+    }
+    const openAppHref = vi.fn((_href: string) => true);
+    await openMarkdownLinkUrl(link, undefined, { openAppHref });
+    expect(openAppHref).toHaveBeenCalledTimes(1);
+    return mountRestoreRoute(openAppHref.mock.calls[0]![0]);
+}
 function cameraScan(screen: Awaited<ReturnType<typeof mount>>, value: string) {
     return screen.findByType('CameraView').props.onBarcodeScanned({ type: 'qr', data: value }) as Promise<void>;
 }
@@ -114,6 +170,14 @@ async function beginScan(screen: Awaited<ReturnType<typeof mount>>, invite = for
     activeInvite = invite;
     let completion!: Promise<void>;
     await act(async () => { completion = cameraScan(screen, buildHomeQrInviteDeepLink({ invite })); });
+    return { completion };
+}
+async function beginRequesterApproval(screen: Awaited<ReturnType<typeof mount>>, invite = reverseInvite()) {
+    await scan(screen, invite);
+    const button = screen.findAllByTestId('restore-enrollment-approve').find(node => typeof node.props.action === 'function');
+    if (!button) throw new Error('Expected an Approve button action');
+    let completion!: Promise<void>;
+    await act(async () => { completion = button.props.action(); });
     return { completion };
 }
 async function expectNoAdoption() {
@@ -165,6 +229,10 @@ beforeEach(async () => {
         if (url.pathname === '/v1/auth/pairing/start') handler = http.start;
         if (url.pathname === '/v1/auth/pairing/status') handler = http.status;
         if (url.pathname === '/v1/auth/account/response') handler = http.complete;
+        if (url.pathname === '/v1/account/encryption/currentness') {
+            const credentials = await TokenStorage.getCredentialsForServerUrl(home.canonicalServerUrl, { serverId: targetHomeId });
+            if (credentials) return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(credentials));
+        }
         if (url.pathname === '/v1/auth/pairing/consume') return Response.json({});
         return handler ? await waitForNetworkResponseForTests(Promise.resolve(handler(request)), init?.signal) : homes.request(input, init);
     });
@@ -266,25 +334,39 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(await TokenStorage.getCredentialsForServerUrl(home.canonicalServerUrl, { serverId: targetHomeId })).toEqual({ token: enrolledToken });
         expect(requests.every(request => request.url.origin === home.canonicalServerUrl)).toBe(true);
     });
-    it('completes a known-target requester invite through its stored Home and real sealed response', async () => {
-        await trustTargetHome(); const invite = reverseInvite();
-        const onInviteDirectionChange = vi.fn();
-        const screen = await mount({ onInviteDirectionChange }); await scan(screen, invite);
-        expect(onInviteDirectionChange).toHaveBeenCalledWith('requester_displays');
+    it.each(['scan', 'paste', 'native', 'desktop', 'transcript'] as const)('firstOpen.F2.approve gates requester pairing from %s on one press', async origin => {
+        await TokenStorage.setCredentialsForServerUrl(home.canonicalServerUrl, { serverId: targetHomeId }, encryptedApprover);
+        const invite = reverseInvite();
+        const screen = await openRequesterInvite(origin, invite);
+        await flushHookEffects();
+        expect(observed('/v1/auth/pairing/start')).toHaveLength(0);
+        expect(observed('/v1/auth/account/response')).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('connect.confirmDeviceApproval');
+        expect(screen.findByTestId('restore-enrollment-approval-expiry')).not.toBeNull();
+        await screen.pressByTestIdAsync('restore-enrollment-approve');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('connect.requesterDeviceAddedBody'));
+        expect(observed('/v1/auth/pairing/start')).toHaveLength(1);
+        expect(observed('/v1/auth/account/response')).toHaveLength(1);
         expect(observed('/v1/auth/pairing/start')[0]?.body).toMatchObject({ direction: 'requester_displays', pairId: invite.pairId });
         expect(observed('/v1/auth/account/response')[0]?.body).toMatchObject({ pairId: invite.pairId,
-            homeServerIdentityId: home.homeServerIdentityId, responseKind: 'tokenOnly', response: expect.any(String) });
-        expect(observed('/v1/auth/account/response')[0]?.token).toBe(createAccountTokenForTests('trusted-home-b'));
+            homeServerIdentityId: home.homeServerIdentityId, responseKind: 'dataKey', response: expect.any(String) });
+        expect(observed('/v1/auth/account/response')[0]?.token).toBe(encryptedApprover.token);
         expect(observed('/v2/auth/account/request')).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('connect.requesterDeviceAddedBody');
         expect(screen.findByTestId('restore-scan-confirm-code')).toBeNull();
         expect(screen.getTextContent()).not.toContain('connect.confirmCodeComparisonBody');
         expect(profiles.getActiveServerSnapshot().serverId).toBe(focusedHomeId);
     });
+    it('cancels a requester invite without sending any pairing request', async () => {
+        await trustTargetHome();
+        const screen = await openRequesterInvite('native', reverseInvite());
+        await screen.pressByTestIdAsync('restore-enrollment-cancel');
+        expect(requests.filter(request => request.url.pathname.startsWith('/v1/auth/pairing/'))).toEqual([]);
+        expect(observed('/v1/auth/account/response')).toHaveLength(0);
+    });
     it('reports reverse-direction success once after a transient status failure', async () => {
         await trustTargetHome(); vi.useFakeTimers();
         http.status.mockImplementationOnce(() => Response.json({}, { status: 503 }));
-        const screen = await mount(); const { completion } = await beginScan(screen, reverseInvite());
+        const screen = await mount(); const { completion } = await beginRequesterApproval(screen);
         await vi.waitFor(() => expect(http.status).toHaveBeenCalled());
         await act(async () => { await vi.advanceTimersByTimeAsync(2_000); await completion; });
         expect(screen.getTextContent()).toContain('connect.requesterDeviceAddedBody');
@@ -292,14 +374,14 @@ describe('RestoreScanComputerQrView (web phone)', () => {
     });
     it('does not dispatch reverse completion UI after unmount', async () => {
         await trustTargetHome(); const held = hold(); http.complete.mockImplementation(() => held.promise);
-        const screen = await mount(); const { completion } = await beginScan(screen, reverseInvite());
+        const screen = await mount(); const { completion } = await beginRequesterApproval(screen);
         await vi.waitFor(() => expect(http.complete).toHaveBeenCalled());
         await screen.unmount(); held.resolve(Response.json({})); await completion;
         expect(boundary.alert).not.toHaveBeenCalled(); expect(boundary.replace).not.toHaveBeenCalled();
     });
     it.each(['cancel', 'unmount'] as const)('aborts reverse polling and consumes its exact pending row on %s', async action => {
         await trustTargetHome(); const held = hold(); http.status.mockImplementation(() => held.promise);
-        const screen = await mount(); const invite = reverseInvite(); const { completion } = await beginScan(screen, invite);
+        const screen = await mount(); const invite = reverseInvite(); const { completion } = await beginRequesterApproval(screen, invite);
         await vi.waitFor(() => expect(http.status).toHaveBeenCalled());
         const signal = http.status.mock.calls[0]![0].signal;
         if (action === 'cancel') await screen.pressByTestIdAsync('restore-enrollment-cancel'); else await screen.unmount();
@@ -311,7 +393,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
     });
     it('aborts reverse start and consumes the row when cancellation races its response', async () => {
         await trustTargetHome(); const held = hold(); http.start.mockImplementation(() => held.promise);
-        const screen = await mount(); const invite = reverseInvite(); const { completion } = await beginScan(screen, invite);
+        const screen = await mount(); const invite = reverseInvite(); const { completion } = await beginRequesterApproval(screen, invite);
         await vi.waitFor(() => expect(http.start).toHaveBeenCalled());
         const signal = http.start.mock.calls[0]![0].signal;
         await screen.pressByTestIdAsync('restore-enrollment-cancel');
@@ -358,6 +440,8 @@ describe('RestoreScanComputerQrView (web phone)', () => {
             return failure === 'bad_request' ? Response.json({}, { status: 400 }) : Response.json({ invalid: true });
         });
         await scan(screen, reverseInvite());
+        await screen.pressByTestIdAsync('restore-enrollment-approve');
+        await vi.waitFor(() => expect(screen.findByTestId('restore-enrollment-approve')).toBeNull());
         expect(screen.getTextContent()).toContain(failure === 'invalid_payload' ? 'connect.updateRequiredBody'
             : failure === 'bad_request' ? 'connect.requesterDeviceRequestInvalidBody' : 'connect.requesterDeviceRetryBody');
         expect(observed('/v1/auth/pairing/start')).toHaveLength(0);

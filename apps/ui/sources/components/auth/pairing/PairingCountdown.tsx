@@ -6,7 +6,12 @@ import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyView
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /** The expiry's only ticking leaf; the pairing panel itself never renders each second. */
-export function PairingCountdown(props: Readonly<{ testID: string; expiresAtMs: number; style?: AppTextProps['style'] }>) {
+export function PairingCountdown(props: Readonly<{
+    testID: string;
+    expiresAtMs: number;
+    style?: AppTextProps['style'];
+    formatLabel?: (time: string) => string;
+}>) {
     const [now, setNow] = React.useState(() => Date.now());
     const presented = useLayoutPresentationActive();
     useHostActivelyViewedEffect((activelyViewed) => {
@@ -21,7 +26,8 @@ export function PairingCountdown(props: Readonly<{ testID: string; expiresAtMs: 
         }, 1000);
         return () => clearInterval(timer);
     }, [presented, props.expiresAtMs]);
+    const time = formatPairingCountdown(props.expiresAtMs, now);
     return <Text testID={props.testID} style={props.style}>
-        {t('homeSetup.newCodeIn', { time: formatPairingCountdown(props.expiresAtMs, now) })}
+        {props.formatLabel ? props.formatLabel(time) : t('homeSetup.newCodeIn', { time })}
     </Text>;
 }

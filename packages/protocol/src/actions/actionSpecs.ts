@@ -156,6 +156,8 @@ import {
 } from './metadata.js';
 
 import {
+  ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1,
+  ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1,
   ACTION_IDS,
   ACTION_ID_FAMILIES_V1,
   ActionIdSchema,
@@ -960,6 +962,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
 // list/revoke are user administration and are exposed to Agent and MCP.
 export const AGENT_ACTION_EXCLUSION_REASONS = Object.freeze({
   'account.apiTokens.create': 'Token creation is human-only: the new bearer secret must never enter an Agent or MCP flow (owner ruling 2026-11-07).',
+  [ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1]: 'Adding a device to an Account requires the person’s Approve press on a trusted device.',
   'plugins.permissions.grants.request': 'Permission requests originate from host-stamped plugin provenance, not a user UI operation.',
   'session.view.toolCalls.set': 'Plan 60 §6 reserves transcript visibility for human UI, user Voice and genuine CLI callers.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
