@@ -7,8 +7,11 @@ const rippleLifeS = 2.6;
 const rippleSpeed = 550;
 const rippleBand = 30;
 const trailTau = 1.1;
-const trailRadius = 16 * 2.6;
+export const glyphFieldTrailCell = 16;
+const trailRadius = glyphFieldTrailCell * 2.6;
 const trailFloor = 0.015;
+export const glyphFieldTrailLifeS = trailTau * Math.log(0.3 / trailFloor);
+export const glyphFieldRippleLifeS = rippleLifeS;
 export const glyphFieldDurationS = 5;
 export const glyphDotRadii = [0.62, 0.78, 0.92, 1.08];
 
@@ -19,6 +22,12 @@ export function fieldDotLayer(options) {
 const clamp = (value) => Math.min(1, Math.max(0, value));
 const mix = (a, b, k) => a + (b - a) * k;
 const smooth = (value) => { const k = clamp(value); return k * k * (3 - 2 * k); };
+const empty = Object.freeze([]);
+
+export function glyphFieldPhase(seconds) {
+    const progress = clamp(seconds / glyphFieldDurationS);
+    return 0.5 * glyphFieldDurationS * (progress - progress ** 3 + 0.5 * progress ** 4);
+}
 
 function hash(x, y, z) {
     let bits = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 1274126177) | 0;
@@ -53,23 +62,31 @@ function createField(width, height, step, palette, seed) {
     }
     const maskCols = Math.ceil(cols / fieldStep), maskRows = Math.ceil(rows / fieldStep);
     const mask = { width: maskCols, height: maskRows, rgba: new Uint8Array(maskCols * maskRows * 4).fill(255) };
-    return { width, height, step, palette, seed, sprites: { glyph, at, rgba }, mask };
+    const frame = { sprites: { glyph, at, rgba }, mask, maskExtent: [mask.width * step * fieldStep, mask.height * step * fieldStep], revision: 0 };
+    return { width, height, step, palette, seed, frame, phase: NaN, quiet: null, strength: NaN, active: false };
 }
 
 export function createGlyphFieldSampler() {
     let field;
     return (layer, time, width, height, dpr, theme, palette) => {
         if (!layer || layer.mode === 'off' || !width || !height) return null;
-        const { quiet = [], seed = 0, strength = 1, stirs = [], ripples = [], phaseS = 0 } = layer;
+        const { quiet = empty, seed = 0, strength = 1, stirs = empty, ripples = empty, phaseS = 0 } = layer;
         const step = Math.max(1, Math.round(pitch * dpr));
         if (!field || field.width !== width || field.height !== height || field.step !== step || field.seed !== seed || field.palette !== palette) {
             field = createField(width, height, step, palette, seed);
         }
-        const { mask, sprites } = field;
-        const elapsed = layer.mode === 'still' ? glyphFieldDurationS : Math.min(time, glyphFieldDurationS);
-        // Integral of the calm curve. The mask reaches a fixed, continuous phase at five seconds.
-        const progress = elapsed / glyphFieldDurationS;
-        const phase = phaseS + 0.5 * glyphFieldDurationS * (progress - progress ** 3 + 0.5 * progress ** 4);
+        const stampTime = time = layer.mode === 'still' ? glyphFieldDurationS : layer.stampTimeS ?? time;
+        const { mask } = field.frame;
+        const phase = phaseS + glyphFieldPhase(layer.mode === 'still' ? time : layer.elapsedS ?? time);
+        const active = layer.mode === 'animated' && (
+            stirs.some(stamp => time >= stamp.at && time - stamp.at < glyphFieldTrailLifeS)
+            || ripples.some(ripple => time >= ripple.at && time - ripple.at < rippleLifeS));
+        if (!active && !field.active && phase === field.phase && quiet === field.quiet && strength === field.strength) return field.frame;
+        field.active = active;
+        field.phase = phase;
+        field.quiet = quiet;
+        field.strength = strength;
+        field.frame.revision++;
         const cell = step * fieldStep / dpr;
         const tint = theme === 'dark' ? 0.56 : 0.42;
         for (let j = 0; j < mask.height; j++) {
@@ -81,15 +98,15 @@ export function createGlyphFieldSampler() {
                 const band = 0.5 + 0.5 * Math.sin((x * 0.8 + y * 0.6) / 70 - phase * 1.3 + noise * 5);
                 const patch = smooth((noise + 0.1 * (band - 0.5) - 0.36) / 0.36);
                 let stirred = 0;
-                if (layer.mode === 'animated') {
+                if (active) {
                     for (const stamp of stirs) {
-                        const age = time - stamp.at;
+                        const age = stampTime - stamp.at;
                         const decay = 0.3 * Math.exp(-age / trailTau);
                         if (age < 0 || decay < trailFloor) continue;
                         stirred += (1 - smooth(Math.hypot(x - stamp.x, y - stamp.y) / trailRadius)) * decay;
                     }
                     for (const ripple of ripples) {
-                        const age = time - ripple.at;
+                        const age = stampTime - ripple.at;
                         if (age < 0 || age >= rippleLifeS) continue;
                         const ring = Math.abs(Math.hypot(x - ripple.x, y - ripple.y) - rippleSpeed * age);
                         stirred += (1 - smooth(ring / rippleBand)) * (1 - age / rippleLifeS) ** 2;
@@ -105,6 +122,6 @@ export function createGlyphFieldSampler() {
                 mask.rgba[(j * mask.width + i) * 4 + 3] = Math.round(255 * clamp(tint * strength * dip * (0.12 + 0.5 * patch + Math.min(0.6, stirred))));
             }
         }
-        return { sprites, mask, maskExtent: [mask.width * step * fieldStep, mask.height * step * fieldStep] };
+        return field.frame;
     };
 }

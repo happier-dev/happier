@@ -19,7 +19,11 @@ export type PlanetGlyphOptions = Readonly<{
     ring?: Readonly<{ radius: number; width: number; alpha: number }>;
 }>;
 export type MarkGlyphOptions = Readonly<{ centre: GlyphPoint; size: number; ink: 'sunrise'; retypeS?: number; dissolve?: number; turn?: number; fill?: number }>;
-export type TravellerGlyphOptions = Readonly<{ particles: Float32Array; ink: 'sunrise' | GlyphInk; small?: boolean }>;
+export type TravellerGlyphOptions = Readonly<{
+    particles: Float32Array; ink: 'sunrise' | GlyphInk; small?: boolean;
+    /** Presentation time from the same measured epoch when an in-flight layer is carried across a step. */
+    presentationTimeS?: number;
+}>;
 export type FrontGlyphOptions = Readonly<{
     shape: 'superellipse' | 'roundRect';
     origin?: GlyphPoint;
@@ -45,6 +49,8 @@ export type FieldDotOptions = Readonly<{
     seed?: number;
     strength?: number;
     phaseS?: number;
+    elapsedS?: number;
+    stampTimeS?: number;
     stirs?: readonly FieldInput[];
     ripples?: readonly FieldInput[];
 }>;
@@ -67,6 +73,7 @@ export type GlyphFrame = Readonly<{
         sprites: GlyphSprites;
         mask: Readonly<{ rgba: Uint8Array; width: number; height: number }>;
         maskExtent: readonly [number, number];
+        revision: number;
     }> | null;
     body: Readonly<{
         rgba: Uint8Array;
@@ -87,5 +94,9 @@ export function createGlyphFrameSampler(): (scene: GlyphScene, motion?: Readonly
 export function glyphFrame(scene: GlyphScene, motion?: Readonly<{ time?: number }>): GlyphFrame;
 
 export const glyphFieldDurationS: number;
+export const glyphFieldTrailCell: number;
+export const glyphFieldTrailLifeS: number;
+export const glyphFieldRippleLifeS: number;
+export function glyphFieldPhase(seconds: number): number;
 export const glyphDotRadii: readonly number[];
 export function fieldDotLayer(options: FieldDotOptions): FieldDotLayer;

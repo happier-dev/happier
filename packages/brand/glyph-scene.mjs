@@ -1,7 +1,7 @@
 import { PLANET_PALETTES, PLANET_SAMPLER, shadePlanetDot } from './planet.mjs';
 import { orderedFade } from './atmosphere.mjs';
 import { createGlyphFieldSampler } from './glyph-field.mjs';
-export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii } from './glyph-field.mjs';
+export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii, glyphFieldPhase, glyphFieldTrailCell, glyphFieldTrailLifeS, glyphFieldRippleLifeS } from './glyph-field.mjs';
 import { markSdfAt } from './glyph-mark.mjs';
 
 const { gradient, lightForReveal, REST_SPIN } = PLANET_SAMPLER;
@@ -69,9 +69,10 @@ function planetBody(out, grid, planet, fade, palette, previous) {
     const { cx, cy, R, spin, rotate, light, reveal, dim, glow, gain, ring, assembly } = planet;
     const { dpr } = out;
     const { cols, rows, cell } = grid;
-    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, ring?.radius, ring?.width, ring?.alpha, assembly, palette, fade?.from, fade?.to, dpr];
+    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, ring?.radius, ring?.width, ring?.alpha, assembly, palette, fade?.from, fade?.to, dpr, out.height];
     if (previous && key.every((value, index) => previous.key[index] === value)) return previous;
-    const rgba = new Uint8Array(cols * rows * 4);
+    const rgba = previous?.body.rgba.length === cols * rows * 4 ? previous.body.rgba : new Uint8Array(cols * rows * 4);
+    rgba.fill(0);
     const sine = Math.sin(-rotate), cosine = Math.cos(-rotate);
     const sample = { palette, light, reveal, spin, glow, breath: 0, reach: 7, bandStrength: 0.35, detail: 1.4 };
     const edge = Math.hypot(...cell) / (R * dpr);
@@ -89,13 +90,15 @@ function planetBody(out, grid, planet, fade, palette, previous) {
             const flare = ring ? clamp(1 - Math.abs(distance - ring.radius) / ring.width) * ring.alpha : 0;
             const appearance = assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2);
             const n = (j * cols + i) * 4;
-            rgba[n] = Math.round(clamp(mix(shade.rgb[0], palette.rim[0], flare) * strength, 0, 255));
-            rgba[n + 1] = Math.round(clamp(mix(shade.rgb[1], palette.rim[1], flare) * strength, 0, 255));
-            rgba[n + 2] = Math.round(clamp(mix(shade.rgb[2], palette.rim[2], flare) * strength, 0, 255));
+            rgba[n] = Math.round(clamp(mix(palette.background[0], mix(shade.rgb[0], palette.rim[0], flare), strength), 0, 255));
+            rgba[n + 1] = Math.round(clamp(mix(palette.background[1], mix(shade.rgb[1], palette.rim[1], flare), strength), 0, 255));
+            rgba[n + 2] = Math.round(clamp(mix(palette.background[2], mix(shade.rgb[2], palette.rim[2], flare), strength), 0, 255));
             rgba[n + 3] = Math.round(255 * appearance * fadeBetween(assembly, 0, 0.12));
         }
     }
-    const fadeMask = fade ? makeFadeMask(out, fade) : null;
+    const former = previous?.body;
+    const fadeMask = fade ? former?.fadeMask?.height === out.height && former.fade?.from === fade.from * dpr && former.fade.to === fade.to * dpr
+        ? former.fadeMask : makeFadeMask(out, fade) : null;
     return {
         key,
         body: { rgba, cols, rows, disc: { cx: cx * dpr, cy: cy * dpr, R: R * dpr }, fade: fade && { from: fade.from * dpr, to: fade.to * dpr }, fadeMask },
@@ -264,7 +267,7 @@ export function createGlyphFrameSampler() {
             if (layer.kind === 'field') field = layer;
             if (layer.kind === 'planet') body = samplePlanet(out, grid, layer, time, theme, palette, previousBody);
             if (layer.kind === 'mark') sampleMark(out, grid, layer, time, palette);
-            if (layer.kind === 'traveller') sampleTravellers(out, layer, time, palette);
+            if (layer.kind === 'traveller') sampleTravellers(out, layer, layer.presentationTimeS ?? time, palette);
             if (layer.kind === 'front') sampleFront(out, grid, layer, time, palette);
         }
         previousBody = body;
