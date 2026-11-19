@@ -6,11 +6,10 @@ import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/prot
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
-import { resolveBoundTargetSessionAddress } from './voiceAgentRunState';
 import { readAdmittedVoiceSessionExecutionTarget } from '@/voice/session/voiceSessionStore';
 import { createVoiceToolHandlers } from '@/voice/tools/handlers';
 import { projectVoiceActionExecutionResult } from '@/voice/tools/voiceActionResult';
-import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
+import { resolveToolSessionAddress, resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import { resolveVoiceActionExecution } from '@/voice/tools/voiceActionExecution';
 import { redactVoiceActionExecutionResultForProvider } from '@/voice/context/redactVoiceToolResult';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
@@ -38,11 +37,11 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
     }
     if (!handle.actionInvocation) return failure('admission_unavailable');
     const binding = resolveVoiceBindingBySessionId({ sessionId: controlSessionId });
-    const target = resolveBoundTargetSessionAddress(controlSessionId);
+    const target = binding ? await resolveToolSessionAddress({ binding }) : null;
     const serverId = handle.accountLifetime.scope.serverId;
     const turn = handle.toolTurnContext?.current;
     const tools = createVoiceToolHandlers({
-      voiceSessionBinding: binding, currentSessionAddress: target, currentServerId: serverId,
+      voiceSessionBinding: binding, resolveCurrentSessionAddress: async () => target, currentServerId: serverId,
       currentExecutionTarget: binding ? readAdmittedVoiceSessionExecutionTarget({ adapterId: binding.adapterId,
         controlSessionId: binding.controlSessionId, serverId }) : null,
       readVoiceAgentHandle: () => handle,

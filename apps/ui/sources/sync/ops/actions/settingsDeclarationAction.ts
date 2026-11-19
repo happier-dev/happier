@@ -5,7 +5,7 @@ import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/ap
 import type { ApprovalProfileArtifactChangeV1, executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, SettingsDeclarationValueV1Schema, SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationCapturedMutationV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
-import { createSettingsDeclarationQueryMatcherV1, projectSettingsDeclarationDiscoveryV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationDiscovery';
+import { projectSettingsDeclarationDiscoveryV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationDiscovery';
 import { AccountSettingMutationV1Schema, applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import { captureSettingMutationV1, restoreSettingMutationV1 } from '@happier-dev/protocol/actions/settings/settingMutationReversal';
 import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -18,6 +18,7 @@ import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/a
 import { getSettingsPageDeclarations } from '@/components/settings/catalog/settingsPageDeclarations';
 import { buildSettingHref, findSettingDeclaration, readBuiltInSettingUiRef, settingRendersOnHost, settingTargetKinds, SETTING_VALUE_UNAVAILABLE, type SettingRef, type SettingsHost, type SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
+import { createSettingsCatalogSearch, readSettingRowSearchText } from '@/components/settings/catalog/runtime/settingsCatalogSearch';
 import type { SettingsPageGate } from '@/components/settings/catalog/types';
 import { resolveSettingsPageGateUnavailableReason } from '@/components/settings/catalog/settingsPageGateAvailability';
 import { t } from '@/text';
@@ -246,51 +247,63 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
         const declarations = getSettingsPageDeclarations(undefined, localDeclaration ? undefined : await owner.readAccountSettings());
         if (actionId === 'settings.list') {
             const { query, ...parsed } = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
-            const matchesQuery = createSettingsDeclarationQueryMatcherV1(query);
-            const matchesRef = (ref: SettingRef) => !query || matchesQuery({
-                anchor: ref.anchor, title: ref.title ?? String(t(ref.titleKey)),
-            });
             const pageAnchors = new Set(declarations.flatMap(page => Object.values(page.settings).map(ref => ref.anchor)));
             const portablePreferences = BUILT_IN_SETTINGS_DECLARATIONS_V1.flatMap(declaration => {
                 if (pageAnchors.has(declaration.anchor) || parsed.pageId && declaration.pageId !== parsed.pageId) return [];
                 const ref = readBuiltInSettingUiRef(declaration.anchor);
-                return ref && matchesRef(ref) ? [{ pageId: declaration.pageId, ref }] : [];
+                return ref ? [{ pageId: declaration.pageId, ref }] : [];
             });
-            const items = await Promise.all(declarations
-                .filter((page) => !parsed.pageId || page.pageId === parsed.pageId)
-                .flatMap((page) => Object.values(page.settings).filter(matchesRef).map((ref) => descriptor(page.pageId, ref, context, readHome)))
-                .concat(portablePreferences.map(({ pageId, ref }) => descriptor(pageId, ref, context, readHome))));
+            const refs = declarations
+                .filter(page => !parsed.pageId || page.pageId === parsed.pageId)
+                .flatMap(page => Object.values(page.settings).map(ref => ({ pageId: page.pageId, ref })))
+                .concat(portablePreferences);
+            const items: SettingsDeclarationDescriptorV1[] = [];
             const connection = readBuiltInSettingDeclarationV1('machines.connection.direct');
-            if (connection && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(connection)) {
+            if (connection && (!parsed.pageId || parsed.pageId === 'machines')) {
                 items.push({ anchor: connection.anchor, pageId: connection.pageId, title: connection.title,
                     description: connection.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'account', allowedValues: [...machineDirectConnectionStorage.allowedValues] });
             }
             const machineHost = readBuiltInSettingDeclarationV1('machines.terminal.host');
-            if (machineHost && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(machineHost)) {
+            if (machineHost && (!parsed.pageId || parsed.pageId === 'machines')) {
                 items.push({ anchor: machineHost.anchor, pageId: machineHost.pageId, title: machineHost.title,
                     description: machineHost.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'account' });
             }
             const installablePolicy = readBuiltInSettingDeclarationV1('machines.installables.policy');
-            if (installablePolicy && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(installablePolicy)) {
+            if (installablePolicy && (!parsed.pageId || parsed.pageId === 'machines')) {
                 items.push({ anchor: installablePolicy.anchor, pageId: installablePolicy.pageId, title: installablePolicy.title,
                     description: installablePolicy.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'account' });
             }
             const storageView = readBuiltInSettingDeclarationV1('machines.storage.view');
-            if (storageView && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(storageView)) {
+            if (storageView && (!parsed.pageId || parsed.pageId === 'machines')) {
                 items.push({ anchor: storageView.anchor, pageId: storageView.pageId, title: storageView.title,
                     description: storageView.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'local' });
             }
             const administrationTarget = readBuiltInSettingDeclarationV1('machines.administrationTarget');
-            if (administrationTarget && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(administrationTarget)) {
+            if (administrationTarget && (!parsed.pageId || parsed.pageId === 'machines')) {
                 items.push({ anchor: administrationTarget.anchor, pageId: administrationTarget.pageId, title: administrationTarget.title,
                     description: administrationTarget.description, readable: Boolean(owner.accountScope), writable: Boolean(owner.accountScope),
                     sensitive: false, storageScope: 'local', ...(!owner.accountScope ? { unavailableReason: 'not_bound' as const } : {}) });
             }
-            return projectSettingsDeclarationDiscoveryV1(items, parsed);
+            const matchedAnchors = query ? new Set(createSettingsCatalogSearch([
+                ...refs.map(({ ref }) => ({
+                    anchor: ref.anchor, ...readSettingRowSearchText(ref), pathTokens: [],
+                })),
+                ...items.map(item => {
+                    const ref = readBuiltInSettingUiRef(item.anchor);
+                    return { anchor: item.anchor, pathTokens: [], ...(ref ? readSettingRowSearchText(ref)
+                        : { title: item.title, subtitle: item.description ?? '', keywords: [] }) };
+                }),
+            ])(query).map(match => match.item.anchor)) : null;
+            const selected = await Promise.all(refs
+                .filter(({ ref }) => !matchedAnchors || matchedAnchors.has(ref.anchor))
+                .map(({ pageId, ref }) => descriptor(pageId, ref, context, readHome)));
+            return projectSettingsDeclarationDiscoveryV1(
+                selected.concat(matchedAnchors ? items.filter(item => matchedAnchors.has(item.anchor)) : items), parsed,
+            );
         }
         const parsed = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
         if (parsed.anchor === 'machines.administrationTarget') {

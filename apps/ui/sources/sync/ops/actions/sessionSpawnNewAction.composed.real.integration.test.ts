@@ -693,7 +693,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         let runnerClient: ApiSessionClient | null = null;
         let requesterRuntime: RequesterSessionRuntimeContext | null = null;
         const readRunnerClient = () => runnerClient;
-        const selectedServices = { v: 2 as const, bindingsByServiceId: fullHostRuntime || nativeVoiceActions ? {} : {
+        const selectedServices = { v: 2 as const, bindingsByServiceId: fullHostRuntime ? {} : {
             'happier.agent.claude/claude-subscription': { source: 'team_resource' as const,
                 resourceId: crypto.randomUUID(), deliveryMode: 'brokered' as const },
         } };
@@ -1463,13 +1463,17 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 const started = await voice.manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                     chatModelId: 'native-actions', commitModelId: 'native-actions', permissionIntent: 'default',
                     idleTtlSeconds: 60, initialContext: '' });
-                const turn = voice.manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Start a coding Session.' });
+                const turn = voice.manager.sendTurn({ voiceAgentId: started.voiceAgentId,
+                    userText: 'Start a coding Session with native-model and the selected Claude subscription.' });
                 void turn.catch(() => {});
                 await voice.native.waitForInputs(1);
                 const tool = voice.native.opens[0]?.functionTools?.find(candidate => candidate.name === 'happier_voice_action');
                 if (!tool) throw new Error('Native Voice Action function unavailable');
                 const { creationKey: _creationKey, ...spawnInput } = input;
-                const action = { t: 'spawnSession', args: spawnInput };
+                const modelSelection = { v: 1 as const, ref: {
+                    agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'native-model',
+                }, updatedAt: Date.now() };
+                const action = { t: 'spawnSession', args: { ...spawnInput, modelSelection } };
                 const invoke = (callId: string) => tool.call(action, { callId });
                 releaseObservedStartup();
                 const childId = (raw: unknown) => {
@@ -1485,6 +1489,12 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                     result: { type: 'success', sessionId: expect.any(String) } });
                 const childIds = duplicates.map(childId);
                 expect(new Set(childIds).size).toBe(1);
+                const child = await db.session.findUniqueOrThrow({ where: { id: childIds[0]! } });
+                const metadata: unknown = JSON.parse(child.ownerMetadata ?? 'null');
+                expect(metadata).toMatchObject({ t: 'plain', v: {
+                    runtime: { modelSelectionIntentV1: { selection: modelSelection.ref } },
+                    connectedServices: { connectedServices: selectedServices },
+                } });
                 expect(await db.session.count({ where: { accountId: requester.id } })).toBe(1);
                 expect(physicalLaunches).toBe(1);
                 const distinct = [

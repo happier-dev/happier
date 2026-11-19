@@ -89,6 +89,9 @@ it('refreshes the root language search label when the same selected service enve
     onTestFinished(() => hook.unmount());
     const root = (query: string) => hook.getCurrent().search(query).find((item) => item.setting?.anchor === 'voiceConversations.assistantLanguage');
     expect(root(t('settingsVoice.pages.conversations.iSpeakTitle'))?.setting?.title).toBe(t('settingsVoice.pages.conversations.iSpeakTitle'));
+    expect(hook.getCurrent().search('Waitng sound')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ setting: expect.objectContaining({ anchor: 'voiceConversations.audibleWaitingCue' }) }),
+    ]));
     // A service's own control says which service it belongs to: "Voice conversations · ElevenLabs Voice".
     const agentId = hook.getCurrent().search('ElevenLabs Agent ID')
         .find((item) => item.setting?.anchor.startsWith(`voiceConversations.provider.${providerId}.`));

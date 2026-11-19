@@ -74,7 +74,7 @@ describe('createActionToolExecutorBridge', () => {
     const spawn = inventory.registrations.find(registration => registration.actionId === 'session.spawn_new');
     if (!spawn) throw new Error('Missing Voice Session creation tool');
     const schema = zodSchemaToJsonSchemaObject(spawn.meta.inputSchema, { target: 'draft-7' });
-    expect(schema).toMatchObject({ properties: { newSession: expect.any(Object) } });
+    expect(schema.properties).not.toHaveProperty('newSession');
     expect(schema.required).not.toContain('agentTarget');
   });
 

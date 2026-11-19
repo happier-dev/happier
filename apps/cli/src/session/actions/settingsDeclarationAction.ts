@@ -132,7 +132,8 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
       ?? (await import('./settingsCatalogServices')).createCliVoiceSettingsBindingContext();
     const declarations = getSettingsDeclarationCatalogV1(voiceBindingContext.registry);
     if (actionId === 'settings.list') {
-      const requested = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
+      const { query, ...requested } = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
+      if (query) return clientActionUnavailable(actionId);
       const items: SettingsDeclarationDescriptorV1[] = declarations
         .filter(item => !requested.pageId || item.pageId === requested.pageId).map(item => {
           const sensitive = item.sensitive || item.storage?.access === 'sensitive';

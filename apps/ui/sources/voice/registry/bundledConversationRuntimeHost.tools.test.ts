@@ -217,9 +217,13 @@ describe('bundled Conversation runtime host tool projection', () => {
       const result = await tool.execute(transport === 'direct'
         ? { id: 'session.spawn_new' }
         : { actionId: 'action.spec.get', input: { id: 'session.spawn_new' } });
-      expect(result).toMatchObject(transport === 'direct'
-        ? { actionSpec: { id: 'session.spawn_new' } }
-        : { ok: true, result: { actionSpec: { id: 'session.spawn_new' } } });
+      const actionSpec = { id: 'session.spawn_new', inputHints: { fields: expect.arrayContaining([
+        expect.objectContaining({ path: 'modelSelection' }),
+        expect.objectContaining({ path: 'modelSelectionInput' }),
+        expect.objectContaining({ path: 'connectedServicesAuthIntent', description: expect.stringContaining('listSpawnConnectedServices') }),
+        expect.objectContaining({ path: 'teamCredentialBindings' }),
+      ]) } };
+      expect(result).toMatchObject(transport === 'direct' ? { actionSpec } : { ok: true, result: { actionSpec } });
     } finally {
       lease.revoke();
     }

@@ -1512,9 +1512,11 @@ describe('voice tool handlers', () => {
     ['', 'named', 'remembered-default'], ['', 'discovered', 'remembered-default'],
     ['', 'named', 'signed-out-default'], ['', 'discovered', 'signed-out-default'],
     ['', 'discovered', 'r135-default'],
+    ['', 'realtime', 'codex'], ['s1', 'realtime', 'codex'],
   ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s, %s)', async (sourceSessionId, entry, agentChoice) => {
     state.settings.voice.canApproveRequests = false;
     const r135Default = agentChoice === 'r135-default';
+    const realtime = entry === 'realtime';
     const configuredDefault = agentChoice === 'configured-default';
     const selectedAgentTarget = configuredDefault
       ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'qa-c-exact-args' }
@@ -1594,7 +1596,8 @@ describe('voice tool handlers', () => {
         tagIds: [],
       },
       initialInput: {
-        status: 'notRequested' as const,
+        ...(realtime ? { status: 'accepted' as const, localId: 'spawned-first-input' }
+          : { status: 'notRequested' as const }),
       },
     };
     const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol/machines/machineStoredContent');
@@ -1635,7 +1638,18 @@ describe('voice tool handlers', () => {
       if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
         return createExistingSessionDirectoryPreflightResult(request.payload);
       }
-      if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) return spawnSettlement;
+      if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) {
+        if (realtime && spawnSettlement === spawnResult) {
+          const occurredAt = Date.now();
+          storage.getState().applySessions([createSessionFixture({
+            ...storage.getState().sessions.s1, id: spawnResult.sessionId,
+            latestTurnStatus: 'failed', latestTurnStatusObservedAt: occurredAt,
+            lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit',
+              source: 'usage_limit', occurredAt },
+          })]);
+        }
+        return spawnSettlement;
+      }
       throw new Error(`Unexpected Voice spawn daemon RPC: ${request.method}`);
     });
     // Each scenario installs a new daemon boundary; invalidate the preceding
@@ -1711,23 +1725,58 @@ describe('voice tool handlers', () => {
     expect(example.t).toBe(spawnTool);
     expect(example.args).not.toHaveProperty('agentTarget');
     const action = { t: example.t, args: { ...example.args, ...spawnInput } };
-    const invokeCreate = (effectId: string, input: unknown = action.args) => (entry === 'discovered'
+    const carrierId = 'realtime-voice-carrier';
+    const owner = createVoiceRuntimeAttemptBindingOwner();
+    const adapterId = 'test.voice.provider/conversation';
+    const controlSessionId = 'realtime-spawn-journey';
+    const bindTarget = (targetSessionId: string | null) => bindVoiceRuntimeAttemptBinding({ owner, binding: {
+      adapterId, controlSessionId, conversationSessionId: carrierId,
+      conversationSessionAddress: { serverId: homeA, sessionId: carrierId }, lifetime: 'runtime_attempt', transcriptMode: 'synthetic',
+      targetSessionAddress: targetSessionId ? { serverId: homeA, sessionId: targetSessionId } : null,
+      updatedAt: Date.now(),
+    } });
+    const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
+    const barrier = realtime ? (() => {
+      bindTarget(sourceSessionId || null);
+      const lease = createBundledConversationRuntimeHostLease();
+      const result = lease.host.createToolBarrier({ adapterId, controlSessionId, resolveSessionId: () => carrierId,
+        submitResults: async () => {}, continueResponse: async () => {} });
+      onTestFinished(() => { result.dispose(); lease.revoke();
+        unbindVoiceRuntimeAttemptBindingIfOwned({ conversationSessionId: carrierId, owner }); });
+      return result;
+    })() : null;
+    const invokeRealtime = async (effectId: string, toolName: string, input: unknown) => {
+      if (!barrier) throw new Error('Missing realtime tool barrier');
+      const batch = await barrier.run({ responseId: effectId, calls: [{ v: 1, responseId: effectId,
+        callId: effectId, order: 0, toolName, arguments: input as import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue }] });
+      const result = batch.results[0];
+      expect(result?.output, JSON.stringify(batch)).toBeDefined();
+      return JSON.stringify(result!.output);
+    };
+    const invokeCreate = (effectId: string, input: unknown = realtime && !sourceSessionId ? spawnInput : action.args) => (realtime
+      ? invokeRealtime(effectId, sourceSessionId ? 'action_execute' : action.t,
+        sourceSessionId ? { actionId: 'session.spawn_new', input } : input)
+      : entry === 'discovered'
       ? tools.action_execute!({ actionId: 'session.spawn_new', input }, { serverId: homeA, effectId })
       : tools[action.t]!(input, { serverId: homeA, effectId }));
     // A receiving host may accept work before it has a committed child. That
     // receipt cannot navigate to a guessed child or to the source Session.
     spawnSettlement = { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' };
     const pending = JSON.parse(await invokeCreate('voice-spawn-pending'));
-    expect(entry === 'discovered' ? pending.result : pending, JSON.stringify({ pending,
+    const generic = entry === 'discovered' || (realtime && Boolean(sourceSessionId));
+    expect(generic ? pending.result : pending, JSON.stringify({ pending,
       daemonMethods: daemonRpc.mock.calls.map(([request]) => request.method),
       homePaths: account.request.mock.calls.map(([url]) => new URL(String(url)).pathname),
     })).toMatchObject({ type: 'pending' });
     expect(routerNavigate).not.toHaveBeenCalled();
     spawnSettlement = spawnResult;
     const creation = JSON.parse(await invokeCreate('voice-spawn-effect'));
-    const response = entry === 'discovered' ? { ok: creation.ok, ...creation.result } : creation;
+    const response = generic ? { ok: creation.ok, ...creation.result } : creation;
 
-    expect(response, JSON.stringify(response)).toEqual({ ok: true, ...spawnResult });
+    expect(response, JSON.stringify(response)).toEqual({ ok: true, ...spawnResult,
+      ...(realtime ? { session: { id: spawnResult.sessionId, latestTurnStatus: 'failed',
+        lastRuntimeIssue: { code: 'usage_limit' } } } : {}),
+    });
     await vi.waitFor(() => {
       expect(routerNavigate).toHaveBeenCalledWith(`/session/${response.sessionId}?serverId=${homeA}`, expect.any(Object));
     });
@@ -1736,7 +1785,7 @@ describe('voice tool handlers', () => {
     });
     expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
       serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW,
-      payload: { ...spawnInput, agentTarget: selectedAgentTarget, executionTarget: { serverId: homeA, machineId: 'm1' } },
+      payload: expect.objectContaining({ ...spawnInput, agentTarget: selectedAgentTarget, executionTarget: { serverId: homeA, machineId: 'm1' } }),
     }));
 
     // The new Session arrives through the ordinary server projection. Global
@@ -1790,15 +1839,18 @@ describe('voice tool handlers', () => {
     const followupTools = createVoiceToolHandlers({ currentServerId: homeA,
       currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
       resolveSessionId: () => sourceSessionId || null });
+    if (realtime) bindTarget(child.id);
     const followup = decodeVoiceAssistantActions([{
-      t: 'sendSessionMessage', args: { sessionId: child.id, message: 'Reply MAPLE READY.', reply: 'wait' },
+      t: 'sendSessionMessage', args: { ...(!realtime ? { sessionId: child.id } : {}), message: 'Reply MAPLE READY.', reply: 'wait' },
     }]).actions[0]!;
-    const reply = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-followup' }));
+    const reply = JSON.parse(await (realtime ? invokeRealtime('voice-maple-followup', followup.t, followup.args)
+      : followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-followup' })));
     expect(reply, JSON.stringify(reply)).toMatchObject({ ok: true, status: 'replied', outcome: { text: 'MAPLE READY' } });
     expect(delivered).toEqual([{ input: expect.objectContaining({ sessionId: child.id, message: 'Reply MAPLE READY.', reply: 'wait' }),
       invocation: expect.objectContaining({ authority: 'account_automation', surface: 'voice', caller: { kind: 'host' } }) }]);
     inputAllowed = false;
-    const refused = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-refused' }));
+    const refused = JSON.parse(await (realtime ? invokeRealtime('voice-maple-refused', followup.t, followup.args)
+      : followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-refused' })));
     expect(refused).toMatchObject({ ok: true, status: 'rejected', code: 'session_input_unauthorized' });
     expect(delivered).toHaveLength(1);
     if (signedOutDefault) {

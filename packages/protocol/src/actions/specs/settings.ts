@@ -48,7 +48,7 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonl
     }, safetyForInput: (input: unknown): 'danger' | 'safe' => readBuiltInSettingsOperationApprovalPolicyV1(input).requiresApproval ? 'danger' : 'safe' } : {}),
     title: id === 'settings.list' ? 'List settings' : id === 'settings.get' ? 'Read a setting' : id === 'settings.reset' ? 'Reset a setting' : id === 'settings.invoke' ? 'Run a settings operation' : 'Change a setting',
     description: id === 'settings.list'
-      ? 'Find an app preference by its displayed title or anchor. Use query for a short label, for example {"query":"waiting sound"} for the Voice waiting cue. Optionally narrow by pageId. Use the returned anchor with settings.get or settings.set.'
+      ? 'In the app, find a preference by its displayed title, keywords or description. Use query for a short label, for example {"query":"waiting sound"} for the Voice waiting cue. Optionally narrow by pageId. Use the returned anchor with settings.get or settings.set.'
       : id === 'settings.set'
         ? 'Change the requested app or Voice preference directly using an anchor returned by settings.list. Settings retain their existing approval. Local preferences belong to the answering client.'
         : 'Read or reset a setting, or request a settings operation through its owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.',
@@ -79,7 +79,7 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonl
         description: 'Optional exact page id from settings discovery, not a display name. Omit to list all settings and discover their page ids, displayed titles, anchors and allowed values. Built-in page ids: '
           + [...new Set(BUILT_IN_SETTINGS_DECLARATIONS_V1.map(setting => setting.pageId))].join(', '),
       }, { path: 'query', title: 'Search settings', widget: 'text',
-        description: 'Case-insensitive title or anchor text. For example, search Waiting sound for the Voice waiting cue.' },
+        description: 'Search the app catalog by displayed title, keywords or description. For example, search Waiting sound for the Voice waiting cue.' },
       { path: 'maxBytes', title: 'Result byte budget', widget: 'number',
         description: 'Optional UTF-8 JSON result budget supplied by the delivery caller. Full declarations are paged, never truncated. Omit for the complete catalog.' },
       { path: 'cursor', title: 'Discovery continuation', widget: 'number',

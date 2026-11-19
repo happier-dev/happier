@@ -50,6 +50,7 @@ import {
 } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { applyVoiceSessionTargetSelection } from '@/voice/binding/applyVoiceSessionTargetSelection';
+import { resolveToolSessionAddress } from '@/voice/tools/resolveToolSessionId';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingManager } from '@/voice/binding/voiceConversationBindingRuntime';
 import { readAdmittedVoiceSessionExecutionTarget } from '@/voice/session/voiceSessionStore';
@@ -795,17 +796,18 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
     createWebSocketPcmConnection,
     createWebSocketPcmMedia,
     createToolBarrier: ({ controlSessionId, adapterId, ...deps }) => {
-      const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId, adapterId });
-      // Capture the connected attempt's Home/Session, not later navigation or
-      // target selection. Home Voice still has an Account-owned carrier address.
-      const currentSessionAddress = binding?.conversationSessionAddress ?? null;
+      const readBinding = () => voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId, adapterId });
+      const binding = readBinding();
+      const serverId = binding?.conversationSessionAddress.serverId;
       return createDefaultRealtimeToolBarrier({
         ...deps,
         voiceSessionBinding: binding,
-        currentSessionAddress,
-        currentServerId: currentSessionAddress?.serverId ?? null,
-        currentExecutionTarget: readAdmittedVoiceSessionExecutionTarget({ adapterId, controlSessionId,
-          serverId: currentSessionAddress?.serverId }),
+        resolveCurrentSessionAddress: async () => {
+          const liveBinding = readBinding();
+          return liveBinding ? resolveToolSessionAddress({ binding: liveBinding }) : null;
+        },
+        currentServerId: serverId,
+        currentExecutionTarget: readAdmittedVoiceSessionExecutionTarget({ adapterId, controlSessionId, serverId }),
         ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
       });
     },

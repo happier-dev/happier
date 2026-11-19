@@ -175,7 +175,7 @@ describe('personal list Settings approval defaults', () => {
         }));
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
         const context = { surface: 'voice', authority: 'account_automation' } as const;
-        const discovery = await executor.execute('settings.list', { query: 'Waiting sound' }, context);
+        const discovery = await executor.execute('settings.list', { query: 'Waitng sound' }, context);
         expect(discovery).toMatchObject({ ok: true, result: { items: [
             { anchor: 'voiceConversations.audibleWaitingCue', writable: true },
         ] } });

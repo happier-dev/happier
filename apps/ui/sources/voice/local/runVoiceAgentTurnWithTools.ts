@@ -184,6 +184,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     voiceSessionBinding: binding,
     currentSessionAddress: params.currentToolSessionAddress ?? null,
     resolveCurrentSessionAddress: () => resolveToolSessionAddress({
+      binding: resolveVoiceBindingBySessionId({ sessionId: params.sessionId }),
       currentSessionId: params.currentToolSessionAddress?.sessionId ?? params.currentToolSessionId ?? null,
       currentServerId: params.currentToolSessionAddress?.serverId ?? null,
     }),

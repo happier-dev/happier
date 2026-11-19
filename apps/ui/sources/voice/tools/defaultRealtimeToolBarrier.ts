@@ -55,7 +55,7 @@ type DefaultRealtimeToolBarrierDeps = Readonly<{
   /** Machine captured from this attempt's existing Start admission. */
   currentExecutionTarget?: SessionExecutionTargetV1 | null;
   exposure?: 'voice_assistant' | 'current_ui_only';
-  currentSessionAddress?: SessionAddress | null;
+  resolveCurrentSessionAddress?: () => Promise<SessionAddress | null>;
   /** Provider-local current-context capability; absent means no such tool. */
   currentUiContext?: VoiceCurrentUiToolPort;
   submitResults: (
@@ -117,7 +117,7 @@ export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrie
     handlers: createVoiceToolHandlers({
       voiceSessionBinding: deps.voiceSessionBinding,
       resolveSessionId: deps.resolveSessionId,
-      currentSessionAddress: deps.currentSessionAddress,
+      resolveCurrentSessionAddress: deps.resolveCurrentSessionAddress,
       currentServerId: deps.currentServerId,
       currentExecutionTarget: deps.currentExecutionTarget,
       onSetupRequired: deps.onSetupRequired,

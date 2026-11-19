@@ -757,7 +757,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
       return snapshot.state === 'cancelled' ? 'replay' : 'refuse';
     },
     title: 'Create session',
-    description: 'Create a new Session on the requested Machine using the selected Agent. For Voice, newSession:true confirms the person explicitly asked to start a separate Session. Continue work in the bound coding Session with session.message.send. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
+    description: 'Create a new Session on the requested Machine using the selected Agent. In Voice, use this Action when the person asks to start a separate coding Session. Continue work in the bound coding Session with session.message.send. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
     prompting: { voiceHotPath: true },
     sideEffectClass: 'write',
     safety: 'safe',
@@ -772,8 +772,14 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
         inputSchema: SessionSpawnNewActionVoiceInputV2Schema,
         inputHints: { ...SessionSpawnNewInputHints, fields: [...SessionSpawnNewInputHints.fields.map(field => field.path === 'agentTarget'
           ? { ...field, required: false, description: `${field.description} Omit agentTarget to use the configured default Agent; the host resolves its exact catalog target.` }
-          : field), { path: 'newSession', title: 'Explicit new Session request', widget: 'boolean',
-          description: 'Set true only when the person explicitly asks for a separate Session. Required while a coding Session is selected.' }] },
+          : field),
+          { path: 'modelSelectionInput', title: 'Model choice by ID', widget: 'json',
+            description: 'Supply modelId, providerConnectionId when applicable, and updatedAt when using a catalog choice without a structured model ref.' },
+          { path: 'connectedServicesAuthIntent', title: 'Connected Account choice', widget: 'json',
+            description: 'Use listSpawnConnectedServices for the selected Agent. Supply the requested profile or group, or {kind:"native"} for native authentication.' },
+          { path: 'teamCredentialBindings', title: 'Team credential bindings', widget: 'json',
+            description: 'Preserve the exact Team binding approved for the requested slot. Use the Team-resource model ref in modelSelection for a Team model.' },
+        ] },
       },
       mcp: { inputSchema: SessionSpawnNewTerminalInputSchema },
       api: {
@@ -789,7 +795,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
       },
     },
     examples: {
-      voice: { argsExample: '{"newSession":true,"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/workspace/project"},"initialInput":{"text":"Help me inspect this workspace."}}' },
+      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/workspace/project"},"initialInput":{"text":"Help me inspect this workspace."}}' },
     },
     surfaces: {
       ui: true,

@@ -125,7 +125,11 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
       { text: 'Use listRecentPaths when you need a recent path handle', requiresActionIds: ['paths.list_recent'] },
     ],
     agentTarget: [{ text: 'Omit when no coding Agent was named so the host binds the ready default; use listAgentBackends to resolve an explicitly named Agent to its exact target', requiresActionIds: ['agents.backends.list'] }],
-    modelSelection: [{ text: 'Use listAgentModels after choosing the Agent target so you can select a compatible model', requiresActionIds: ['agents.models.list'] }],
+    modelSelection: [{ text: 'Use listAgentModels for the selected Agent and preserve the requested model and its exact catalog ref, including a Team-resource ref when applicable. When the person asks to reuse a Session’s model, use its exact model ref if available', requiresActionIds: ['agents.models.list'] }],
+    modelSelectionInput: [{ text: 'Use the exact model ID and provider connection when the catalog choice has no structured ref. A Connected Account profile is a separate credential choice', requiresActionIds: ['agents.models.list'] }],
+    connectedServices: [{ text: 'Use listSpawnConnectedServices or a content-free binding returned by Session status. Preserve the exact requested credential binding, without reading credentials or copying bindings the person did not ask to reuse', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
+    connectedServicesAuthIntent: [{ text: 'Use listSpawnConnectedServices to resolve the named profile or group for that Agent. Pass the exact choice as the auth intent when the catalog did not already return a binding', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
+    teamCredentialBindings: [{ text: 'For a requested Team credential, use its catalog or Session selection reference. Pass its exact binding when required together with the selected Team-resource model ref', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
   },
   'session.permission.respond': {
     requestId: [{ text: 'Optional when only one permission request is pending' }],
@@ -219,7 +223,8 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     { text: 'Use listRecentPaths instead of guessing raw paths', requiresActionIds: ['paths.list_recent'] },
     { text: 'Use the admitted Voice execution target when one is supplied; use listMachines and listServers only when choosing a different execution target, and never invent Machine or Home identifiers', requiresActionIds: ['machines.list', 'servers.list'] },
     { text: 'When the person does not name a coding Agent, omit agentTarget so the host selects the canonical ready default. If using listAgentBackends, use its exact executionTarget and the ready row identified by defaultTargetKey; never choose a coding Agent because it shares the Voice provider name. Preserve an Agent the person explicitly names, and report unavailable when no ready default exists', requiresActionIds: ['agents.backends.list'] },
-    { text: 'Use listAgentModels before setting modelSelection internally', requiresActionIds: ['agents.models.list'] },
+    { text: 'When the person names a model, resolve it with listAgentModels and include the exact modelSelection or modelSelectionInput', requiresActionIds: ['agents.models.list'] },
+    { text: 'When the person names a credential source, resolve it with listSpawnConnectedServices or use an exact Session selection reference when the person requests reuse. Submit the exact source in connectedServices, connectedServicesAuthIntent, or teamCredentialBindings as applicable. Ask if the source is ambiguous or unavailable instead of spawning with a different source', requiresActionIds: ['sessions.spawn.connected_services.list'] },
   ],
   'session.target.primary.set': [
     { text: 'Use listSessions before choosing the exact serverId and sessionId internally', requiresActionIds: ['session.list'] },

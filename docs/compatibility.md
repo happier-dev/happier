@@ -10908,7 +10908,16 @@ discovered execution and Voice action blocks use the same surface schema.
 Canonical Action/RPC inputs, stored approval operands and Agent identities stay
 closed and fully bound; malformed explicit targets remain invalid. Refresh the
 UI host with the matching Protocol source. No daemon change, wire epoch,
-persisted format or compatibility adapter is introduced.
+persisted format or compatibility adapter is introduced. Refresh the UI and
+tool hosts together when dropping the temporary Voice authoring field
+`newSession`. Voice creation submits requested model and credential references
+through the ordinary Session creation selection. Omitted follow-up Session
+operands use the live working Session binding.
+
+Unreleased 0.3 Settings Action text search uses the UI settings catalog's
+localized row labels, declared keywords and descriptions. A headless
+`settings.list` call can list by page. Text search requires an app client.
+Exact anchor reads and writes continue through the Settings Action owner.
 
 Unreleased 0.3 native duration facts add optional `idleAfterMs` beside `afterMs` in
 the existing closed `ProviderNativeOptionFactsV1.duration` object. Modal's closed

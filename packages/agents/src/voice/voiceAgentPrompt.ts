@@ -16,7 +16,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 11;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 12;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -34,7 +34,8 @@ const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Create a requested Happier Session through the canonical Session creation Action. A native Agent/Task subagent or execution run is not a Happier Session and does not create a Session list row.',
   'When the person asks to start a new coding Session and do work, pass the work to that Session creation Action in initialInput.text. Do not perform the requested coding task in the Voice carrier, including through native shell or file tools. If the Action is unavailable or fails, report that result instead of doing the work locally.',
   'Only report a Session as created or started after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
-  'With a coding Session selected, set newSession to true only if the person asks to start a separate Session. Omit sessionId on a coding follow-up to use the current target.',
+  'Use Session creation for a separate Session the person requested. For a coding follow-up, send the message with sessionId omitted to use the working target.',
+  'If the person specifies a model and a credential source for a new coding Session, resolve both through the Agent model and spawn connected-services catalogs, or use an available exact Session selection when the person requests reuse. Submit the exact model and credential references in the creation Action. If either requested choice is ambiguous or unavailable, ask before creating the Session.',
   'Creation and input acceptance alone establish only that the Session exists or received the request. To report the work outcome, read the observed child turn or use Session status. For a message with reply wait, use its exact reply outcome. If the turn failed, report the typed cause, such as a usage limit. If work is still pending, say it was sent.',
   'Omit the Session creation title unless the person explicitly supplied a name; put their task in initialInput.text. Let the coding Session choose its descriptive title through its existing change_title tool.',
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',

@@ -226,7 +226,8 @@ export function createVoiceToolHandlers(
   const resolveSessionIdOrError = async (
     explicitSessionId?: string | null,
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> => {
-    const sessionId = await deps.resolveSessionId(explicitSessionId);
+    const sessionId = explicitSessionId || !deps.resolveCurrentSessionAddress
+      ? await deps.resolveSessionId(explicitSessionId) : (await deps.resolveCurrentSessionAddress())?.sessionId;
     if (!sessionId) return { ok: false, error: 'error (no active session)' };
     return { ok: true, sessionId };
   };
@@ -439,12 +440,6 @@ export function createVoiceToolHandlers(
       if (!bound.ok) {
         return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
       }
-      if (currentAddress && !bound.newSession) {
-        const error = 'Continue in the bound coding Session with session.message.send. Set newSession to true only if the person explicitly asked to start a separate Session.';
-        return serializeVoiceActionExecuteResult(actionId, {
-          ok: false, errorCode: 'voice_new_session_intent_required', error, details: currentAddress,
-        }, { canonicalResult, failurePayload: { errorMessage: error } });
-      }
       actionInput = bound.input;
       spawnAgentTarget = bound.input.agentTarget;
       spawnSelection = bound.input;
@@ -609,7 +604,7 @@ export function createVoiceToolHandlers(
         ...(deps.readVoiceAgentHandle?.()?.accountLifetime.scope.accountId
           ? { expectedAccountId: deps.readVoiceAgentHandle()?.accountLifetime.scope.accountId } : {}),
         serverId: targetServerId,
-        defaultSessionId: await deps.resolveSessionId(null),
+        defaultSessionId: sessionId,
         ...(resolveVoiceActionRequestId(context)
           ? { actionRequestId: resolveVoiceActionRequestId(context)! }
           : {}),

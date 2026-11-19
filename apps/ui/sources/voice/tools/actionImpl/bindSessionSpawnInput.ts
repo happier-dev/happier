@@ -4,10 +4,11 @@ import { actionInputValidationFailure } from '@happier-dev/protocol/actions/exec
 
 /** Voice validates its authoring ingress; the Action owner settles every default once. */
 export function bindVoiceSessionSpawnInput(input: unknown): Readonly<{
-  ok: true; input: SessionSpawnNewActionAuthoringInputV2; newSession?: true;
+  ok: true; input: SessionSpawnNewActionAuthoringInputV2;
 }> | ActionExecuteFailure {
   const parsed = SessionSpawnNewActionVoiceInputV2Schema.safeParse(input);
   if (!parsed.success) return actionInputValidationFailure(parsed.error);
-  const { newSession, ...selection } = parsed.data;
-  return { ok: true, input: selection, ...(newSession ? { newSession } : {}) };
+  // Forward the authored model and credential references together. The ordinary
+  // creation owner resolves them against the final Agent and Machine.
+  return { ok: true, input: parsed.data };
 }
