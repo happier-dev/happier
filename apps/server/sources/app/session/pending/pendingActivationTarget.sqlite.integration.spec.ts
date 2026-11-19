@@ -331,17 +331,29 @@ describe('exact requester pending activation target (real SQLite)', () => {
         await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurn.id, status: sourceTurn.status,
             startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
         await db.session.update({ where: { id: source.id }, data: { latestTurnId: sourceTurn.id, latestTurnStatus: sourceTurn.status } });
-        const followDeliveryV1 = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'wake',
-            original: { sourceSessionId: source.id, sourceTurn }, event: { kind: 'finished' } });
-        const protectedInput = protectedContent({ followDeliveryV1 });
-        const input = { ...f.input, localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId: f.session.id,
-            original: followDeliveryV1.original }), followDeliveryV1, followRelations: [{ relation: 'follower' as const }],
-            content: protectedInput.content };
-        expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
-        const finalContent = protectedInput.finalContent(await admittedReceipt(f.session.id, input.localId));
-        if (route === 'removed') expect(await removeSessionFollowSource(follow)).toEqual({ ok: true, value: { changed: true } });
+        const occurrences = [];
+        for (const [seq, kind, delivery] of [[1, 'update_posted', 'wake'], [2, 'message', 'next_turn']] as const) {
+            const sourceMessage = { seq, localId: randomUUID() };
+            await db.sessionMessage.create({ data: { sessionId: source.id, ...sourceMessage, messageRole: 'agent',
+                content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'source update' } } } } });
+            await db.session.update({ where: { id: source.id }, data: { seq } });
+            occurrences.push({ delivery, original: { sourceSessionId: source.id, sourceMessage }, event: { kind } });
+        }
+        occurrences.push({ delivery: 'wake', original: { sourceSessionId: source.id, sourceTurn }, event: { kind: 'finished' } });
+        const originals = [];
+        for (const occurrence of occurrences) {
+            const followDeliveryV1 = SessionFollowInputV1Schema.parse({ v: 1, ...occurrence });
+            const protectedInput = protectedContent({ followDeliveryV1 });
+            const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: f.session.id, original: followDeliveryV1.original });
+            expect(await enqueuePendingMessage({ ...f.input, localId, followDeliveryV1,
+                requestedAction: { v: 1, kind: 'enqueue' }, followRelations: [{ relation: 'follower' }],
+                content: protectedInput.content })).toMatchObject({ ok: true });
+            originals.push({ localId, delivery: followDeliveryV1.delivery,
+                finalContent: protectedInput.finalContent(await admittedReceipt(f.session.id, localId)) });
+        }
         const laterInput = { ...f.input, localId: randomUUID(), requestedAction: { v: 1, kind: 'enqueue' } as const };
         expect(await enqueuePendingMessage(laterInput)).toMatchObject({ ok: true });
+        if (route === 'removed') expect(await removeSessionFollowSource(follow)).toEqual({ ok: true, value: { changed: true } });
         await db.session.update({ where: { id: f.session.id }, data: {
             metadata: JSON.stringify(clearSessionExplicitStopV1FromMetadata(stopped, 'receiver-stop')),
         } });
@@ -352,19 +364,40 @@ describe('exact requester pending activation target (real SQLite)', () => {
         const publisherAuthority = { ...binding, committedFence: registered.committedFence };
         const materialize = () => materializeNextPendingMessage({ actorUserId: f.requester.id, sessionId: f.session.id,
             deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority });
-        expect(await materialize()).toMatchObject({ ok: true, didMaterialize: true, message: { localId: input.localId } });
-        const reconcile = () => settlePendingInputAdmission({ actorUserId: f.requester.id, sessionId: f.session.id,
-            localId: input.localId, publisherAuthority, decision: { kind: 'admit', finalContent } });
-        expect(await reconcile()).toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
-        if (route === 'kept') {
-            expect(await reconcile()).toMatchObject({ ok: true, result: { status: 'alreadyAccepted', localId: input.localId } });
-            return;
+        const reconcile = (input: { localId: string; finalContent: (typeof originals)[number]['finalContent'] }) =>
+            settlePendingInputAdmission({ actorUserId: f.requester.id, sessionId: f.session.id,
+                localId: input.localId, publisherAuthority, decision: { kind: 'admit', finalContent: input.finalContent } });
+        const accepted = (localId: string) => resolveAcceptedPendingDelivery({ actorUserId: f.requester.id,
+            sessionId: f.session.id, localId, publisherAuthority });
+        const cancellation = { ok: true, result: { status: 'rejected', code: 'session_input_cancelled' } };
+        for (const [index, original] of originals.entries()) {
+            expect(await materialize()).toMatchObject({ ok: true, didMaterialize: true, message: { localId: original.localId } });
+            const admitted = await reconcile(original);
+            if (route === 'kept' || original.delivery === 'wake') {
+                expect(admitted).toMatchObject({ ok: true, result: { status: 'accepted', localId: original.localId } });
+            } else {
+                expect(admitted).toMatchObject(cancellation);
+            }
+            if (route === 'kept') {
+                expect(await reconcile(original)).toMatchObject({ ok: true, result: { status: 'alreadyAccepted', localId: original.localId } });
+                return;
+            }
+            expect(await reconcile(original)).toMatchObject({ ...cancellation, pendingCount: 3 - index });
+            const row = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+                sessionId: f.session.id, localId: original.localId,
+            } } });
+            expect(row).toMatchObject({ status: 'discarded', discardedReason: 'session_input_cancelled' });
+            expect(await reconcile(original)).toMatchObject({ ...cancellation, pendingCount: 3 - index });
+            const replayedRow = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+                sessionId: f.session.id, localId: original.localId,
+            } } });
+            expect(replayedRow.updatedAt).toEqual(row.updatedAt);
         }
-        expect(await reconcile()).toMatchObject({ ok: true, result: { status: 'rejected', code: 'session_input_cancelled' }, pendingCount: 1 });
-        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
-            sessionId: f.session.id, localId: input.localId,
-        } } })).toMatchObject({ status: 'discarded', discardedReason: 'session_input_cancelled' });
         expect(await materialize()).toMatchObject({ ok: true, didMaterialize: true, message: { localId: laterInput.localId } });
+        expect(await accepted(laterInput.localId)).toMatchObject({ ok: true, didResolve: true });
+        expect(await accepted(laterInput.localId)).toMatchObject({ ok: true, didResolve: false });
+        expect(await materialize()).toMatchObject({ ok: true, didMaterialize: false, pendingCount: 0 });
+        expect(await db.sessionMessage.count({ where: { sessionId: f.session.id, localId: laterInput.localId } })).toBe(1);
     });
 
     it('keeps target-less predecessor input from becoming foreign publisher authority', async () => {

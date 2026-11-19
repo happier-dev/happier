@@ -1961,6 +1961,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     localId: string;
     validation?: SessionInputSettlementValidationV1;
     settledOriginal?: true;
+    admittingPending?: true;
     /** The admitted original already read in this transaction under the Session lock. */
     original?: Readonly<{ replyProgress: unknown; inputAdmissionReceipt: unknown; turnStartWitnessId: string | null;
         autonomousExchangeRootSessionId: string | null; autonomousExchangeRootLocalId: string | null }>;
@@ -1980,10 +1981,11 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     } }, select: SETTLEMENT_ORIGINAL_PROJECTION });
     const originalProgress = SessionMessageReplyProgressV1Schema.safeParse(original?.replyProgress);
     const originalReceipt = SessionInputAdmissionReceiptV1Schema.safeParse(original?.inputAdmissionReceipt);
-    // An unstarted Follow rejoining its transcript custody needs a surviving
-    // delivery reason before it can reach the provider.
-    if (params.settledOriginal && original?.turnStartWitnessId === null && originalReceipt.success
-        && originalReceipt.data.followDeliveryV1 && 'sourceSessionId' in originalReceipt.data.followDeliveryV1.original) {
+    const followDelivery = originalReceipt.data?.followDeliveryV1;
+    // A next-turn original enters retained context at first admission. Wakes
+    // reach this check when they rejoin transcript custody before dispatch.
+    if (followDelivery && 'sourceSessionId' in followDelivery.original && original?.turnStartWitnessId === null
+        && (params.settledOriginal || (params.admittingPending && followDelivery.delivery === 'next_turn'))) {
         const custody = await readAdmittedSessionFollowInputInTx(params.tx, {
             accountId: params.accountId, destinationSessionId: params.targetSessionId, localInputId: params.localId,
             authority: { kind: 'account', authentication: backgroundDeliveryAuthentication() },
@@ -2522,6 +2524,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 localId,
                 original: existing,
                 ...(settledOriginal ? { settledOriginal: true } : {}),
+                ...(params.decision.kind === "admit" ? { admittingPending: true } : {}),
                 ...(params.decision.validation ? { validation: params.decision.validation } : {}),
             });
             if (!domainValidation.ok && domainValidation.holdReason) {
