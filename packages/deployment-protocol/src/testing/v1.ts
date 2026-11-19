@@ -10,7 +10,7 @@ import { DeploymentSecretBindingSourceV1Schema, EnvironmentVariableBindingV1Sche
 type OwnServerDeploymentFixtureV1 = Omit<DeploymentV1, 'content'> & {
     content: { t: 'plain'; v: DeploymentOwnServerContentV1 } | Extract<DeploymentV1['content'], { t: 'encrypted' }>;
 };
-type OwnServerReceiptDetailFixtureV1 = Omit<DeploymentReceiptDetailV1, 'content'> & { content: DeploymentOwnServerContentV1 };
+type OwnServerReceiptDetailFixtureV1 = DeploymentReceiptDetailV1 & { content: DeploymentOwnServerContentV1 };
 
 /** Current variable content, including its opaque reference, through the strict binding owner. */
 export function createDeploymentVariableBindingV1(input: Readonly<Pick<EnvironmentVariableBindingV1, 'name' | 'phase' | 'source'> & {
