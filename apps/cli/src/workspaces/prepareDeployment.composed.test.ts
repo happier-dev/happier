@@ -929,6 +929,21 @@ describe('Prepare native workspace to normal Session handoff', () => {
     expect(f.accepted).toHaveLength(1);
   });
 
+  it('hands off browser Prepare with its authored Session placement through the exact Machine', async () => {
+    const f = fixture({ enforceHomeRpcAdmission: true });
+    const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft,
+      organizationPlacement: { folderId: null, tagIds: [] } } };
+    const result = await (await f.admit(false, input)).execute();
+
+    expect(result, JSON.stringify({ result, targetRefusals: f.targetRefusals(), boundaryErrors: f.boundaryErrors }))
+      .toMatchObject({ kind: 'handedOff', sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } });
+    expect(f.rpcAdmissions).toContainEqual(expect.objectContaining({
+      method: `workspace-daemon:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`,
+      executionParsed: true, rootActionId: 'deployments.prepare',
+    }));
+    expect(f.launches).toHaveLength(1);
+  });
+
   it('retains Home original-Action refusal cause and no-effect metadata in the approved Prepare receipt', async () => {
     const f = fixture({ enforceHomeRpcAdmission: true, refuseHomeOriginalAction: true });
     const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft, permissionMode: 'read-only' as const } };

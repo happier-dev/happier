@@ -184,11 +184,12 @@ async function readReviewedSessionSpawnInput(
   input: Parameters<typeof readReviewedExternalActionInput>[0],
 ): Promise<SessionSpawnNewInputV2 | null> {
   const root = await readReviewedExternalActionInput(input);
-  const preparation = input.authorization.binding.actionId === 'deployments.prepare'
-    ? DeploymentPrepareInputV1Schema.safeParse(root) : null;
-  const parsed = SessionSpawnNewActionInputV2Schema.safeParse(preparation
-    ? preparation.success ? preparation.data.sessionDraft : null
-    : root);
+  if (input.authorization.binding.actionId === 'deployments.prepare') {
+    const preparation = DeploymentPrepareInputV1Schema.safeParse(root);
+    const spawn = preparation.success ? deriveDeploymentPrepareSessionSpawnInputV1(preparation.data) : null;
+    return spawn ? admitSessionSpawnNewActionInputV2(spawn) : null;
+  }
+  const parsed = SessionSpawnNewActionInputV2Schema.safeParse(root);
   return parsed.success ? admitSessionSpawnNewActionInputV2(parsed.data) : null;
 }
 
