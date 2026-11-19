@@ -2,7 +2,7 @@ import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
 import { machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1, projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1, isMachineSetupRecipeExcludedV1, MachineSetupSourceV1Schema, type getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
-import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { mergeMachineSetupsV1, isMachineSetupRecipeItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import { readMachineSetupAppOriginsV1, selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -82,7 +82,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   // not the whole source. Adding B must not recertify a retained unavailable A.
   const savedByOrigin = input.sources !== undefined || input.removeItemKeys !== undefined
     ? new Map(current.policy.sources.map(source => [machineSetupSourceOriginKeyV1(source),
-      new Set((source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [machineSetupItemKeyV1(item)]))])) : undefined;
+      new Set((source.setup.items ?? []).flatMap(item => isMachineSetupRecipeItemV1(item) ? [machineSetupItemKeyV1(item)] : []))])) : undefined;
   const defaultKept = new Set(change?.detached.filter(entry => !entry.selected).map(entry => entry.itemKey));
   const recipeItems = selectMachineSetupRecipeItemsV1(sources.map(source => source.setup), exclusions, executionSources);
   const proposed = (input.mode !== undefined || input.sources !== undefined ? recipeItems : []).map(entry => {
@@ -95,7 +95,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   const selected = proposed.filter(entry => !entry.retained || input.mode !== undefined && entry.execute);
   const executing = new Set(recipeItems.filter(entry => entry.execute).map(entry => `${entry.sourceIndex}:${entry.itemIndex}`));
   const support: MachineSetupLocalPlanResultV1['support'] = sources.flatMap((source, sourceIndex) =>
-    (source.setup.items ?? []).flatMap((item, itemIndex) => item.kind !== 'app'
+    (source.setup.items ?? []).flatMap((item, itemIndex) => isMachineSetupRecipeItemV1(item)
       && !executing.has(`${sourceIndex}:${itemIndex}`)
       ? [] : [{ sourceIndex, itemIndex, status: 'unverifiable', reason: 'required_fact_unavailable' }]));
   const recipePlans: NonNullable<MachineSetupLocalPlanResultV1['recipePlans']> = [];
@@ -182,7 +182,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   if (!reviewing && params.observation?.desiredRevision === current.policy.revision) {
     for (const entry of support) {
       const item = sources[entry.sourceIndex]?.setup.items?.[entry.itemIndex];
-      if (!item || item.kind === 'app') continue;
+      if (!item || !isMachineSetupRecipeItemV1(item)) continue;
       const observed = params.observation.recipes.find(recipe => sameStrictJsonValue(recipe.ref, item.selection.ref));
       if (!observed) continue;
       entry.status = observed.status;
@@ -225,7 +225,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   // Reuse this Plan's admitted declaration read. Labels never create catalog
   // demand or turn retained/excluded/unavailable recipes into admission work.
   const reviewedRefs = new Set([
-    ...sources.flatMap(source => (source.setup.items ?? []).flatMap(item => item.kind === 'app' ? [] : [item.selection.ref])),
+    ...sources.flatMap(source => (source.setup.items ?? []).flatMap(item => isMachineSetupRecipeItemV1(item) ? [item.selection.ref] : [])),
     ...(change?.detached ?? []).map(entry => entry.item.selection.ref),
   ].map(ref => JSON.stringify([ref.pluginId, ref.recipeId, ref.revision])));
   const recipeTitles = recipes?.filter(entry => reviewedRefs.has(JSON.stringify([

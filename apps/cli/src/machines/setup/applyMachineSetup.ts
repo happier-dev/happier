@@ -7,7 +7,7 @@ import { createMachineSetupNativeBackend, applyMachineSetupEffectPlans, machineS
   runMachineSetupNativeCommand, buildUserManagerGroupRefreshStep, machineSetupStepChangesDaemonGroupsV1,
   type MachineSetupApplyResultV1 } from '@happier-dev/cli-common/machineSetup';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
-import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { mergeMachineSetupsV1, isMachineSetupRecipeItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupEffectPlanV1, MachineSetupBoundTargetBasisV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { selectMachineSetupRecipeItemsV1,
@@ -125,7 +125,7 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
   if (!merged.ok) return merged;
   if (recipePlans?.some(entry => {
     const item = sources[entry.sourceIndex]?.items?.[entry.itemIndex];
-    return !item || item.kind === 'app' || (boundBasis
+    return !item || !isMachineSetupRecipeItemV1(item) || (boundBasis
       ? !sameStrictJsonValue(entry.plan.basis, boundBasis)
       : entry.plan.basis.kind !== 'setup' || !sameStrictJsonValue(entry.plan.basis.selection, item.selection));
   })) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
@@ -152,7 +152,7 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
   };
   const selectedKeys = new Set(recipeItems.map(entry => machineSetupItemKeyV1(entry.item)));
   return { ok: true, setup: execution.setup.items === undefined ? execution.setup : { ...execution.setup,
-    items: execution.setup.items.filter(item => item.kind === 'app' || selectedKeys.has(machineSetupItemKeyV1(item))),
+    items: execution.setup.items.filter(item => !isMachineSetupRecipeItemV1(item) || selectedKeys.has(machineSetupItemKeyV1(item))),
   }, sources: execution.sources };
 }
 
