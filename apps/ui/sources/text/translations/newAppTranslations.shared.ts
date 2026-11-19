@@ -139,7 +139,6 @@ type Copy = Readonly<{
     whereDescription: (p: Name) => string;
     whereDescriptionUnnamed: string;
     configurePlatform: (p: Readonly<{ name: string; target: string }>) => string;
-    configureMachine: (p: Readonly<{ name: string; machine: string }>) => string;
     configureUnnamed: string;
     reviewTitle: (p: Readonly<{ name: string; target: string }>) => string;
     reviewTitleUnnamed: (p: Readonly<{ target: string }>) => string;
@@ -369,7 +368,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Choose where ${name} runs. You can move it later.`,
       whereDescriptionUnnamed: 'Choose where it runs. You can move it later.',
       configurePlatform: ({ name, target }) => `Happier links ${name} to ${target}. Linking deploys nothing.`,
-      configureMachine: ({ name, machine }) => `${machine} runs ${name}.`,
       configureUnnamed: 'Choose what runs and how it deploys.',
       reviewTitle: ({ name, target }) => `Deploy ${name} to ${target}`,
       reviewTitleUnnamed: ({ target }) => `Deploy to ${target}`,
@@ -574,7 +572,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Tria on s’executa ${name}. Ho pots moure més tard.`,
       whereDescriptionUnnamed: 'Tria on s’executa. Ho pots moure més tard.',
       configurePlatform: ({ name, target }) => `Happier enllaça ${name} amb ${target}. Enllaçar no desplega res.`,
-      configureMachine: ({ name, machine }) => `${machine} executa ${name}.`,
       configureUnnamed: 'Tria què s’executa i com es desplega.',
       reviewTitle: ({ name, target }) => `Desplega ${name} a ${target}`,
       reviewTitleUnnamed: ({ target }) => `Desplega a ${target}`,
@@ -779,7 +776,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Wähle, wo ${name} läuft. Du kannst es später verschieben.`,
       whereDescriptionUnnamed: 'Wähle, wo es läuft. Du kannst es später verschieben.',
       configurePlatform: ({ name, target }) => `Happier verknüpft ${name} mit ${target}. Verknüpfen stellt nichts bereit.`,
-      configureMachine: ({ name, machine }) => `${machine} führt ${name} aus.`,
       configureUnnamed: 'Wähle, was läuft und wie es bereitgestellt wird.',
       reviewTitle: ({ name, target }) => `${name} auf ${target} bereitstellen`,
       reviewTitleUnnamed: ({ target }) => `Auf ${target} bereitstellen`,
@@ -984,7 +980,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Elige dónde se ejecuta ${name}. Puedes moverlo después.`,
       whereDescriptionUnnamed: 'Elige dónde se ejecuta. Puedes moverlo después.',
       configurePlatform: ({ name, target }) => `Happier vincula ${name} con ${target}. Vincular no despliega nada.`,
-      configureMachine: ({ name, machine }) => `${machine} ejecuta ${name}.`,
       configureUnnamed: 'Elige qué se ejecuta y cómo se despliega.',
       reviewTitle: ({ name, target }) => `Desplegar ${name} en ${target}`,
       reviewTitleUnnamed: ({ target }) => `Desplegar en ${target}`,
@@ -1189,7 +1184,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Choisissez où ${name} s’exécute. Vous pourrez le déplacer plus tard.`,
       whereDescriptionUnnamed: 'Choisissez où il s’exécute. Vous pourrez le déplacer plus tard.',
       configurePlatform: ({ name, target }) => `Happier relie ${name} à ${target}. Relier ne déploie rien.`,
-      configureMachine: ({ name, machine }) => `${machine} exécute ${name}.`,
       configureUnnamed: 'Choisissez ce qui s’exécute et comment c’est déployé.',
       reviewTitle: ({ name, target }) => `Déployer ${name} sur ${target}`,
       reviewTitleUnnamed: ({ target }) => `Déployer sur ${target}`,
@@ -1394,7 +1388,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Scegli dove viene eseguita ${name}. Puoi spostarla in seguito.`,
       whereDescriptionUnnamed: 'Scegli dove viene eseguita. Puoi spostarla in seguito.',
       configurePlatform: ({ name, target }) => `Happier collega ${name} a ${target}. Collegare non distribuisce nulla.`,
-      configureMachine: ({ name, machine }) => `${machine} esegue ${name}.`,
       configureUnnamed: 'Scegli cosa viene eseguito e come viene distribuito.',
       reviewTitle: ({ name, target }) => `Distribuisci ${name} su ${target}`,
       reviewTitleUnnamed: ({ target }) => `Distribuisci su ${target}`,
@@ -1599,7 +1592,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `${name} を実行する場所を選びます。あとで移動できます。`,
       whereDescriptionUnnamed: '実行する場所を選びます。あとで移動できます。',
       configurePlatform: ({ name, target }) => `Happier は ${name} を ${target} にリンクします。リンクだけではデプロイされません。`,
-      configureMachine: ({ name, machine }) => `${machine} が ${name} を実行します。`,
       configureUnnamed: '何を実行し、どうデプロイするかを選びます。',
       reviewTitle: ({ name, target }) => `${name} を ${target} にデプロイ`,
       reviewTitleUnnamed: ({ target }) => `${target} にデプロイ`,
@@ -1804,7 +1796,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Wybierz, gdzie działa ${name}. Możesz to później przenieść.`,
       whereDescriptionUnnamed: 'Wybierz, gdzie działa. Możesz to później przenieść.',
       configurePlatform: ({ name, target }) => `Happier łączy ${name} z ${target}. Połączenie niczego nie wdraża.`,
-      configureMachine: ({ name, machine }) => `${machine} uruchamia ${name}.`,
       configureUnnamed: 'Wybierz, co działa i jak jest wdrażane.',
       reviewTitle: ({ name, target }) => `Wdróż ${name} na ${target}`,
       reviewTitleUnnamed: ({ target }) => `Wdróż na ${target}`,
@@ -2009,7 +2000,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Escolha onde ${name} é executado. Pode mudá-lo depois.`,
       whereDescriptionUnnamed: 'Escolha onde é executado. Pode mudá-lo depois.',
       configurePlatform: ({ name, target }) => `O Happier liga ${name} a ${target}. Ligar não implementa nada.`,
-      configureMachine: ({ name, machine }) => `${machine} executa ${name}.`,
       configureUnnamed: 'Escolha o que é executado e como é implementado.',
       reviewTitle: ({ name, target }) => `Implementar ${name} em ${target}`,
       reviewTitleUnnamed: ({ target }) => `Implementar em ${target}`,
@@ -2214,7 +2204,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `Выберите, где работает ${name}. Это можно изменить позже.`,
       whereDescriptionUnnamed: 'Выберите, где это работает. Это можно изменить позже.',
       configurePlatform: ({ name, target }) => `Happier связывает ${name} с ${target}. Связь ничего не развёртывает.`,
-      configureMachine: ({ name, machine }) => `${machine} запускает ${name}.`,
       configureUnnamed: 'Выберите, что запускается и как развёртывается.',
       reviewTitle: ({ name, target }) => `Развернуть ${name} в ${target}`,
       reviewTitleUnnamed: ({ target }) => `Развернуть в ${target}`,
@@ -2415,7 +2404,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `选择 ${name} 在哪里运行。之后可以移动。`,
       whereDescriptionUnnamed: '选择在哪里运行。之后可以移动。',
       configurePlatform: ({ name, target }) => `Happier 会把 ${name} 关联到 ${target}。关联不会部署任何内容。`,
-      configureMachine: ({ name, machine }) => `${machine} 运行 ${name}。`,
       configureUnnamed: '选择运行什么以及如何部署。',
       reviewTitle: ({ name, target }) => `将 ${name} 部署到 ${target}`,
       reviewTitleUnnamed: ({ target }) => `部署到 ${target}`,
@@ -2616,7 +2604,6 @@ export const newAppTranslations: Readonly<
       whereDescription: ({ name }) => `選擇 ${name} 在哪裡執行。之後可以移動。`,
       whereDescriptionUnnamed: '選擇在哪裡執行。之後可以移動。',
       configurePlatform: ({ name, target }) => `Happier 會把 ${name} 連結到 ${target}。連結不會部署任何內容。`,
-      configureMachine: ({ name, machine }) => `${machine} 執行 ${name}。`,
       configureUnnamed: '選擇執行什麼以及如何部署。',
       reviewTitle: ({ name, target }) => `將 ${name} 部署到 ${target}`,
       reviewTitleUnnamed: ({ target }) => `部署到 ${target}`,

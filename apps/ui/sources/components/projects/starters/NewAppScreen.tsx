@@ -564,7 +564,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // The deploy steps count the source step first, then the draft's own (journey-deploy: four dots).
   // Describe your app is the source step's other way in: the same first dot of the same stepper.
   const stepIndex = deployStep ? 1 + DEPLOY_STEPS.indexOf(deployStep) : step === 'auto' ? 0 : STEPS.indexOf(step);
-  const stepCount = step === 'deploy' ? 1 + DEPLOY_STEPS.length : STEPS.length;
+  // The source step already counts the deploy path's four dots, so choosing a source fills a dot instead of adding one
+  // (PAGE-ACCEPT-176 R2-D5); only Describe your app, the other way in, has its own three.
+  const stepCount = step === 'describe' || step === 'create' ? STEPS.length : 1 + DEPLOY_STEPS.length;
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
   const autoKind = auto.view.kind;
@@ -855,8 +857,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       ? [name && target ? t('newApp.deploy.reviewTitle', { name, target }) : target ? t('newApp.deploy.reviewTitleUnnamed', { target }) : t('newApp.title'),
         t('newApp.deploy.reviewDescription')]
       : deployStep === 'configure'
-        ? [t('newApp.title'), !name || !target ? t('newApp.deploy.configureUnnamed') : deployFrame?.runsOn?.kind === 'platform'
-          ? t('newApp.deploy.configurePlatform', { name, target }) : t('newApp.deploy.configureMachine', { name, machine: target })]
+        // The summary's Source and Runs on rows name the app and its Machine; the description says what this step is for
+        // instead of naming them a third time (PAGE-ACCEPT-176 R2-D5). A platform keeps its one fact: linking deploys nothing.
+        ? [t('newApp.title'), name && target && deployFrame?.runsOn?.kind === 'platform'
+          ? t('newApp.deploy.configurePlatform', { name, target }) : t('newApp.deploy.configureUnnamed')]
         : [t('newApp.title'), name ? t('newApp.deploy.whereDescription', { name }) : t('newApp.deploy.whereDescriptionUnnamed')];
     body = (
       <View testID="newApp.deploy">

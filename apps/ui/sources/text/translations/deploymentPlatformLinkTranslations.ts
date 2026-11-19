@@ -91,11 +91,11 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   choicesFailed: (params: { platform: string }) => string;
   choicesFailedBody: string;
   connection: string;
-  hostNeedsSetup: (params: { machine: string }) => string;
+  hostNeedsSetup: string;
   hostSetupBody: string;
   hostSetupAction: (params: { machine: string }) => string;
   hostReviewShort: string;
-  hostUnchecked: (params: { machine: string }) => string;
+  hostUnchecked: string;
 }>;
 
 export const deploymentPlatformLinkTranslations = {
@@ -186,10 +186,10 @@ export const deploymentPlatformLinkTranslations = {
     choicesFailed: ({ platform }) => `Couldn’t read your ${platform} choices`,
     choicesFailedBody: "Check that the connection can see your projects, then retry.",
     connection: "Connection",
-    hostNeedsSetup: ({ machine }) => `${machine} isn’t set up to host deploys yet`,
+    hostNeedsSetup: 'This Machine isn’t set up to host deploys yet',
     hostSetupBody: "You review every change before anything runs. Saving this environment can wait until then.",
     hostSetupAction: ({ machine }) => `Set up ${machine}`,
     hostReviewShort: 'Review setup',
-    hostUnchecked: ({ machine }) => `Couldn’t check whether ${machine} can host deploys`,
+    hostUnchecked: 'Couldn’t check whether this Machine can host deploys',
   },
 } satisfies Pick<Record<SupportedLanguage, DeploymentPlatformLinkCopy>, 'en'>;

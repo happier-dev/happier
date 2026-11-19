@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/components/ui/popover';
 import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
@@ -79,18 +78,14 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
       ) : null}
       <View style={[styles.plans, props.columns ? styles.plansColumns : null]}>
         {props.plans.map((plan) => (
+          // jdF-where: the plan's name and price share its first line, then its facts (PAGE-ACCEPT-176 R3-D4).
           <View key={plan.id} style={[styles.plan, props.columns ? styles.planColumn : null]}>
-            <Text variant="meta" emphasis="medium">{plan.title}</Text>
-            {plan.price ? (
-              <FieldLayout label={t('newApp.deploy.plan.price')} columns>
-                <FieldValue value={formatDeclaredPlanPrice(plan.price)} />
-              </FieldLayout>
-            ) : null}
-            {plan.facts.map((fact, index) => (
-              <FieldLayout key={`${index}:${fact.label}`} label={fact.label} columns>
-                <FieldValue value={factValue(fact)} />
-              </FieldLayout>
-            ))}
+            <View style={styles.planHead}>
+              <Text variant="meta" emphasis="medium" style={styles.planTitle}>{plan.title}</Text>
+              {plan.price ? <Text variant="meta" emphasis="medium" accessibilityLabel={
+                `${t('newApp.deploy.plan.price')} ${formatDeclaredPlanPrice(plan.price)}`}>{formatDeclaredPlanPrice(plan.price)}</Text> : null}
+            </View>
+            {plan.facts.length > 0 ? <PlanFacts facts={plan.facts} /> : null}
             <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{sourceLine(plan.source)}</Text>
           </View>
         ))}
@@ -112,6 +107,37 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
           )}
         </Popover>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * A plan's facts as label · value rows whose label column is as wide as its longest label (jdF-where), so values keep
+ * one line in a half-width card. An unseen copy of the labels sizes that column at their natural widths (and again if
+ * the face finishes loading); a value that still needs two lines keeps its own row, so labels and values never drift.
+ */
+function PlanFacts(props: Readonly<{ facts: Plans[number]['facts'] }>) {
+  const { theme } = useUnistyles();
+  const [labelWidth, setLabelWidth] = React.useState<number | null>(null);
+  const label = { color: theme.colors.text.secondary };
+  return (
+    <View>
+      <View style={styles.factMeasure} pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
+        onLayout={(event) => {
+          // Layout reports whole pixels on the web; the label's natural width can be a fraction over, so one more
+          // pixel keeps the widest label on its line.
+          const width = Math.ceil(event.nativeEvent.layout.width) + 1;
+          setLabelWidth((current) => current === width ? current : width);
+        }}>
+        {/* One line each, so the copy measures each label's natural width rather than wrapping to the narrowest. */}
+        {props.facts.map((fact, index) => <Text key={index} variant="meta" numberOfLines={1} style={label}>{fact.label}</Text>)}
+      </View>
+      {props.facts.map((fact, index) => (
+        <View key={`${index}:${fact.label}`} style={styles.fact}>
+          <Text variant="meta" style={[label, styles.factLabel, labelWidth === null ? null : { width: labelWidth }]}>{fact.label}</Text>
+          <Text variant="meta" style={styles.factValue}>{factValue(fact)}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -163,6 +189,12 @@ const styles = StyleSheet.create((theme) => ({
   plansColumns: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16 },
   plan: { gap: theme.space.s4 },
   planColumn: { flexGrow: 1, flexBasis: 0 },
+  planHead: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8 },
+  planTitle: { flex: 1, minWidth: 0 },
+  fact: { flexDirection: 'row', gap: theme.space.s16 },
+  factLabel: { flexShrink: 0, maxWidth: '50%' },
+  factMeasure: { position: 'absolute', opacity: 0, alignItems: 'flex-start', left: 0, top: 0 },
+  factValue: { flex: 1, minWidth: 0 },
   peek: { alignSelf: 'flex-start' },
   comparison: { gap: theme.space.s12, padding: theme.space.s16 },
   headerRow: { flexDirection: 'row', gap: theme.space.s12, paddingBottom: theme.space.s8 },

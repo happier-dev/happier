@@ -769,9 +769,10 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID={host.readiness === 'needsSetup' ? 'project-deployments.draft.hostNeedsSetup' : 'project-deployments.draft.hostUnchecked'}
               tone="warning"
               title={t(host.readiness === 'needsSetup' ? 'projects.deployments.platformLink.hostNeedsSetup'
-                : 'projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })}
+                : 'projects.deployments.platformLink.hostUnchecked')}
               description={t('projects.deployments.platformLink.hostSetupBody')}
-              // The title already names the Machine; the way forward stays quiet beside the footer's one primary (R2-D5).
+              // The Machine field above names it, so the title says "this Machine"; the way forward stays quiet beside the
+              // footer's one primary (R2-D5).
               action={{ label: t('projects.deployments.platformLink.hostReviewShort'),
                 onPress: () => {
                   if (host.setup) void host.review();
@@ -788,7 +789,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             <AttentionBanner
               testID="project-deployments.draft.hostSetup"
               tone="warning"
-              title={t('projects.deployments.platformLink.hostNeedsSetup', { machine: machineName(chosen.id) })}
+              title={t('projects.deployments.platformLink.hostNeedsSetup')}
               description={t('projects.deployments.platformLink.hostSetupBody')}
               {...(hostApply.error ? { details: [hostApply.error] } : {})}
               action={{ label: t('projects.deployments.platformLink.hostSetupAction', { machine: machineName(chosen.id) }),
