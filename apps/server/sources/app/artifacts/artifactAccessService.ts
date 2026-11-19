@@ -113,7 +113,7 @@ export async function resolveArtifactAccessBatchInTx(tx: Tx, input: Readonly<{
     return new Map(input.artifactIds.map((artifactId, index) => {
         const decision = decisions[index];
         return decision ? [artifactId, decision] as const : null;
-    }).filter((entry): entry is readonly [string, ArtifactAccess] => entry !== null));
+    }).filter(entry => entry !== null));
 }
 
 /** Candidate discovery is a database predicate per access arm; only the access owner admits rows.
