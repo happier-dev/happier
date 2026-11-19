@@ -29,6 +29,7 @@ type Props = Readonly<{
     children?: React.ReactNode;
     narrator?: React.ReactNode;
     credentials?: React.ReactNode;
+    onSaveAsWorkflow?: () => void;
     cost?: ReviewStartOptionsProps['cost'];
 }>;
 
@@ -53,7 +54,8 @@ export function ReviewStartBody(props: Props) {
             onThenChange={then => props.onChange({ ...props.input, then })}
             walkthrough={props.walkthrough}
             onWalkthroughChange={walkthrough => props.onChange({ ...props.input, outputs: walkthrough ? ['walkthrough'] : [] })}
-            narrator={props.narrator} credentials={props.credentials} cost={props.cost ?? null} disabled={props.disabled} />
+            narrator={props.narrator} credentials={props.credentials} cost={props.cost ?? null} disabled={props.disabled}
+            onSaveAsWorkflow={props.onSaveAsWorkflow} />
     </View>;
 }
 

@@ -148,6 +148,13 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
             machineId, ...(machineTarget ? { machineTarget } : {}), machineReachable, resumeCapabilityOptions,
             defaultBackend, runBackendTargets, requirements: requires, readinessOperationId });
     }, [session, readExactSettings, accountLifetime, sessionId, serverId, machineId, machineTarget, machineReachable, resumeCapabilityOptions, defaultBackend, workspace?.cwd, executor.getSignal]);
+    // The start and unsaved authoring copy share the exact selected placement.
+    const prepareStartInput = React.useCallback((actionId: ActionId, input: Record<string, unknown>) => ({
+        ...input,
+        ...(sessionId !== null || actionId === 'execution.run.start' ? { sessionId } : {}),
+        ...(sessionId === null && actionId === 'review.start' ? { target: { kind: 'detached' } } : {}),
+        ...(sessionId === null && workspace ? { cwd: workspace.cwd } : {}),
+    }), [sessionId, workspace?.cwd]);
     const startAction = React.useCallback(async (actionId: ActionId, input: Record<string, unknown>, readinessOperationId: string,
         launchOrigin?: ExecutionRunLaunchOrigin) => {
         const rawTargets = actionId === 'execution.run.start' ? [input.backendTarget]
@@ -169,18 +176,14 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
         await admitExactTarget({ secretReferenceOverlay: input.secretReferenceOverlay !== undefined || reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.secretReferenceOverlay !== undefined),
             teamCredentialModel: input.teamCredentialModel !== undefined || reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.teamCredentialModel !== undefined),
             roleBinding: input.roleId !== undefined || reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.roleId !== undefined) }, readinessOperationId, runBackendTargets);
-        // `execution.run.start` names a rowless Run with an explicit null Session; the fan-out Actions (a detached
-        // review carries `target: { kind: 'detached' }`) take no Session key at all.
-        return executor.execute(actionId, { ...input, ...(sessionId !== null || actionId === 'execution.run.start' ? { sessionId } : {}),
-            ...(sessionId === null && actionId === 'review.start' ? { target: { kind: 'detached' } } : {}),
-            ...(sessionId === null && workspace ? { cwd: workspace.cwd } : {}) },
+        return executor.execute(actionId, prepareStartInput(actionId, input),
             { ...(sessionId ? { defaultSessionId: sessionId } : {}),
                 ...(machineId ? { executionRunTargetMachineId: machineId } : {}),
                 ...(launchOrigin ? { executionRunLaunchOrigin: launchOrigin } : {}),
                 ...(!sessionId && workspace ? { externalActionTarget: { kind: 'machine' as const, machineId: workspace.machineId } } : {}) });
-    }, [admitExactTarget, executor.execute, machineId, sessionId, workspace?.machineId, workspace?.cwd]);
+    }, [admitExactTarget, executor.execute, machineId, prepareStartInput, sessionId, workspace?.machineId]);
     return { session, accountBinding, accountLifetime, exactSettings, settings, profileCatalogReady, acpCatalogReady, acpCatalogSnapshot, enabledAgentIds, defaultBackend,
-        backendTarget, inheritedModelSelection, inheritedTeamCredentialModel, resolveInheritedModelLabel, inheritedConnectedServicesSelection, inheritedRoutePresentation, machineTarget, machineId, machineReachable, admitExactTarget, startAction,
+        backendTarget, inheritedModelSelection, inheritedTeamCredentialModel, resolveInheritedModelLabel, inheritedConnectedServicesSelection, inheritedRoutePresentation, machineTarget, machineId, machineReachable, admitExactTarget, prepareStartInput, startAction,
         executeAction: executor.execute,
         isStartCurrent: executor.isCurrent, cancelStart: executor.cancel };
 }

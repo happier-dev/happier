@@ -1,3 +1,6 @@
+import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { validateWorkflowEditorDraft } from '@/sync/domains/workflows/workflowAuthoring';
+import { setWorkflowBlockName } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import * as React from 'react';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 import { Dimensions } from 'react-native';
@@ -661,6 +664,49 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
     afterEach(async () => { await disconnectActiveServerConnection(); await standardCleanup(); await home?.dispose(); restorePopoverGlobals?.(); });
 
+    it('opens the current Review recipe as an editable unsaved workflow without starting it', async () => {
+        const reviewers = [
+            { kind: 'engine', engineId: 'claude', modelId: 'first-model', options: { feature: 'auth' }, includeSessionTranscript: true },
+            { kind: 'engine', engineId: 'claude', modelId: 'second-model', options: { feature: 'storage' } },
+            { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
+        ];
+        const steps = [
+            { kind: 'review', reviewers, instructions: 'Check security' },
+            { kind: 'verify', reviewers: [{ kind: 'session', session: { serverId, sessionId: 'session_1' } }], instructions: '' },
+        ];
+        await mount({ intent: 'review', workspace: { machineId: 'machine_1', cwd: '/repo' },
+            initialActionInput: { reviewers, steps, then: 'fix', outputs: ['walkthrough'],
+                secretReferenceOverlay: { v: 1, bindings: { API_KEY: { ref: secretRef, revision: 1 } } } } });
+        await type('Inspect the current changes');
+        await screen.pressByTestIdAsync('review-start-advanced:header');
+        const requestsBeforeSave = home.requests.length;
+        await screen.pressByTestIdAsync('review-start-save-as-workflow');
+        const entry = reviewRouterPush.mock.calls.at(-1)?.[0];
+        expect(entry, screen.getTextContent()).toMatchObject({ pathname: '/workflows/new', params: { serverId } });
+        const seed = readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, { serverId, accountId: 'account_1' });
+        expect(seed).toMatchObject({ project: { machineId: 'machine_1', directory: '/repo' }, executionTarget: 'session' });
+        if (!seed?.draft) throw new Error('Expected an unsaved editable workflow draft');
+        const validation = validateWorkflowEditorDraft(seed.draft);
+        expect(validation.valid, JSON.stringify(validation.issues)).toBe(true);
+        const block = validation.normalizedDefinition?.blocks[0];
+        if (block?.kind !== 'action') throw new Error('Expected the ordinary Review start Action');
+        expect(block.actionId).toBe('review.start');
+        const savedInput = Object.fromEntries(Object.entries(block.input).map(([key, binding]) => {
+            if (binding.kind !== 'literal') throw new Error('Expected retained Review input');
+            return [key, binding.value];
+        }));
+        expect(savedInput).toMatchObject({ reviewers, steps: [steps[0], { ...steps[1], instructions: 'Inspect the current changes' }],
+            instructions: 'Inspect the current changes', then: 'fix', outputs: ['walkthrough'],
+            sourceSession: { serverId, sessionId: 'session_1' },
+            secretReferenceOverlay: { v: 1, bindings: { API_KEY: { ref: secretRef, revision: 1 } } } });
+        expect(savedInput).not.toHaveProperty('reviewRound');
+        expect(savedInput).not.toHaveProperty('reviewReviewerId');
+        expect(setWorkflowBlockName(seed.draft, block.id, 'Edited Review').blocks[0]?.name).toBe('Edited Review');
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
+        expect(input().props.value).toBe('Inspect the current changes');
+    });
     it('activates contributed options only for the opened selected review engine', async () => {
         const { buildQualifiedPluginContributionKey, createPluginContributionIdentity } = await import('@happier-dev/protocol/plugins/contribution-identity');
         const { normalizePluginUiInlineSurfaceBindingV1 } = await import('@happier-dev/protocol/plugins/ui');

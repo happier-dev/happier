@@ -35,6 +35,7 @@ export type ReviewStartOptionsProps = Readonly<{
   credentials?: React.ReactNode;
   cost: ReviewStartCostConsent | null;
   disabled?: boolean;
+  onSaveAsWorkflow?: () => void;
 }>;
 
 /**
@@ -156,6 +157,12 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
             rightElement={props.credentials}
           />
         ) : null}
+        {props.onSaveAsWorkflow ? <Item
+          testID="review-start-save-as-workflow"
+          title={t('workflows.run.saveAsWorkflow')}
+          onPress={props.onSaveAsWorkflow}
+          disabled={props.disabled}
+        /> : null}
         {cost ? (
           <Item
             title={t('reviewWalkthrough.start.costEstimate')}

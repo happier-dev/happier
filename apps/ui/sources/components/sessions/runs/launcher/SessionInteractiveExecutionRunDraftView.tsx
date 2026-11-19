@@ -86,7 +86,7 @@ import { resolveRowlessExecutionRunStartOptions } from './resolveRowlessExecutio
 import { admitReviewExecutionRunLaunchSelection, useReviewExecutionRunLaunchOptions, type ReviewExecutionRunLaunchSelection } from './useReviewExecutionRunLaunchOptions';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
-import { requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
 import { useDetachedExecutionRunProtocolSupport } from './useDetachedExecutionRunProtocolSupport';
@@ -113,6 +113,8 @@ import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/re
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ReviewEngineOptionsPluginContent } from '@/components/reviews/plugins/ReviewPluginContent';
 import { compileReviewLauncherInput } from './reviewLauncherSelection';
+import { buildReviewStartWorkflowDraftSeed } from './reviewStartWorkflowDraft';
+import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import { getValueAtPath } from '@/components/sessions/actions/ActionInputFields';
 import { useSessionProjectScmSummarySnapshot, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
@@ -1143,6 +1145,29 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         const directory = workspace?.cwd ?? (session ? readSessionOwnerMetadataView(session)?.path : null);
         return machineId && directory ? { machineId, directory } : null;
     }, [machineId, session, workspace?.cwd]);
+    const saveReviewAsWorkflow = React.useCallback(() => {
+        if (!accountLifetime?.isCurrent() || !mountedComposerRef || !serverId) return;
+        const snapshot = readMountedComposerPresentationSnapshot({ ref: mountedComposerRef, scope: accountLifetime.scope });
+        if (!snapshot) return;
+        try {
+            const instructions = snapshot.text.trim();
+            const seed = buildReviewStartWorkflowDraftSeed({
+                input: launcher.prepareStartInput('review.start', { ...comparisonReview.launchInput,
+                    ...(secretOverlayState.overlay ? { secretReferenceOverlay: secretOverlayState.overlay } : {}) }),
+                instructions,
+                sourceSession: props.sessionId ? { sessionId: props.sessionId, serverId } : null,
+                name: resolveExecutionRunLaunchTitle({ intent: 'review', instructions }),
+                project: whereTarget ?? undefined,
+                executionTarget: props.sessionId === null ? 'detached_run' : 'session',
+            });
+            const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed(seed, accountLifetime);
+            setError(null);
+            router.push({ pathname: '/workflows/new', params: { definitionDraftSeedId, serverId } });
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : t('common.requestFailed'));
+        }
+    }, [accountLifetime, mountedComposerRef, serverId, launcher.prepareStartInput, comparisonReview.launchInput,
+        secretOverlayState.overlay, props.sessionId, whereTarget, router]);
     const reviewModelSubtitle = reviewOptions.modelSubtitle;
     const contextualSource = React.useMemo<ContextualStartSource>(() => ({
         enabled: accountLifetime !== null,
@@ -1323,7 +1348,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 stepControls={reviewStepControls}
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}
-                credentials={reviewOptions.controls}
+                credentials={reviewOptions.controls} onSaveAsWorkflow={saveReviewAsWorkflow}
                 narrator={props.comparisonReview ? <ComparisonWalkthroughChoice {...comparisonReview.fields} /> : null}>
                 {startQuestion}
             </ReviewStartBody> : <ContextualStartComposerBody model={contextualComposer}
