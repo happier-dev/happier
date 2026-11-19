@@ -6,7 +6,7 @@ import { ApprovalRequesterThreadCard } from '@/components/approvals/ApprovalRequ
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/approvalArtifacts';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 
 /**

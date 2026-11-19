@@ -26,7 +26,7 @@ import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtur
 import { deriveReadOnlyTranscriptInteraction } from '@/components/sessions/transcript/forkContext/deriveReadOnlyTranscriptInteraction';
 import { TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from './transcriptSettledApprovalPresentations';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { createSessionSurfaceNoteDocumentV1 } from '@happier-dev/protocol/sessions/board';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 

@@ -6,7 +6,7 @@ import { qualifyTranscriptAccountActor } from '@happier-dev/session-core/message
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/approvalArtifacts';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { t } from '@/text';
 
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';

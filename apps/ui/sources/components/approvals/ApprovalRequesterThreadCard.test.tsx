@@ -6,7 +6,7 @@ import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approval
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/approvalArtifacts';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { getStorage } from '@/sync/domains/state/storage';

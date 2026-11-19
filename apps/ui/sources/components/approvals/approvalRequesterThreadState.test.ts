@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/approvalArtifacts';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveApprovalRequesterThreadState } from './approvalRequesterThreadState';

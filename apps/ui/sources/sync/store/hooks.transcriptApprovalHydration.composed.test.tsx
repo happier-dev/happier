@@ -32,7 +32,7 @@ afterEach(() => standardCleanup());
 
 describe('transcript approval hydration', () => {
     it('batches cold settled Discussion requester receipts and keeps unrelated arrivals quiet at Account scale', async () => {
-        const { buildDiscussionRequesterApprovalArtifact } = await import('@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit');
+        const { buildDiscussionRequesterApprovalArtifact } = await import('@/dev/testkit/fixtures/discussionRequesterApprovalArtifact');
         const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
         let inventory: Artifact[] = [];
         const queries: string[] = [], bodyReads: string[][] = [];

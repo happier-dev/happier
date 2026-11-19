@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { listDiscussionRequesterApprovals, readOpenApprovalDiscussionAttention } from './approvalArtifacts';
-import { buildDiscussionRequesterApprovalArtifact } from './approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 
 describe('listDiscussionRequesterApprovals', () => {
     const discussion = { serverId: 'server-1', discussionId: 'discussion-1' };

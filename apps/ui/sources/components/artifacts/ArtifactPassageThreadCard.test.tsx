@@ -10,7 +10,7 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { DocPassageMarginThread } from './docPassageMargin';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit');

@@ -19,7 +19,7 @@ import { createArtifactsDomain, type ArtifactsDomain } from '@/sync/store/domain
 import { isInboxArtifactBodyAdmissionComplete, listInboxArtifactBodyHydrationRequests } from '@/sync/domains/artifacts/inboxArtifacts';
 import { collectOpenApprovalSessionReferences, isOpenApprovalInboxArtifact, listDiscussionRequesterApprovals,
     listOpenApprovalArtifactsForSession } from '@/sync/domains/artifacts/approvalArtifacts';
-import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { buildDiscussionRequesterApprovalArtifact } from '@/dev/testkit/fixtures/discussionRequesterApprovalArtifact';
 import { createArtifactReadBatchHttpResponse, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { readApprovalArtifactDisplayStatus } from '@/components/approvals/approvalStatusLabel';
 import { decryptArtifactWithBody, fetchAndApplyArtifactBodies, fetchAndApplyArtifactChanges, fetchAndApplyArtifactsList, handleNewArtifactSocketUpdate, type ArtifactDataKeyCache } from './syncArtifacts';

@@ -8,7 +8,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
-import type { DecryptedArtifact } from './artifactTypes';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 /**
  * A shared Bot's requester-bound approval produced by the real Protocol owners: the requester subject
