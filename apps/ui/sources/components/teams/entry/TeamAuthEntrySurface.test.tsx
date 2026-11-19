@@ -917,6 +917,32 @@ describe('TeamAuthEntrySurface', () => {
         expectAcceptedAs(accountScope, { continuation });
     });
 
+    it.each([
+        ['account_inactive', 'teams.join.inactiveTitle'],
+        ['email_mismatch', 'teams.join.mismatchTitle'],
+        ['feature_unavailable', 'teams.join.updateRequiredTitle'],
+    ] as const)('shows a reason and a recovery action when admission returns %s', async (outcome, title) => {
+        entryScope = 'invitation';
+        acceptHttpResponse.mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome }) });
+        const onRecoverIdentity = vi.fn();
+        const screen = await renderScreen(<TeamAuthEntrySurface
+            invitation={{ token: 'A'.repeat(43), accountScope: { serverId: homeId, accountId: 'account-1' } }}
+            target={target} onSelectAction={() => {}} onAdmissionComplete={() => {}} onRecoverIdentity={onRecoverIdentity}
+        />);
+        await waitForTestId(screen, 'team-auth-entry-ready');
+        await screen.pressByTestIdAsync('team-auth-entry-join');
+        await waitForTestId(screen, `team-auth-entry-admission-${outcome}`);
+        expect(screen.getTextContent()).toContain(t(title));
+        expect(screen.findByTestId(`team-auth-entry-admission-${outcome}-reason`)).toBeTruthy();
+        await screen.pressByTestIdAsync(`team-auth-entry-admission-${outcome}-action`);
+        if (outcome === 'feature_unavailable') {
+            expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(1);
+            expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        } else {
+            expect(onRecoverIdentity).toHaveBeenCalledTimes(1);
+        }
+    });
+
     it.each([undefined, 'expired'] as const)('withholds held-continuation Join without an active offer (%s)', async (state) => {
         entryScope = 'invitation';
         entryInvitationPreview = state ? activePreview({ state }) : undefined;

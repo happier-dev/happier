@@ -885,10 +885,15 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 kind="warning"
                 title={admissionTerminalPresentation.title}
                 reason={admissionTerminalPresentation.body ?? undefined}
-                action={admissionTerminalPresentation.identityAction === 'sign_in_with_invited' && props.onRecoverIdentity ? {
-                    label: t('teams.join.signInWithInvited'),
-                    onPress: props.onRecoverIdentity,
-                } : undefined}
+                action={admissionTerminalPresentation.identityAction && props.onRecoverIdentity
+                    ? {
+                        label: t(admissionTerminalPresentation.identityAction === 'sign_in_with_invited'
+                            ? 'teams.join.signInWithInvited' : 'teams.join.useAnotherAccount'),
+                        onPress: props.onRecoverIdentity,
+                    }
+                    : admissionTerminalPresentation.exitToHappier
+                        ? { label: t('teams.entry.returnToHappier'), onPress: () => router.replace('/') }
+                        : undefined}
                 accessibilitySemantics="status"
             />
         ) : admissionState.kind === 'incompatible' ? (

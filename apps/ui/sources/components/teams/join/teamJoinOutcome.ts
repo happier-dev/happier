@@ -22,7 +22,8 @@ export type TeamJoinPresentation = Readonly<{
     /** Whether a fresh invitation from a Team manager is the real remedy. */
     askForNew: boolean;
     /** Whether the person must act on their own identity first. */
-    identityAction: 'sign_in_with_invited' | 'verify_address' | null;
+    identityAction: 'sign_in_with_invited' | 'use_another_account' | null;
+    exitToHappier?: true;
 }>;
 
 export function resolveTeamJoinPresentation(
@@ -84,18 +85,26 @@ export function resolveTeamJoinPresentation(
                 askForNew: true,
             });
         case 'account_inactive':
-            return Object.freeze({ ...base, title: t('teams.join.inactiveTitle') });
+            return Object.freeze({
+                ...base,
+                title: t('teams.join.inactiveTitle'),
+                body: t('teams.join.inactiveBody'),
+                identityAction: 'use_another_account',
+            });
         case 'email_mismatch':
             // The invitation is fine; this device is signed in as somebody else.
             return Object.freeze({
                 ...base,
                 title: t('teams.join.mismatchTitle'),
+                body: t('teams.join.mismatchBody'),
                 identityAction: 'sign_in_with_invited',
             });
         case 'feature_unavailable':
             return Object.freeze({
                 ...base,
                 title: t('teams.join.updateRequiredTitle'),
+                body: t('teams.join.updateRequiredBody'),
+                exitToHappier: true,
             });
         case 'not_found':
             return Object.freeze({
