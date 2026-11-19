@@ -472,6 +472,7 @@ export function useInSessionAgentPickerControls(
     params: UseInSessionAgentPickerControlsParams,
 ): InSessionAgentPickerControls {
     const { accountScope, currentAgentId, currentAgentLabel, entries, sessionId, source } = params;
+    const sourceMachineId = params.detail.machineId;
     const accountScopeIsCurrent = params.accountScopeIsCurrent ?? ACCOUNT_SCOPE_ALWAYS_CURRENT;
     const featureEnabled = params.featureDecision?.state === 'enabled';
     const featureDefinitelyDisabled = params.featureDecision?.state === 'disabled';
@@ -533,7 +534,7 @@ export function useInSessionAgentPickerControls(
         entry.backendTargetKey !== source.currentBackendTargetKey
     )), [entries, source.currentBackendTargetKey]);
     const purposeCatalog = useConnectedAccountCatalog('purposes', pickerVisible
-        && targetEntries.some(entry => entry.agentCatalogEntry.connectedAccounts.length > 0) ? accountScope : null);
+        && targetEntries.some(entry => entry.agentCatalogEntry.connectedAccounts.length > 0) ? accountScope : null, { sourceMachineId });
     const purposeDefaultsReady = React.useCallback((entry: ResolvedBackendCatalogEntry) => {
         if (entry.agentCatalogEntry.connectedAccounts.length === 0) return true;
         const current = getConnectedAccountCatalogValue(accountScope, 'purposes');
@@ -891,7 +892,7 @@ export function useInSessionAgentPickerControls(
         const pending = { backendTargetKey: entry.backendTargetKey, sourceAgentId: currentAgentId, selection };
         pendingArmRef.current = pending;
         setSelectionByTargetKey(current => new Map(current).set(entry.backendTargetKey, selection));
-        if (!purposeDefaultsReady(entry)) await refreshConnectedAccountCatalog(accountScope, 'purposes');
+        if (!purposeDefaultsReady(entry)) await refreshConnectedAccountCatalog(accountScope, 'purposes', { sourceMachineId });
         if (pendingArmRef.current !== pending || armScopeRef.current.key !== admittedScopeKey) return false;
         // A changed exact choice stops being armed while its demanded inspection
         // settles. The same Action resumes here, using the existing pending choice.
@@ -901,7 +902,7 @@ export function useInSessionAgentPickerControls(
         pendingArmRef.current = null;
         const applied = armOwnerRef.current(entry, currentAgentId, selection, inspection);
         return applied;
-    }, [accountScope, accountScopeIsCurrent, currentAgentId, inspectableTargetSelections, inspections.request, persistArmedContinuation, purposeDefaultsReady]);
+    }, [accountScope, accountScopeIsCurrent, currentAgentId, inspectableTargetSelections, inspections.request, persistArmedContinuation, purposeDefaultsReady, sourceMachineId]);
 
     const applyDraftAgentIntent = React.useCallback(async (intent: NewSessionDraftAgentIntent) => {
         if (intent.kind === 'picker') {

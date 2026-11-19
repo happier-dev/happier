@@ -5,11 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogRowReadResponseV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '../agentInput/agentInputTestHelpers';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
@@ -30,6 +34,12 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn<(_request: unknown) => Prom
 // Machine capability, Provider projection and continuation-inspection transports.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: async (params: { method: string; payload: { agentTargetKey?: string; selections?: readonly unknown[] } }) => {
+        if (params.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1,
+            projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: { codex: {
+                id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, isBuiltIn: true, title: 'Codex',
+                connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }],
+            } } }),
+        };
         if (params.method === RPC_METHODS.CAPABILITIES_INVOKE) return invoke(params.payload);
         if (params.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createProviderModelProjectionFixture({
             agentTargetKey: params.payload.agentTargetKey, groups: [],
@@ -75,7 +85,7 @@ describe('continuation target account discovery', () => {
         } finally { await hook.unmount(); }
     });
 
-    it.each(['work', 'missing-profile', 'unavailable'])('probes the destination-only qualified target purpose account (%s)', async (profileId) => {
+    it.each(['work', 'missing-profile', 'unavailable', 'retained-default'])('probes the destination-only qualified target purpose account (%s)', async (profileId) => {
         invoke.mockClear();
         resetDynamicModelProbeCacheForTests();
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
@@ -83,6 +93,9 @@ describe('continuation target account discovery', () => {
         const bridge = await loadSyncSingletonForTests();
         const previous = storage.getState();
         const http = createHomeHubArtifactHttpBoundary('continuation-defaults');
+        const sessionId = 'c123456789012345678901234';
+        const session = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId,
+            metadata: { machineId: 'machine-1', path: '/repo', host: 'tester.local', flavor: 'claude' } });
         const value = {
                 v: 1 as const, bindings: [{
                     purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
@@ -91,20 +104,41 @@ describe('continuation target account discovery', () => {
                     } },
                 }],
         };
+        const usesRetainedDefault = profileId === 'retained-default';
+        let purposeRow: ConnectedAccountCatalogRowReadResponseV1 = usesRetainedDefault ? { status: 'absent' }
+            : { status: 'present', revision: 3, content: { t: 'plain', v: { key: 'purposes', value } } };
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://continuation-defaults.test', accountId: 'continuation-defaults',
-            request: (input, init) => new URL(String(input)).pathname === '/v1/account/entity-rows/connected-accounts/purposes'
-                ? Promise.resolve(profileId === 'unavailable' ? Response.json({ error: 'unavailable' }, { status: 503 })
-                    : Response.json({ status: 'present', revision: 3, content: { t: 'plain', v: { key: 'purposes', value } } }))
-                : http.request(input, init) });
+            request: createSessionReadBatchFetchBoundary(async (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path === `/v2/sessions/${sessionId}`) return Response.json({ session });
+                if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
+                    if (profileId === 'unavailable') return Response.json({ error: 'unavailable' }, { status: 503 });
+                    if (init?.method === 'POST') {
+                        const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                        if (mutation.expectedRevision !== 'absent' || mutation.content === null) throw Error('Expected purposes initialization');
+                        purposeRow = { status: 'present', revision: 3, content: mutation.content };
+                        return Response.json({ status: 'updated', revision: 3, cursor: 3 });
+                    }
+                    return Response.json(purposeRow);
+                }
+                if (usesRetainedDefault && path === '/v2/account/settings') {
+                    return Response.json({ version: 7, content: { t: 'plain', v: {
+                        connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: { codex: {
+                            v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId } },
+                        } } },
+                    } } });
+                }
+                return http.request(input, init);
+            }) });
         const accountScope = { serverId: connection.home.id, accountId: 'continuation-defaults' };
         storage.setState({ profileScope: accountScope, profile: AccountProfileSchema.parse({ id: accountScope.accountId }) });
-        applyConnectedAccountCatalogSnapshot(accountScope, 'purposes', profileId === 'unavailable'
+        if (!usesRetainedDefault) applyConnectedAccountCatalogSnapshot(accountScope, 'purposes', profileId === 'unavailable'
             ? { status: 'unavailable', reason: 'account-mode-mismatch' }
             : { status: 'ready', revision: 3, record: { key: 'purposes', value } }, true);
-        publishSessionDraftPickerFixture(accountScope, 'qualified-account-discovery');
+        publishSessionDraftPickerFixture(accountScope, sessionId);
         const hook = await renderHook(() => {
             const controls = useInSessionAgentPickerControls({
-            sessionId: 'qualified-account-discovery', accountScope,
+            sessionId, accountScope,
             currentAgentId: 'claude', currentAgentLabel: 'Claude', projectionCurrent: true,
             entries: getResolvedBackendCatalogEntries({
                 enabledAgentIds: ['claude', 'codex'],
@@ -121,20 +155,22 @@ describe('continuation target account discovery', () => {
             machine: { machineId: 'machine-1', serverId: connection.home.id, connectionGeneration: 1, daemonGeneration: 1 },
             detail: { capabilityServerId: connection.home.id, machineId: 'machine-1', cwd: '/repo' },
         });
-            useSessionDraftPickerPresentation(controls, accountScope, 'qualified-account-discovery');
+            useSessionDraftPickerPresentation(controls, accountScope, sessionId);
             return controls;
         });
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
         await act(async () => { hook.getCurrent().onAgentPickerVisibilityChange(true); });
         await act(async () => { await Promise.resolve(); });
-        const option = hook.getCurrent().composeAgentPickerOptions([]).find((row) => row.id.includes('codex'));
+        const readOption = () => hook.getCurrent().composeAgentPickerOptions([]).find((row) => row.id.includes('codex'));
+        if (usesRetainedDefault) await vi.waitFor(() => expect(purposeRow.status).toBe('present'));
         if (profileId === 'unavailable') {
-            expect(option?.disabled).toBe(true);
+            expect(readOption()?.disabled).toBe(true);
             expect(invoke.mock.calls).toEqual([]);
             return;
         }
-        expect(option?.disabled).not.toBe(true);
+        await vi.waitFor(() => expect(readOption()).toMatchObject({ disabled: false }));
+        const option = readOption();
         const detail = option?.renderDetailContent?.({ onRequestClose: vi.fn() });
         if (!React.isValidElement(detail)) throw new Error('Expected target Agent detail content');
         screen = await renderScreen(detail);
