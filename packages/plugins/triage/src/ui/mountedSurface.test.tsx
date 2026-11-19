@@ -96,7 +96,8 @@ import { TriageResourceSurface } from './resourceSurface.js';
 import { createTriageResolveResourceActionHandler } from '../actions/resolveResource.js';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionInputV1Schema } from '../actions/resolveResourceProtocol.js';
 import { internalTaskStateV1 } from '../internalTasks/source.js';
-import { readTaskOriginError } from '../corpus/marks/setPinned.js';
+import { readTaskOriginError, readTaskOriginReview } from '../corpus/marks/setPinned.js';
+import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TriageReadTaskOriginReviewInputV1Schema } from '../actions/taskReviewProtocol.js';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorInputV1Schema } from '../actions/taskOriginProtocol.js';
 import {
     buildTriageRouteSubPathV1,
@@ -358,6 +359,10 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         if (request.action === TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1) {
             const input = TriageReadTaskOriginErrorInputV1Schema.parse(request.input);
             return { v: 1, originError: await readTaskOriginError({ entryRef: input.entryRef, collections }) };
+        }
+        if (request.action === TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1) {
+            const input = TriageReadTaskOriginReviewInputV1Schema.parse(request.input);
+            return { v: 1, originReview: await readTaskOriginReview({ entryRef: input.entryRef, collections }) };
         }
         if (String(request.action) === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1) {
             return await createTriageResolveResourceActionHandler()(TriageResolveResourceActionInputV1Schema.parse(request.input), {
