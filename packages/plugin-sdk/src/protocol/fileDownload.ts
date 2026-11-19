@@ -4,7 +4,7 @@ import {
 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 
 import type { FilesystemActionInputById, FilesystemActionResultById } from '../actions/dtos/filesystemActionDtos.generated.js';
-import type { ProtocolComposableSchema } from './protocolFacade.js';
+import type { ProtocolComposableSchema, ProtocolJsonValue } from './protocolFacade.js';
 
 /** The filesystem Action's receiver-issued destination, without path or URL authority. */
 export type FileDownloadDestinationV1 = FilesystemActionInputById['daemon.filesystem.download']['destination'];
@@ -12,4 +12,4 @@ export type FileDownloadDestinationV1 = FilesystemActionInputById['daemon.filesy
 export type FileDownloadResultV1 = FilesystemActionResultById['daemon.filesystem.download'];
 
 export const FileDownloadDestinationV1ProtocolSchema: ProtocolComposableSchema<FileDownloadDestinationV1> = canonicalDestination;
-export const FileDownloadResultV1ProtocolSchema: ProtocolComposableSchema<FileDownloadResultV1> = canonicalResult;
+export const FileDownloadResultV1ProtocolSchema: ProtocolComposableSchema<FileDownloadResultV1, FileDownloadResultV1 & ProtocolJsonValue> = canonicalResult;
