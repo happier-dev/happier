@@ -155,7 +155,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   control: { flex: 1, minWidth: 0 },
-  selectSlot: { marginLeft: 'auto' },
+  selectSlot: { alignSelf: 'flex-start' },
   note: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -17,12 +17,10 @@ import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext }
 
 const NO_CONTROLS: readonly SessionConfigOptionControl[] = [];
 
-/** The band's one label column (lab A2): Thinking, Ultracode and Runs through share one edge, controls one start. */
-const BAND_LABEL_COLUMN_PX = 104;
-
 /**
- * One row of the selected option's band: its label, then its control, then an optional quiet note. A wide band
- * (the grid) puts the label in one column beside the control; a phone stacks the label over a full-width control.
+ * One row of the selected option's band: its label over its control, then an optional quiet note. The band is as
+ * wide as the selected card's own column (the grid stacks columns independently), so a label column beside the
+ * control would push a five-level Thinking row into its overflow select; the label stacks instead, at every width.
  */
 export function OptionPickerBandRow(props: Readonly<{
     label: string;
@@ -32,14 +30,12 @@ export function OptionPickerBandRow(props: Readonly<{
     dataSet?: Record<string, string>;
     style?: StyleProp<ViewStyle>;
 }>) {
-    const { multiColumn } = React.useContext(OptionPickerSelectedControlsContext);
     return (
-        <View testID={props.testID} {...(props.dataSet ? { dataSet: props.dataSet } : {})}
-            style={[styles.row, multiColumn ? styles.rowWide : styles.rowStacked, props.style]}>
-            <Text style={[styles.label, multiColumn ? styles.labelColumn : null]}>{props.label}</Text>
-            <View style={[styles.body, multiColumn ? styles.bodyWide : null]}>
+        <View testID={props.testID} {...(props.dataSet ? { dataSet: props.dataSet } : {})} style={[styles.row, props.style]}>
+            <Text style={styles.label}>{props.label}</Text>
+            <View style={styles.body}>
                 {props.children}
-                {props.note ? <View style={multiColumn ? styles.noteWide : null}>{props.note}</View> : null}
+                {props.note}
             </View>
         </View>
     );
@@ -162,15 +158,10 @@ const styles = StyleSheet.create(theme => ({
         borderRadius: theme.borderRadius.lg,
         paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
     },
-    row: { paddingVertical: theme.space.s8 },
-    rowWide: { flexDirection: 'row', alignItems: 'center' },
-    rowStacked: { gap: theme.space.s6 },
+    row: { paddingVertical: theme.space.s8, gap: theme.space.s6 },
     divided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.divider },
     label: { ...Typography.variant('body'), color: theme.colors.text.primary },
-    labelColumn: { width: BAND_LABEL_COLUMN_PX, flexShrink: 0 },
     body: { gap: theme.space.s4 },
-    bodyWide: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-    noteWide: { marginLeft: 'auto' },
     choiceBody: { flexShrink: 1, gap: theme.space.s2 },
     booleanBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     textBlock: { flex: 1, minWidth: 0 },

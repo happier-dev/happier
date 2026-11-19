@@ -108,7 +108,7 @@ const TEAM_PROPS = {
 /** Lab A2 (ideas-1118-picker r3): Claude models served by the Work pool, an API key, a gateway and a hidden source. */
 const CLAUDE = 'agent:happier.agent.claude/claude';
 const SONNET_UPSTREAM = { vendor: 'anthropic', vendorModelId: 'claude-sonnet-5-5' };
-const claudeNative = (modelId: string) => ProviderBoundModelRefSchema.parse({ agentTargetKey: CLAUDE, modelId });
+const claudeNative = (modelId: string) => ProviderBoundModelRefSchema.parse({ agentTargetKey: CLAUDE, providerConnectionId: null, modelId });
 const A2_MODELS = [
     { value: 'claude-opus-5-5', label: 'Opus 5.5', description: 'Latest Opus model for long-running agentic coding and knowledge work.' },
     { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', upstreamRef: SONNET_UPSTREAM,
