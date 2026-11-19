@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
-import { workflowEditorSnapshotsEqual } from './useWorkflowEditorHistory';
+import { act, renderHook, standardCleanup } from '@/dev/testkit';
+import { useWorkflowEditorHistory, workflowEditorSnapshotsEqual } from './useWorkflowEditorHistory';
+
+afterEach(standardCleanup);
 
 function draftWithSchema(schema: PluginJsonSchemaV2) {
     return buildWorkflowEditorDraftFromDefinition({ draftId: 'schema-order', name: 'Gather changes',
@@ -38,5 +41,34 @@ describe('workflow editor snapshot equality', () => {
         expect(workflowEditorSnapshotsEqual(before, after)).toBe(true);
         expect(workflowEditorSnapshotsEqual(before, null)).toBe(false);
         expect(workflowEditorSnapshotsEqual(null, null)).toBe(true);
+    });
+});
+
+function promptDraft(text: string) {
+    return buildWorkflowEditorDraftFromDefinition({ draftId: 'typing', name: 'Fix it',
+        definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'step', id: 'fix',
+            document: { text, references: [], attachments: [] }, input: [] }] }) });
+}
+
+describe('workflow editor history while a prompt is still being typed (WF-ACCEPT-1119 fix 6)', () => {
+    it('offers Undo for the staged change as soon as the draft differs, and Undo restores it', async () => {
+        const restored: ReturnType<typeof promptDraft>[] = [];
+        const hook = await renderHook(() => useWorkflowEditorHistory<ReturnType<typeof promptDraft>>('scope', (snapshot) => { restored.push(snapshot); }));
+        const history = hook.getCurrent();
+        // The composer stages its document until blur: the header already says "Unsaved changes".
+        await act(async () => { history.record(promptDraft('Fix it'), promptDraft('Fix itx'), 'Edit prompt', false); });
+        expect(history.controls.undoLabel).toBe('Edit prompt');
+        await act(async () => { history.controls.undo(); });
+        expect(restored).toEqual([promptDraft('Fix it')]);
+        expect(history.controls.undoLabel).toBeNull();
+        expect(history.controls.redoLabel).toBe('Edit prompt');
+    });
+
+    it('offers nothing when the staged typing returned to where it started', async () => {
+        const hook = await renderHook(() => useWorkflowEditorHistory<ReturnType<typeof promptDraft>>('scope', () => {}));
+        const history = hook.getCurrent();
+        await act(async () => { history.record(promptDraft('a'), promptDraft('ab'), 'Edit prompt', false); });
+        await act(async () => { history.record(promptDraft('ab'), promptDraft('a'), 'Edit prompt', false); });
+        expect(history.controls.undoLabel).toBeNull();
     });
 });

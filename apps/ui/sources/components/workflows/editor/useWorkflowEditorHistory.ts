@@ -113,7 +113,12 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
     }, [listeners]);
     // One identity for the history's lifetime; the labels are read when shown.
     const controls = React.useMemo((): WorkflowEditorHistoryControls => ({
-        get undoLabel() { return state.current.past.at(-1)?.label ?? null; },
+        // A staged edit (a prompt still being typed) is the latest change: Undo commits it first, so it is offered now.
+        get undoLabel() {
+            const { pending, past } = state.current;
+            if (pending !== null && !workflowEditorSnapshotsEqual(pending.before, pending.after)) return pending.label;
+            return past.at(-1)?.label ?? null;
+        },
         get redoLabel() { return state.current.future.at(-1)?.label ?? null; },
         undo, redo, subscribe,
     }), [redo, subscribe, undo]);

@@ -304,6 +304,15 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         const id = readWorkflowTriggerStartId(when);
         return startOptions.find((option) => option.id === id)?.title ?? '';
     };
+    // What the trigger set's Machine says about its plugin triggers; null once it has some to list.
+    const catalogReason = catalogMachineName === null ? null
+        : catalog.status === 'ready'
+            ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName }) : null
+            : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
+                : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName });
+    // A pending Event is named by its declaration; until that resolves its When says why, never a blank pill.
+    const pendingTitle = (when: TriggerWhenValue) => startTitle(when)
+        || (when.kind === 'pluginEvent' ? catalogReason ?? t('automations.form.trigger.chooseEvent') : '');
     // The When select's choice; a session event keeps its Session, and choosing the same start keeps the rows as they are.
     const selectStart = (when: TriggerWhenValue | null, id: string, apply: (next: TriggerWhenValue) => void) => {
         if (when !== null && readWorkflowTriggerStartId(when) === id) return;
@@ -365,7 +374,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         }),
         ...resolvedPending.map((item) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
-                title={startTitle(item.when)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
+                title={pendingTitle(item.when)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
                 initialEventSeed={item.eventSeed}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
@@ -376,11 +385,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     ];
     const addFooter = catalogMachineName === null ? undefined : (
         <Text testID={`${props.testIDPrefix}-triggers-add-source`} style={styles.menuFoot}>
-            {catalog.status === 'ready'
-                ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName })
-                    : t('workflows.triggers.card.pluginTriggersOn', { count: catalog.events.length, machine: catalogMachineName })
-                : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
-                    : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName })}
+            {catalogReason ?? t('workflows.triggers.card.pluginTriggersOn', { count: catalog.events.length, machine: catalogMachineName })}
         </Text>
     );
     const addStart = (id: string) => {
@@ -407,7 +412,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     renderRows: () => blocks[index] };
             }),
             ...resolvedPending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
-                startId: readWorkflowTriggerStartId(item.when), startTitle: startTitle(item.when), detail: null, enabled: item.enabled ?? true, incomplete: true,
+                startId: readWorkflowTriggerStartId(item.when), startTitle: pendingTitle(item.when), detail: null, enabled: item.enabled ?? true, incomplete: true,
                 onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
                 onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),
                 renderRows: () => blocks[rows.length + index] })),
