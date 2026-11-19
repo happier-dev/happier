@@ -4,16 +4,21 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBanners/ComposerBannerCollapseProvider';
 import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
+import { useNewSessionDraftDockPresentation } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
+import { focusNewSessionComposerWhenPresented } from '@/components/sessions/new/navigation/newSessionComposerFocus';
 import { NewSessionEmbeddedHostProvider } from '@/components/sessions/new/navigation/newSessionHost';
 import { useNewSessionEmbeddedHostState } from '@/components/sessions/new/navigation/useNewSessionEmbeddedHostState';
 import { useNewSessionShellHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
+import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 
+import { commitHomeComposerOpen } from './commitHomeComposerOpen';
 import { HubComposerSuggestions, type HomeComposerSuggestionFill } from './suggestions/HubComposerSuggestions';
 
 /**
@@ -25,8 +30,7 @@ import { HubComposerSuggestions, type HomeComposerSuggestionFill } from './sugge
  * continues in the other. Typing and Enter start the session here; the app then opens it, and the
  * next time Home is shown it holds a fresh draft.
  *
- * The composer's chips issue no machine RPCs until the person shows intent (focus, hover, touch or
- * a suggestion); until then they show cached state.
+ * The folded draft summary stays in the same seat until the person opens the editor or fills a suggestion.
  */
 /**
  * How the suggestions stand: `tiles` on the plain page; under Home's atmosphere they step back to links or
@@ -133,10 +137,37 @@ function HubComposerHeld(props: HubComposerSectionProps & Readonly<{ height: num
     )} />;
 }
 
+function HubComposerClosed(props: Readonly<{ draftId: string | null; onOpen: () => void }>) {
+    const { theme } = useUnistyles();
+    const scope = useActiveServerAccountScope() ?? null;
+    const { hasText, isBot, name } = useNewSessionDraftDockPresentation(scope, props.draftId);
+    const label = name ?? (isBot ? t('bots.new') : t('session.inputPlaceholder'));
+    const draftBadge = hasText ? t('sessionDrafts.badge') : null;
+    useKeyboardShortcutHandlers({ 'composer.focus': props.onOpen });
+    return (
+        <Pressable testID="hub-composer.open" accessibilityRole="button" accessibilityLabel={label}
+            accessibilityValue={draftBadge ? { text: draftBadge } : undefined} onPress={props.onOpen}>
+            <GlassSurface surfaceGroup="card" finishRole="composer" style={[styles.held, styles.closed]}>
+                <Text variant="body" style={{ color: theme.colors.text.secondary }}>{label}</Text>
+                {draftBadge ? <Text variant="body" style={{ color: theme.colors.text.secondary }}>{draftBadge}</Text> : null}
+            </GlassSurface>
+        </Pressable>
+    );
+}
+
 function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ composerHeight: React.MutableRefObject<number | undefined> }>) {
     const { host, markDemanded } = useNewSessionEmbeddedHostState();
-    const draftId = typeof host.params.draftId === 'string' ? host.params.draftId : 'home-composer';
+    const draftId = typeof host.params.draftId === 'string' ? host.params.draftId : null;
     const setHostParams = host.setParams;
+    const cancelFocus = React.useRef<(() => void) | undefined>(undefined);
+    React.useEffect(() => () => cancelFocus.current?.(), [draftId]);
+    const open = React.useCallback(() => {
+        commitHomeComposerOpen(() => {
+            markDemanded();
+            cancelFocus.current?.();
+            cancelFocus.current = draftId ? focusNewSessionComposerWhenPresented(draftId) : undefined;
+        });
+    }, [draftId, markDemanded]);
 
     const fill = React.useCallback((suggestion: HomeComposerSuggestionFill) => {
         markDemanded();
@@ -152,14 +183,13 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
                 hero?.onLayout();
             }}
             testID="hub-composer.intent"
-            onFocus={markDemanded}
-            onPointerEnter={markDemanded}
-            onTouchStart={markDemanded}
         >
             <NewSessionEmbeddedHostProvider host={host}>
-                <ComposerBannerCollapseProvider key={draftId}>
-                    <NewSessionScreen presentation="embedded" />
-                </ComposerBannerCollapseProvider>
+                {host.demanded ? (
+                    <ComposerBannerCollapseProvider key={draftId ?? 'home-composer'}>
+                        <NewSessionScreen presentation="embedded" />
+                    </ComposerBannerCollapseProvider>
+                ) : <HubComposerClosed draftId={draftId} onOpen={open} />}
             </NewSessionEmbeddedHostProvider>
         </View>
     );
@@ -174,6 +204,11 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'flex-start',
         padding: theme.space.s16,
         borderRadius: theme.parts.composer.radius,
+    },
+    closed: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: theme.space.s16,
     },
     // Lab `at-links`: the suggestions sit 12 px under the composer.
     heroStack: {

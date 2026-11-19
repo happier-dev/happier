@@ -48,7 +48,9 @@ export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostPar
         const pickerOrigin = ordinaryPage ? readOrdinaryNewSessionPickerOrigin() : null;
         return pickerOrigin ? { draftId: pickerOrigin, draftOrigin: 'ordinary' } : paramsForDraft(resolveOrdinaryEntry());
     });
-    const [demanded, setDemanded] = React.useState(false);
+    const [demanded, setDemanded] = React.useState(() => (
+        ordinaryPage && readOrdinaryNewSessionPickerOrigin() === params.draftId
+    ));
     const handedOffRef = React.useRef(false);
     const targetServerId = typeof initialParams?.spawnServerId === 'string' ? initialParams.spawnServerId : undefined;
 
@@ -91,7 +93,8 @@ export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostPar
         if (!handedOffRef.current) return;
         handedOffRef.current = false;
         setParamsState(freshParams());
-    }, [freshParams]));
+        if (ordinaryPage) setDemanded(false);
+    }, [freshParams, ordinaryPage]));
 
     const host = React.useMemo<NewSessionEmbeddedHost>(() => ({
         params,

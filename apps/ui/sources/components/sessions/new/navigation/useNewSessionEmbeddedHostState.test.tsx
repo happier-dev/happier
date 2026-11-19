@@ -150,6 +150,7 @@ it('resumes the untouched ordinary draft that opened a picker and takes its resu
     try {
         expect(again.getCurrent().host.params.draftId).toBe(draftId);
         expect(again.getCurrent().host.params.machineId).toBe('joined-while-away');
+        expect(again.getCurrent().host.demanded).toBe(true);
         expect(readOrdinaryNewSessionPickerOrigin()).toBeNull();
     } finally { await again.unmount(); }
 });

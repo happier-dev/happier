@@ -1197,8 +1197,11 @@ describe('multi-Home Session creation composition', () => {
         const screen = await renderScreen(element(false));
         modalBoundary.confirm.mockResolvedValue(true);
         try {
+            expect(screen.findByTestId('hub-composer.open')?.props.accessibilityValue?.text).toBeTruthy();
+            await screen.pressByTestIdAsync('hub-composer.open');
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             const homeComposer = screen.root.findByType(AgentInput);
+            expect(composerText(homeComposer)).toBe('Describe this picture');
             await screen.update(element(false, false));
             expect(screen.root.findByType(AgentInput)).toBe(homeComposer);
             await screen.update(element(true));
@@ -1217,10 +1220,52 @@ describe('multi-Home Session creation composition', () => {
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
             expect(records.get(draftId)?.content).toBeNull();
             await screen.update(element(false));
+            await screen.pressByTestIdAsync('hub-composer.open');
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             expect(composerText(screen.root.findByType(AgentInput))).toBe('');
             expect(screen.root.findByType(AgentInput).props.attachmentRowItems).toEqual([]);
             expect(getSessionDraftSnapshot(scope, address)).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
+    it('does no New Session model work during closed Home Machine hydration and opens the editor inline', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = async url => coreHttp(new URL(url).pathname);
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('home-composer-demand', { applyConnectionManager: true }));
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { HubComposerSection } = await import('@/components/hub/composer/HubComposerSection');
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const { NewSessionLaunchSurface } = await import('../components/NewSessionLaunchSurface');
+        const navigation = { push: routeBoundary.push, replace: routeBoundary.replace, back: () => {} };
+        const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: homeAToken }}>
+            <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/', focused: true, isFocused: () => true, visible: true, navigation }}>
+                <HubComposerSection suggestions="none" />
+            </DestinationInstanceContext.Provider>
+        </InjectedAuthProvider>);
+        try {
+            await flushHookEffects();
+            const launchProps = () => screen.root.findAllByType(NewSessionLaunchSurface)[0]?.props;
+            let previous = launchProps();
+            const initialModels = Number(previous !== undefined);
+            let publicationModels = 0;
+            const stop = screen.subscribe(() => {
+                const next = launchProps();
+                if (next && next !== previous) publicationModels += 1;
+                previous = next;
+            });
+            const machines = Array.from({ length: 492 }, (_, index) => createMachineFixture({ id: `cold-home-machine-${index}` }));
+            try {
+                for (let start = 0; start < machines.length; start += 100) {
+                    await act(async () => storage.getState().applyMachines(machines.slice(start, start + 100), false, { sourceServerId: homeAScopeId }));
+                }
+            } finally { stop(); }
+            expect(storage.getState().machineListByServerId[homeAScopeId]).toHaveLength(492);
+            expect({ initialModels, publicationModels }).toEqual({ initialModels: 0, publicationModels: 0 });
+            await screen.pressByTestIdAsync('hub-composer.open');
+            await vi.waitFor(() => expect(screen.root.findAllByType(NewSessionLaunchSurface)).toHaveLength(1));
+            expect(screen.findByTestId('hub-composer.open')).toBeNull();
+            expect(routeBoundary.push).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
     });
 
@@ -1247,6 +1292,7 @@ describe('multi-Home Session creation composition', () => {
         };
         const screen = await renderScreen(element(true));
         try {
+            await screen.pressByTestIdAsync('hub-composer.open');
             await vi.waitFor(() => expect(screen.root.findAllByType(NewSessionComposerCard)).toHaveLength(1));
             const composer = screen.root.findByType(NewSessionComposerCard);
             let rebuilt = 0;
@@ -1291,6 +1337,7 @@ describe('multi-Home Session creation composition', () => {
         const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offsetMs);
         const screen = await renderScreen(element(true));
         try {
+            await screen.pressByTestIdAsync('hub-composer.open');
             await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
             await flushHookEffects();
             const settled = censusReads;
@@ -1298,6 +1345,8 @@ describe('multi-Home Session creation composition', () => {
                 offsetMs += 60_000;
                 await screen.update(element(false));
                 await screen.update(element(true));
+                await screen.pressByTestIdAsync('hub-composer.open');
+                await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
                 await flushHookEffects();
                 await act(async () => { await new Promise<void>(resolve => setImmediate(resolve)); });
             }
