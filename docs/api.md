@@ -162,6 +162,7 @@ and [encryption](encryption.md) for the owning wire and privacy boundaries.
 - `GET /v1/feed`
 
 ### Version and voice
+- `GET /v1/version` returns `ok: true`, the server package `version`, and optional `source_sha` when present in release metadata.
 - `POST /v1/version`
 - `POST /v1/voice/token`
 
