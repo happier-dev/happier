@@ -2386,7 +2386,11 @@ commit as well as its existing authorization ticket.
 In 0.3 development source, Session-owned Run admission and personal-Provider
 materialization reach that owner over the existing authenticated runner-to-daemon
 service, borrowing the Run's retained executable registry rather than acquiring
-a daemon registry inside the runner. The snapshot retains preparation cleanup;
+a daemon registry inside the runner. Home admits a fresh Session-scoped Run
+start on this owner-bound carrier only for the Session's Account. Session edit
+grants allow collaborators to submit input. Starting a fresh Run through this
+carrier as another Account returns `RPC_FORBIDDEN` before provider preparation.
+The snapshot retains preparation cleanup;
 the runner receives only the scoped launch environment, binding and exact
 diagnostic-redaction values. Incompatible and unverified inherited routes retain
 their existing child-choice result. This is a source contract, not loaded-runtime

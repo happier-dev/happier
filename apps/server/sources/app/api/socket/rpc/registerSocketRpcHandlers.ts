@@ -1813,6 +1813,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         callback?.(buildForbiddenRpcResponse());
                         return;
                     }
+                    // A fresh attached Run resolves provider custody as the Session Account.
+                    // Session input grants allow collaboration, but do not delegate that custody.
+                    if (sessionAuthorization.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+                        && actorAccountId !== session.accountId) {
+                        callback?.(buildForbiddenRpcResponse(undefined, 'rpc.admission.session'));
+                        return;
+                    }
                     sessionWriteTargetUserId = session.accountId;
                     if (sessionAuthorization.startsAgentWork) {
                         // Retaining a publisher lets its admitted turn finish; a new provider

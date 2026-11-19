@@ -73,12 +73,12 @@ describe('Session work admission after Machine grant withdrawal', () => {
             clientType: 'user-scoped', accountStoredContentCompatibility,
         } }), { handshake: { auth: { token } } });
         registerSocketRpcHandlers({ userId: guest.id, socket: caller as unknown as Socket, io, sessionPublisherPresence: presence });
-        const call = async (rpcMethod: string) => {
+        const call = async (rpcMethod: string, requestingSocket = caller) => {
             const method = `${session.id}:${rpcMethod}`;
             io.sockets.adapter.rooms.set(buildRpcMethodRoom({ userId: guest.id, method }), new Set([target.id]));
             const callback = vi.fn();
             emitWithAck.mockClear();
-            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-work-request',
+            await triggerSocketHandler(requestingSocket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-work-request',
                 ...(transferCarrier === 'attachment' && rpcMethod === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT ? { transferRouting: {
                     t: 'session_attachment_upload_v1', sessionId: session.id, method: rpcMethod,
                 } } : {}),
@@ -97,6 +97,21 @@ describe('Session work admission after Machine grant withdrawal', () => {
             SESSION_RPC_METHODS.SESSION_ROLLBACK, SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK,
             SESSION_RPC_METHODS.SESSION_CHECKPOINT, SESSION_RPC_METHODS.SESSION_RESTORE];
         try {
+            const editor = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id,
+                createdByAccountId: guest.id, accountId: editor.id, accessLevel: 'edit' } });
+            const editorToken = await createAccountTokenForTests(editor.id, { kind: 'account', authority: 'present_user' });
+            const editorSocket = Object.assign(createAuthenticatedFakeSocket({ id: randomUUID(), data: {
+                clientType: 'user-scoped', accountStoredContentCompatibility,
+            } }), { handshake: { auth: { token: editorToken } } });
+            registerSocketRpcHandlers({ userId: editor.id, socket: editorSocket as unknown as Socket, io,
+                sessionPublisherPresence: presence });
+            expect(await call(SESSION_RPC_METHODS.SESSION_GOAL_SET, editorSocket)).toMatchObject({ ok: true, result: { delivered: true } });
+            expect(await call(SESSION_RPC_METHODS.EXECUTION_RUN_START, editorSocket)).toMatchObject({
+                ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            });
+            expect(emitWithAck).not.toHaveBeenCalled();
+
             for (const method of workMethods) {
                 expect(await call(method), method).toMatchObject({ ok: true, result: { delivered: true } });
             }
