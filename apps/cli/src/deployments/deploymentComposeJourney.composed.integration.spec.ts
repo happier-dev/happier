@@ -73,6 +73,7 @@ import { createAccountTokenForTests } from '../../../server/sources/testkit/ligh
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
 import { sessionRoutes } from '../../../server/sources/app/api/routes/session/sessionRoutes';
 import { sessionPendingRoutes } from '../../../server/sources/app/api/routes/session/pendingRoutes';
+import { registerAutomationActionIndexRoutes } from '../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { runDeploymentRootBackupCoverage } from './deploymentRootBackupCoverage.testkit';
 import { runDeploymentRootProviderCoverage } from './deploymentRootProviderCoverage.testkit';
 import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.testkit';
@@ -739,6 +740,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 registerQualifiedConnectedAccountCredentialRoutesV4(app);
                 sessionRoutes(app);
                 sessionPendingRoutes(app);
+                registerAutomationActionIndexRoutes(app);
                 app.addHook('onSend', async (request, reply, payload) => {
                     await beforeHomeResponse?.({ method: request.method,
                         path: new URL(request.url, 'https://home.invalid').pathname, status: reply.statusCode }, payload);
