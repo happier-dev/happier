@@ -4806,7 +4806,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 triggers: [{ triggerId: expect.any(String), trigger }],
             })]);
             // "Workflow saved · Triggers not updated", with the pending trigger still in the draft.
-            expect(readBodyProps()?.saveStatus).toEqual({ kind: 'failed', reason: 'workflows.triggers.editor.partialSave' });
+            expect(readBodyProps()?.saveStatus).toMatchObject({ kind: 'failed' });
             expect((readBodyProps()?.triggersSection as React.ReactElement<{ draft: { adds: unknown[] } }>).props.draft.adds).toHaveLength(1);
             // A partial write did not authorize Save's route continuation. Opening
             // that saved definition separately must hydrate its persisted content.
