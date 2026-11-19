@@ -37,11 +37,7 @@ import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwi
 
 import { activateSelectionListRow } from './SelectionListRowActivation';
 import { SelectionListActivationCommandContext } from './SelectionListCommandHost';
-import {
-  SelectionListOptionPresentationContext,
-  SelectionListSelectedFillContext,
-  SelectionListSelectedMarkContext,
-} from './SelectionListOptionPresentationContext';
+import { SelectionListMenuTitleOneLineContext, SelectionListOptionPresentationContext, SelectionListSelectedFillContext, SelectionListSelectedMarkContext } from './SelectionListOptionPresentationContext';
 import { SelectionListOptionTabBehaviorContext } from './SelectionListOptionTabBehaviorContext';
 import {
   SELECTION_LIST_CARD_ACCESSORY_BOX_PX,
@@ -411,6 +407,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     SelectionListOptionPresentationContext,
   );
   const isCard = optionPresentation === 'card';
+  const menuTitleOneLine = React.useContext(SelectionListMenuTitleOneLineContext);
   const explicitRowFocus = React.useContext(SelectionListExplicitRowFocusContext);
   const paintsFocus = props.isFocused && (!isCard || explicitRowFocus);
   // The pointer moves the list's one highlight to this row (a card has no focus fill to duplicate).
@@ -549,7 +546,10 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   // names ("Nemotron 3.5 Lightning 3…") that no longer said which model they were.
   const itemInsetAndTextProps = isCard
     ? { style: cardStyles.itemInset, titleLines: 2, subtitleLines: props.option.subtitleLines ?? 2 }
-    : props.option.subtitleLines === undefined ? {} : { subtitleLines: props.option.subtitleLines };
+    : {
+      ...(props.option.subtitleLines === undefined ? {} : { subtitleLines: props.option.subtitleLines }),
+      ...(menuTitleOneLine && (props.option.subtitle || props.option.subtitleContent) ? { titleLines: 1 } : {}),
+    };
   // The overlay carries no role of its own: it is part of the option, and the
   // option's cell (this wrapper at two columns, the node inside it at one)
   // already owns it. Giving it a cell of its own was how the single-column

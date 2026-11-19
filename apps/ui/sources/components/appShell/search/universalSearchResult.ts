@@ -123,6 +123,8 @@ export type UniversalSearchResult = Readonly<{
      * that lives in an Agent's own history; its row then carries that Agent's mark.
      */
     conversation?: Readonly<{ snippet: string; query: string; agentId?: string; machineLabel?: string; atMs?: number }>;
+    /** The Agent a Session result runs (the Session row's own presentation Agent); its mark leads the row. */
+    agentId?: string;
     /** A changed workspace file's lines, drawn at the row's end so the session's work reads in results (lab FB2). */
     fileChange?: Readonly<{ added: number; removed: number }>;
     target: UniversalSearchTarget;

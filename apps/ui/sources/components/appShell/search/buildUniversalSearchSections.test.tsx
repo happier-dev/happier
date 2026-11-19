@@ -73,10 +73,11 @@ describe('buildUniversalSearchSections', () => {
     it('keeps unchanged producer options across refinements while updating highlights and activation targets', async () => {
         const onCommitResult = vi.fn();
         const command = { id: 'release', title: 'Release', icon: 'file' as const, action: vi.fn() };
+        const unmarked = { id: 'pin-tabs', title: 'Pin tabs', icon: 'file' as const, action: vi.fn() };
         const sessionRows = [{ ...sessionEntity('visible', 1), title: 'release' },
             { ...sessionEntity('hidden', 2), title: 'Alpha', searchText: 'release' }];
         const settings = [{ id: 'display', title: 'Display', route: '/settings/display' }];
-        const base = input({ commands: [command], sessions: sessionRows, searchSettingsPages: () => settings, onCommitResult });
+        const base = input({ commands: [command, unmarked], sessions: sessionRows, searchSettingsPages: () => settings, onCommitResult });
         const before = buildUniversalSearchSections({ ...base, query: 'r' });
         const refined = { ...base, query: 're', previousSections: before };
         const after = buildUniversalSearchSections(refined);
@@ -87,7 +88,10 @@ describe('buildUniversalSearchSections', () => {
         expect(rows(after)[0]?.labelHighlightQuery).toBe('re');
         const commandRows = (sections: readonly SelectionListSectionDescriptor[]) => sections.flatMap(section =>
             section.kind === 'static' && section.id.startsWith('commands:') ? section.options : []);
-        expect(commandRows(after)[0]).toBe(commandRows(before)[0]);
+        // A command whose name shows the query is redrawn with the new marks; one whose marks are unchanged is kept.
+        expect(commandRows(after)[0]).not.toBe(commandRows(before)[0]);
+        expect(commandRows(after)[0]?.labelHighlightQuery).toBe('re');
+        expect(commandRows(after)[1]).toBe(commandRows(before)[1]);
         const settingsBefore = dynamicSections(before).find(section => section.id === 'settings')!;
         const first = await settingsBefore.resolve('r', new AbortController().signal);
         const settingsAfter = dynamicSections(after).find(section => section.id === 'settings')!;
@@ -715,6 +719,22 @@ describe('buildUniversalSearchSections', () => {
         const typed = buildUniversalSearchSections(input({ query: 'Session', sessions, pinnedSessionIds: ['s2'] }));
         expect(typed.some(section => section.id === 'sessions:pinned')).toBe(false);
         expect(staticOptionIds(typed, 'sessions')).toHaveLength(12);
+    });
+
+    it('marks a Session result with its Agent and tints the typed query in command names (palette lab rows)', () => {
+        const sessions = [{ ...sessionEntity('s1', 1), agentId: 'claude' }, sessionEntity('s2', 0)];
+        const command = { id: 'choose-model', title: 'Choose a model…', category: 'Actions', action: () => {} };
+        const typed = buildUniversalSearchSections(input({ query: 'model', sessions: [], commands: [command] }));
+        const commandOption = typed.flatMap(section => 'options' in section ? section.options : []).find(option => option.label === 'Choose a model…');
+        expect(commandOption?.labelHighlightQuery).toBe('model');
+
+        const empty = buildUniversalSearchSections(input({ query: '', sessions }));
+        const rows = empty.flatMap(section => 'options' in section ? section.options : []);
+        const marked = rows.find(option => option.label === 'Session s1');
+        const unknown = rows.find(option => option.label === 'Session s2');
+        const iconProps = (option: typeof marked) => (option?.icon as (() => { props: Record<string, unknown> }) | undefined)?.().props;
+        expect(iconProps(marked)?.agentId).toBe('claude');
+        expect(iconProps(unknown)?.name).toBe('chats-circle');
     });
 
     it('bounds empty-query local recents and offers the complete candidate set to the host matcher once a query is typed', () => {

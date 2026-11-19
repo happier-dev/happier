@@ -113,9 +113,19 @@ export function useKeyboardCommandHintLabel(commandId: KeyboardCommandId): strin
  * the hint beside a control that does the same thing (Go to file in the Files tree, Text in files).
  */
 export function KeyboardCommandHint(props: Readonly<{ commandId: KeyboardCommandId; tone?: KeyHintProps['tone']; testID?: string }>): React.ReactElement | null {
-    const shortcut = useKeyboardCommandHintLabel(props.commandId);
-    if (!shortcut) return null;
-    return <KeyCombinationHint label={shortcut} tone={props.tone} testID={props.testID} />;
+    const shortcut = useKeyboardShortcutLabel(props.commandId);
+    return <KeyboardShortcutHint label={shortcut} tone={props.tone} testID={props.testID} />;
+}
+
+/**
+ * An already-resolved shortcut label as its keycaps, drawn only with a hardware keyboard: the row hint of a
+ * list whose owner decides which commands have a live key (Search's command rows).
+ */
+export function KeyboardShortcutHint(props: Readonly<{ label: string | null | undefined; tone?: KeyHintProps['tone']; testID?: string }>): React.ReactElement | null {
+    // Keycaps name a key: without a hardware keyboard they are not drawn, as in SelectionList's footer.
+    const hasKeyboard = useHardwareKeyboard();
+    if (!props.label || !hasKeyboard) return null;
+    return <KeyCombinationHint label={props.label} tone={props.tone} testID={props.testID} />;
 }
 
 /**

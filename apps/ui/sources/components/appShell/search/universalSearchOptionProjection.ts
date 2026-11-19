@@ -1,6 +1,6 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { SelectionListOption } from '@/components/ui/selectionList';
-import { queryRanges } from '@/components/ui/text/queryRanges';
+import { sameQueryMarks } from '@/components/ui/text/queryRanges';
 
 import type { UniversalSearchResult, UniversalSearchTarget } from './universalSearchResult';
 
@@ -47,18 +47,10 @@ function sameResult(left: UniversalSearchResult, right: UniversalSearchResult): 
         && left.kind === right.kind && left.title === right.title && left.subtitle === right.subtitle
         && left.searchText === right.searchText && left.exactSearchText === right.exactSearchText
         && left.symbol === right.symbol && left.fileContent === right.fileContent
-        && left.conversation === right.conversation && left.fileChange === right.fileChange && sameTarget(left.target, right.target));
+        && left.conversation === right.conversation && left.fileChange === right.fileChange && left.agentId === right.agentId
+        && sameTarget(left.target, right.target));
 }
 
-function sameTitleMarks(label: string, left: string | undefined, right: string | undefined): boolean {
-    if (left === right) return true;
-    // Item also uses the presence of a search query for its line allowance. Keep that presentation fact.
-    if (Boolean(left) !== Boolean(right)) return false;
-    const before = left ? queryRanges(label, left) : undefined;
-    const after = right ? queryRanges(label, right) : undefined;
-    return (before?.length ?? 0) === (after?.length ?? 0)
-        && (before?.every((range, index) => range.start === after?.[index]?.start && range.end === after?.[index]?.end) ?? true);
-}
 
 /**
  * Reconcile at the option producer against its current output, before constructing any visuals or callbacks.
@@ -72,6 +64,6 @@ export function projectUniversalSearchOption(
     const before = (previous as ProjectedOption | undefined)?.[projection];
     if (previous && before && before.iconName === inputs.iconName && before.onCommit === inputs.onCommit
         && before.fileLine === inputs.fileLine && sameResult(before.result, inputs.result)
-        && sameTitleMarks(previous.label, before.titleQuery, inputs.titleQuery)) return previous;
+        && sameQueryMarks(previous.label, before.titleQuery, inputs.titleQuery)) return previous;
     return Object.assign(build(), { [projection]: inputs });
 }

@@ -104,6 +104,7 @@ import { t } from '@/text';
 import { transcriptSearchUnavailableHint } from './transcriptSearchUnavailableHint';
 import { presentCommitSearchFailure, presentContentSearchError, presentFileSearchError } from './universalSearchMachineFailures';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { readSessionRowPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import {
     buildCanonicalSessionListPrimarySearchText,
     buildCanonicalSessionListSearchText,
@@ -507,6 +508,8 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                 ? t('session.folderless.chats')
                 : workspace?.label?.trim() || path.split(/[\\/]/).filter(Boolean).pop() || '';
             const subtitle = [projectLabel, settledMachineNameById.get(machineId) ?? ''].filter(Boolean).join(' · ');
+            // The Session list's own mark owner decides which Agent leads the row.
+            const agentId = readSessionRowPresentationAgentId(session);
             const entity: UniversalSearchSessionEntity = {
                 sessionId: session.id,
                 serverId: canonicalServerId,
@@ -525,6 +528,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                     renderable: session,
                     workspaceDisplayLabel: workspace?.label ?? null,
                 }),
+                ...(agentId ? { agentId } : {}),
                 updatedAt: session.updatedAt,
             };
             rowSessionEntities.set(session, entity);
@@ -1039,8 +1043,10 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                     machineNameById.get(choice.scope.machineId)].filter(Boolean).join(' · ') }
                 : { id: choice.key, label: choice.label }),
         selectedId: scopeKey,
-        // The Home is where the search looks: its chip stays on the field's row at every width.
+        // The Home is where the search looks: its chip stays on the field's row at every width. On a phone
+        // it draws only its glyph, so the field keeps room for its placeholder; the popover keeps the name.
         pairsWithSearch: true,
+        iconOnly: deviceType === 'phone',
         open: scopePickerOpen,
         onOpenChange: setScopePickerOpen,
         onChange: (choiceKey: string) => {
@@ -1050,7 +1056,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             setScope(choice.scope);
         },
         testID: 'universal-search:scope',
-    }] : undefined, [currentScopeLabel, hasScopeChoice, machineHomeById, machineNameById, scope.machineScope, scopeChoices, scopeKey, scopePickerOpen, theme.colors.text.secondary]);
+    }] : undefined, [currentScopeLabel, deviceType, hasScopeChoice, machineHomeById, machineNameById, scope.machineScope, scopeChoices, scopeKey, scopePickerOpen, theme.colors.text.secondary]);
 
     const conversationMachineId = scope.machineId ?? workspaceScope?.machineId ?? null;
     const scanAvailability = useConversationSearch({ query: { v: 1, query: '', scope: { type: 'global' }, mode: 'auto' },

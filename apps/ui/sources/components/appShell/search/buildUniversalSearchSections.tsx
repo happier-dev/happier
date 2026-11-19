@@ -89,6 +89,8 @@ export type UniversalSearchSessionEntity = Readonly<{
     subtitle?: string;
     searchText?: string;
     exactSearchText?: string;
+    /** `readSessionRowPresentationAgentId`: the mark the Session list draws; absent when the Agent is unknown. */
+    agentId?: string;
     updatedAt: number;
 }>;
 
@@ -579,7 +581,8 @@ function toOption(
             : {}),
         ...(result.fileChange ? { rightAccessory: () => <DiffStat added={result.fileChange!.added} removed={result.fileChange!.removed} /> } : {}),
         // A symbol row draws its kind glyph in its label, where it indents with the name.
-        ...(result.symbol ? {} : { icon: result.conversation?.agentId ? agentIcon(result.conversation.agentId)
+        ...(result.symbol ? {} : { icon: result.agentId ? agentIcon(result.agentId)
+            : result.conversation?.agentId ? agentIcon(result.conversation.agentId)
             : result.fileContent ? fileIcon(result.fileContent.path)
             : result.kind === 'workspaceFile' && result.target.kind === 'workspaceFile' ? fileIcon(result.target.path)
             : icon(iconName) }),
@@ -933,7 +936,7 @@ export function buildUniversalSearchSections(
         ? nonRecentCommands
         : nonRecentCommands
             .filter((command) => command.emptyQuerySuggested === true);
-    const commandSections = buildCommandPaletteSelectionListSections(visibleCommands, previousSections);
+    const commandSections = buildCommandPaletteSelectionListSections(visibleCommands, previousSections, query || undefined);
 
     // Empty query: pinned Sessions lead (lab palette "Pinned"), and Recent shows only the unpinned ones.
     const pinnedSessionIds = query.length === 0 ? input.pinnedSessionIds ?? [] : [];
@@ -960,6 +963,7 @@ export function buildUniversalSearchSections(
         ...(session.subtitle ? { subtitle: session.subtitle } : {}),
         ...(session.searchText ? { searchText: session.searchText } : {}),
         ...(session.exactSearchText ? { exactSearchText: session.exactSearchText } : {}),
+    ...(session.agentId ? { agentId: session.agentId } : {}),
         target: {
             kind: 'session',
             sessionId: session.sessionId,

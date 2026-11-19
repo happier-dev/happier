@@ -2,11 +2,12 @@ import * as React from 'react';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AskHappierMark } from '@/components/sessions/bots/AskHappierOfferCard';
-import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { KeyboardShortcutHint } from '@/components/ui/keyboard/KeyHint';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
 import type { Command } from './types';
 import { ThemeCommandMark } from '@/components/settings/appearance/ThemeModePreview';
+import { sameQueryMarks } from '@/components/ui/text/queryRanges';
 
 /**
  * Presentation adapter between the canonical command catalog
@@ -34,13 +35,13 @@ export function readCommandPaletteOptionCommand(option: SelectionListOption): Co
     return (option as CommandOption)[commandActivation] ?? null;
 }
 
-function buildOption(command: Command, previous?: SelectionListOption): CommandOption {
+function buildOption(command: Command, previous?: SelectionListOption, titleQuery?: string): CommandOption {
     const icon = command.icon;
     const shortcut = command.shortcut;
     const presentation = (previous as CommandOption | undefined)?.[commandPresentation];
     const themeMark = typeof command.mark === 'object' ? command.mark : null;
     if (previous && presentation && previous.label === command.title
-        && previous.subtitle === (command.subtitle || undefined)
+        && previous.subtitle === (command.subtitle || undefined) && sameQueryMarks(command.title, previous.labelHighlightQuery, titleQuery)
         && presentation.icon === icon && presentation.mark === command.mark && presentation.shortcut === shortcut
         && presentation.loadCommands === command.loadCommands) return previous;
     return {
@@ -49,11 +50,13 @@ function buildOption(command: Command, previous?: SelectionListOption): CommandO
         id: buildCommandPaletteOptionId(command.id),
         testID: `command-palette:option:${command.id}`,
         label: command.title,
+        // The typed query tints its matches in the command's name, as in every other Search row.
+        ...(titleQuery ? { labelHighlightQuery: titleQuery } : {}),
         ...(command.subtitle ? { subtitle: command.subtitle } : {}),
         ...(command.mark === 'askHappier' ? { icon: () => <AskHappierMark size={ICON_SIZE.md} /> }
             : themeMark ? { icon: () => <ThemeCommandMark miniature={themeMark.miniature} /> }
             : icon ? { icon: () => <Icon name={icon} size={ICON_SIZE.md} /> } : {}),
-        ...(shortcut ? { rightAccessory: () => <KeyHint label={shortcut} /> } : {}),
+        ...(shortcut ? { rightAccessory: () => <KeyboardShortcutHint label={shortcut} /> } : {}),
         ...(command.loadCommands ? { openStep: {
             id: `commands:${command.id}`, title: command.title, inputPlaceholder: command.title,
             sections: [{ kind: 'dynamic' as const, id: `commands:${command.id}:entries`,
@@ -73,12 +76,13 @@ function buildOption(command: Command, previous?: SelectionListOption): CommandO
 export function buildCommandPaletteSelectionListSections(
     commands: readonly Command[],
     previousSections?: readonly SelectionListSectionDescriptor[],
+    titleQuery?: string,
 ): ReadonlyArray<SelectionListSectionDescriptor> {
     const previousOptions = new Map(previousSections?.flatMap(section => section.kind === 'static'
         ? section.options.map(option => [option.id, option] as const) : []));
     const optionsByCategory = new Map<string, SelectionListOption[]>();
     for (const command of commands) {
-        const option = buildOption(command, previousOptions.get(buildCommandPaletteOptionId(command.id)));
+        const option = buildOption(command, previousOptions.get(buildCommandPaletteOptionId(command.id)), titleQuery);
         // Uncategorized commands share one untitled leading section rather than
         // borrowing another category's heading.
         const category = command.category ?? '';

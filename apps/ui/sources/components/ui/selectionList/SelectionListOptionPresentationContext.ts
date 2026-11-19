@@ -41,3 +41,10 @@ export const SelectionListSelectedMarkContext = React.createContext<SelectionLis
  * chosen rows never read as several highlights at once. A row outside a body keeps the fill.
  */
 export const SelectionListSelectedFillContext = React.createContext(true);
+
+/**
+ * Whether a menu row (⌘K, command menus) keeps a described name to one line, published beside the presentation by
+ * `SelectionListBody` from one device read. On a phone a menu name wraps rather than cut the word that names it; on
+ * a wider screen a row with a description truncates its name, as Search's palette draws it (KIT-PALETTE-ACCEPT 5).
+ */
+export const SelectionListMenuTitleOneLineContext = React.createContext(false);

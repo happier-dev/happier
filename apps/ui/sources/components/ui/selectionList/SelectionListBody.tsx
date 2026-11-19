@@ -50,7 +50,8 @@ import {
 } from './buildSelectionListOptionA11yProps';
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { buildSelectionListGridRowModel } from './selectionListGridRowModel';
-import { SelectionListOptionPresentationContext, SelectionListSelectedFillContext, SelectionListSelectedMarkContext } from './SelectionListOptionPresentationContext';
+import { SelectionListMenuTitleOneLineContext, SelectionListOptionPresentationContext, SelectionListSelectedFillContext, SelectionListSelectedMarkContext } from './SelectionListOptionPresentationContext';
+import { useDeviceType } from '@/utils/platform/responsive';
 import {
     flattenRenderPlanForVirtualizedList,
     groupVirtualizedItemsIntoColumnRows,
@@ -198,6 +199,7 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
     // pattern is published to every row path from here instead of being
     // re-derived per row.
     const pattern = props.a11yPattern ?? 'listbox';
+    const deviceType = useDeviceType();
     return (
         <SelectionListA11yPatternContext.Provider value={pattern}>
             <SelectionListOptionPresentationContext.Provider value={props.optionPresentation ?? 'row'}>
@@ -210,7 +212,9 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
                         : props.selectionMark === 'enter' ? 'enter' : 'check'}
                 >
                     <SelectionListSelectedFillContext.Provider value={props.multiselectable !== true}>
-                        <SelectionListBodyContent {...props} />
+                        <SelectionListMenuTitleOneLineContext.Provider value={props.optionPresentation === 'menu' && deviceType !== 'phone'}>
+                            <SelectionListBodyContent {...props} />
+                        </SelectionListMenuTitleOneLineContext.Provider>
                     </SelectionListSelectedFillContext.Provider>
                 </SelectionListSelectedMarkContext.Provider>
             </SelectionListOptionPresentationContext.Provider>

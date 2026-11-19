@@ -35,6 +35,23 @@ describe('KeyHint', () => {
         expect(screen.findByTestId('escape:label')?.props.children).toBe('Esc');
     });
 
+    it('draws a resolved shortcut as one keycap per key with a keyboard, and nothing on a touch screen (Search rows)', async () => {
+        const { KeyboardShortcutHint } = await import('./KeyHint');
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 0 });
+        const keyboard = await renderScreen(<KeyboardShortcutHint label="Alt+N" testID="row-key" />);
+        expect(keyboard.findByTestId('row-key')?.props.accessibilityLabel).toBe('Alt+N');
+        // Caps per key, never one "Alt+N" cap.
+        expect(keyboard.getTextContent()).not.toContain('+');
+        expect(keyboard.getTextContent()).toContain('N');
+
+        vi.stubGlobal('navigator', { maxTouchPoints: 5 });
+        const touch = await renderScreen(<KeyboardShortcutHint label="Alt+N" testID="row-key" />);
+        // The hint component stays mounted and draws nothing.
+        expect(touch.getTextContent()).toBe('');
+        vi.unstubAllGlobals();
+    });
+
     it('renders nothing when disabled', async () => {
         const { KeyHint } = await import('./KeyHint');
 
