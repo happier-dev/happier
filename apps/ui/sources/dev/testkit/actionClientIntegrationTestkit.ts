@@ -451,6 +451,20 @@ export async function connectFreshVercelThroughDeploymentUi(params: Readonly<{
 }
 
 /** Submit the mounted New Session action with the same manual custody completion as the UI. */
+export async function mountUiTriageComposeJourney(machineId: string) {
+    return await (await import('./triageNewSessionJourneyTestkit')).mountUiTriageComposeJourney(machineId);
+}
+
+export async function mountUiTriageComposerAttachmentJourney(
+    input: import('./triageComposeJourneyTestkit').TriageComposerAttachmentJourneyInput,
+): Promise<import('./triageComposeJourneyTestkit').TriageComposerAttachmentJourneyProbe> {
+    return await (await import('./triageComposeJourneyTestkit')).mountUiTriageComposerAttachmentJourney(input);
+}
+
+export async function mountUiTriageDispatchComposer(input: Parameters<typeof import('./triageComposeJourneyTestkit').mountUiTriageDispatchComposer>[0]) {
+    return await (await import('./triageComposeJourneyTestkit')).mountUiTriageDispatchComposer(input);
+}
+
 export async function submitUiSessionSpawnNew(params: Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;

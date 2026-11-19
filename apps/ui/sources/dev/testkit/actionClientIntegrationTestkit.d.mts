@@ -12,6 +12,83 @@ export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaratio
 export function installBundledPluginUiArtifactsForTests(artifacts: BundledPluginUiAppArtifactInventory): () => void;
 export function installBundledPluginUiDeclarationsForTests(declarations: readonly PluginHostBundledUiDeclaration[]): () => void;
 export function installPersonTransientConfirmationBoundary(): () => void;
+export type TriageComposeJourneyDraftProbe = Readonly<{
+    seededText: string;
+    pendingSeedCount: number;
+    hasCheckoutCreationDraft: boolean;
+    readSnapshot(): import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1 | null;
+    readPendingSeedCount(): number;
+    close(): Promise<void>;
+}>;
+
+export type TriageComposeJourneyProbe = Readonly<{
+    clearNavigation(): void;
+    readNavigation(): readonly Readonly<{ pathname: string; draftId: string; serverId: string; accountId: string }>[];
+    mountDraft(draftId: string): Promise<TriageComposeJourneyDraftProbe>;
+    close(): Promise<void>;
+}>;
+
+export type TriageComposerAttachmentJourneyInput = Readonly<{
+    machineId: string;
+    text: string;
+    selection: NonNullable<import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1['selection']>;
+    mention: Readonly<{ kind: string; ref: string; tokenText: string; start: number; end: number }>;
+    unrelatedAttachment: import('@happier-dev/protocol/runtime/input/composerAttachmentV1').ComposerAttachmentDraftV1;
+    executeAction(action: Readonly<{ pluginId: string; localId: string }>, input: unknown): Promise<unknown>;
+    sourceSurfaces?: readonly Readonly<{ pluginId: string; renderSurface: import('@happier-dev/plugin-sdk/ui').RenderSurface }>[];
+}>;
+
+export type TriageComposerAttachmentJourneyProbe = Readonly<{
+    composerRef: import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1;
+    before: import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1;
+    otherBefore: import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1;
+    beforeDocument: Readonly<{ text: string; composerAttachments: readonly import('@happier-dev/protocol/runtime/input/composerAttachmentV1').ComposerAttachmentDraftV1[] }>;
+    reads: readonly unknown[];
+    transactions: readonly unknown[];
+    sourceHostRequests: readonly unknown[];
+    readSnapshot(): import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1;
+    readOtherSnapshot(): import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1;
+    readDocument(): Readonly<{ text: string; composerAttachments: readonly import('@happier-dev/protocol/runtime/input/composerAttachmentV1').ComposerAttachmentDraftV1[]; revision: number }>;
+    pressAttach(title: string): Promise<void>;
+    pressRemove(title: string): Promise<void>;
+    pressViewDetails(title: string): Promise<unknown>;
+    mountDestination(launchInput: unknown): Promise<void>;
+    readDestinationCurrentRef(): import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1 | null | undefined;
+    pressDetailControl(role: 'button' | 'tab' | 'option', name: string): Promise<void>;
+    hasDetailControl(role: 'button' | 'tab' | 'option', name: string): Promise<boolean>;
+    readDetailText(): Promise<string>;
+    retireComposer(): void;
+    conflictAttach(input: Readonly<{
+        entryRef: import('@happier-dev/triage-protocol/v1').TriageEntryRefV1;
+        sourceInstance: import('@happier-dev/triage-protocol/v1').TriageSourceInstanceRefV1;
+        presentation: import('@happier-dev/plugin-sdk/ui').ComposerAttachmentAuthorPresentationV1;
+        concurrentText: string;
+    }>): Promise<Readonly<{
+        outcome: Readonly<{ kind: 'applied' }> | Readonly<{ kind: 'settled' }> |
+            Readonly<{ kind: 'refused'; refusal: Readonly<{ code: string; maximum?: number }> }>;
+        reads: number;
+        applies: number;
+    }>>;
+    close(): Promise<void>;
+}>;
+
+export function mountUiTriageComposeJourney(machineId: string): Promise<TriageComposeJourneyProbe>;
+export function mountUiTriageComposerAttachmentJourney(input: TriageComposerAttachmentJourneyInput): Promise<TriageComposerAttachmentJourneyProbe>;
+
+export function mountUiTriageDispatchComposer(input: Readonly<{
+    machineId: string;
+    text: string;
+    selection: NonNullable<import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1['selection']>;
+    publishSnapshot(ref: import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1,
+        snapshot: import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1): void;
+}>): Promise<Readonly<{
+    ref: import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1;
+    readSnapshot(): import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1;
+    readStructuredInput(): unknown;
+    hostHandlers: Required<Pick<import('@happier-dev/plugin-sdk/testing').PluginUiTestkitHostHandlers, 'readComposer' | 'applyComposer' | 'watchComposer'>>;
+    close(): void;
+}>>;
+
 export function mountUiManagedMachineDetail(params: Readonly<{ serverId: string; managedId: string }>): Promise<Readonly<{
     readControls(): Readonly<{ delete: boolean; stop: boolean; remove: boolean }>;
     close(): Promise<void>;
