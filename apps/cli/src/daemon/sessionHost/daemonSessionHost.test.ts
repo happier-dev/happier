@@ -267,12 +267,15 @@ async function createHarness(startupFailure?: Error,
     return { record, result: await pending };
   };
   return {
-    tracked, exits, hosts, hostedEnvironments, hostedLaunches, releaseSessions, spawnSession, sessionHost,
+    tracked, exits, hosts, hostedEnvironments, hostedLaunches, releaseSessions, spawnSession, sessionHost, onChildExited,
     setExitObserver: (observer: (pid: number, exit: ChildExit) => Promise<void>) => { observeExit = observer; },
     releaseAll: () => { for (const release of releaseSessions.splice(0)) release(); },
     /** Daemon restart: hand the reattached Sessions of a live host to this daemon's session host. */
     adoptReattached: (sessions: readonly TrackedSession[], isCurrentRuntime?: (processCommand: string) => boolean) =>
-      sessionHost.adoptReattachedSessions({ trackedSessions: sessions, observeExit: onChildExited, ...(isCurrentRuntime ? { isCurrentRuntime } : {}) }),
+      sessionHost.adoptReattachedSessions({ trackedSessions: sessions, observeExit: onChildExited,
+        readPersistedLifecycle: async () => ({ metadata: {}, archivedAt: null }),
+        stopReattachedSession: async () => { throw new Error('Unexpected Stop for a continuing Session'); },
+        ...(isCurrentRuntime ? { isCurrentRuntime } : {}) }),
   };
 }
 
@@ -664,10 +667,11 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     updated.releaseAll();
   });
 
-  it('reattaches a restarted daemon to the live host: Stop ends only that Session and new Sessions join the same host', { timeout: 120_000 }, async () => {
+  it('applies offline Archive and Stop on re-adoption while reusing the host for other Sessions', { timeout: 120_000 }, async () => {
     const first = await createHarness();
     const a = await first.spawnSession('session-a');
     const b = await first.spawnSession('session-b');
+    const c = await first.spawnSession('session-c');
     const launchesBeforeRestart = census.hostLaunches;
     const liveHost = first.hosts.at(-1)!;
 
@@ -675,31 +679,64 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     // tracked Sessions from the markers (pid, birth and command identity of the host process).
     for (const socket of hostSockets) socket.destroy();
     const restarted = await createHarness();
-    const reattached = [a.record, b.record].map(record => ({
+    const reattached = [a.record, b.record, c.record].map(record => ({
       trackingKey: record.trackingKey, pid: record.pid, happySessionId: record.happySessionId,
       startedBy: 'daemon' as const, processStartTimeMs: 1_000, processCommand: HOST_COMMAND,
       reattachedFromDiskMarker: true, spawnOptions: { directory: testHome },
     }) as TrackedSession);
     for (const session of reattached) restarted.tracked.set(session.trackingKey, session);
 
-    expect(restarted.adoptReattached(reattached)).toBe(2);
-    const [ra, rb] = reattached;
-    // Stop of A reaches the host; A's end is observed for A only; the host and B live on.
-    await expect(ra!.hostedSession!.end()).resolves.toBe(true);
-    await ra!.hostedSession!.observed;
-    expect(restarted.exits).toEqual([{ pid: process.pid, exit: expect.objectContaining({ trackingKey: ra!.trackingKey }) }]);
+    const machine = {
+      enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('Inactive Session has no current turn to end'); },
+      captureMachineSessionTerminal: async (sessionId: string) => ({ v: 1 as const, status: 'already_inactive' as const, sessionId }),
+      finalizeMachineSessionTerminal: async () => { throw new Error('Inactive Session cannot finalize again'); },
+    } satisfies Pick<ApiMachineClient, 'enqueueDaemonTerminalExactTurnEnd' | 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal'>;
+    restarted.setExitObserver(createOnChildExited({ trackedSessionsByKey: restarted.tracked,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => machine }));
+    const stop = createStopSession({ trackedSessionsByKey: restarted.tracked,
+      waitForTrackedRunnersExit: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
+        runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 }),
+    });
+    const stopOutcomes = new Map<string, Awaited<ReturnType<typeof stop>>>();
+    const adoption = {
+      trackedSessions: reattached,
+      observeExit: restarted.onChildExited,
+      readPersistedLifecycle: async (sessionId: string) => ({
+        metadata: sessionId === 'session-b'
+          ? { sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestId: 'offline-stop', requestedAtMs: 2 } }
+          : {},
+        archivedAt: sessionId === 'session-a' ? 1 : null,
+      }),
+      stopReattachedSession: async (sessionId: string, tracked: TrackedSession) => {
+        const result = await stop(sessionId, { expectedTrackedRunner: {
+          tracked, sessionRunnerPid: tracked.sessionRunnerPid,
+          processStartTimeMs: tracked.processStartTimeMs, processCommandHash: tracked.processCommandHash,
+        } });
+        stopOutcomes.set(sessionId, result);
+      },
+    };
+    expect(restarted.sessionHost.adoptReattachedSessions(adoption)).toBe(3);
+    const [ra, rb, rc] = reattached;
+    await vi.waitFor(() => {
+      expect(stopOutcomes.get('session-a')).toEqual({ status: 'stopped' });
+      expect(stopOutcomes.get('session-b')).toEqual({ status: 'stopped' });
+    });
+    expect(restarted.exits.map(({ exit }) => exit.trackingKey).sort()).toEqual([ra!.trackingKey, rb!.trackingKey].sort());
+    expect(restarted.tracked.has(ra!.trackingKey)).toBe(false);
+    expect(restarted.tracked.has(rb!.trackingKey)).toBe(false);
+    expect(liveHost.host.watchSession(rc!.trackingKey)).not.toBeNull();
     expect(liveHost.exit).not.toHaveBeenCalled();
 
     // A new Session joins the reattached host: no host launch.
-    const c = await restarted.spawnSession('session-c');
-    expect(c.result).toMatchObject({ type: 'success', sessionId: 'session-c' });
+    const d = await restarted.spawnSession('session-d');
+    expect(d.result).toMatchObject({ type: 'success', sessionId: 'session-d' });
     expect(census.hostLaunches).toBe(launchesBeforeRestart);
 
     first.releaseAll();
     restarted.releaseAll();
-    await Promise.all([rb!.hostedSession!.observed, c.record.hostedSession!.observed]);
+    await Promise.all([rc!.hostedSession!.observed, d.record.hostedSession!.observed]);
     expect(restarted.exits.map(({ exit }) => exit.trackingKey).sort())
-      .toEqual([ra!.trackingKey, rb!.trackingKey, c.record.trackingKey].sort());
+      .toEqual([ra!.trackingKey, rb!.trackingKey, rc!.trackingKey, d.record.trackingKey].sort());
   });
 
   it('prestarts ONE host on New Session intents, preloads the runner once, and the next Session joins that host', { timeout: 120_000 }, async () => {

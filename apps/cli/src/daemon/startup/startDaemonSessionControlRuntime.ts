@@ -7841,16 +7841,6 @@ export async function startDaemonSessionControlRuntime(
       }
     }
   };
-  // Daemon restart: reattached Sessions whose process is a live session host are stopped and
-  // observed through that host (never a signal to its pid), and that host takes new Sessions.
-  const adoptedHostedSessions = sessionHostPlacement.adoptReattachedSessions({
-    trackedSessions: [...params.trackedSessionsByKey.values()],
-    observeExit: (pid, exit) => onChildExited(pid, exit),
-    // A host from before a CLI update keeps its Sessions; new Sessions start a current host.
-    isCurrentRuntime: (processCommand) =>
-      resolveProcessCommandVersionState(processCommand, resolveCurrentSessionRunnerLaunchIdentity()) !== 'stale',
-  });
-  if (adoptedHostedSessions > 0) logger.debug('[DAEMON RUN] Reattached Sessions of a live session host', { count: adoptedHostedSessions });
   observeConnectedServiceRestartProcessMissing = (tracked) => {
     // A hosted Session's end is its own; the host process and its other Sessions live on.
     const exit = { reason: 'process-missing', code: null, signal: null,
@@ -12492,6 +12482,28 @@ export async function startDaemonSessionControlRuntime(
     },
     trackedSessions: params.trackedSessionsByKey, spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
     signal: shutdownCancellationDomains.daemonWorkSignal });
+  // Install exact host handles before taking new work. Watch admission applies any recorded
+  // Stop or Archive while the daemon was offline, using the same Stop and exit owners.
+  const adoptedHostedSessions = sessionHostPlacement.adoptReattachedSessions({
+    trackedSessions: params.trackedSessionsByKey.values(),
+    observeExit: onChildExited,
+    readPersistedLifecycle: (sessionId, tracked) => withSessionStopMetadataContext(sessionId, ({ credentials }) =>
+      resolvePersistedConnectedServiceSwitchSessionState({ sessionId, token: credentials.token, credentials }),
+    tracked.requesterWorkAttributionV1, shutdownCancellationDomains.daemonWorkSignal),
+    stopReattachedSession: (sessionId, tracked) => withSessionStopMetadataContext(sessionId, async metadataContext => {
+      metadataContext.currentness?.assertCurrent?.();
+      const result = await stopSession(sessionId, { metadataContext, expectedTrackedRunner: {
+        tracked, sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
+        processCommandHash: tracked.processCommandHash,
+      } }, undefined, undefined, metadataContext.credentials);
+      if (result.status === 'incomplete') {
+        logger.warn('[DAEMON RUN] Recorded Session Stop or Archive could not be applied', { sessionId, reason: result.reason });
+      }
+    }, tracked.requesterWorkAttributionV1, shutdownCancellationDomains.daemonWorkSignal),
+    isCurrentRuntime: processCommand =>
+      resolveProcessCommandVersionState(processCommand, resolveCurrentSessionRunnerLaunchIdentity()) !== 'stale',
+  });
+  if (adoptedHostedSessions > 0) logger.debug('[DAEMON RUN] Reattached Sessions of a live session host', { count: adoptedHostedSessions });
   let runtimeAuthFailureReportIntake: RuntimeAuthFailureReportIntake | null = null;
   const { port: controlPort, stop: stopControlServer } =
     await startDaemonControlServer({
