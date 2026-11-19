@@ -127,8 +127,8 @@ export const WidgetAreaLayoutBar = React.memo(function WidgetAreaLayoutBar(
     readFailure?: Readonly<{ reasonCode: string; retry: () => Promise<unknown> }>;
     labels: WidgetAreaLayoutLabels;
     /**
-     * What the bar heads: a whole page or pane (a Project's dashboards, Usage's views) speaks at the
-     * page-title step; an area that is one section of a page (a plugin page's widget area, lab
+     * What the bar heads: a whole page or pane (a Project's dashboards) speaks at the page-title step; an
+     * area under a page that already names itself (Usage's views, a plugin page's widget area, lab
      * `dplugin` PG) speaks at the section-title step, under the page's own title.
      */
     heading?: 'page' | 'section';

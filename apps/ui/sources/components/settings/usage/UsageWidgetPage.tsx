@@ -481,6 +481,9 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         actions={bar.personalActions}
         // A failed views read is said once by the page header; the bar keeps the built-in views meanwhile.
         labels={labels}
+        // The page header already says "Usage": when the views fold into one chooser it is a section-level name, never a
+        // second page title under the first (USAGE-ACCEPT 1118 #16).
+        heading="section"
         testID="usage-views"
       />}
       {filterBar}
