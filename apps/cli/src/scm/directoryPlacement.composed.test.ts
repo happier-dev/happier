@@ -207,6 +207,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
     const diff = { method: RPC_METHODS.SCM_DIFF_FILE, operation: { path: 'notes.txt', area: 'pending' } };
     const push = { method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } };
     it.each([
+        { placed: true, caller: 'none', managed: true, ...commit },
         ...[true, false].flatMap(placed => [status, commit, push].map(request => ({ placed, caller: 'none', ...request }))),
         // SEC1116H §4b: Manage on a member's folder whose placed Session shares the root.
         ...[status, commit].map(request => ({ placed: true, caller: 'manage', ...request })),
@@ -217,7 +218,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
         { placed: true, caller: 'member', ...comparison },
         { placed: true, caller: 'other-member', ...comparison },
         ...[diff, commit].map(request => ({ placed: true as const, caller: 'none' as const, disjointRoots: true, ...request })),
-    ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller, disjoint=$disjointRoots)', async (fixture) => {
+    ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller, disjoint=$disjointRoots, managed=$managed)', async (fixture) => {
         const { placed, caller, method, operation } = fixture;
         const disjointRoots = 'disjointRoots' in fixture;
         const directory = await mkdtemp(join(tmpdir(), 'scm-directory-'));
@@ -225,6 +226,9 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
         const addressedRoot = disjointRoots ? join(directory, 'controller') : root;
         const destination = join(directory, 'destination.git');
         const lifetime = new AbortController();
+        const managed = 'managed' in fixture ? { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'commit-project',
+            managedId: 'guest', controller: { machineId: 'machine', installationId: 'installation' }, rootPath: root } as const : undefined;
+        const managedExits: Promise<number | null>[] = [];
         const controllerIndex = join(addressedRoot, '.git/index');
         const controllerLock = `${controllerIndex}.lock`;
         let controllerIndexBefore: Buffer | undefined;
@@ -263,7 +267,15 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 await writeFile(hook, '#!/bin/sh\ntest "$GIT_EDITOR" = : && test -f "$GIT_INDEX_FILE" || exit 1\nprintf "\\nplaced hook\\n" >> "$1"\n');
                 await chmod(hook, 0o755);
             }
-            if (placed) {
+            if (managed) {
+                registerManagedWorkspaceTarget({ workspace: managed, target: { lifetime: lifetime.signal,
+                    holderPath: holderPath!, helperPath: helperPath!, openChannel(argv) {
+                        const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'],
+                            env: { ...process.env, HAPPIER_TEST_SCM_LOCATION: 'target' } });
+                        managedExits.push(new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }));
+                        return Duplex.from({ readable: child.stdout, writable: child.stdin });
+                    } } });
+            } else if (placed) {
                 if (devcontainerImage) {
                     // Devcontainer's image workspaceFolder mode binds this host root at /workspace.
                     // Mount only the packaged native tools beside that real shared workspace.
@@ -312,7 +324,8 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 registerSessionTargetWorkspace({ sessionId: 'directory-rpc-session', lifetime: lifetime.signal,
                     primarySocketPath, target: { ...target, lifetime: lifetime.signal, helperPath: helperPath! }, workspace: { hostRoot: addressedRoot, targetRoot } });
             }
-            const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+            const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
+                resolveWorkspaceTarget: resolveSessionTargetWorkspace });
             if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT && placed) {
                 const source = await admission.selectWorkspaceSource(undefined, { cwd: root });
                 expect(source).toMatchObject({ kind: 'target', id: expect.stringContaining(':directory-rpc-session') });
@@ -337,7 +350,8 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             const memberLaunches: string[] = [];
             const requester = { serverId: 'home', accountId: 'member-account', machineId: 'machine', installationId: 'installation' };
             registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, addressedRoot,
-                { registry, ...(disjointRoots ? { machineId: 'machine' } : {}), selectWorkspaceSource: admission.selectWorkspaceSource,
+                { registry, ...(disjointRoots || managed ? { machineId: 'machine' } : {}), selectWorkspaceSource: admission.selectWorkspaceSource,
+                    admitWorkspaceSource: admission.rpc,
                     actionExecutor: createActionExecutor({ scmActionExecute: input => executeScmActionOperation({
                         ...input, actionContext: input.context, workingDirectory: addressedRoot, accessPolicy: { kind: 'osUser' }, registry,
                     }) }),
@@ -365,7 +379,8 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             const request = {
                 cwd: statusResponse?.snapshot?.repo.rootPath ?? addressedRoot, ...operation,
             };
-            const addressedRequest = disjointRoots
+            const addressedRequest = managed ? { v: 1, kind: 'targeted_action_rpc', target: managed,
+                input: { ...request, outcomeVersion: 1 } } : disjointRoots
                 ? createTargetedActionRpcRequestV1({ ...request, outcomeVersion: 1 }, { kind: 'machine', machineId: 'machine',
                     project: { machineId: 'machine', directory: addressedRoot } })
                 : request;
@@ -383,8 +398,15 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 await rm(targetLock);
             }
             const response = await handlers.get(method)!(addressedRequest,
-                caller !== 'none' ? { signal: new AbortController().signal, localActionContext: { authority: 'present_user', runtimeAccountId:
+                managed ? { signal: lifetime.signal, callerAuthority: 'present_user',
+                    machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+                        installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true }
+                : caller !== 'none' ? { signal: new AbortController().signal, localActionContext: { authority: 'present_user', runtimeAccountId:
                     caller === 'member' ? requester.accountId : 'other-member-account' } } : undefined);
+            if (managed) {
+                expect(response, JSON.stringify(response)).toMatchObject({ success: true, publication: { state: 'published' } });
+                expect(git('show', 'HEAD:notes.txt').toString()).toBe('changed\n');
+            }
             if (caller === 'other-member') {
                 // Another person's placed root is never reached through its holder; their own child decides.
                 expect(memberLaunches).toEqual([method]);
@@ -429,6 +451,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             if (placed) expect(executions.split('\n')).not.toContain('host');
         } finally {
             lifetime.abort();
+            await Promise.all(managedExits);
             await agent?.terminateGroup({ graceMs: 100 });
             if (containerId) execFileSync(dockerPath, ['rm', '--force', containerId], { stdio: 'pipe' });
             await rm(directory, { recursive: true, force: true });

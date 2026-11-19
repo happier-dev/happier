@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createScmCapabilities } from '@happier-dev/protocol/scm';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -39,6 +39,20 @@ beforeEach(async () => {
 afterEach(() => { standardCleanup(); });
 
 describe('SCM mutation transport outcomes', () => {
+    it('keeps both the capability read and the admitted commit in the selected managed Project', async () => {
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'remote-project', managedId: 'guest',
+            controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' } as const;
+        const expectedHeadOid = 'a'.repeat(40);
+        const expectedRef = 'refs/heads/main';
+        rpc.mockImplementation(async (input: { method: string }) => input.method === RPC_METHODS.SCM_BACKEND_DESCRIBE
+            ? { success: true, capabilities: createScmCapabilities({ writeCommit: true, writeCommitExpectedBase: true }) }
+            : { success: true, commitSha: 'b'.repeat(40) });
+        const result = await machineScmCommitCreate('controller', { cwd: '/repo', message: 'commit', expectedHeadOid, expectedRef }, { serverId, workspace });
+        expect(result).toMatchObject({ success: true, commitSha: 'b'.repeat(40) });
+        expect(rpc.mock.calls.map(([request]) => ({ method: request.method, target: request.payload.target, machineId: request.machineId })))
+            .toEqual([RPC_METHODS.SCM_BACKEND_DESCRIBE, RPC_METHODS.SCM_COMMIT_CREATE]
+                .map(method => ({ method, target: workspace, machineId: 'controller' })));
+    });
     it('refuses explicit commit-base authority when the target cannot honor it before sending a mutation', async () => {
         rpc.mockResolvedValue({ success: true, capabilities: createScmCapabilities({ writeCommit: true }) });
         const request = { cwd: '/repo', message: 'commit', expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main' };

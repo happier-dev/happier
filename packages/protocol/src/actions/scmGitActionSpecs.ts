@@ -66,6 +66,7 @@ import * as worktrees from '../scm/worktrees.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionTargetV1Schema } from './sessionTargetV1.js';
+import { ManagedWorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 import { ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '../scm/entriesHistoryV1.js';
 import type { ActionId } from './actionIds.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -158,6 +159,11 @@ function defineScmActionSpec<
   };
 }
 
+const ScmCommitCreateActionInputSchema = lazyZodSchema(() => z.safeExtend(scm.ScmCommitCreateRequestSchema, {
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
+}));
+export type ScmCommitCreateActionInput = z.infer<typeof ScmCommitCreateActionInputSchema>;
+
 const SessionScmStatusInputSchema = lazyZodSchema(() => z.extend(scm.ScmStatusSnapshotRequestSchema, {
   sessionId: z.optional(SessionTargetV1Schema),
 }));
@@ -187,7 +193,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
   ScmActionSpecDefinition<'scm.change.include', typeof scm.ScmChangeApplyRequestSchema, typeof scm.ScmChangeApplyResponseSchema>,
   ScmActionSpecDefinition<'scm.change.exclude', typeof scm.ScmChangeApplyRequestSchema, typeof scm.ScmChangeApplyResponseSchema>,
   ScmActionSpecDefinition<'scm.change.discard', typeof scm.ScmChangeDiscardRequestSchema, typeof scm.ScmChangeDiscardResponseSchema>,
-  ScmActionSpecDefinition<'scm.commit.create', typeof scm.ScmCommitCreateRequestSchema, typeof scm.ScmCommitCreateResponseSchema>,
+  ScmActionSpecDefinition<'scm.commit.create', typeof ScmCommitCreateActionInputSchema, typeof scm.ScmCommitCreateResponseSchema>,
   ScmActionSpecDefinition<'scm.commit.resolveOutcome', typeof scm.ScmCommitResolveOutcomeRequestSchema, typeof scm.ScmCommitResolveOutcomeResponseSchema>,
   ScmActionSpecDefinition<'scm.commit.undoLast', typeof scm.ScmCommitUndoLastRequestSchema, typeof scm.ScmCommitUndoLastResponseSchema>,
   ScmActionSpecDefinition<'scm.commit.backout', typeof scm.ScmCommitBackoutRequestSchema, typeof scm.ScmCommitBackoutResponseSchema>,
@@ -451,7 +457,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     bindings: { rpcMethod: 'scm.commit.create' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'write', localRepository: 'write',
-    inputSchema: scm.ScmCommitCreateRequestSchema,
+    inputSchema: ScmCommitCreateActionInputSchema,
     outputSchema: scm.ScmCommitCreateResponseSchema,
     inputHints: {
       title: 'Commit create',
@@ -2155,6 +2161,11 @@ export function getScmRpcSideEffectClass(method: string) {
 /** A projection of `localRepository` on the declaration owner: the reads a Can use person may run. */
 export function isScmLocalRepositoryReadRpcMethod(method: string): boolean {
   return findScmRpcSpec(method)?.localRepository === 'read';
+}
+
+/** The managed workspace carries its exact placement through these RPCs. */
+export function supportsManagedWorkspaceScmRpcMethod(method: string): boolean {
+  return method === RPC_METHODS.SCM_COMMIT_CREATE || isScmLocalRepositoryReadRpcMethod(method);
 }
 
 /** A projection of `localRepository` on the declaration owner: any read or write that runs as the folder's owner. */

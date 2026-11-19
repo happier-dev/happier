@@ -84,7 +84,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS, type SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
-import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { getScmRpcSideEffectClass, supportsManagedWorkspaceScmRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { ManagedWorkspaceScmRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { scmFallbackError, type ScmRpcFailure } from './scmRpcFailure';
 import { runScmRpcWithAdmission, type ScmRpcTransportResult } from './scmRpcAdmission';
@@ -178,7 +178,7 @@ export async function runMachineScmRpc<
     options?: MachineScmCallOptions,
 ): Promise<ScmRpcTransportResult<T>> {
     const workspace = options?.workspace;
-    if (workspace && !isScmLocalRepositoryReadRpcMethod(method)) {
+    if (workspace && !supportsManagedWorkspaceScmRpcMethod(method)) {
         return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The workspace does not support this SCM operation.' };
     }
     let payload: MachineScmRpcRequest = method.startsWith('scm.diffSummary.') || requiresExplicitScmMachineTarget(method) ? request : withScmBackendPreference({
@@ -265,13 +265,15 @@ async function callMachineScm<T extends { success: boolean; error?: string; erro
 ): Promise<T | ScmRpcFailure> {
     // Passive snapshot/diff observations retain the transport's cancellation contract.
     // Intentional effects and PR draft preparation enter the shared Action owner.
-    if (getScmRpcSideEffectClass(method) === 'read' && method !== RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE) {
+    const workspace = options?.workspace;
+    if ((workspace && !supportsManagedWorkspaceScmRpcMethod(method))
+        || (getScmRpcSideEffectClass(method) === 'read' && method !== RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE)) {
         return normalizeUiScmFacadeResult<T>(await callMachineScmTransport<T, R>(machineId, method, request, options));
     }
     const actionId = ActionIdSchema.parse(method);
     const schema = getActionSpec(actionId).outputSchema;
     if (!schema) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The SCM Action has no result contract.' };
-    const result: unknown = await invokeUiScmAction({ actionId, input: request, schema,
+    const result: unknown = await invokeUiScmAction({ actionId, input: workspace ? { ...request, workspace } : request, schema,
         confirmed: options?.confirmedByPerson ? true : undefined,
         ...(options?.onDispatched ? { onDispatched: options.onDispatched } : {}),
         context: { externalActionTarget: { kind: 'machine', machineId },

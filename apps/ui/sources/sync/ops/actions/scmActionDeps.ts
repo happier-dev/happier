@@ -1,5 +1,5 @@
 import { getActionSpec, requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
-import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { getScmRpcSideEffectClass, type ScmCommitCreateActionInput } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
 import { ScmComparisonCaptureOutputSchema, ScmReviewedMarkInputSchema, ScmReviewedUnmarkInputSchema, buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, buildScmComparisonSourceKey, buildScmReviewScopeId, buildReviewUnits, ScmStatusSnapshotResponseSchema, ScmDiffFileResponseSchema, type ScmReviewedMarksSource } from '@happier-dev/protocol/scm';
@@ -47,13 +47,19 @@ export function createUiScmAction(
         if (!method) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
 
         // The canonical Action owner has already parsed this family's request schema.
-        const request = input as Readonly<{ cwd?: string; backendPreference?: unknown; destinationParentPath?: string; resultId?: string }>;
+        const { workspace, ...request } = input as Readonly<{
+            cwd?: string; backendPreference?: unknown; destinationParentPath?: string; resultId?: string;
+            workspace?: ScmCommitCreateActionInput['workspace'];
+        }>;
         // Saved records retain their captured repository. Session transport proves the record's
         // Session scope; its current workspace is not the address of an earlier publication.
         const addressesSavedResult = actionId.startsWith('scm.diffSummary.') && typeof request.resultId === 'string';
         const serverId = account?.serverId ?? context.serverId;
         const accountId = account?.accountId ?? context.runtimeAccountId;
         const target = context.externalActionTarget;
+        if (workspace && (target?.kind !== 'machine' || target.machineId !== workspace.controller.machineId || context.defaultSessionId)) {
+            return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
+        }
         const finish = (result: unknown) => {
             const effectClass = getActionSpec(actionId).sideEffectClass;
             account?.assertResultCurrent(effectClass);
@@ -169,6 +175,7 @@ export function createUiScmAction(
             options?.onDispatched?.();
             const result = await runMachineScmRpcWithFallback(target.machineId, method, request, {
                 serverId, accountId, signal: context.signal,
+                ...(workspace ? { workspace } : {}),
                 ...(context.defaultSessionId && resolveSocketRpcSessionAuthorization(method)?.optionalSessionScope
                     ? { authorization: { kind: 'session.write', sessionId: context.defaultSessionId } } : {}),
             });

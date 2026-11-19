@@ -27,6 +27,30 @@ let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('Project Changes destination', () => {
+    it('reads the exact attached guest when its checkout path also exists on the controller', async () => {
+        const rootPath = '/repo';
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request =>
+            request.method === 'scm.status.snapshot' ? { success: true, snapshot: fileViewSnapshot({ rootPath }) } : undefined });
+        fixture.storage.setState({ sessions: {} });
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: fixture.home.id, workspaceId: 'guest-project',
+            managedId: 'guest-resource', controller: { machineId: 'm1', installationId: 'controller-installation' }, rootPath };
+        const scope = { serverId: fixture.home.id, machineId: workspace.controller.machineId, rootPath, workspace };
+        const noop = () => {};
+        const screen = await fixture.render(<ProjectGitSurface scopeId="project:guest-project" {...scope}
+            onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}
+            onOpenCommit={noop} onSelectWorkspacePath={noop} onRequestCreateWorktreeFromAnotherBranch={noop} onRevealInFilesTree={noop} />);
+        const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+        await act(async () => screen.findByType(WorkspaceScmReviewBody)
+            .find(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')
+            .props.onLayout({ nativeEvent: { layout: { width: 1200, height: 480 } } }));
+        await flushHookEffects({ cycles: 20 });
+        const snapshots = fixture.requests.filter(request => request.method === 'scm.status.snapshot');
+        expect(snapshots.length).toBeGreaterThan(0);
+        for (const request of snapshots) {
+            expect(request.payload).toMatchObject({ v: 1, kind: 'targeted_action_rpc', target: workspace, input: { cwd: rootPath } });
+        }
+    });
+
     it.each(['unsuccessful response', 'destroyed stream'] as const)('shows a failed first history read (%s) and loads commits through Try again', async (failure) => {
         let failHistory = true;
         const entry = { sha: 'a'.repeat(40), shortSha: 'aaaaaaa', authorName: 'A', authorEmail: '', timestamp: Date.now(), subject: 'Recovered history', body: '' };

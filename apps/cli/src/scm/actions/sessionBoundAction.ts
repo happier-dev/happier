@@ -13,7 +13,8 @@ import { ScmBackendDescribeResponseSchema, ScmRemoteRequestSchema, ScmCommitCrea
 import type { ScmCapabilities } from '@happier-dev/protocol/scm';
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import type { ResolvedSessionPullRequestBindingInputV1 } from '@/session/actions/createCliActionDeps';
-import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { createTargetedActionRpcRequestV1, ManagedWorkspaceScmRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import type { ScmCommitCreateActionInput } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { resolveCwd } from '@/scm/runtime';
@@ -221,13 +222,25 @@ export function createSessionBoundScmAction(
     if (machineInventory && context.externalActionTarget?.kind !== 'machine') {
       return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
     }
+    const workspace = actionId === 'scm.commit.create' ? (inputRecord as ScmCommitCreateActionInput).workspace : undefined;
+    const target = context.externalActionTarget;
+    if (workspace && (target?.kind !== 'machine' || target.machineId !== workspace.controller.machineId
+      || context.actionCaller?.kind === 'session' || context.rpcSessionAuthorization
+      || (target.project && target.project.directory !== workspace.rootPath))) {
+      return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
+    }
+    const addressManagedWorkspace = (request: unknown) => ManagedWorkspaceScmRpcRequestV1Schema.parse({
+      v: 1, kind: 'targeted_action_rpc', target: workspace, input: request,
+    });
     const executeMachineScmAction = async (machineId: string | null, selectedInput: Readonly<Record<string, unknown>>,
       sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string) => {
       const selectedTarget = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined;
-      const root = sessionRoot ?? selectedTarget?.project?.directory;
+      const root = workspace?.rootPath ?? sessionRoot ?? selectedTarget?.project?.directory;
       const [{ bindScmActionToSessionWorkspace }, { tryAcquireAuthoritativePluginRuntimeRegistryLease }, { executeCapturedMachineAction }] = await Promise.all([import("@/scm/actions/placement"), import("@/plugins/runtime/reload/runtimeLease"), import("@/api/machine/capturedMachineAction")]);
+      const { workspace: _workspace, ...commitInput } = selectedInput;
+      const scmInput = workspace ? commitInput : selectedInput;
       const sessionInput = root && context.defaultSessionId && context.actionCaller?.kind === 'session'
-        ? bindScmActionToSessionWorkspace(actionId, selectedInput, root, context.defaultSessionId) : selectedInput;
+        ? bindScmActionToSessionWorkspace(actionId, scmInput, root, context.defaultSessionId) : scmInput;
       const inputRecord = root && !machineInventory && actionId !== 'scm.repository.clone' && sessionInput.cwd === undefined
         ? { ...sessionInput, cwd: root } : sessionInput;
       const cwd = normalizeStringValue(actionId === 'scm.repository.clone'
@@ -302,9 +315,10 @@ export function createSessionBoundScmAction(
       if (admitPolicy && !admitPolicy().success) {
         let capabilities: ScmCapabilities | undefined;
         try {
+          const describe = { cwd, ...(inputRecord.backendPreference ? { backendPreference: inputRecord.backendPreference } : {}), outcomeVersion: 1 };
           const description = ScmBackendDescribeResponseSchema.safeParse(await callMachineAction({
             machineId, serverId: context.serverId ?? undefined, method: 'scm.backend.describe',
-            request: { cwd, ...(inputRecord.backendPreference ? { backendPreference: inputRecord.backendPreference } : {}), outcomeVersion: 1 },
+            request: workspace ? addressManagedWorkspace(describe) : describe,
             authority: context.authority, context, effectActionId: 'scm.backend.describe', exactMachine: true,
             ...(context.signal ? { signal: context.signal } : {}),
           }));
@@ -323,7 +337,7 @@ export function createSessionBoundScmAction(
           : { outcomeVersion: 1 }),
         ...(actionId === 'scm.status.snapshot' ? { operationStateVersion: 1 } : {}),
       };
-      const request = root ? createTargetedActionRpcRequestV1(machineInput,
+      const request = workspace ? addressManagedWorkspace(machineInput) : root ? createTargetedActionRpcRequestV1(machineInput,
         { kind: 'machine', machineId, project: selectedTarget?.project ?? { machineId, directory: root } }, context) : machineInput;
       const invoke = () => executeCapturedMachineAction({ actionId,
         assertCurrent: async () => {

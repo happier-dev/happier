@@ -121,7 +121,7 @@ import { createHostScmCommandRunner, isRequesterScmCommandRunnerSelected, resolv
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { FilesystemEffectAdmission, FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { ApiMachineClient } from '@/api/apiMachine';
-import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod, supportsManagedWorkspaceScmRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { isScmActionId } from '@happier-dev/protocol/actions/executor/actionFamilies';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
@@ -289,7 +289,7 @@ export function registerScmHandlers(
                 const wrapped = request && typeof request === 'object' && 'kind' in request
                     && request.kind === 'targeted_action_rpc';
                 const handledPush = method === RPC_METHODS.SCM_REMOTE_PUSH;
-                const managed = wrapped && unwrapTarget && (isScmLocalRepositoryReadRpcMethod(method) || handledPush)
+                const managed = wrapped && unwrapTarget && (supportsManagedWorkspaceScmRpcMethod(method) || handledPush)
                     ? ManagedWorkspaceScmRpcRequestV1Schema.safeParse(request).data : undefined;
                 if (managed && (!deps?.selectWorkspaceSource || managed.target.controller.machineId !== deps.machineId)) {
                     return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
