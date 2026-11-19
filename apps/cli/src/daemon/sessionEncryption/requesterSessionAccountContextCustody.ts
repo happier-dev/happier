@@ -12,6 +12,7 @@ import {
   type ResolveRequesterSessionRuntimeContext,
 } from './requesterSessionCredentials';
 import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
+import { retainRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
 
 type RetainedAttribution = TrackedSession['requesterWorkAttributionV1'];
 
@@ -90,9 +91,11 @@ export function createRequesterSessionAccountContextCustody(params: Readonly<{
     releaseSessionAccountContext,
     withSessionAccountContext: async (sessionId, operation, retainedAttribution, signal) => {
       const context = await resolveSessionAccountContext(sessionId, retainedAttribution, signal);
+      const releaseOperation = context ? retainRequesterSessionRuntimeContext(context) : null;
       try {
         return await operation(context);
       } finally {
+        releaseOperation?.();
         await releaseSessionAccountContext(context);
       }
     },

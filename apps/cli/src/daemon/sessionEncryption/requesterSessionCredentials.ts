@@ -48,6 +48,8 @@ import { performance } from 'node:perf_hooks';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { TrackedSession } from '../types';
+import { releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
+export { releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
 import { readHostAccountExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationAccountCustody';
 import { selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -272,15 +274,6 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
 }
 
 export type ReleaseRequesterSessionRuntimeContext = (context: RequesterSessionRuntimeContext) => Promise<void>;
-
-/** A tracked runner owns its exact requester; other acquisitions are temporary. */
-export async function releaseUnretainedRequesterSessionRuntimeContext(
-  context: RequesterSessionRuntimeContext,
-  retainedContexts: Iterable<RequesterSessionRuntimeContext | null | undefined>,
-): Promise<void> {
-  for (const retained of retainedContexts) if (retained === context) return;
-  await context.dispose();
-}
 
 /** Recovery can return a borrowed tracked runtime or a temporary operation owner. */
 export type RequesterSessionRuntimeContextPorts =

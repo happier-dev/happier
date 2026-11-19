@@ -14,11 +14,18 @@ import type { SpawnResourceCleanupByKey } from '../sessions/cleanupSessionResour
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import type { TrackedSession } from '../types';
 import { createRequesterSessionRuntimeContext } from './createRequesterSessionRuntimeContext';
-import { admitRequesterSessionBootstrap, createRequesterSessionRuntimeContextResolver,
+import { createRequesterSessionAccountContextCustody } from './requesterSessionAccountContextCustody';
+import { retireExactTerminalControlServiceability } from '../sessions/retireTerminalControlServiceability';
+import { SessionMetadataTuplePatchV1Schema, createAccountScopedCryptoMaterialSnapshotV1,
+  convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+  openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
+import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
+import { encodeStoredCredentials } from '@/persistence';
+import { admitRequesterSessionBootstrap, createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext,
   type AdmittedRequesterSessionBootstrap } from './requesterSessionCredentials';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision_during_exit', 'shared_live_replacement', 'shared_retiring_replacement', 'shared_predecessor_recovery'] as const)(
+it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision_during_exit', 'shared_live_replacement', 'shared_retiring_replacement', 'shared_predecessor_recovery', 'stop_publication', 'stop_publication_e2ee', 'stop_publication_failed', 'stop_publication_home_changed'] as const)(
   'retires current requester custody across %s',
   async replacement => {
     const directory = await mkdtemp(join(tmpdir(), 'requester-exit-lifetime-'));
@@ -26,6 +33,12 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
     // consume its real Account subject, including the Follow cache boundary.
     const requesterToken = `e30.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 1,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.fixture`;
+    const accountMode = replacement === 'stop_publication_e2ee' ? 'e2ee' : 'plain';
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(23) };
+    const contentKeyFingerprint = accountMode === 'e2ee'
+      ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+        createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint)
+      : null;
     const channel = await createRequesterCurrentnessSocketHarness();
     let releaseExitCleanup: (() => void) | undefined;
     let announceExitCleanup: (() => void) | undefined;
@@ -38,6 +51,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
     const incumbentCurrentnessRelease = new Promise<void>(resolve => { releaseIncumbentCurrentness = resolve; });
     let initialAdmissionAvailable = true;
     let initialBootstrap: AdmittedRequesterSessionBootstrap | undefined;
+    let stopRunner: Readonly<{ pid: number; startTimeMs: number }> | undefined;
     // Home HTTP is the boundary; admission, requester construction, resource
     // transfer and the actual Session exit owner all execute real logic.
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
@@ -52,12 +66,20 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         return { status: 200, data: {} };
       }
       if (url.endsWith('/initial-admission')) return { status: initialAdmissionAvailable ? 200 : 401, data: {} };
+      const metadata = { machineId: 'machine', path: '/repo', ...(stopRunner ? {
+        hostPid: stopRunner.pid, hostProcessStartTimeMs: stopRunner.startTimeMs,
+        lifecycleState: 'running', terminal: { mode: 'plain' },
+      } : {}) };
       return { status: 200, data: url.endsWith('/v2/sessions/bob-session')
-        ? { session: createSessionRecordFixture({ id: 'bob-session', encryptionMode: 'plain',
-          metadata: JSON.stringify({ machineId: 'machine', path: '/repo' }), dataEncryptionKey: null, share: null }) }
+        ? { session: createSessionRecordFixture({ id: 'bob-session', encryptionMode: accountMode,
+          metadataLayoutVersion: 0, metadataVersion: 1,
+          metadata: accountMode === 'e2ee' ? encryptSessionPayload({ ctx: { encryptionKey: material.secret,
+            encryptionVariant: 'legacy' }, payload: metadata }) : JSON.stringify(metadata), dataEncryptionKey: null, share: null }) }
         : url.endsWith('/profile') ? { id: 'bob' }
         : url.endsWith('/currentness')
-          ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+          ? { mode: accountMode, version: 1, signingKeyFingerprint: null, contentKeyFingerprint, updatedAt: 1,
+            recipientEnvelopeReadiness: accountMode === 'e2ee' ? { status: 'available' } : { status: 'unavailable', reason: 'plain_account' } }
+          : accountMode === 'e2ee' && url.endsWith('/v2/account/settings') ? { content: null, version: 0 }
           : { content: { t: 'plain', v: {} }, version: 1 } };
     });
     let requester: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
@@ -76,12 +98,13 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       const switchCoordinator = host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator;
       const admitBootstrap = async () => {
         const admitted = await admitRequesterSessionBootstrap({
-          bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: requesterToken } },
+          bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials({ token: requesterToken,
+            encryption: accountMode === 'e2ee' ? material : null }) },
           existingSessionId: 'bob-session',
           boundary: { serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', happyHomeDir: directory },
           context: { signal: new AbortController().signal,
             machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
-              installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+              installationId: 'installation', role: 'use', encryptionMode: accountMode },
             verifyMachineAdmissionCurrent: async () => true },
         });
         if (!admitted) throw new Error('Missing real requester admission');
@@ -90,7 +113,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         // Machine permission was admitted once. The retained Home identity
         // observation still belongs to the runtime's local custody lifetime.
         admitted.admitted.bindRuntimeMachineAdmissionCurrentness(async () => true, async () => {
-          if (initial && replacement === 'shared_predecessor_recovery') {
+          if ((initial && replacement === 'shared_predecessor_recovery') || replacement === 'stop_publication_home_changed') {
             return (await axios.get('https://bob-home.test/initial-admission')).status === 200;
           }
           if (pauseIncumbentCurrentness) await axios.get('https://bob-home.test/incumbent-currentness-barrier');
@@ -145,6 +168,58 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         getApiMachineForSessions: () => null });
       const exit = await exited;
       expect(exit.code).toBe(1);
+      if (replacement.startsWith('stop_publication')) {
+        const expectedRunner = { pid, startTimeMs: 100 };
+        stopRunner = expectedRunner;
+        tracked.processStartTimeMs = stopRunner.startTimeMs;
+        tracked.requesterSessionRuntimeContext = requester;
+        const custody = createRequesterSessionAccountContextCustody({ trackedSessions,
+          resolveRequesterSessionRuntimeContext: async () => requester,
+          releaseRequesterSessionRuntimeContext: context => releaseUnretainedRequesterSessionRuntimeContext(context,
+            [...trackedSessions.values()].map(session => session.requesterSessionRuntimeContext)),
+          externalActionAccountId: 'alice', serverId: 'bob-home', machineId: 'machine', isRetired: () => false });
+        const patch = vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
+          const tuple = SessionMetadataTuplePatchV1Schema.parse(body);
+          if (tuple.mode !== 'owner' && tuple.mode !== 'owner_migration') throw new Error('Expected owner tuple mutation');
+          if (replacement === 'stop_publication_failed') throw new Error('Fixture Home write failed');
+          return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+            sharedMetadata: { version: (tuple.mode === 'owner' ? tuple.sharedMetadata.expectedVersion : tuple.source.metadata.version) + 1 },
+            agentState: { version: tuple.mode === 'owner' ? tuple.agentState.expectedVersion : tuple.source.agentState.version } } };
+        });
+        try {
+          const publication = custody.withSessionAccountContext('bob-session', async context => {
+            if (!context) throw new Error('Missing admitted requester Account');
+            pendingExit = onChildExited(pid, { reason: 'process-exited', ...exit });
+            await pendingExit;
+            expect(trackedSessions.size).toBe(0);
+            if (replacement === 'stop_publication_home_changed') initialAdmissionAvailable = false;
+            // Stop captured this Account before physical exit; its exact final
+            // publication follows the real runner resource/requester cleanup.
+            return await retireExactTerminalControlServiceability({ sessionId: 'bob-session',
+              credentials: context.bootstrap.credentials, currentness: { verifyCurrent: () => context.isCurrent() },
+              terminalMode: 'plain', expectedRunner, stoppedAt: 1234 });
+          });
+          if (replacement === 'stop_publication_failed') await expect(publication).rejects.toThrow('Fixture Home write failed');
+          else if (replacement === 'stop_publication_home_changed') {
+            await expect(publication).rejects.toMatchObject({ code: 'session_publisher_authority_lost' });
+            expect(patch).not.toHaveBeenCalled();
+          } else {
+            await expect(publication).resolves.toBe('retired');
+            const tuple = SessionMetadataTuplePatchV1Schema.parse(patch.mock.calls.at(-1)?.[1]);
+            if (tuple.mode !== 'owner' && tuple.mode !== 'owner_migration') throw new Error('Expected owner tuple mutation');
+            const envelope = tuple.mode === 'owner' ? tuple.ownerMetadata : tuple.target.ownerMetadata;
+            const opened = openSessionOwnerMetadataEnvelopeV1(accountMode === 'e2ee'
+              ? { accountMode, material, envelope } : { accountMode, envelope });
+            expect(opened).toMatchObject({ ok: true, ownerMetadata: { runtime: { lifecycleState: 'stopped', lifecycleStateSince: 1234 } } });
+          }
+          expect(await requester.isCurrent(), 'Final publication releases the last operation custody').toBe(false);
+          const retiredRequester = requester;
+          expect(() => retiredRequester.subscribeAccountSettingsSnapshot(() => {}, {})).toThrow();
+        } finally {
+          patch.mockRestore();
+        }
+        return;
+      }
       if (replacement === 'shared_predecessor_recovery') {
         retainedPredecessor = initialRequester;
         trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid),
