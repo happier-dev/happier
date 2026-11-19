@@ -115,6 +115,8 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['dev', 'glyphs'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['dev', 'glyphs', 'nested'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['dev', 'first-open'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['dev', 'first-open', 'nested'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'agent-setup'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes', 'other'])).toBe(false);
@@ -149,6 +151,7 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'scripts'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'glyphs'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'first-open'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'media'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'native-approvals'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'session-defaults'])).toBe(false);
