@@ -71,15 +71,15 @@ export function ReviewsListHost(): React.ReactElement {
         items: view.items ?? EMPTY_ITEMS, keyOf, window, openKey: null, onOpenChange: open,
     });
     const scope = useActiveServerAccountScope();
-    // Titles are sealed in the Review body; a row names its subject and state from the metadata it carries.
+    // The Artifact owner opens sealed headers; the collection only presents those exact titles.
     const anatomy = React.useMemo((): CollectionAnatomy<ReviewListItemV1> => ({
         wrapItem: (item, children) => <WorkspaceDestinationRow href={artifactViewRoute(item.reviewId)} existingMenu
-            entityTitle={reviewLabel} entityItem={scope ? { kind: 'artifact', scope, artifactId: item.reviewId } : null}>
+            entityTitle={view.titles.get(item.reviewId) || reviewLabel} entityItem={scope ? { kind: 'artifact', scope, artifactId: item.reviewId } : null}>
             {children}
         </WorkspaceDestinationRow>,
-        glyph: () => null, loadingGlyph: false, title: () => reviewLabel,
+        glyph: () => null, loadingGlyph: false, title: item => view.titles.get(item.reviewId) || reviewLabel,
         columnTitles: { title: reviewLabel },
-        accessibilityLabel: item => `${reviewLabel} · ${reviewCountsLabel(item)} · ${formatRelativeTimeShort(item.createdAt, Date.now())}`,
+        accessibilityLabel: item => `${view.titles.get(item.reviewId) || reviewLabel} · ${reviewCountsLabel(item)} · ${formatRelativeTimeShort(item.createdAt, Date.now())}`,
         titleMeta: reviewCountsLabel,
         byline: item => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state),
             formatRelativeTimeShort(item.createdAt, Date.now())].join(' · '),

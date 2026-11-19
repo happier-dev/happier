@@ -23,6 +23,7 @@ import type {
 import type { ResourceSpaceMembershipMutationV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useArtifactTitleProjections } from '@/components/artifacts/useArtifactTitleProjections';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { COLLECTION_SPACE_KIND_PRESENTATION } from '@/components/settings/session/collectionSpaceKindPresentation';
 import { projectActionOutcome } from '@/components/sessions/shell/dropPreview/sessionListActionOutcome';
@@ -71,9 +72,10 @@ export function reviewSpaceTakesMembers(
   return Boolean(space?.membership);
 }
 
-/** The words a loaded row shows, so the local search narrows what the person can see (titles stay sealed). */
-export function reviewRowWords(item: ReviewListItemV1): string {
+/** Search the loaded row's opened title and its server-readable metadata. */
+export function reviewRowWords(item: ReviewListItemV1, title: string | null | undefined): string {
   return [
+    title ?? '',
     reviewSubjectLabel(item.subjectKind),
     reviewStateLabel(item.state),
   ].join(' ');
@@ -135,6 +137,10 @@ export function useReviewsCollectionView(focused: boolean) {
   );
   // The default query stands until a saved space binds; a bound non-default space then asks once for its own rows.
   const list = useReviewList(request);
+  const artifactIds = React.useMemo(() => list.items?.map(item => item.reviewId) ?? [], [list.items]);
+  const openedTitles = useArtifactTitleProjections(list.scope, artifactIds, focused);
+  const titles = React.useMemo(() => new Map(artifactIds.map((id, index) =>
+    [id, openedTitles[index] ?? null] as const)), [artifactIds, openedTitles]);
   // Search is this page's presentation over loaded rows, so it never waits on saved spaces to load.
   const [searchQuery, setSearchQuery] = React.useState('');
   useCurrentUiContextLocalCommands(focused ? [{
@@ -159,13 +165,14 @@ export function useReviewsCollectionView(focused: boolean) {
     const loaded = list.items ?? null;
     if (!loaded || !needle) return loaded;
     return loaded.filter((item) =>
-      reviewRowWords(item).toLowerCase().includes(needle),
+      reviewRowWords(item, titles.get(item.reviewId)).toLowerCase().includes(needle),
     );
-  }, [list.items, needle]);
+  }, [list.items, needle, titles]);
   return {
     focused,
     list,
     items,
+    titles,
     searchQuery,
     setSearchQuery,
     filters: binding.filters,

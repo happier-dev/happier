@@ -23,6 +23,8 @@ import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collection
 import { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 } from '@happier-dev/protocol/collections/spaces/collectionSpaceEnablementV1';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { UniversalSearchRuntimeProvider, type UniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const membershipAlert = vi.hoisted(() => vi.fn());
@@ -38,9 +40,50 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
 afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); });
 
 describe('/reviews live host', () => {
+    it('names and searches loaded Reviews from their exact Artifact headers and follows header updates', async () => {
+        const serverUrl = 'https://review-titles.example';
+        const serverId = await homes.addHome({ serverUrl, name: 'Review titles', accountId: 'alice', currentAccount: true });
+        const reviewId = 'review-header-title';
+        homes.artifacts(serverId).replaceStoredRow({ id: reviewId, ownerAccountId: 'alice', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId, title: 'Relay handshake' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
+        homes.answer(serverId, 'POST /v1/reviews/list', { body: { items: [{ reviewId, projectSourceId: null, workflowId: null,
+            subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+            startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 1, needsDecision: 0 },
+            needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } }], cursor: null } });
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
+        storage.getState().deleteArtifact(reviewId);
+        const before = homes.requests.length;
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive>
+            <WorkspaceRouteBody />
+        </PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await reportCollectionLayout(screen, 'reviews:list');
+            await vi.waitFor(() => expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).not.toBeNull());
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('Relay handshake'));
+            expect(screen.findHostByTestId(`reviews:row:${reviewId}`)?.props.accessibilityLabel).toContain('Relay handshake');
+            expect(storage.getState().artifacts[reviewId]?.body).toBeUndefined();
+            const titleReads = () => homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read');
+            expect(titleReads().map(request => request.input)).toEqual([{ artifactIds: [reviewId], projection: 'headers' }]);
+            await screen.pressByTestIdAsync('reviews:search-toggle');
+            screen.changeTextByTestId('reviews:search', 'handshake');
+            expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).not.toBeNull();
+            const artifact = storage.getState().artifacts[reviewId];
+            if (!artifact?.isDecrypted) throw new Error('The list must open the canonical header');
+            await act(async () => storage.getState().applyArtifacts([{ ...artifact, title: 'Durable review', headerVersion: 2 }]));
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).toBeNull());
+            screen.changeTextByTestId('reviews:search', 'durable');
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Durable review'));
+            expect(titleReads()).toHaveLength(1);
+        } finally { await screen.unmount(); await connection.dispose(); }
+    });
     it('renders real list metadata and withdraws demand while its retained page is hidden', async () => {
         const serverId = await homes.addHome({ serverUrl: 'https://reviews-host.example', name: 'Reviews', accountId: 'alice' });
         await setActiveServerId(serverId, { scope: 'device' });
