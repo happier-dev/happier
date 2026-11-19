@@ -446,8 +446,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
         } else {
           const firstOpenPosture = currentState.posture === null && input.change.posture.management.publicSsh.kind === 'open';
           const written = await write(input.change);
-          if (written === 'unchanged' || written === 'satisfied') status = 'unchanged';
-          else status = firstOpenPosture ? 'saved_not_enforced' : 'applied';
+          if (firstOpenPosture) status = 'saved_not_enforced';
+          else status = written === 'applied' ? 'applied' : 'unchanged';
         }
       } else {
         const change = input.change;

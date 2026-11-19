@@ -5,12 +5,13 @@ import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney
 import { userInfo } from 'node:os';
 import { readFile, unlink } from 'node:fs/promises';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
-import { inspectMachineReachability } from './machineReachabilityHost';
+import { executeMachineReachabilityTransition, inspectMachineReachability } from './machineReachabilityHost';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nativeCaddyImage, nativeCaddyProfile, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
 import { relayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess/catalog';
 import { MachineReachabilityPostureV1Schema } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
+import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 
@@ -33,7 +34,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     return { f, api, selected };
   }
 
-  it('saves a restricted first SSH posture and returns the firewall apply step', async () => {
+  it.each([false, true])('saves a restricted first SSH posture and returns the firewall apply step (lost reply: %s)', async lostReply => {
     const f = await journey('external', [], {
       authoredProvider: createDockerNetworkAuthoredProvider(false, true),
     });
@@ -51,12 +52,22 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       serverId: 'generic-home', machineId, change: { kind: 'posture', posture },
     }, f.dependencies(f.context())));
 
-    const configured = parseCompletedReachabilityConfigure(await f.configure(review));
+    if (lostReply) {
+      f.metadata.setOnWrite(() => { throw new Error('Machine metadata write reply lost'); });
+    }
+    const configured = MachineReachabilityConfigureResultV1Schema.parse(await executeMachineReachabilityTransition(
+      f.configureInput(review),
+      f.dependencies({ ...f.context(), operationAcceptance: {
+        operationId: 'first-ssh-posture', actionId: 'machines.reachability.configure', accept() {},
+      } }),
+    ));
     expect(configured).toMatchObject({
       status: 'saved_not_enforced', nextStep: 'apply_firewall_recipe', posture,
       observation: { management: { publicSsh: 'open' }, nativeFirewall: { ownedTable: 'absent' } },
     });
-    expect(f.metadata.read().metadata.reachabilityPosture).toEqual(posture);
+    expect(f.metadata.read()).toMatchObject({
+      metadata: { reachabilityPosture: posture }, metadataVersion: metadataVersion + 2,
+    });
     expect(f.hostNative.firewallStages).toEqual([]);
   });
 
@@ -300,7 +311,9 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       await f.hostNative.setNativeSshPort(22, socketActivated);
       const fresh = await reviewFirst();
       const saved = await executeReviewedReachabilityConfigure(f, api, fresh);
-      expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({ status: 'applied', posture });
+      expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({
+        status: 'saved_not_enforced', nextStep: 'apply_firewall_recipe', posture,
+      });
       const existing = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
         serverId: 'generic-home', machineId, change: { kind: 'posture', posture: { ...posture, revision: 1 } },
       }));
