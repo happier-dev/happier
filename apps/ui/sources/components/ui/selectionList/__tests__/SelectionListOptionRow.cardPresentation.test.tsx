@@ -226,21 +226,15 @@ describe('optionPresentation card — fill ownership', () => {
     it.each([
         ['light', lightTheme],
         ['dark', darkTheme],
-    ] as const)('paints nothing unselected and selected when selected (%s theme)', async (_name, theme) => {
+    ] as const)('paints no tile selected or not; the selected title carries the choice (%s theme, lab A2)', async (_name, theme) => {
         const idle = await renderRow({ presentation: 'card', isSelected: false, theme });
         expect(flattenStyle(idle.findByTestId(WRAPPER_TEST_ID)!.props.style).backgroundColor)
             .toBe('transparent');
 
+        // The selected option's soft well belongs to its expanded band, never to the card (owner pick 2026-11-18).
         const selected = await renderRow({ presentation: 'card', isSelected: true, theme });
         expect(flattenStyle(selected.findByTestId(WRAPPER_TEST_ID)!.props.style).backgroundColor)
-            .toBe(theme.colors.surface.selected);
-
-        // The two tokens must differ, or "paints the selected surface" would be
-        // satisfied by an implementation that never repaints at all; and the two
-        // themes must differ, or the two runs could not tell a themed card from a
-        // hardcoded one.
-        expect(theme.colors.surface.base).not.toBe(theme.colors.surface.selected);
-        expect(lightTheme.colors.surface.selected).not.toBe(darkTheme.colors.surface.selected);
+            .toBe('transparent');
     });
 
     it('leaves the selected fill to the card alone for custom-content rows', async () => {

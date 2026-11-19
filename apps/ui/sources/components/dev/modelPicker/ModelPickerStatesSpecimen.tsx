@@ -105,7 +105,43 @@ const TEAM_PROPS = {
     homeNameByTeamId: { acme: 'Acme Cloud' },
 };
 
-/** The model pane's states: `?frame=normal|loading|refreshing|empty|pending|usage|failures|team|inherited`. */
+/** Lab A2 (ideas-1118-picker r3): Claude models served by the Work pool, an API key, a gateway and a hidden source. */
+const CLAUDE = 'agent:happier.agent.claude/claude';
+const SONNET_UPSTREAM = { vendor: 'anthropic', vendorModelId: 'claude-sonnet-5-5' };
+const claudeNative = (modelId: string) => ProviderBoundModelRefSchema.parse({ agentTargetKey: CLAUDE, modelId });
+const A2_MODELS = [
+    { value: 'claude-opus-5-5', label: 'Opus 5.5', description: 'Latest Opus model for long-running agentic coding and knowledge work.' },
+    { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5', upstreamRef: SONNET_UPSTREAM,
+        description: 'Latest balanced Claude model with the best mix of speed and intelligence.' },
+    { value: 'claude-haiku-5-5', label: 'Haiku 5.5', description: 'Fastest Claude model, for quick edits and small tasks.' },
+    { value: 'claude-fable-5-2', label: 'Fable 5.2', description: 'Preview of the next Fable. Slower, with the deepest reasoning.' },
+];
+const a2Source = (connectionId: string, providerName: string, connectionName: string, endpointHealth: 'available' | 'unauthorized') => {
+    const id = ProviderConnectionIdSchema.parse(connectionId);
+    return { ...(providerSource(connectionId, providerName, connectionName, []) as unknown as Record<string, unknown>),
+        rows: [{ ref: { agentTargetKey: CLAUDE, providerConnectionId: id, modelId: 'claude-sonnet-5-5' },
+            descriptor: { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', upstreamRef: SONNET_UPSTREAM,
+                description: 'Latest balanced Claude model with the best mix of speed and intelligence.' },
+            sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
+            compatibility: { result: { status: 'verified', selectedProtocol: 'anthropic-messages',
+                evidence: { sourceUrls: ['https://docs.anthropic.com'], verifiedAt: '2026-11-18' } },
+                compatibilityFingerprint: `compatibility:v1:${connectionId}`, confirmed: true },
+            endpointHealth, catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }] };
+};
+const A2_THINKING = (value: string) => [{
+    option: { id: 'reasoning_effort', name: 'Thinking', type: 'select' as const, currentValue: value,
+        options: [{ value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' },
+            { value: 'xhigh', name: 'XHigh' }, { value: 'max', name: 'Max' }] },
+    effectiveValue: value, isPending: false,
+}];
+const A2_BASE: SessionModelPickerProps = {
+    agentTargetKey: CLAUDE, nativeSourceLabel: 'Claude subscription · Work pool', nativeModels: A2_MODELS, providerGroups: [],
+    providerProjectionAuthoritative: true, selected: claudeNative('claude-opus-5-5'), selectedOptionControls: A2_THINKING('high'),
+    onSelectOptionControlValue: noop, onSelect: noop, probe: { phase: 'idle', onRefresh: noop },
+};
+const A2_SONNET_KEY = JSON.stringify([CLAUDE, null, 'claude-sonnet-5-5']);
+
+/** The model pane's states: `?frame=normal|loading|refreshing|empty|pending|usage|failures|team|inherited|a2-one|a2-many|a2-favorite`. */
 function frameProps(frame: string): SessionModelPickerProps {
     const none = { ...BASE, nativeModels: [], allowAutomatic: false, canEnterCustomNativeValue: false };
     switch (frame) {
@@ -126,6 +162,19 @@ function frameProps(frame: string): SessionModelPickerProps {
         case 'inherited': return { ...BASE, ...TEAM_PROPS, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop },
             selected: ProviderBoundModelRefSchema.parse({ agentTargetKey: BASE.agentTargetKey, modelId: 'opus-5-5' }),
             selectedAttribution: 'Acme · acme/web' };
+        // Lab A2 r3-one: Opus 5.5 is served only by the Work pool, so Runs through is a plain value.
+        case 'a2-one': return A2_BASE;
+        // Lab A2 r3-many: Sonnet 5.5 through the Work pool, an API key and a hidden gateway; one more needs a key.
+        case 'a2-many': return { ...A2_BASE, selected: claudeNative('claude-sonnet-5-5'), selectedOptionControls: A2_THINKING('medium'),
+            providerGroups: [a2Source('anthropic-personal', 'Anthropic API key', 'Personal', 'available'),
+                a2Source('openrouter-work', 'OpenRouter', 'Work', 'unauthorized')] as unknown as SessionModelPickerProps['providerGroups'],
+            hiddenSources: [{ connectionId: ProviderConnectionIdSchema.parse('vercel-team'), providerName: 'Vercel AI Gateway',
+                connectionName: 'Team', connectionRole: 'named', connectionDisplayNameMode: 'custom', modelCount: 1,
+                upstreamModels: [{ upstreamRef: SONNET_UPSTREAM, endpointHealth: 'available' }] }] };
+        // Lab A2 r3-remember: favourite 1 was starred at High; this session runs it at Medium.
+        case 'a2-favorite': return { ...A2_BASE, selected: claudeNative('claude-sonnet-5-5'), selectedOptionControls: A2_THINKING('medium'),
+            favoriteKeys: new Set([A2_SONNET_KEY]), favoriteReasoningEffortByKey: new Map([[A2_SONNET_KEY, 'high']]),
+            onToggleFavorite: noop, onUpdateFavoriteModelReasoningEffort: noop };
         default: return { ...BASE, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
     }
 }

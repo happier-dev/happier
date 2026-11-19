@@ -54,13 +54,15 @@ export function ReportedModelSummary(props: Readonly<{
     modelLabel: string;
     /** When a change takes effect ("Applies from your next message"), on the same line. */
     applyTiming?: string;
+    /** The chosen model when it is not the one running: "Running: Opus 5.5. Next message: Sonnet 5.5". */
+    nextModelLabel?: string | null;
 }>) {
-    return (
-        <Text style={styles.label}>
-            {reportedModelSummary(props.status, props.modelLabel)}
-            {props.applyTiming ? ` · ${props.applyTiming}` : null}
-        </Text>
-    );
+    const summary = reportedModelSummary(props.status, props.modelLabel);
+    // Naming the next model already says when it applies, so the timing is not repeated beside it.
+    const line = props.nextModelLabel
+        ? `${summary}. ${t('agentInput.model.nextMessage', { model: props.nextModelLabel })}`
+        : props.applyTiming ? `${summary} · ${props.applyTiming}` : summary;
+    return <Text style={styles.label}>{line}</Text>;
 }
 
 export function ReportedModelStatusIcon(props: Readonly<{

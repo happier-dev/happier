@@ -13,6 +13,7 @@
  */
 
 import * as React from 'react';
+import { Typography } from '@/constants/Typography';
 import {
   HappierListRowFollowedContext,
   HappierListRowPrecedesSelectedContext,
@@ -139,6 +140,9 @@ const cardStyles = StyleSheet.create((theme) => ({
   },
   selectedRowFill: {
     backgroundColor: 'transparent',
+  },
+  selectedTitle: {
+    ...Typography.default('semiBold'),
   },
 }));
 
@@ -423,12 +427,10 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   // slab on a floating glass material), and a selected one paints the selected
   // surface over both the row and its expanded controls. Resolved per render so
   // the card follows a live theme swap; the geometry above is theme-independent.
+  // No tile (lab A2, owner pick 2026-11-18): a selected card is its bold title and check; the soft well
+  // belongs to its expanded band (`OptionPickerSelectedControls`), so the card itself paints the row base.
   const cardFillStyle = isCard
-    ? {
-        backgroundColor: isSelected
-          ? resolveSelectionListPaint(theme, 'row', 'selected', paintColor(theme.colors.surface.selected)).background.color
-          : resolveSelectionListPaint(theme, 'row').background.color,
-      }
+    ? { backgroundColor: resolveSelectionListPaint(theme, 'row').background.color }
     : null;
   // At one column there is no `SelectionListColumnRow`, so this envelope IS
   // the card row and carries the gap that separates it from the row above —
@@ -610,7 +612,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
           rowRole={rowRole}
           dataSet={rowSurfaceDataSet}
           titleDataSet={labelSurfaceDataSet}
-          titleStyle={themeSurfaceStyles.surface(themeSurfaceEnabled ? labelSurface : undefined)}
+          titleStyle={[isCard && isSelected ? cardStyles.selectedTitle : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? labelSurface : undefined)]}
           pressableStyle={[isCard && isSelected ? cardStyles.selectedRowFill : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? rowSurface : undefined)]}
           title={labelContent ?? optionLabel}
           titleAccessory={titleAccessory}
@@ -709,7 +711,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         testID={optionTestId}
         dataSet={rowSurfaceDataSet}
         titleDataSet={labelSurfaceDataSet}
-        titleStyle={themeSurfaceStyles.surface(themeSurfaceEnabled ? labelSurface : undefined)}
+        titleStyle={[isCard && isSelected ? cardStyles.selectedTitle : null, themeSurfaceStyles.surface(themeSurfaceEnabled ? labelSurface : undefined)]}
         title={labelContent ?? optionLabel}
         titleAccessory={titleAccessory}
         titleQualifier={props.option.titleQualifier}

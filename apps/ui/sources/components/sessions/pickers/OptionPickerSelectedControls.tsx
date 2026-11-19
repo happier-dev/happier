@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { resolveThemeSurfaceAddress, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { resolveThemeSurfaceAddress, useHappierMaterialColorResolver, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { resolveHappierChoiceControl } from '@happier-dev/plugin-ui/presentation';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
@@ -17,25 +17,56 @@ import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext }
 
 const NO_CONTROLS: readonly SessionConfigOptionControl[] = [];
 
+/** The band's one label column (lab A2): Thinking, Ultracode and Runs through share one edge, controls one start. */
+const BAND_LABEL_COLUMN_PX = 104;
+
 /**
- * The selected option's live controls, inside its card. Only the current choice carries controls; every
- * other card is its name and description (owner 2026-11-04, matching the 0.2 engine popover). Picking
- * another card selects it, and then its card shows its own controls.
+ * One row of the selected option's band: its label, then its control, then an optional quiet note. A wide band
+ * (the grid) puts the label in one column beside the control; a phone stacks the label over a full-width control.
+ */
+export function OptionPickerBandRow(props: Readonly<{
+    label: string;
+    children: React.ReactNode;
+    note?: React.ReactNode;
+    testID?: string;
+    dataSet?: Record<string, string>;
+    style?: StyleProp<ViewStyle>;
+}>) {
+    const { multiColumn } = React.useContext(OptionPickerSelectedControlsContext);
+    return (
+        <View testID={props.testID} {...(props.dataSet ? { dataSet: props.dataSet } : {})}
+            style={[styles.row, multiColumn ? styles.rowWide : styles.rowStacked, props.style]}>
+            <Text style={[styles.label, multiColumn ? styles.labelColumn : null]}>{props.label}</Text>
+            <View style={[styles.body, multiColumn ? styles.bodyWide : null]}>
+                {props.children}
+                {props.note ? <View style={multiColumn ? styles.noteWide : null}>{props.note}</View> : null}
+            </View>
+        </View>
+    );
+}
+
+/**
+ * The selected option's band (lab A2, owner pick 2026-11-18): only the current choice carries options; every
+ * other card is its name and description (owner 2026-11-04, matching the 0.2 engine popover). The band is one
+ * soft well of labelled rows: the option controls, then any rows the picker adds (Runs through).
  */
 export function OptionPickerSelectedControls() {
     const context = React.useContext(OptionPickerSelectedControlsContext);
     const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
     const segmentedOverflow = React.useMemo(() => ({ label: t('common.more') }), []);
-    const { multiColumn, onSelect } = context;
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
+    const { multiColumn, onSelect, band } = context;
     const controls = context.controls ?? NO_CONTROLS;
     const idBase = 'model-picker-overlay-selected-option-control';
-    if (controls.length === 0) return null;
+    if (controls.length === 0 && !band?.rows) return null;
     return (
         <View testID="model-picker-overlay-selected-controls"
-            style={[styles.panel, multiColumn ? styles.panelCard : null, multiColumn ? null : styles.panelFill]}>
-            <View style={styles.controls}>
-                {controls.map(control => {
+            style={[styles.panel, multiColumn ? styles.panelCard : styles.panelList]}>
+            <View style={[styles.band, { backgroundColor: paintColor(theme.colors.surface.selected) }]}>
+                {controls.map((control, index) => {
                     const option = control.option;
+                    const divided = index > 0 ? styles.divided : null;
                     const controlAccessibilityLabel = t('modelPickerOverlay.optionControlA11y', { name: option.name });
                     const overriddenBy = control.disabled === true ? control.disabledByOptionName : undefined;
                     const secondaryText = overriddenBy ? t('agentInput.acp.optionOverriddenBy', { name: overriddenBy }) : option.description;
@@ -43,21 +74,22 @@ export function OptionPickerSelectedControls() {
                         <Text testID={overriddenBy ? `${idBase}-overridden:${option.id}` : undefined}
                             style={styles.description}>{secondaryText}</Text>
                     ) : null;
+                    const note = band?.controlNotes?.[option.id];
                     if (isBooleanConfigOptionType(option.type)) {
                         const boolValue = resolveBooleanConfigOptionValue(option, String(control.effectiveValue) as SessionConfigOptionValueId);
                         return (
-                            <View key={option.id} testID={`${idBase}:${option.id}`} style={styles.row}>
-                                <View style={styles.textBlock}>
-                                    <Text style={styles.title}>{option.name}</Text>
-                                    {secondary}
+                            <OptionPickerBandRow key={option.id} testID={`${idBase}:${option.id}`} label={option.name}
+                                note={note} style={divided}>
+                                <View style={styles.booleanBody}>
+                                    <View style={styles.textBlock}>{secondary}</View>
+                                    <Switch testID={`${idBase}-switch:${option.id}`}
+                                        accessibilityLabel={controlAccessibilityLabel} value={boolValue} disabled={control.disabled === true}
+                                        onValueChange={next => {
+                                            if (control.disabled === true) return;
+                                            onSelect?.(option.id, resolveBooleanConfigOptionNextValue(option, next));
+                                        }} compact />
                                 </View>
-                                <Switch testID={`${idBase}-switch:${option.id}`}
-                                    accessibilityLabel={controlAccessibilityLabel} value={boolValue} disabled={control.disabled === true}
-                                    onValueChange={next => {
-                                        if (control.disabled === true) return;
-                                        onSelect?.(option.id, resolveBooleanConfigOptionNextValue(option, next));
-                                    }} compact />
-                            </View>
+                            </OptionPickerBandRow>
                         );
                     }
                     // An override outside the available segments highlights nothing.
@@ -74,59 +106,74 @@ export function OptionPickerSelectedControls() {
                         groups.flatMap(group => group.options.map(choice => ({ label: choice.name }))),
                         { ordinal }) === 'list';
                     return (
-                        <View key={option.id} testID={`${idBase}:${option.id}`}
+                        <OptionPickerBandRow key={option.id} testID={`${idBase}:${option.id}`} label={option.name} note={note}
                             {...(surface ? { dataSet: { ...surface, state: surface.state ?? 'default' } } : {})}
-                            style={[styles.group, themeSurfaceStyles.surface(themeSurfaceEnabled ? surface : undefined)]}>
-                            <Text style={styles.title}>{option.name}</Text>
-                            {secondary}
-                            {groups.map(group => {
-                                const tabs = group.options.map(choice => ({ id: choice.value, label: choice.name }));
-                                const selectTab = (tabId: string) => {
-                                    if (control.disabled === true) return;
-                                    onSelect?.(option.id, tabId as SessionConfigOptionValueId);
-                                };
-                                const testIDPrefix = `${idBase}-option:${option.id}${group.id === null ? '' : `:${group.id}`}`;
-                                const groupAccessibilityLabel = group.name ? `${controlAccessibilityLabel}: ${group.name}` : controlAccessibilityLabel;
-                                return (
-                                    <React.Fragment key={group.id ?? 'choices'}>
-                                        {group.name ? <Text accessibilityRole="header" style={styles.groupLabel}>{group.name}</Text> : null}
-                                        {asSelect ? (
-                                            <SegmentedValueSelect tabs={tabs} activeTabId={highlightedValue}
-                                                disabled={control.disabled === true} onSelectTab={selectTab}
-                                                accessibilityLabel={groupAccessibilityLabel} testID={`${testIDPrefix}:select`} />
-                                        ) : (
-                                            <SegmentedTabBar role="radiogroup" tabs={tabs}
-                                                segmentSizing={ordinal ? 'equal-or-label' : undefined}
-                                                activeTabId={highlightedValue} disabled={control.disabled === true}
-                                                onSelectTab={selectTab}
-                                                testIDPrefix={testIDPrefix}
-                                                // A card narrower than its choices shows them as one field select instead of cutting a label.
-                                                overflow={segmentedOverflow}
-                                                accessibilityLabel={groupAccessibilityLabel}
-                                                compact activeLabelStyle={Typography.default('semiBold')} />
-                                        )}
-                                    </React.Fragment>
-                                );
-                            })}
-                        </View>
+                            style={[divided, themeSurfaceStyles.surface(themeSurfaceEnabled ? surface : undefined)]}>
+                            <View style={styles.choiceBody}>
+                                {secondary}
+                                {groups.map(group => {
+                                    const tabs = group.options.map(choice => ({ id: choice.value, label: choice.name }));
+                                    const selectTab = (tabId: string) => {
+                                        if (control.disabled === true) return;
+                                        onSelect?.(option.id, tabId as SessionConfigOptionValueId);
+                                    };
+                                    const testIDPrefix = `${idBase}-option:${option.id}${group.id === null ? '' : `:${group.id}`}`;
+                                    const groupAccessibilityLabel = group.name ? `${controlAccessibilityLabel}: ${group.name}` : controlAccessibilityLabel;
+                                    return (
+                                        <React.Fragment key={group.id ?? 'choices'}>
+                                            {group.name ? <Text accessibilityRole="header" style={styles.groupLabel}>{group.name}</Text> : null}
+                                            {asSelect ? (
+                                                <SegmentedValueSelect tabs={tabs} activeTabId={highlightedValue}
+                                                    disabled={control.disabled === true} onSelectTab={selectTab}
+                                                    accessibilityLabel={groupAccessibilityLabel} testID={`${testIDPrefix}:select`} />
+                                            ) : (
+                                                <SegmentedTabBar role="radiogroup" tabs={tabs}
+                                                    segmentSizing={ordinal ? 'equal-or-label' : undefined}
+                                                    activeTabId={highlightedValue} disabled={control.disabled === true}
+                                                    onSelectTab={selectTab}
+                                                    testIDPrefix={testIDPrefix}
+                                                    // A band narrower than its choices shows them as one field select instead of cutting a label.
+                                                    overflow={segmentedOverflow}
+                                                    accessibilityLabel={groupAccessibilityLabel}
+                                                    compact activeLabelStyle={Typography.default('semiBold')} />
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </View>
+                        </OptionPickerBandRow>
                     );
                 })}
+                {band?.rows ? (
+                    <View style={controls.length > 0 ? styles.divided : null}>{band.rows}</View>
+                ) : null}
             </View>
         </View>
     );
 }
 
 const styles = StyleSheet.create(theme => ({
-    // Match the selected row's existing inset; the card owns its background in grid mode.
-    panel: { paddingHorizontal: OPTION_PICKER_LIST_TEXT_INSET_PX, paddingBottom: theme.space.s10 },
-    // On a card the controls start on the card title's edge, not a list row's.
-    panelCard: { paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX, paddingTop: theme.space.s6 },
-    panelFill: { backgroundColor: theme.colors.surface.selected },
-    controls: { gap: theme.space.s10 },
-    group: { gap: 3 },
-    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s8 },
-    textBlock: { flex: 1, gap: 1 },
-    title: { ...Typography.variant('meta', 'medium'), color: theme.colors.text.secondary },
-    description: { fontSize: 11, lineHeight: 14, color: theme.colors.text.tertiary },
-    groupLabel: { fontSize: 11, lineHeight: 14, fontWeight: '600', color: theme.colors.text.secondary },
+    // The band sits under the selected row: on a list row at the row's text inset, on a card at the card's edge.
+    panel: { paddingBottom: theme.space.s10 },
+    panelList: { paddingHorizontal: OPTION_PICKER_LIST_TEXT_INSET_PX - SELECTION_LIST_CARD_CONTENT_INSET_PX },
+    panelCard: { paddingTop: theme.space.s2 },
+    // One soft well (the selection surface the card used to paint), its text on the card title's edge.
+    band: {
+        borderRadius: theme.borderRadius.lg,
+        paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
+    },
+    row: { paddingVertical: theme.space.s8 },
+    rowWide: { flexDirection: 'row', alignItems: 'center' },
+    rowStacked: { gap: theme.space.s6 },
+    divided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.divider },
+    label: { ...Typography.variant('body'), color: theme.colors.text.primary },
+    labelColumn: { width: BAND_LABEL_COLUMN_PX, flexShrink: 0 },
+    body: { gap: theme.space.s4 },
+    bodyWide: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    noteWide: { marginLeft: 'auto' },
+    choiceBody: { flexShrink: 1, gap: theme.space.s2 },
+    booleanBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    textBlock: { flex: 1, minWidth: 0 },
+    description: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
+    groupLabel: { ...Typography.variant('micro', 'semiBold'), color: theme.colors.text.secondary },
 }));

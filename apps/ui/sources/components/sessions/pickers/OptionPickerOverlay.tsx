@@ -31,7 +31,9 @@ import { OptionPickerPaneRow, OptionPickerPaneRowContent, optionPickerPaneRowSty
 import { OptionPickerPaneSlotsContext } from './optionPickerPaneSlots';
 import { optionPickerOptionKey, useOptionPickerSections } from './optionPickerSections';
 import { OptionPickerSelectedControls } from './OptionPickerSelectedControls';
-import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
+import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext, type OptionPickerSelectedBand } from './optionPickerSelectedControlsState';
+export type { OptionPickerSelectedBand } from './optionPickerSelectedControlsState';
+export { OptionPickerBandRow } from './OptionPickerSelectedControls';
 
 const CUSTOM_EDITOR_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.modal + 1;
 
@@ -221,6 +223,8 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     favoriteOptions?: OptionPickerFavoriteOptions<TValue>;
     selectedOptionControls?: ReadonlyArray<SessionConfigOptionControl>;
     onSelectOptionControlValue?: (configId: string, valueId: SessionConfigOptionValueId) => void;
+    /** Rows and notes the selected option's band carries beyond its own option controls (lab A2). */
+    selectedOptionBand?: OptionPickerSelectedBand;
     onSelect: (value: TValue) => void;
     probe?: OptionPickerProbeState;
     fillAvailableSpace?: boolean;
@@ -540,7 +544,9 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         effortSurface: props.selectedOptionControlsSurface,
         onSelect: props.onSelectOptionControlValue,
         multiColumn,
-    }), [multiColumn, props.onSelectOptionControlValue, props.selectedOptionControls, props.selectedOptionControlsSurface]);
+        band: props.selectedOptionBand,
+    }), [multiColumn, props.onSelectOptionControlValue, props.selectedOptionBand, props.selectedOptionControls,
+        props.selectedOptionControlsSurface]);
 
     const probe = props.probe;
     const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;

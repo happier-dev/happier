@@ -34,6 +34,7 @@ import {
     OptionPickerOverlay,
     type OptionPickerFavoriteOptions,
     type OptionPickerProbeState,
+    type OptionPickerSelectedBand,
 } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type {
     SessionConfigOptionControl,
@@ -59,6 +60,9 @@ import {
 } from './buildSessionModelPickerSections';
 import { useGatewaySlotTitle } from './useGatewaySlotTitle';
 import { SessionModelSourceUsage } from './SessionModelSourceUsage';
+import { selectSessionModelPickerSourceGroups } from './selectSessionModelPickerSourceGroups';
+import { SessionModelFavoriteEffortNote, SessionModelRunsThrough, type SessionModelPickerSource } from './SessionModelRunsThrough';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import {
@@ -79,7 +83,6 @@ import {
     type SessionModelPickerValue,
 } from './sessionModelSelectionKey';
 import {
-    ReportedModelStatusIcon,
     ReportedModelSummary,
     reportedModelSummary,
     type ReportedModelStatus,
@@ -536,21 +539,15 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             .find((option) => sessionModelSelectionKey(option.value) === reportedKey);
         const label = reportedOption?.label ?? reportedModel.label ?? reportedModel.ref.modelId;
         const summary = reportedModelSummary(reportedModel.status, label);
+        // One mark per state (lab A2 review 4): the check marks the choice; "Running" lives in the header line
+        // only. The running row still says so to assistive tech.
         return {
             label,
             sections: baseSections.map((section) => ({
                 ...section,
                 options: section.options.map((option) => (
                     sessionModelSelectionKey(option.value) === reportedKey
-                        ? {
-                            ...option,
-                            trailingStatusIcon: (
-                                <ReportedModelStatusIcon
-                                    status={reportedModel.status}
-                                />
-                            ),
-                            accessibilityLabel: `${option.accessibilityLabel ?? option.label}. ${summary}`,
-                        }
+                        ? { ...option, accessibilityLabel: `${option.accessibilityLabel ?? option.label}. ${summary}` }
                         : option
                 )),
             })),
@@ -630,6 +627,11 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     const paneSaysUnavailable = props.probe?.failed === true || (props.notes ?? []).includes(t('agentInput.model.unavailable'));
     const selectedKey = sessionModelSelectionKey(props.selectedTeamCredentialModel ?? props.selected);
     const selectedAttribution = props.selectedAttribution ?? null;
+    // The header names the model the next message uses when it is not the one running (lab A2 review 10).
+    const nextModelLabel = props.reportedModel && selectedKey !== sessionModelSelectionKey(props.reportedModel.ref)
+        ? baseSections.flatMap(section => section.options)
+            .find(option => sessionModelSelectionKey(option.value) === selectedKey)?.label ?? null
+        : null;
     const presentedSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
         const unavailable = t('agentInput.model.unavailable');
         if (!paneSaysUnavailable && selectedAttribution === null) return labeledSections;
@@ -727,6 +729,56 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         if (props.experimentalConfirmation?.pending) return;
         void props.experimentalConfirmation?.confirm(resolution, commit);
     };
+    const pickSource = useEventCallback((source: SessionModelPickerSource, label: string) => {
+        const option = source.state === 'ready'
+            ? source.options.find(candidate => candidate.disabled !== true && candidate.availability !== 'unavailable')
+            : undefined;
+        if (option) return selectModel(option.value);
+        if (source.providerConnectionId === null) return;
+        // A hidden source offers this model only through browsing it; one that needs sign-in or a key opens its recovery.
+        if (source.state === 'ready' && props.onBrowseSource) {
+            props.onBrowseSource({ connectionId: source.providerConnectionId, label });
+            return;
+        }
+        router.pushRetainingCurrent(providerConnectionDetailRoute(source.providerConnectionId) as never);
+    });
+    const updateFavoriteEffort = useEventCallback((ref: ProviderBoundModelRef, effort: string) => {
+        props.onUpdateFavoriteModelReasoningEffort?.(ref, effort);
+    });
+    const selectedRef = props.selectedTeamCredentialModel ?? props.selected;
+    const effortControl = selectedOptionControls?.find(control => control.option.id === PROVIDER_REASONING_EFFORT_OPTION_ID);
+    const favoriteEffort = props.favoriteReasoningEffortByKey?.get(selectedKey);
+    const sessionEffort = typeof effortControl?.effectiveValue === 'string' ? effortControl.effectiveValue : undefined;
+    const favoriteSlot = props.favoriteKeys?.has(selectedKey) ? [...props.favoriteKeys].indexOf(selectedKey) + 1 : 0;
+    const favoriteEffortLabel = favoriteEffort
+        ? effortControl?.option.options?.find(choice => choice.value === favoriteEffort)?.name ?? favoriteEffort
+        : null;
+    const canUpdateFavorite = Boolean(props.onUpdateFavoriteModelReasoningEffort) && selectedRef !== null
+        && !isTeamCredentialProviderModelPickerValue(selectedRef);
+    const selectedOptionBand = React.useMemo<OptionPickerSelectedBand | undefined>(() => {
+        const groups = selectSessionModelPickerSourceGroups(presentedSections,
+            { agentTargetKey: props.agentTargetKey, hiddenSources: props.hiddenSources ?? [] });
+        const group = groups.find(candidate => candidate.sources.some(source => source.options.some(option => (
+            option.source !== undefined && sessionModelSelectionKey(option.value) === selectedKey))));
+        const sourceLabel = (source: SessionModelPickerSource) => {
+            const listed = source.options.find(option => option.source)?.source?.label;
+            if (listed) return listed;
+            const hidden = props.hiddenSources?.find(candidate => candidate.connectionId === source.providerConnectionId);
+            return hidden ? providerConnectionSourceLabel(hidden) : t('settingsProviders.models.builtIn');
+        };
+        const rows = group ? (
+            <SessionModelRunsThrough group={group} selectedKey={selectedKey} sourceLabel={sourceLabel}
+                onPick={(source) => pickSource(source, sourceLabel(source))} />
+        ) : undefined;
+        const note = favoriteSlot > 0 && favoriteEffortLabel && sessionEffort && favoriteEffort !== sessionEffort
+            && canUpdateFavorite && selectedRef !== null && !isTeamCredentialProviderModelPickerValue(selectedRef) ? (
+                <SessionModelFavoriteEffortNote slot={favoriteSlot} effortLabel={favoriteEffortLabel}
+                    onUpdate={() => updateFavoriteEffort(selectedRef, sessionEffort)} />
+            ) : undefined;
+        if (!rows && !note) return undefined;
+        return { rows, ...(note ? { controlNotes: { [PROVIDER_REASONING_EFFORT_OPTION_ID]: note } } : {}) };
+    }, [canUpdateFavorite, favoriteEffort, favoriteEffortLabel, favoriteSlot, pickSource, presentedSections,
+        props.agentTargetKey, props.hiddenSources, selectedKey, selectedRef, sessionEffort, updateFavoriteEffort]);
     // A failure line names the source it is about, so two unreachable sources never read as one anonymous line.
     // A failed source has no model group; its name comes from the same connection read the route sources use.
     const failedConnectionIds = [props.projectionError?.connectionId, ...(props.projectionFailures ?? []).map((failure) => failure.connectionId)]
@@ -839,6 +891,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             // it owns the popup's ARIA pattern, independently of the selected row.
             selectedOptionControls={selectedOptionControls}
             onSelectOptionControlValue={props.onSelectOptionControlValue}
+            selectedOptionBand={selectedOptionBand}
             summary={reportedModelPresentation.label
                 || props.mixedSelection
                 || currentSelectionRecovery
@@ -857,6 +910,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
                         <ReportedModelSummary
                             status={props.reportedModel.status}
                             modelLabel={reportedModelPresentation.label}
+                            nextModelLabel={nextModelLabel}
                             applyTiming={hostApplyTiming?.timing}
                         />
                     ) : null}

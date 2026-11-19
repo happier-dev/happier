@@ -154,7 +154,8 @@ describe('SessionModelPicker', () => {
             expect(list.props.selectedOptionId).not.toBe(sessionModelSelectionKey(selection));
             expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeTruthy();
             expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${sessionModelSelectionKey(selection)}`)).toBeNull();
-            expect(screen.findByTestId(`model-picker-overlay-option-status-icon:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeTruthy();
+            // One mark per state (lab A2): the running/last-used state is the header line's, never a row icon.
+            expect(screen.findByTestId(`model-picker-overlay-option-status-icon:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeNull();
             expect(screen.findByTestId(`team-provider-model-experimental:${sessionModelSelectionKey(active.teamCredentialModel)}`)).toBeTruthy();
             expect(findTestInstanceByTypeContainingText(screen, Text, t('settingsProviders.models.experimental'))).toBeTruthy();
             expect(findTestInstanceByTypeContainingText(screen, Text, t('settingsProviders.status.notChecked'))).toBeTruthy();
@@ -385,8 +386,8 @@ describe('SessionModelPicker', () => {
                 reported.modelId,
             ])}`,
         );
-        expect(reportedIcon).toBeTruthy();
-        expect(reportedIcon?.findByProps({ name: 'clock' })).toBeTruthy();
+        // The header says what ran last (lab A2: one mark per state), so the reported row carries no icon.
+        expect(reportedIcon).toBeNull();
         expect(screen.findByTestId(
             `model-picker-overlay-option-icon:${JSON.stringify([
                 reported.agentTargetKey,
