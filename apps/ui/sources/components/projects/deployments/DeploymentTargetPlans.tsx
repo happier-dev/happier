@@ -54,12 +54,13 @@ type DeploymentTargetPlansProps = Readonly<{
 
 /**
  * The plans with the plan the connected account is on (deploy auto-mode U4, F8): one read through the account's
- * existing quota owner while shown, never polled; no account, no read.
+ * existing quota owner while shown, then one more only when that owner pushes a change for the account (a connection
+ * added just before Review gets its plan from the Machine's first acquisition), never on a timer; no account, no read.
  */
 export function DeploymentTargetPlansForAccount(props: Omit<DeploymentTargetPlansProps, 'accountPlanLabel'>
   & Readonly<{ account: QualifiedConnectedAccountRef }>) {
   const { account, ...plans } = props;
-  const quota = useQualifiedConnectedAccountQuota(account, { fetchPolicy: 'once' });
+  const quota = useQualifiedConnectedAccountQuota(account);
   return <DeploymentTargetPlans {...plans} accountPlanLabel={quota.snapshot?.planLabel ?? null} />;
 }
 

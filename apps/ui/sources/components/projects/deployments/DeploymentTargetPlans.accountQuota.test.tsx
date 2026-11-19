@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -122,6 +125,51 @@ describe('Your plan on Review reads the account plan once, only while shown (F8 
     await screen.update(element(false));
     await flushHookEffects({ cycles: 8, turns: 8 });
     expect(boundary.read).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
+  it('a connection just added: the producer\'s first plan write reaches Review through its push, one read more', async () => {
+    // Review opens before the Machine's quota owner has acquired the new connection's plan: no record yet.
+    boundary.read.mockImplementation(async () =>
+      Response.json({ error: 'connect_quotas_not_found' }, { status: 404 }),
+    );
+    const screen = await renderScreen(
+      <Wrapper>
+        <DeploymentTargetPlansForAccount
+          account={ref}
+          plans={plans}
+          platform="Vercel"
+          columns
+          phone={false}
+          testID="plans"
+        />
+      </Wrapper>,
+    );
+    await vi.waitFor(() => expect(boundary.read).toHaveBeenCalledTimes(1));
+    await flushHookEffects({ cycles: 8, turns: 8 });
+    expect(screen.findByTestId('plans:yourPlan')).toBeNull();
+
+    // The quota owner writes the plan it read once for the added connection; the server pushes that change.
+    boundary.read.mockImplementation(async () =>
+      Response.json(
+        quotaTestResponse({ ...snapshot, fetchedAt: Date.now(), planLabel: 'Pro' }),
+      ),
+    );
+    await act(async () =>
+      publishHomeAccountChange(
+        boundary.context().serverBasis.serverId,
+        [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1],
+        { changeKinds: ['account'] },
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('plans:yourPlan')).not.toBeNull(),
+    );
+    expect(screen.getTextContent()).toContain('Pro');
+    await flushHookEffects({ cycles: 8, turns: 8 });
+    // Review never asks for an acquisition itself, and nothing reads on a timer.
+    expect({ reads: boundary.read.mock.calls.length, refreshes: boundary.refresh.mock.calls.length })
+      .toEqual({ reads: 2, refreshes: 0 });
     await screen.unmount();
   });
 });
