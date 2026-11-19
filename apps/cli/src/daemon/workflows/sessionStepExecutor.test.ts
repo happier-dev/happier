@@ -2777,6 +2777,7 @@ describe('workflow Session step executor', () => {
   it.each([
     { errorCode: 'DAEMON_RPC_UNAVAILABLE', code: 'requester_session_custody_unavailable', phase: 'client_start' },
     { errorCode: 'SPAWN_FAILED', code: 'broker_unavailable', phase: 'authentication' },
+    { errorCode: 'SPAWN_FAILED', code: 'team_credential_provider_selection_not_current', phase: 'authentication' },
   ] as const)('keeps $code when an existing Workflow Session cannot resume', async ({ errorCode, code, phase }) => {
     const sessionId = 'existing-session';
     const machineId = 'machine-1';
@@ -2792,7 +2793,7 @@ describe('workflow Session step executor', () => {
       if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error('Unexpected RPC');
       return { type: 'error', errorCode, errorMessage: 'PRIVATE_NATIVE_PROSE',
         errorDetail: { kind: 'launch_error', code, message: 'PRIVATE_NATIVE_PROSE',
-          ...(code === 'broker_unavailable' ? { failureCause: { phase, failureReason: 'unknown', code,
+          ...(phase === 'authentication' ? { failureCause: { phase, failureReason: 'unknown', code,
             providerErrorCode: 'PRIVATE_NATIVE_PROSE' } } : {}) } };
     });
     const execute = createProductionWorkflowSessionStepExecutor({ credentials, machineId,

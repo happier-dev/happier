@@ -806,17 +806,22 @@ describe('requestInactiveSessionResume', () => {
     }
   });
 
-  it('reports the typed post-admission daemon refusal without logging private prose', async () => {
+  it.each([
+    ['DAEMON_RPC_UNAVAILABLE', 'session_startup_observation_unavailable'],
+    ['SPAWN_FAILED', 'team_credential_provider_selection_not_current'],
+  ] as const)('reports the typed post-admission %s refusal without logging private prose', async (errorCode, code) => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
-    const errorDetail = { kind: 'launch_error', code: 'session_startup_observation_unavailable',
+    const errorDetail = { kind: 'launch_error', code,
       message: 'Session startup cannot be observed' };
-    callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
+    callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode,
       errorMessage: 'private native detail', errorDetail });
     await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
-      rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'resume_failed', errorDetail });
+      rawSession: rawSession(), metadata })).resolves.toMatchObject({
+      ok: false, code: 'resume_failed', errorDetail, spawnRefusalReason: code,
+    });
     expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
-      phase: 'spawn_rpc', cause: 'DAEMON_RPC_UNAVAILABLE', outcomeCode: 'resume_failed',
-      spawnRefusalReason: 'session_startup_observation_unavailable',
+      phase: 'spawn_rpc', cause: errorCode, outcomeCode: 'resume_failed',
+      spawnRefusalReason: code,
     }));
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private native detail');
   });
