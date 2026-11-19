@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionSpecGetResultSchema } from '@happier-dev/protocol/actions/specs/catalog';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
@@ -21,6 +22,11 @@ import { connectUiPersonActionClient, mountUiAutomationSubjectPicker } from '@ha
 import { captureActiveServerAccountScopeLifetime } from '../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope';
 import { acquireDaemonMergedWorkflowActionCatalog, loadDaemonMergedProjectionCacheEntry } from '../../../../apps/ui/sources/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { listWorkflowStepActionSpecs } from '../../../../apps/ui/sources/components/workflows/presentation/workflowActionCatalog';
+
+function expectAction(result: ActionExecuteResult) {
+  return expect(result, JSON.stringify(result.ok ? { ok: true } : { ok: false,
+    errorCode: result.errorCode, failureCause: result.failureCause }));
+}
 
 describe('Automations everywhere: qualified plugin subjects', () => {
   const run = createRunDirs({ runLabel: 'automations-p01-f7' });
@@ -142,11 +148,25 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       } });
     expect(definitionCreated.ok, JSON.stringify({ ok: definitionCreated.ok,
       ...(!definitionCreated.ok ? { errorCode: definitionCreated.errorCode } : {}) })).toBe(true);
-    expect(await actor.executeAsPerson('artifact.access.grants.set', { artifactId: workflowId,
-      principal: { kind: 'account', accountId: readAccountIdFromToken(reader.credentials.token) }, accessLevel: 'view' }))
+    const ownerId = readAccountIdFromToken(actor.credentials.token);
+    const readerId = readAccountIdFromToken(reader.credentials.token);
+    // The public sharing owner admits friends or teammates as new recipients.
+    for (const [account, id] of [[actor, ownerId], [reader, readerId]] as const) {
+      expectAction(await account.executeAsPerson('account.username.set', {
+        username: `f7${id.replaceAll('-', '').slice(0, 12)}`,
+      })).toMatchObject({ ok: true });
+    }
+    expectAction(await actor.executeAsPerson('friends.add', { uid: readerId })).toMatchObject({
+      ok: true, result: { user: { id: readerId, status: 'requested' } },
+    });
+    expectAction(await reader.executeAsPerson('friends.add', { uid: ownerId })).toMatchObject({
+      ok: true, result: { user: { id: ownerId, status: 'friend' } },
+    });
+    expectAction(await actor.executeAsPerson('artifact.access.grants.set', { artifactId: workflowId,
+      principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' }))
       .toMatchObject({ ok: true });
     // The shared Workflow is real; sharing it must not create a grant owner for plugin identities.
-    expect(await actor.executeAsPerson('workflow.definition.get', { definitionId: workflowId })).toMatchObject({ ok: true });
+    expectAction(await actor.executeAsPerson('workflow.definition.get', { definitionId: workflowId })).toMatchObject({ ok: true });
     const linked = await actor.executeAsPerson('workflow.trigger.add', {
       workflow: workflowId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
       trigger: { kind: 'action', phase: 'after', enabled: true,
@@ -182,11 +202,11 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     };
     const close = (pluginId: string, ticketId: string) => actor.executeAsPerson('action.invoke', {
       action: { pluginId, localId: 'close-ticket' }, input: { ticket: { ticketId } },
-    }, context);
-    expect(await close(pluginIds[1], 'ticket-1')).toMatchObject({ ok: true });
-    expect(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
+    }, context, { action: { pluginId, localId: 'close-ticket' }, machineId: machine.target.machineId });
+    expectAction(await close(pluginIds[1], 'ticket-1')).toMatchObject({ ok: true });
+    expectAction(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toEqual([]);
-    expect(await close(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
+    expectAction(await close(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
     await waitForWorkflowChildSession(async () => {
       const observed = await runs();
       expect(observed.length).toBeLessThanOrEqual(2);
@@ -198,15 +218,17 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       })));
       return sessions.every(session => session !== null);
     }, 'Only the qualified ticket starts its before and after review Runs');
-    expect(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
+    expectAction(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
     const readerContext = { externalActionTarget: { kind: 'machine' as const,
       machineId: readerMachine.target.machineId,
       project: { machineId: readerMachine.target.machineId, directory: readerMachine.workspaceDir } } };
-    expect(await reader.executeAsPerson('action.invoke', { action: { pluginId: pluginIds[0], localId: 'close-ticket' },
-      input: { ticket: { ticketId: 'ticket-1' } } }, readerContext)).toMatchObject({ ok: true });
+    expectAction(await reader.executeAsPerson('action.invoke', { action: { pluginId: pluginIds[0], localId: 'close-ticket' },
+      input: { ticket: { ticketId: 'ticket-1' } } }, readerContext,
+      { action: { pluginId: pluginIds[0], localId: 'close-ticket' }, machineId: readerMachine.target.machineId }))
+      .toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
-    expect(await reader.executeAsPerson('workflow.trigger.list', { subject: {
+    expectAction(await reader.executeAsPerson('workflow.trigger.list', { subject: {
       kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' },
     } })).toMatchObject({ ok: true, result: { attached: [], skippedNotSharedCount: 0 } });
 
@@ -232,11 +254,11 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     if (!automationIds.includes(eventSaved.set.automationId)) automationIds.push(eventSaved.set.automationId);
     const observe = (pluginId: string, ticketId: string) => actor.executeAsPerson('action.invoke', {
       action: { pluginId, localId: 'observe-ticket' }, input: { ticketId },
-    }, context);
-    expect(await observe(pluginIds[1], 'ticket-1')).toMatchObject({ ok: true });
-    expect(await observe(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
+    }, context, { action: { pluginId, localId: 'observe-ticket' }, machineId: machine.target.machineId });
+    expectAction(await observe(pluginIds[1], 'ticket-1')).toMatchObject({ ok: true });
+    expectAction(await observe(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
-    expect(await observe(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
+    expectAction(await observe(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
     await waitForWorkflowChildSession(async () => {
       const observed = await runs();
       expect(observed.length).toBeLessThanOrEqual(3);
@@ -248,10 +270,12 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       })));
       return sessions.every(session => session !== null);
     }, 'The declared Event subject selects only its qualified ticket');
-    expect(await reader.executeAsPerson('action.invoke', { action: { pluginId: pluginIds[0], localId: 'observe-ticket' },
-      input: { ticketId: 'ticket-1' } }, readerContext)).toMatchObject({ ok: true });
+    expectAction(await reader.executeAsPerson('action.invoke', { action: { pluginId: pluginIds[0], localId: 'observe-ticket' },
+      input: { ticketId: 'ticket-1' } }, readerContext,
+      { action: { pluginId: pluginIds[0], localId: 'observe-ticket' }, machineId: readerMachine.target.machineId }))
+      .toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(3);
-    expect(await reader.executeAsPerson('workflow.trigger.list', { subject: {
+    expectAction(await reader.executeAsPerson('workflow.trigger.list', { subject: {
       kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' },
     } })).toMatchObject({ ok: true, result: { attached: [], skippedNotSharedCount: 0 } });
 
@@ -272,13 +296,15 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     const otherContext = { externalActionTarget: { kind: 'machine' as const,
       machineId: otherMachine.target.machineId,
       project: { machineId: otherMachine.target.machineId, directory: otherMachine.workspaceDir } } };
-    expect(await otherActor.executeAsPerson('action.invoke', {
+    expectAction(await otherActor.executeAsPerson('action.invoke', {
       action: { pluginId: pluginIds[0], localId: 'close-ticket' },
       input: { ticket: { ticketId: 'ticket-1' } },
-    }, otherContext)).toMatchObject({ ok: true });
-    expect(await otherActor.executeAsPerson('action.invoke', {
+    }, otherContext, { action: { pluginId: pluginIds[0], localId: 'close-ticket' },
+      machineId: otherMachine.target.machineId })).toMatchObject({ ok: true });
+    expectAction(await otherActor.executeAsPerson('action.invoke', {
       action: { pluginId: pluginIds[0], localId: 'observe-ticket' }, input: { ticketId: 'ticket-1' },
-    }, otherContext)).toMatchObject({ ok: true });
+    }, otherContext, { action: { pluginId: pluginIds[0], localId: 'observe-ticket' },
+      machineId: otherMachine.target.machineId })).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(3);
   }, 0);
 });

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { connectUiPersonActionClient, mountUiAutomationSubjectPicker, readUiMachineProjection } from '@happier-tests/ui-action-client';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { createExternalTicketPlugin } from '../../../plugin-ui/fixtures/external-authoring/src/ticketAutomationPlugin';
 import { createPluginManifestV2Fixture } from '../../../../apps/cli/src/plugins/testkit/manifestV2Fixture';
 import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
@@ -66,7 +67,8 @@ it('reacquires the adopted projection after two Accounts and two Machines prewar
     } finally { await picker.close(); }
     await ui.close();
     ui = undefined;
-    const definitionCreated = await actor.executeAsPerson('workflow.definition.create', { definitionId: randomUUID(),
+    const definitionId = randomUUID();
+    const definitionCreated = await actor.executeAsPerson('workflow.definition.create', { definitionId,
       metadata: { title: 'Shared ticket review' }, definition: { version: 1,
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
         blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the ticket.', references: [], attachments: [] },
@@ -74,6 +76,32 @@ it('reacquires the adopted projection after two Accounts and two Machines prewar
       } });
     expect(definitionCreated.ok, JSON.stringify({ ok: definitionCreated.ok,
       ...(!definitionCreated.ok ? { errorCode: definitionCreated.errorCode } : {}) })).toBe(true);
+    const ownerId = readAccountIdFromToken(actor.credentials.token);
+    const readerId = readAccountIdFromToken(reader.credentials.token);
+    for (const [account, id] of [[actor, ownerId], [reader, readerId]] as const) {
+      const named = await account.executeAsPerson('account.username.set', {
+        username: `f7${id.replaceAll('-', '').slice(0, 12)}`,
+      });
+      expect(named.ok, JSON.stringify(named.ok ? { ok: true } : { errorCode: named.errorCode })).toBe(true);
+    }
+    const requested = await actor.executeAsPerson('friends.add', { uid: readerId });
+    expect(requested, JSON.stringify(requested.ok ? { ok: true } : { errorCode: requested.errorCode }))
+      .toMatchObject({ ok: true, result: { user: { id: readerId, status: 'requested' } } });
+    const accepted = await reader.executeAsPerson('friends.add', { uid: ownerId });
+    expect(accepted, JSON.stringify(accepted.ok ? { ok: true } : { errorCode: accepted.errorCode }))
+      .toMatchObject({ ok: true, result: { user: { id: ownerId, status: 'friend' } } });
+    const granted = await actor.executeAsPerson('artifact.access.grants.set', { artifactId: definitionId,
+      principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' });
+    expect(granted.ok, JSON.stringify(granted.ok ? { ok: true } : { ok: false,
+      errorCode: granted.errorCode, failureCause: granted.failureCause })).toBe(true);
+    const closed = await actor.executeAsPerson('action.invoke', {
+      action: { pluginId: pluginIds[0], localId: 'close-ticket' }, input: { ticket: { ticketId: 'ticket-1' } },
+    }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
+      project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } },
+    { action: { pluginId: pluginIds[0], localId: 'close-ticket' }, machineId: machine.target.machineId });
+    expect(closed, JSON.stringify(closed.ok ? { ok: true } : { ok: false,
+      errorCode: closed.errorCode, failureCause: closed.failureCause }))
+      .toMatchObject({ ok: true, result: { ticketId: 'ticket-1', state: 'closed' } });
   } finally {
     await ui?.close();
     await fixture.stop();

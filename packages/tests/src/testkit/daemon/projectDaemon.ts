@@ -6,6 +6,7 @@ import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
@@ -29,6 +30,7 @@ import { type CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { withWorkspaceSourceRuntime } from '../process/tsxImportHook';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
+import { waitFor } from '../timing';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { createEphemeralTlsServerFixture } from '../tls/ephemeralTlsServerFixture.mjs';
 
@@ -151,10 +153,16 @@ export async function startProjectDaemonFixture(params: Readonly<{
             context: { signal: context.signal },
           });
         },
-        async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
+        async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {},
+          presentation?: Readonly<{ action: PluginContributionIdentityV1; machineId: string }>) {
           const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
-            addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
+            addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed,
+            ...(presentation ? { presentedMachineAction: presentation.action } : {}) });
           try {
+            if (presentation) {
+              await waitFor(() => ui.isPresentedMachineActionReady(presentation.machineId),
+                { context: `presented Machine Action ${presentation.action.pluginId}/${presentation.action.localId}` });
+            }
             return await ui.executeConfirmed(actionId, input, { ...context, surface: 'ui', authority: 'present_user',
               actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: serverId,
               actionRequestId: randomUUID() });

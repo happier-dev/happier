@@ -4,6 +4,7 @@ import { createModalModuleMock } from './mocks/modal';
 import { installNativeRuntimeFetchBoundary } from './harness/nativeRuntimeFetch';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { encodeBase64 } from '@/encryption/base64';
@@ -258,7 +259,9 @@ export async function connectUiPersonActionClient(params: Readonly<{
     withCurrentUiActionPort?: boolean;
     /** Triage fixtures keep the restored Account lifetime as their authority. */
     withAccountLifecycle?: boolean;
-}>): ReturnType<typeof connectUiActionClient> {
+    /** The contributed control the fixture presents before a Person presses it. */
+    presentedMachineAction?: PluginContributionIdentityV1;
+}>) {
     const credentials = await authGetTokenAtEndpoint({
         endpointUrl: params.serverUrl,
         addressAnchorUrl: params.addressAnchorUrl,
@@ -275,12 +278,14 @@ export async function connectUiPersonActionClient(params: Readonly<{
         const [{ renderHook }, { createMountedCurrentUiContextWrapper }, { createElement, Fragment },
             { PluginSurfaceProjectionDemand }, { REGISTRY_SOURCE_PROJECTION_SECTIONS },
             { useRegistryListSourceSelection }, { REGISTRY_ACTION_IDS_V1, RegistryKindV1Schema }, { waitForTestEvent },
-            { useAppShellPluginUiProjection }] = await Promise.all([
+            { useAppShellPluginUiProjection }, { resolveCurrentContributedAction }, { readCurrentAppShellPluginUiProjection }] = await Promise.all([
             import('./hooks/renderHook'), import('./harness/mountedCurrentUiContext'),
             import('react'), import('@/components/plugins/surfaces/PluginSurfaceProjectionDemand'),
             import('@/sync/domains/plugins/ui/projectionSections'), import('@/registries/useRegistrySourceRevision'),
             import('@happier-dev/protocol/registries'), import('./hooks/waitForTestEvent'),
             import('@/components/appShell/plugins/AppShellPluginUiProjection'),
+            import('@/components/appShell/currentUiContext/contributedActionInvocation'),
+            import('@/components/appShell/plugins/committedPluginUiProjection'),
         ]);
         const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: params.withAppShellActions !== false,
             withCurrentUiActionPort: params.withCurrentUiActionPort, withAccountLifecycle: params.withAccountLifecycle !== false });
@@ -292,7 +297,10 @@ export async function connectUiPersonActionClient(params: Readonly<{
         }, {
             wrapper: ({ children }) => createElement(AppShell, null, createElement(Fragment, null,
                 createElement(PluginSurfaceProjectionDemand, { accountScope: scope,
-                    presents: 'allInstallations', sections: REGISTRY_SOURCE_PROJECTION_SECTIONS }), children)),
+                    presents: 'allInstallations', sections: REGISTRY_SOURCE_PROJECTION_SECTIONS }),
+                params.presentedMachineAction && createElement(PluginSurfaceProjectionDemand, {
+                    accountScope: scope, pluginId: params.presentedMachineAction.pluginId,
+                }), children)),
         });
         unmount = shell.unmount;
         const waitForRegistry = async (actionId: string, input: unknown) => {
@@ -319,7 +327,14 @@ export async function connectUiPersonActionClient(params: Readonly<{
             await waitForRegistry(args[0], args[1]);
             return client.executePresented(...args);
         }, { prepare: client.executePresented.prepare, confirmed: client.executePresented.confirmed });
-        return { ...client, execute, executeConfirmed, executePresented, async close() {
+        const isPresentedMachineActionReady = (machineId: string): boolean => {
+            const identity = params.presentedMachineAction;
+            if (!identity || !scope) return false;
+            const action = resolveCurrentContributedAction(
+                () => readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true }), identity);
+            return action?.kind === 'machine' && action.origin.machineId === machineId;
+        };
+        return { ...client, execute, executeConfirmed, executePresented, isPresentedMachineActionReady, async close() {
             try { await unmount?.(); } finally { await client.close(); }
         } };
     } catch (error) {
