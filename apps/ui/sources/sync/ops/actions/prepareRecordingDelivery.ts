@@ -1,4 +1,4 @@
-import { isEmptyEdit } from '@happier-dev/protocol/sessions/media/imageMarksV1';
+import { formatStepNotes, isEmptyEdit } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { flattenAnnotatedImage } from '@/components/ui/media/annotation/flattenImage';
@@ -30,7 +30,10 @@ function frameNote(frame: RecordingSelectedFrame, pinned: boolean): string {
         ...(frame.document && !isEmptyEdit(frame.document)
             ? [`marked frame: ${frame.document.marks.map(mark => mark.kind).join(', ')}`] : []),
     ];
-    return additions.length ? `${timestamp} — ${additions.join('; ')}` : timestamp;
+    const line = additions.length ? `${timestamp} — ${additions.join('; ')}` : timestamp;
+    // A marked frame's numbered comments follow its line, numbered as on the frame.
+    const steps = frame.document ? formatStepNotes(frame.document) : null;
+    return steps ? `${line}\n${steps}` : line;
 }
 
 async function drawFrames(source: RecordingDeliverySource, selected: readonly RecordingSelectedFrame[],

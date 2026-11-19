@@ -5868,6 +5868,10 @@ const fileViewerTranslations = { 'zh-Hant': {
         editableUntilSend: "傳送前標註都可以修改",
         doneFailed: "無法儲存標註後的圖片。標註已保留，請再按一次「完成」。",
         editMarks: "編輯標註",
+        steps: "步驟",
+        stepsHint: "只有編號也可以：代理會依序把它們當作步驟。",
+        stepNote: ({ number }: { number: number }) => `步驟備註 ${number}`,
+        selectStep: ({ number }: { number: number }) => `選擇步驟 ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `第 ${current} 個，共 ${total} 個`,

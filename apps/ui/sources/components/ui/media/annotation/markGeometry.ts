@@ -5,6 +5,8 @@ export const ANNOTATOR_GEOMETRY = Object.freeze({ arrowHeadThreshold: 18, minimu
 export const MARK_STROKE: Readonly<Record<ImageMarkSizeV1, number>> = { s: 3, m: 5, l: 8 };
 /** These are content colours, identical in light/dark and in the exported image (MIS §3.3). */
 export const MARK_COLORS: Readonly<Record<ImageMarkColorV1, string>> = { red: '#FF3B30', orange: '#FF9500', yellow: '#FFCC00', green: '#34C759', blue: '#0A84FF', purple: '#AF52DE', ink: '#1C1C1E' };
+/** A step's numeral and a text label's words on their mark colour, also in the Steps list's badges. */
+export const MARK_NUMERAL_COLOR = '#ffffff';
 export type MarkPath = Readonly<{ d: string; fill?: string; stroke?: string; strokeWidth?: number; opacity?: number; blendMode?: 'multiply' }>;
 export type MarkText = Readonly<{ text: string; x: number; y: number; fontSize: number; color: string; align: 'left' | 'center' }>;
 export type MarkGeometry = Readonly<{ paths: readonly MarkPath[]; texts: readonly MarkText[]; bounds: ImageRectV1 }>;
@@ -143,7 +145,7 @@ export function getMarkGeometry(mark: ImageMarkV1, scale = 1, stepNumber = 1, me
       const radius = strokeWidth * ANNOTATOR_GEOMETRY.stepRadius;
       bounds = { x: mark.at.x - radius, y: mark.at.y - radius, width: radius * 2, height: radius * 2 };
       paths.push({ d: `M${mark.at.x - radius} ${mark.at.y}a${radius} ${radius} 0 1 0 ${radius * 2} 0a${radius} ${radius} 0 1 0 ${-radius * 2} 0`, fill: color });
-      texts.push({ text: String(stepNumber), x: mark.at.x, y: mark.at.y + radius * 0.4, fontSize: radius * 1.1, color: '#ffffff', align: 'center' });
+      texts.push({ text: String(stepNumber), x: mark.at.x, y: mark.at.y + radius * 0.4, fontSize: radius * 1.1, color: MARK_NUMERAL_COLOR, align: 'center' });
       break;
     }
   }

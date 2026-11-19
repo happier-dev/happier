@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, PixelRatio, Platform, Pressable, View, type ViewToken } from 'react-native';
+import { FlatList, PixelRatio, Platform, Pressable, ScrollView, View, type ViewToken } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
@@ -56,6 +56,7 @@ import type { ImageAnnotator } from '../annotation/annotatorStore';
 import { AnnotatorCanvas } from '../annotation/AnnotatorCanvas';
 import { AnnotatorCaptionSlot, AnnotatorPalette } from '../annotation/AnnotatorPalette';
 import { AnnotatorPictureFrame } from '../annotation/AnnotatorPictureFrame';
+import { AnnotatorSteps, useAnnotatorShowsSteps } from '../annotation/AnnotatorSteps';
 import { useAnnotatorHoldsFinger } from '../annotation/useImageAnnotator';
 import { useWheelZoom } from '../zoom/useWheelZoom';
 import { useZoomableViewport } from '../zoom/useZoomableViewport';
@@ -65,6 +66,7 @@ import { hideStageOrigin } from './hideStageOrigin';
 import { useMediaStageGallery } from './useMediaStageGallery';
 import { useMediaStageKeyboard } from './useMediaStageKeyboard';
 import { useMediaStageAnnotation } from './useMediaStageAnnotation';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import {
   StageAnnotateActions,
@@ -82,6 +84,8 @@ type Phase = 'opening' | 'open' | 'closing';
 /** Desktop chrome geometry, composed from the stage's own parts (lab files MS1 spec). */
 const TOP_BAR_HEIGHT = 44;
 const STRIP_THUMB_SIZE = 56;
+/** The numbered comments' side panel beside the picture (lab `comments` A). */
+const STEPS_PANEL_WIDTH = 320;
 const STRIP_RING_WIDTH = 2;
 
 const isPicture = (item: MediaStageItem) =>
@@ -341,6 +345,8 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
     }));
 
     const neighboursEnabled = props.phase === 'open';
+    // Annotating holds one picture (paging is off), so its neighbours stay out of the room the steps panel frees.
+    const showNeighbours = !annotating;
     const pageOffset = props.viewport.width + theme.space.s24;
     const hidden = props.phase !== 'open' && picture && size !== null;
     const label = itemLabel(item, size);
@@ -382,7 +388,7 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
                 style={[StyleSheet.absoluteFill, zoom.pageStyle]}
                 collapsable={false}
               >
-                {hasPrevious ? (
+                {hasPrevious && showNeighbours ? (
                   <View
                     style={[
                       StyleSheet.absoluteFill,
@@ -396,7 +402,7 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
                     />
                   </View>
                 ) : null}
-                {hasNext ? (
+                {hasNext && showNeighbours ? (
                   <View
                     style={[
                       StyleSheet.absoluteFill,
@@ -511,6 +517,41 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
 const loadStageMediaPlayer = () =>
   import('@/components/workspaces/files/file/MediaPlayerBody').then((module) => module.MediaPlayerBody);
 const loadStagePdfViewer = () => import('../pdf/PdfViewer').then((module) => module.PdfViewer);
+
+/**
+ * A phone's annotate dock by the thumb: the numbered steps above the palette rows (lab `comments` A, 390). It
+ * rides above the keyboard while a note is typed, and tells the stage how much room it takes from the bottom.
+ */
+function StagePhoneAnnotateDock(props: Readonly<{
+  annotator: ImageAnnotator;
+  steps: boolean;
+  stepsMaxHeight: number;
+  onRoom: (room: number) => void;
+}>) {
+  const { theme } = useUnistyles();
+  const insets = useChromeSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
+  const bottom = Math.max(insets.bottom, keyboardHeight) + theme.space.s16;
+  const { onRoom } = props;
+  return (
+    <Animated.View
+      entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)}
+      exiting={FadeOut.duration(motionTokens.durationMs.fast)}
+      style={[stageStyles.phonePaletteLayer, { bottom }]}
+      pointerEvents="box-none"
+      onLayout={(event) => onRoom(event.nativeEvent.layout.height + bottom)}
+    >
+      {props.steps ? (
+        <GlassPanel radius={theme.space.s16} shadowLevel={2} innerShadow={false} style={stageStyles.phoneSteps}>
+          <ScrollView style={{ maxHeight: props.stepsMaxHeight }} keyboardShouldPersistTaps="handled">
+            <AnnotatorSteps annotator={props.annotator} presentation="list" />
+          </ScrollView>
+        </GlassPanel>
+      ) : null}
+      <AnnotatorPalette annotator={props.annotator} layout="phone" surface="glass" />
+    </Animated.View>
+  );
+}
 
 /** Video and PDF items render their own bodies in the stage (lab MS1f); pictures use the zoom viewport. */
 function StageDocumentItem(props: Readonly<{
@@ -693,6 +734,18 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const currentPreview = heldPreview?.index === gallery.index ? heldPreview : null;
 
 
+  // Annotate mode (P2 D6, MIS §8). `useMediaStageAnnotation` owns entering, Cancel's question and Done;
+  // the annotator itself mounts only while a session is open, so a stage that never annotates does no
+  // annotation work (S4).
+  const stageAnnotation = useMediaStageAnnotation(item);
+  const [annotator, setAnnotator] = React.useState<ImageAnnotator | null>(null);
+  const annotation = stageAnnotation.session && annotator ? { annotator } : null;
+  // Numbered steps open their list beside the picture (wide) or above the phone palette; the picture's
+  // viewport makes room for it so no step sits under its own list.
+  const stepsShown = useAnnotatorShowsSteps(annotation?.annotator ?? null) && !immersive;
+  // The phone dock (steps over the palette) reports the room it takes from the bottom, keyboard included.
+  const [phoneDockRoom, setPhoneDockRoom] = React.useState(0);
+
   const windowRect = React.useMemo<Rect>(
     () => ({ x: 0, y: 0, width: window.width, height: window.height }),
     [window.width, window.height],
@@ -700,34 +753,34 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const viewport = React.useMemo<Rect>(() => {
     if (immersive) return windowRect;
     // A phone keeps a side gutter, so a picture's edge is out of the screen edge's gesture (lab `ia · I1p`).
-    if (phone) return { ...windowRect, x: theme.space.s16, width: Math.max(1, window.width - theme.space.s16 * 2) };
+    if (phone) {
+      const height = stepsShown && phoneDockRoom > 0 ? window.height - phoneDockRoom - theme.space.s8 : window.height;
+      return { ...windowRect, x: theme.space.s16, width: Math.max(1, window.width - theme.space.s16 * 2), height: Math.max(1, height) };
+    }
     const top = theme.space.s12 + TOP_BAR_HEIGHT + theme.space.s16;
     const bottom = showStrip
       ? theme.space.s16 * 2 + STRIP_THUMB_SIZE + theme.space.s4 * 2
       : top;
     const side = theme.space.s32;
+    const steps = stepsShown ? STEPS_PANEL_WIDTH + side : 0;
     return {
       x: side,
       y: top,
-      width: Math.max(1, window.width - side * 2),
+      width: Math.max(1, window.width - side * 2 - steps),
       height: Math.max(1, window.height - top - bottom),
     };
   }, [
     immersive,
     phone,
+    phoneDockRoom,
     showStrip,
+    stepsShown,
     theme.space,
     window.height,
     window.width,
     windowRect,
   ]);
 
-  // Annotate mode (P2 D6, MIS §8). `useMediaStageAnnotation` owns entering, Cancel's question and Done;
-  // the annotator itself mounts only while a session is open, so a stage that never annotates does no
-  // annotation work (S4).
-  const stageAnnotation = useMediaStageAnnotation(item);
-  const [annotator, setAnnotator] = React.useState<ImageAnnotator | null>(null);
-  const annotation = stageAnnotation.session && annotator ? { annotator } : null;
   const [reverted, setReverted] = React.useState(false);
   const annotateCapsule: StageAnnotateCapsule = stageAnnotation.confirmDiscard ? 'confirmDiscard' : reverted ? 'reverted' : 'editing';
   const setAnnotateCapsule = React.useCallback((next: StageAnnotateCapsule) => {
@@ -1137,14 +1190,8 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
           )}
         </View>
         {annotation && phone ? (
-          <Animated.View
-            entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)}
-            exiting={FadeOut.duration(motionTokens.durationMs.fast)}
-            style={[stageStyles.phonePaletteLayer, { bottom: insets.bottom + theme.space.s16 }]}
-            pointerEvents="box-none"
-          >
-            <AnnotatorPalette annotator={annotation.annotator} layout="phone" surface="glass" />
-          </Animated.View>
+          <StagePhoneAnnotateDock annotator={annotation.annotator} steps={stepsShown}
+            stepsMaxHeight={window.height / 3} onRoom={setPhoneDockRoom} />
         ) : null}
         {annotation && !phone ? (
           <Animated.View
@@ -1156,6 +1203,19 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
             ]}
           >
             <AnnotatorPalette annotator={annotation.annotator} layout="bar" surface="glass" />
+          </Animated.View>
+        ) : null}
+        {annotation && !phone && stepsShown ? (
+          <Animated.View
+            entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)}
+            exiting={FadeOut.duration(motionTokens.durationMs.fast)}
+            style={[stageStyles.stepsLayer, { top: viewport.y, right: theme.space.s32, maxHeight: viewport.height }]}
+          >
+            <GlassPanel radius={theme.space.s16} shadowLevel={2} innerShadow={false}>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <AnnotatorSteps annotator={annotation.annotator} presentation="panel" />
+              </ScrollView>
+            </GlassPanel>
           </Animated.View>
         ) : null}
 
@@ -1344,6 +1404,14 @@ const stageStyles = StyleSheet.create((theme) => ({
     position: 'absolute',
     left: theme.space.s12,
     right: theme.space.s12,
+    gap: theme.space.s8,
+  },
+  phoneSteps: {
+    padding: theme.space.s12,
+  },
+  stepsLayer: {
+    position: 'absolute',
+    width: STEPS_PANEL_WIDTH,
   },
   paletteLayer: {
     position: 'absolute',

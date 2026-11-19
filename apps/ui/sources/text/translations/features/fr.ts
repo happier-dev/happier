@@ -5988,6 +5988,10 @@ const fileViewerTranslations = { fr: {
         editableUntilSend: "les marques restent modifiables jusqu’à l’envoi",
         doneFailed: "Impossible d'enregistrer l'image annotée. Vos marques sont conservées ; réessayez Terminé.",
         editMarks: "Modifier les marques",
+        steps: "Étapes",
+        stepsHint: "Les numéros seuls suffisent : l’agent les reçoit comme des étapes, dans l’ordre.",
+        stepNote: ({ number }: { number: number }) => `Note de l’étape ${number}`,
+        selectStep: ({ number }: { number: number }) => `Sélectionner l’étape ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} sur ${total}`,

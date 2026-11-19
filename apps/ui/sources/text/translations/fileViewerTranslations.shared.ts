@@ -25,6 +25,11 @@ export type FileViewerTranslations = Readonly<{
     doneFailed: string;
     /** The tray picture's pen badge: reopen the marks. */
     editMarks: string;
+    /** The numbered comments list (lab `comments`): its title, the hint under it and each row's names. */
+    steps: string;
+    stepsHint: string;
+    stepNote: (params: Readonly<{ number: number }>) => string;
+    selectStep: (params: Readonly<{ number: number }>) => string;
   }>;
   viewer: Readonly<{
     stageCounter: (
@@ -177,6 +182,10 @@ export const fileViewerTranslationsEnglish = {
         editableUntilSend: "marks stay editable until you send",
         doneFailed: "The marked picture couldn't be saved. Your marks are kept; try Done again.",
         editMarks: "Edit marks",
+        steps: "Steps",
+        stepsHint: "Numbers alone are fine: the agent gets them as steps, in order.",
+        stepNote: ({ number }: { number: number }) => `Note for step ${number}`,
+        selectStep: ({ number }: { number: number }) => `Select step ${number}`,
     },
     viewer: {
       stageCounter: ({ current, total }) => `${current} of ${total}`,

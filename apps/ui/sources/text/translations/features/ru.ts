@@ -5996,6 +5996,10 @@ const fileViewerTranslations = { ru: {
         editableUntilSend: "разметку можно менять до отправки",
         doneFailed: "Не удалось сохранить размеченное изображение. Разметка сохранена; нажмите «Готово» ещё раз.",
         editMarks: "Изменить разметку",
+        steps: "Шаги",
+        stepsHint: "Хватит и номеров: агент получит их как шаги по порядку.",
+        stepNote: ({ number }: { number: number }) => `Заметка к шагу ${number}`,
+        selectStep: ({ number }: { number: number }) => `Выбрать шаг ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} из ${total}`,

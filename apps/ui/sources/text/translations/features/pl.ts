@@ -5995,6 +5995,10 @@ const fileViewerTranslations = { pl: {
         editableUntilSend: "znaczniki można edytować do wysłania",
         doneFailed: "Nie udało się zapisać oznaczonego obrazu. Znaczniki zostają; spróbuj ponownie Gotowe.",
         editMarks: "Edytuj znaczniki",
+        steps: "Kroki",
+        stepsHint: "Same numery wystarczą: agent dostanie je jako kroki, po kolei.",
+        stepNote: ({ number }: { number: number }) => `Notatka do kroku ${number}`,
+        selectStep: ({ number }: { number: number }) => `Wybierz krok ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} z ${total}`,

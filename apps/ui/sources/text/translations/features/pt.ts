@@ -5966,6 +5966,10 @@ const fileViewerTranslations = { pt: {
         editableUntilSend: "as marcas podem ser editadas até você enviar",
         doneFailed: "Não foi possível salvar a imagem marcada. Suas marcas foram mantidas; tente Concluído novamente.",
         editMarks: "Editar marcas",
+        steps: "Passos",
+        stepsHint: "Só os números já bastam: o agente recebe-os como passos, por ordem.",
+        stepNote: ({ number }: { number: number }) => `Nota do passo ${number}`,
+        selectStep: ({ number }: { number: number }) => `Selecionar passo ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} de ${total}`,

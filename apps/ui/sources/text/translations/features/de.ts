@@ -5983,6 +5983,10 @@ const fileViewerTranslations = { de: {
         editableUntilSend: "Markierungen bleiben bis zum Senden bearbeitbar",
         doneFailed: "Das markierte Bild konnte nicht gespeichert werden. Deine Markierungen bleiben erhalten; versuche es mit Fertig erneut.",
         editMarks: "Markierungen bearbeiten",
+        steps: "Schritte",
+        stepsHint: "Nur Nummern reichen: Der Agent bekommt sie als Schritte, der Reihe nach.",
+        stepNote: ({ number }: { number: number }) => `Notiz zu Schritt ${number}`,
+        selectStep: ({ number }: { number: number }) => `Schritt auswählen: ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} von ${total}`,

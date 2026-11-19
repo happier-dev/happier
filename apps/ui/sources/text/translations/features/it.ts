@@ -5979,6 +5979,10 @@ const fileViewerTranslations = { it: {
         editableUntilSend: "i segni restano modificabili fino all’invio",
         doneFailed: "Impossibile salvare l'immagine annotata. I segni restano; riprova con Fatto.",
         editMarks: "Modifica i segni",
+        steps: "Passaggi",
+        stepsHint: "Bastano i numeri: l’agente li riceve come passaggi, in ordine.",
+        stepNote: ({ number }: { number: number }) => `Nota del passaggio ${number}`,
+        selectStep: ({ number }: { number: number }) => `Seleziona il passaggio ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} di ${total}`,

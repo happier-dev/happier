@@ -14,6 +14,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AnnotatorCanvas } from '@/components/ui/media/annotation/AnnotatorCanvas';
 import { AnnotatorCaptionSlot, AnnotatorPalette, AnnotatorPaperCapsule } from '@/components/ui/media/annotation/AnnotatorPalette';
 import { AnnotatorPictureFrame } from '@/components/ui/media/annotation/AnnotatorPictureFrame';
+import { AnnotatorSteps } from '@/components/ui/media/annotation/AnnotatorSteps';
 import type { ImageAnnotator } from '@/components/ui/media/annotation/annotatorStore';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -535,6 +536,8 @@ export function CaptureWindowScreen(props: Readonly<{
                             ))}
                         </View>
                     </AnnotatorCaptionSlot>
+                    {/* Numbered comments sit under the caption, above the note (lab `comments` Capture window). */}
+                    <AnnotatorSteps annotator={props.annotator} presentation="list" style={styles.steps} />
                     <View style={styles.foot}>
                         {props.notice}
                         {props.unreachable ? <CaptureWindowTargetLine cause={{ kind: 'unreachable', unreachable: props.unreachable }} onChooseSession={chooseSession} />
@@ -742,6 +745,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     captionSep: {
         color: theme.colors.text.tertiary,
+    },
+    steps: {
+        paddingHorizontal: theme.space.s20,
+        paddingTop: theme.space.s10,
     },
     // One inset around the note card: its sides, its foot and the room above it under the caption.
     foot: {

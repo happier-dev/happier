@@ -5928,6 +5928,10 @@ const fileViewerTranslations = { ja: {
         editableUntilSend: "マークは送信するまで編集できます",
         doneFailed: "注釈付きの画像を保存できませんでした。マークは残っています。もう一度「完了」を押してください。",
         editMarks: "マークを編集",
+        steps: "ステップ",
+        stepsHint: "番号だけでも大丈夫です。エージェントは順番どおりのステップとして受け取ります。",
+        stepNote: ({ number }: { number: number }) => `ステップのメモ ${number}`,
+        selectStep: ({ number }: { number: number }) => `ステップを選択 ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} / ${total}`,

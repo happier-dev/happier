@@ -144,7 +144,8 @@ export function createSessionMessageDelivery(params: Readonly<{
         if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
         if ('ok' in uploaded) return uploaded;
         const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
-        input = { ...input, message: composerSubmission.legacyAttachments.originalMessage,
+        const { appendPictureStepNotes } = await import('@/components/sessions/attachments/pictureStepNotes');
+        input = { ...input, message: appendPictureStepNotes(composerSubmission.legacyAttachments.originalMessage, composerSubmission.legacyAttachments.drafts),
           structuredInput: { v: 1, ...input.structuredInput, sessionAttachments: uploaded.map(attachment => attachment.attachmentHandle),
             ...(input.structuredInput?.browserContext ? { browserContext: reconcileBrowserContextPictures(input.structuredInput.browserContext, uploaded) } : {}) } };
       }

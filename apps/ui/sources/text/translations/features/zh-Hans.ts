@@ -5868,6 +5868,10 @@ const fileViewerTranslations = { 'zh-Hans': {
         editableUntilSend: "发送前标注都可以修改",
         doneFailed: "无法保存标注后的图片。标注已保留，请再次点“完成”。",
         editMarks: "编辑标注",
+        steps: "步骤",
+        stepsHint: "只有编号也可以：智能体会按顺序把它们当作步骤。",
+        stepNote: ({ number }: { number: number }) => `步骤备注 ${number}`,
+        selectStep: ({ number }: { number: number }) => `选择步骤 ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `第 ${current} 个，共 ${total} 个`,

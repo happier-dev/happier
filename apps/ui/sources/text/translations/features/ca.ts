@@ -5972,6 +5972,10 @@ const fileViewerTranslations = { ca: {
         editableUntilSend: "les marques es poden editar fins que enviïs",
         doneFailed: "No s'ha pogut desar la imatge marcada. Les marques es conserven; torna a provar Fet.",
         editMarks: "Edita les marques",
+        steps: "Passos",
+        stepsHint: "Només els números ja serveixen: l’agent els rep com a passos, en ordre.",
+        stepNote: ({ number }: { number: number }) => `Nota del pas ${number}`,
+        selectStep: ({ number }: { number: number }) => `Selecciona el pas ${number}`,
     },
     viewer: {
         stageCounter: ({ current, total }) => `${current} de ${total}`,
