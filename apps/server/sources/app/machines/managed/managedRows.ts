@@ -468,29 +468,33 @@ async function fenceManagedMachinePublicationInTx<T extends Readonly<{ accountId
  */
 type ManagedPublicationTarget = Readonly<{ homeId: string; managedId: string; nextControllerMachineId?: string }>
     | Readonly<{ controllerMachineId?: string }>;
+type ReadManagedAdditionalPublicationAccounts = (tx: Tx, row: StoredManagedMachine) => Promise<readonly string[]>;
 
 /** The same pure census serves managed endpoints and ordinary enrollment before Machine writes. */
 export async function readManagedMachinePublicationAudienceInTx(tx: Tx, target: ManagedPublicationTarget,
-    additionalMachineIds: readonly string[] = []): Promise<string[]> {
+    additionalMachineIds: readonly string[] = [], readAdditionalAccountIdsInTx?: ReadManagedAdditionalPublicationAccounts): Promise<string[]> {
     let machineIds: string[];
     let creatorAccountId: string | undefined;
+    let additionalAccountIds: readonly string[] = [];
     if (!('managedId' in target)) machineIds = target.controllerMachineId ? [target.controllerMachineId] : [];
     else {
         const row = await readManagedMachineInTx(tx, target);
         creatorAccountId = readManagedAdmissionState(row.admittedInput).enrollmentAccountId ?? row.custodianAccountId;
         machineIds = [row.controllerMachineId, row.enrolledMachineId, target.nextControllerMachineId]
             .filter((id): id is string => typeof id === 'string');
+        if (readAdditionalAccountIdsInTx) additionalAccountIds = await readAdditionalAccountIdsInTx(tx, row);
     }
     const audiences = await Promise.all([...new Set([...machineIds, ...additionalMachineIds])]
         .map(machineId => resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId)));
-    return [...new Set([...audiences.flat(), ...(creatorAccountId ? [creatorAccountId] : [])])];
+    return [...new Set([...audiences.flat(), ...(creatorAccountId ? [creatorAccountId] : []), ...additionalAccountIds])];
 }
 
 export async function acquireManagedMachinePublicationAccountsInTx(tx: Tx, target: ManagedPublicationTarget,
-    admission?: Readonly<{ intent?: AccountAdmissionIntent; additionalAccountIds?: readonly string[]; additionalMachineIds?: readonly string[] }>,
+    admission?: Readonly<{ intent?: AccountAdmissionIntent; additionalAccountIds?: readonly string[]; additionalMachineIds?: readonly string[];
+        readAdditionalAccountIdsInTx?: ReadManagedAdditionalPublicationAccounts }>,
 ): Promise<void> {
     await fenceManagedMachinePublicationInTx(tx, async () => ({ accountIds: [
-        ...await readManagedMachinePublicationAudienceInTx(tx, target, admission?.additionalMachineIds),
+        ...await readManagedMachinePublicationAudienceInTx(tx, target, admission?.additionalMachineIds, admission?.readAdditionalAccountIdsInTx),
         ...admission?.additionalAccountIds ?? [],
     ] }), admission?.intent);
 }
@@ -498,7 +502,8 @@ export async function acquireManagedMachinePublicationAccountsInTx(tx: Tx, targe
 export async function inManagedMachinePublicationTx<T>(
     target: ManagedPublicationTarget,
     write: (tx: Tx) => Promise<T>,
-    admission?: Readonly<{ intent: AccountAdmissionIntent; additionalAccountIds?: readonly string[]; transactionClass?: string }>,
+    admission?: Readonly<{ intent: AccountAdmissionIntent; additionalAccountIds?: readonly string[]; transactionClass?: string;
+        readAdditionalAccountIdsInTx?: ReadManagedAdditionalPublicationAccounts }>,
 ): Promise<ResolvedTransactionResult<T>> {
     return inTx(async tx => {
         await acquireManagedMachinePublicationAccountsInTx(tx, target, admission);

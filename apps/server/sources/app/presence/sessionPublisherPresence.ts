@@ -11,14 +11,15 @@ import {
     type SessionActivityBadgeInputs,
 } from "@/app/activity/accountActivityBadge";
 import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
-import { readCurrentSessionInputMachineTargetInTx } from "@/app/session/messages/sessionInputAdmission";
+import { readCurrentSessionInputMachineTargetInTx, readStoredCommittedSessionInputMachineTarget } from "@/app/session/messages/sessionInputAdmission";
+import { readMachineAccessKeySessionBindingsInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/db";
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { sessionRecipientPublicationResult, type SessionRecipientPublicationResult } from "@/app/session/changeTracking/sessionRecipientPublicationResult";
-import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
+import { acquireSessionAccountCursorLocksInTx, readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import {
     updateSessionRuntimeActivityProjection,
     writeSessionRuntimeActivityObserverLossInTx,
@@ -43,6 +44,8 @@ import { publishSessionProviderBrokerConsumersChangedInTx, readSessionProviderBr
 import { recordWebLatencyPhase, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 import { schedulePresenceDeadline } from './timeout';
 import { publishPresenceDeadline } from './presenceRedisQueue';
+import { publishSessionPublisherClose } from './publishSessionPublisherClose';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import {
     mapPendingActivationAuthorization,
     type PendingActivationTarget,
@@ -383,6 +386,218 @@ export async function expireSessionPublisherCandidates(params: Readonly<{
     });
 }
 
+type PublisherCloseAuthority =
+    | Readonly<{ kind: "heartbeat"; committedFence: Date; publisherGeneration: bigint }>
+    | Readonly<{ kind: "legacy-heartbeat"; committedFence: Date }>
+    | Readonly<{ kind: "generation"; publisherGeneration: bigint }>;
+
+type CloseSessionPublisherParams = Readonly<{
+    binding: SessionPublisherBinding;
+    authority: PublisherCloseAuthority;
+    mutationId: string;
+    settleLatestTurn?: boolean;
+    installedMachineCustody?: InstalledMachineTerminalCustody;
+}>;
+
+async function closeSessionPublisherBindingInTx(
+    tx: Tx,
+    params: CloseSessionPublisherParams,
+    now: () => Date,
+): Promise<PresenceInTxResult<CloseSessionPublisherResult>> {
+    const session = await tx.session.findUnique({
+        where: { id: params.binding.sessionId },
+        select: withSessionContentSelect({
+            ...sessionActivityBadgeSelect,
+            lastActiveAt: true,
+            publisherGeneration: true,
+            publisherGenerationLastActiveAt: true,
+            runtimeMachineTarget: true,
+        }),
+    }).then(decodeSessionStoredContent);
+    if (!session) return { status: "rejected", reason: "not_found" };
+    const hasInstalledCustody = params.installedMachineCustody !== undefined
+        && await hasInstalledMachineTerminalCustodyInTx(tx, {
+            binding: params.binding, installedMachineCustody: params.installedMachineCustody, session,
+        });
+    if (!hasInstalledCustody && session.accountId !== params.binding.accountId) {
+        return { status: "rejected", reason: "unauthorized" };
+    }
+    // Registration or stop capture already admitted this exact publisher.
+    // Closing its lifetime must also work after the Machine grant ends.
+    const runnerBindingState = await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding);
+    if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
+    if (
+        params.authority.kind !== "legacy-heartbeat"
+        && session.publisherGeneration !== params.authority.publisherGeneration
+    ) {
+        return { status: "superseded" };
+    }
+    if (
+        (
+            params.authority.kind !== "legacy-heartbeat"
+            && session.publisherGenerationLastActiveAt !== null
+            && session.publisherGenerationLastActiveAt.getTime() !== session.lastActiveAt.getTime()
+        )
+        || (
+            params.authority.kind !== "generation"
+            && session.lastActiveAt.getTime() !== params.authority.committedFence.getTime()
+        )
+    ) {
+        return { status: "superseded" };
+    }
+    if (!session.active) {
+        if (
+            params.authority.kind !== "legacy-heartbeat"
+            && session.publisherGenerationLastActiveAt !== null
+        ) {
+            const terminalized = await tx.session.updateMany({
+                where: {
+                    id: params.binding.sessionId,
+                    active: false,
+                    archivedAt: null,
+                    lastActiveAt: session.lastActiveAt,
+                    publisherGeneration: params.authority.publisherGeneration,
+                    publisherGenerationLastActiveAt: session.lastActiveAt,
+                },
+                data: { publisherGenerationLastActiveAt: null },
+            });
+            if (terminalized.count !== 1) return { status: "superseded" };
+        }
+        if (runnerBindingState === "current") {
+            await revokeMaterializedEphemeralRunnerBindingInTx(tx, params.binding);
+        }
+        return { status: "already_inactive" };
+    }
+    const updated = await tx.session.updateMany({
+        where: {
+            id: params.binding.sessionId,
+            active: true,
+            archivedAt: null,
+            lastActiveAt: params.authority.kind === "generation"
+                ? session.lastActiveAt
+                : params.authority.committedFence,
+            ...(params.authority.kind !== "legacy-heartbeat"
+                ? {
+                    publisherGeneration: params.authority.publisherGeneration,
+                    publisherGenerationLastActiveAt: session.lastActiveAt,
+                }
+                : {}),
+        },
+        data: {
+            active: false,
+            ...(params.authority.kind !== "legacy-heartbeat"
+                ? { publisherGenerationLastActiveAt: null }
+                : {}),
+        },
+    });
+    if (updated.count !== 1) return { status: "superseded" };
+    await publishSessionProviderBrokerConsumersChangedInTx(tx, params.binding.sessionId);
+    if (runnerBindingState === "current") {
+        await revokeMaterializedEphemeralRunnerBindingInTx(tx, params.binding);
+    }
+    const turnResult = params.settleLatestTurn === false
+        ? null
+        : await applyLatestSessionTurnEndInTx({
+            tx,
+            actorUserId: params.binding.accountId,
+            sessionId: params.binding.sessionId,
+            mutationId: params.mutationId,
+            observedAt: now().getTime(),
+        });
+    if (turnResult && !turnResult.ok) {
+        throw new Error(`Failed to settle publisher-close turn: ${turnResult.error}`);
+    }
+    const activity = await writeSessionRuntimeActivityObserverLossInTx({
+        tx,
+        sessionId: params.binding.sessionId,
+    });
+    if (activity.status === "rejected") {
+        throw new Error(`Failed to record Runtime Activity observer loss: ${activity.reason}`);
+    }
+    const recipientCursors = await markSessionProjectionRecipientsChanged({
+        tx,
+        sessionId: params.binding.sessionId,
+        usageAccountingChanged: false,
+        followReceiverAvailabilityChanged: true,
+    });
+    return sessionRecipientPublicationResult({
+        status: "closed",
+        activeAt: session.lastActiveAt,
+        recipientCursors,
+        badgeAttentionChanged: (turnResult?.ok === true && turnResult.badgeAttentionChanged)
+            || didSessionActivityBadgeSignalChange(
+                session satisfies SessionActivityBadgeInputs,
+                { ...session, active: false },
+            ),
+        ...(activity.status === "applied" ? { projection: activity.projection } : {}),
+        ...(turnResult?.ok && turnResult.didApply
+            ? {
+                turnProjection: {
+                    latestTurnId: turnResult.latestTurnId,
+                    latestTurnStatus: turnResult.latestTurnStatus,
+                    latestTurnStatusObservedAt: turnResult.latestTurnStatusObservedAt,
+                    lastRuntimeIssue: turnResult.lastRuntimeIssue,
+                },
+            }
+            : {}),
+    });
+}
+
+type InstalledMachinePublisherScope = Readonly<{ homeId: string; machineId: string }>;
+
+async function readActiveInstalledMachinePublishersInTx(tx: Tx, scope: InstalledMachinePublisherScope) {
+    const machine = await tx.machine.findUnique({ where: { id: scope.machineId },
+        select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true } });
+    if (!machine?.installationId || machine.revokedAt || machine.replacedByMachineId) return [];
+    const bindings = await readMachineAccessKeySessionBindingsInTx(tx, { accountId: machine.accountId,
+        machineId: scope.machineId }, { activeSessionsOnly: true });
+    const publishers: { binding: SessionPublisherBinding; publisherGeneration: bigint }[] = [];
+    for (const ids of portableQueryChunks({ values: [...new Set(bindings.map(binding => binding.sessionId))],
+        bindingsPerValue: 1, fixedBindings: 2 })) {
+        const sessions = await tx.session.findMany({ where: { id: { in: [...ids] }, active: true, archivedAt: null },
+            select: { id: true, accountId: true, archivedAt: true, runtimeMachineTarget: true, publisherGeneration: true } });
+        for (const session of sessions) {
+            const target = readStoredCommittedSessionInputMachineTarget(session);
+            if (target?.homeId === scope.homeId && target.machineId === scope.machineId
+                && target.installationId === machine.installationId) {
+                publishers.push({ binding: target, publisherGeneration: session.publisherGeneration });
+            }
+        }
+    }
+    return publishers;
+}
+
+function machineTerminalPublicationAudience(sessionIds: readonly string[]) {
+    return { readAdditionalAccountIdsInTx: (tx: Tx) => readSessionProviderBrokerCustodianAccountIdsInTx(tx, sessionIds) };
+}
+
+/** Include the stopped guest's Session audience in the containing publication admission. */
+export async function readInstalledMachinePublisherAccountIdsInTx(tx: Tx, scope: InstalledMachinePublisherScope): Promise<readonly string[]> {
+    const publishers = await readActiveInstalledMachinePublishersInTx(tx, scope);
+    const sessionIds = publishers.map(({ binding }) => binding.sessionId);
+    return sessionIds.length === 0 ? [] : (await readSessionAccountCursorAudienceInTx(tx, sessionIds, [],
+        machineTerminalPublicationAudience(sessionIds))).accountIds;
+}
+
+/** Native power confirmation retires the exact installed publishers in the same commit. */
+export async function closeInstalledMachinePublishersInTx(tx: Tx, scope: InstalledMachinePublisherScope & Readonly<{
+    requestId: string;
+}>): Promise<void> {
+    const publishers = await readActiveInstalledMachinePublishersInTx(tx, scope);
+    if (publishers.length === 0) return;
+    const sessionIds = publishers.map(({ binding }) => binding.sessionId);
+    await acquireSessionAccountCursorLocksInTx(tx, sessionIds, [], machineTerminalPublicationAudience(sessionIds));
+    for (const { binding, publisherGeneration } of publishers) {
+        const result = await closeSessionPublisherBindingInTx(tx, { binding,
+            authority: { kind: 'generation', publisherGeneration }, mutationId: scope.requestId,
+            settleLatestTurn: false }, () => new Date());
+        if (result.status === 'closed') afterTx(tx, () => {
+            void publishSessionPublisherClose({ sessionId: binding.sessionId, publisherAccountId: binding.accountId,
+                closed: result.resolveResult() });
+        });
+    }
+}
+
 function parseCompleteSnapshot(value: unknown): SessionRuntimeActivitySnapshot | null {
     const parsed = SessionRuntimeActivitySnapshotSchema.safeParse(value);
     return parsed.success ? parsed.data : null;
@@ -676,162 +891,13 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         },
     );
 
-    type PublisherCloseAuthority =
-        | Readonly<{ kind: "heartbeat"; committedFence: Date; publisherGeneration: bigint }>
-        | Readonly<{ kind: "legacy-heartbeat"; committedFence: Date }>
-        | Readonly<{ kind: "generation"; publisherGeneration: bigint }>;
-
-    const closeBinding = async (params: Readonly<{
-        binding: SessionPublisherBinding;
-        authority: PublisherCloseAuthority;
-        mutationId: string;
-        settleLatestTurn?: boolean;
-        installedMachineCustody?: InstalledMachineTerminalCustody;
-    }>): Promise<CloseSessionPublisherResult> => await inTx(async (tx): Promise<PresenceInTxResult<CloseSessionPublisherResult>> => {
-        await acquireSessionAccountCursorLocksInTx(tx, [params.binding.sessionId], [], {
-            includeLifecyclePublications: params.settleLatestTurn !== false,
-            ...(params.settleLatestTurn === false ? {
-                readAdditionalAccountIdsInTx: (currentTx: Tx) => readSessionProviderBrokerCustodianAccountIdsInTx(currentTx, [params.binding.sessionId]),
-            } : {}),
+    const closeBinding = async (params: CloseSessionPublisherParams): Promise<CloseSessionPublisherResult> =>
+        await inTx(async (tx): Promise<PresenceInTxResult<CloseSessionPublisherResult>> => {
+            const sessionIds = [params.binding.sessionId];
+            await acquireSessionAccountCursorLocksInTx(tx, sessionIds, [], params.settleLatestTurn === false
+                ? machineTerminalPublicationAudience(sessionIds) : { includeLifecyclePublications: true });
+            return closeSessionPublisherBindingInTx(tx, params, now);
         });
-        const session = await tx.session.findUnique({
-            where: { id: params.binding.sessionId },
-            select: withSessionContentSelect({
-                ...sessionActivityBadgeSelect,
-                lastActiveAt: true,
-                publisherGeneration: true,
-                publisherGenerationLastActiveAt: true,
-                runtimeMachineTarget: true,
-            }),
-        }).then(decodeSessionStoredContent);
-        if (!session) return { status: "rejected", reason: "not_found" };
-        const hasInstalledCustody = params.installedMachineCustody !== undefined
-            && await hasInstalledMachineTerminalCustodyInTx(tx, {
-                binding: params.binding, installedMachineCustody: params.installedMachineCustody, session,
-            });
-        if (!hasInstalledCustody && session.accountId !== params.binding.accountId) {
-            return { status: "rejected", reason: "unauthorized" };
-        }
-        // Registration or stop capture already admitted this exact publisher.
-        // Closing its lifetime must also work after the Machine grant ends.
-        const runnerBindingState = await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding);
-        if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
-        if (
-            params.authority.kind !== "legacy-heartbeat"
-            && session.publisherGeneration !== params.authority.publisherGeneration
-        ) {
-            return { status: "superseded" };
-        }
-        if (
-            (
-                params.authority.kind !== "legacy-heartbeat"
-                && session.publisherGenerationLastActiveAt !== null
-                && session.publisherGenerationLastActiveAt.getTime() !== session.lastActiveAt.getTime()
-            )
-            || (
-                params.authority.kind !== "generation"
-                && session.lastActiveAt.getTime() !== params.authority.committedFence.getTime()
-            )
-        ) {
-            return { status: "superseded" };
-        }
-        if (!session.active) {
-            if (
-                params.authority.kind !== "legacy-heartbeat"
-                && session.publisherGenerationLastActiveAt !== null
-            ) {
-                const terminalized = await tx.session.updateMany({
-                    where: {
-                        id: params.binding.sessionId,
-                        active: false,
-                        archivedAt: null,
-                        lastActiveAt: session.lastActiveAt,
-                        publisherGeneration: params.authority.publisherGeneration,
-                        publisherGenerationLastActiveAt: session.lastActiveAt,
-                    },
-                    data: { publisherGenerationLastActiveAt: null },
-                });
-                if (terminalized.count !== 1) return { status: "superseded" };
-            }
-            if (runnerBindingState === "current") {
-                await revokeMaterializedEphemeralRunnerBindingInTx(tx, params.binding);
-            }
-            return { status: "already_inactive" };
-        }
-        const updated = await tx.session.updateMany({
-            where: {
-                id: params.binding.sessionId,
-                active: true,
-                archivedAt: null,
-                lastActiveAt: params.authority.kind === "generation"
-                    ? session.lastActiveAt
-                    : params.authority.committedFence,
-                ...(params.authority.kind !== "legacy-heartbeat"
-                    ? {
-                        publisherGeneration: params.authority.publisherGeneration,
-                        publisherGenerationLastActiveAt: session.lastActiveAt,
-                    }
-                    : {}),
-            },
-            data: {
-                active: false,
-                ...(params.authority.kind !== "legacy-heartbeat"
-                    ? { publisherGenerationLastActiveAt: null }
-                    : {}),
-            },
-        });
-        if (updated.count !== 1) return { status: "superseded" };
-        await publishSessionProviderBrokerConsumersChangedInTx(tx, params.binding.sessionId);
-        if (runnerBindingState === "current") {
-            await revokeMaterializedEphemeralRunnerBindingInTx(tx, params.binding);
-        }
-        const turnResult = params.settleLatestTurn === false
-            ? null
-            : await applyLatestSessionTurnEndInTx({
-                tx,
-                actorUserId: params.binding.accountId,
-                sessionId: params.binding.sessionId,
-                mutationId: params.mutationId,
-                observedAt: now().getTime(),
-            });
-        if (turnResult && !turnResult.ok) {
-            throw new Error(`Failed to settle publisher-close turn: ${turnResult.error}`);
-        }
-        const activity = await writeSessionRuntimeActivityObserverLossInTx({
-            tx,
-            sessionId: params.binding.sessionId,
-        });
-        if (activity.status === "rejected") {
-            throw new Error(`Failed to record Runtime Activity observer loss: ${activity.reason}`);
-        }
-        const recipientCursors = await markSessionProjectionRecipientsChanged({
-            tx,
-            sessionId: params.binding.sessionId,
-            usageAccountingChanged: false,
-            followReceiverAvailabilityChanged: true,
-        });
-        return sessionRecipientPublicationResult({
-            status: "closed",
-            activeAt: session.lastActiveAt,
-            recipientCursors,
-            badgeAttentionChanged: (turnResult?.ok === true && turnResult.badgeAttentionChanged)
-                || didSessionActivityBadgeSignalChange(
-                    session satisfies SessionActivityBadgeInputs,
-                    { ...session, active: false },
-                ),
-            ...(activity.status === "applied" ? { projection: activity.projection } : {}),
-            ...(turnResult?.ok && turnResult.didApply
-                ? {
-                    turnProjection: {
-                        latestTurnId: turnResult.latestTurnId,
-                        latestTurnStatus: turnResult.latestTurnStatus,
-                        latestTurnStatusObservedAt: turnResult.latestTurnStatusObservedAt,
-                        lastRuntimeIssue: turnResult.lastRuntimeIssue,
-                    },
-                }
-                : {}),
-        });
-    });
 
     const captureMachineStop = async (params: Readonly<{
         binding: SessionPublisherBinding;

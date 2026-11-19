@@ -55,7 +55,9 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions';
-import { enqueuePendingMessage, listPendingMessages, updatePendingRequestedAction } from '@/app/session/pending/pendingMessageService';
+import { enqueuePendingMessage, listPendingMessages, resolveAcceptedPendingDelivery, updatePendingRequestedAction } from '@/app/session/pending/pendingMessageService';
+import { materializeNextPendingMessage } from '@/app/session/pending/materializeNextPendingMessage';
+import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -73,6 +75,7 @@ import { eventRouter } from '@/app/events/eventRouter';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { preparePlainAccountApiTokenLabel, prepareE2eeAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
+import { reportManagedIntent } from './managedMutations';
 
 describe('finite managed wake original Action authority (real storage)', () => {
     let harness: LightSqliteHarness | undefined;
@@ -134,6 +137,97 @@ describe('finite managed wake original Action authority (real storage)', () => {
             assertManagedWakeOriginCurrentInTx(tx, { row, target, ...{ actionOrigin: origin } }));
         return { account, controller, controllerKeys, guest, guestKeys, row, target, actionOrigin, check, requestId };
     }
+
+    it('delivers four explicit Sends after a confirmed managed Stop without leaving Pending inputs', async () => {
+        const test = await setup();
+        const accountId = test.account.id;
+        const machineId = test.guest.id;
+        const presence = createSessionPublisherPresence();
+        const authentication = createPresentUserSessionAccessAuthentication();
+        const envBefore = snapshotEnv();
+        applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        sessionPendingRoutes(app);
+        registerSessionListingRoutes(app);
+        registerAccountEncryptionRoutes(app);
+        try {
+            await db.machine.update({ where: { id: machineId }, data: { active: true,
+                operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } } } });
+            const publish = async (sessionId: string) => {
+                const binding = { accountId, sessionId, machineId };
+                const publication = await presence.registerPublisher({ socket: { data: {} }, binding,
+                    completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+                expect(publication).toMatchObject({ status: 'registered' });
+                if (publication.status !== 'registered') throw new Error('Expected a live guest publisher');
+                return { ...binding, committedFence: publication.committedFence };
+            };
+            const inputs: { sessionId: string; localId: string; message: string }[] = [];
+            for (let index = 0; index < 4; index++) {
+                const session = await db.session.create({ data: { accountId, tag: randomUUID(), encryptionMode: 'plain',
+                    metadata: JSON.stringify({ machineId, path: '/work', runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }) } });
+                expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId,
+                    sessionId: session.id, machineId, data: 'fixture-session-key' }))).toMatchObject({ ok: true });
+                await publish(session.id);
+                inputs.push({ sessionId: session.id, localId: randomUUID(), message: `After Stop ${index + 1}` });
+            }
+            const controller = test.target.controller;
+            const report = { homeId, managedId: test.row.id, controller, requestId: randomUUID(),
+                expectedIntentRevision: test.row.intentRevision };
+            await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                observation: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' },
+                admittedInput: { submittedEffect: { ...report, intent: 'stop' } },
+            } });
+            expect((await reportManagedIntent({ ...report, result: { kind: 'confirmed' },
+                observation: { observedAt: Date.now(), availability: 'present', power: 'stopped' } })).machine.observation)
+                .toMatchObject({ power: 'stopped' });
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machineId }, select: { active: true } }))
+                .toEqual({ active: false });
+
+            // The only substituted boundary is transport to the native guest. The real
+            // CLI Send, Home admission, publisher registration and Pending settlement run.
+            const importCli = async <T,>(path: string) => await import(path) as T;
+            const { sendSessionMessage } = await importCli<{
+                sendSessionMessage: (input: Readonly<{ credentials: { token: string; encryption: null };
+                    idOrPrefix: string; localId: string; message: string; wait: false; timeoutMs: number; explicitMessageSend: true;
+                    machineResumeTransport: (method: string, request: unknown) => Promise<unknown> }>) => Promise<unknown>;
+            }>('../../../../../cli/src/session/services/sendSessionMessage');
+            const { runWithServerHttpBaseUrl } = await importCli<{ runWithServerHttpBaseUrl: <T>(url: string, run: () => T) => T }>(
+                '../../../../../cli/src/api/client/serverHttpBaseUrl');
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+            let boot: Promise<unknown> | undefined;
+            const results = await runWithServerHttpBaseUrl(origin, () => Promise.all(inputs.map(input => sendSessionMessage({
+                credentials: { token, encryption: null }, idOrPrefix: input.sessionId, localId: input.localId,
+                message: input.message, wait: false, timeoutMs: 10_000, explicitMessageSend: true,
+                machineResumeTransport: async (method, request) => {
+                    expect(method).toBe(RPC_METHODS.SPAWN_HAPPY_SESSION);
+                    expect(request).toMatchObject({ type: 'resume-session', sessionId: input.sessionId });
+                    boot ??= db.machine.update({ where: { id: machineId }, data: { active: true } });
+                    await boot;
+                    const publisherAuthority = await publish(input.sessionId);
+                    const host = { actorUserId: accountId, sessionId: input.sessionId, publisherAuthority };
+                    expect(await materializeNextPendingMessage({ ...host, deliveryState: 'provider',
+                        deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' }))
+                        .toMatchObject({ ok: true, didMaterialize: true, message: { localId: input.localId } });
+                    const turnId = randomUUID();
+                    expect(await applySessionTurnMutation({ actorUserId: accountId, authentication, mutation: {
+                        v: 1, sessionId: input.sessionId, mutationId: randomUUID(), action: 'begin', turnId, observedAt: Date.now(),
+                    } })).toMatchObject({ ok: true });
+                    expect(await resolveAcceptedPendingDelivery({ ...host, localId: input.localId,
+                        acceptedTurn: { kind: 'newTurn', turnId } })).toMatchObject({ ok: true, didResolve: true });
+                    return { type: 'success', sessionId: input.sessionId };
+                },
+            }))));
+            for (const [index, result] of results.entries()) expect(result).toMatchObject({ ok: true,
+                admissionResult: { status: 'accepted', localId: inputs[index]!.localId } });
+            const committed = await db.sessionMessage.findMany({ where: { OR: inputs.map(({ sessionId, localId }) => ({ sessionId, localId })) },
+                select: { sessionId: true, localId: true } });
+            const queued = await db.sessionPendingMessage.count({ where: { status: 'queued',
+                sessionId: { in: inputs.map(input => input.sessionId) } } });
+            expect({ delivered: committed.length, queued }).toEqual({ delivered: 4, queued: 0 });
+            expect(committed).toEqual(expect.arrayContaining(inputs.map(({ sessionId, localId }) => ({ sessionId, localId }))));
+        } finally { await app.close(); restoreEnv(envBefore); }
+    });
 
     it.each([false, true])('retains controller-free explicit Send independently of unattended wake choice (%s)', async wakeOnAcceptedMessage => {
         const test = await setup();

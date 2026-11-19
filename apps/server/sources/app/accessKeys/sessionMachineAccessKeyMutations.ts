@@ -134,21 +134,24 @@ export async function readSessionMachineAccessKeyInTx(
 export async function readMachineAccessKeySessionBindingsInTx(
     tx: Tx,
     binding: Readonly<{ accountId: string; machineId: string }>,
+    options?: Readonly<{ activeSessionsOnly: true }>,
 ): Promise<Readonly<{ accountId: string; sessionId: string }>[]> {
     const bindings = await readMachineAccessKeySessionBindingsByMachineInTx(tx, {
         accountId: binding.accountId, machineIds: [binding.machineId],
-    });
+    }, options);
     return bindings.get(binding.machineId) ?? [];
 }
 
 export async function readMachineAccessKeySessionBindingsByMachineInTx(
     tx: Tx,
     input: Readonly<{ accountId: string; machineIds: readonly string[] }>,
+    options?: Readonly<{ activeSessionsOnly: true }>,
 ): Promise<ReadonlyMap<string, Readonly<{ accountId: string; sessionId: string }>[]>> {
     const bindings = new Map<string, Readonly<{ accountId: string; sessionId: string }>[]>();
     for (const machineIds of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
         const rows = await tx.accessKey.findMany({
-            where: { machineId: { in: [...machineIds] }, machine: { accountId: input.accountId } },
+            where: { machineId: { in: [...machineIds] }, machine: { accountId: input.accountId },
+                ...(options?.activeSessionsOnly ? { session: { active: true, archivedAt: null } } : {}) },
             select: { machineId: true, accountId: true, sessionId: true },
         });
         for (const { machineId, ...binding } of rows) {

@@ -3022,6 +3022,12 @@ through the same Machine publisher. Session keepalive schedules the next configu
 idle or thinking renewal, while host thinking and mode changes publish immediately.
 Neither a live socket nor a renewed lease proves active work or service health.
 
+In 0.3 development source, a confirmed managed guest Stop withdraws Machine
+reachability and closes Session publishers placed on that exact installation in
+one Home commit. The Session publisher owner preserves the Session and its
+placement for an ordinary Send to resume after wake. The person-issued Session
+Stop owns the explicit Session hold.
+
 Pure Machine heartbeat persistence uses the shared
 [`persistMachinePresence`](../apps/server/sources/app/presence/persistMachinePresence.ts)
 writer. Its atomic update advances the admitted observation without touching

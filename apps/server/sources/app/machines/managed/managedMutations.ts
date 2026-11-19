@@ -47,6 +47,7 @@ import {
 } from "./managedRows";
 import { readStoredOpaquePresetLaunch } from './managedMachineProjection';
 import { markManagedMachineOfflineInTx, publishInactiveMachines } from '@/app/presence/timeout';
+import { closeInstalledMachinePublishersInTx, readInstalledMachinePublisherAccountIdsInTx } from '@/app/presence/sessionPublisherPresence';
 
 /** Admission/control returns the exact retained opaque envelope, never a latest Preset read. */
 function projectManagedAdmissionCarrier(row: StoredManagedMachine, machine = projectManagedMachine(row)) {
@@ -498,14 +499,19 @@ export async function submitManagedIntent(input: ManagedControllerCurrentnessV1)
 /** Native facts reconcile the exact submitted or still-current admitted command, never a newer intent. */
 export async function reportManagedIntent(input: ManagedControllerIntentReportV1) {
     const canonical = ManagedControllerIntentReportV1Schema.parse(input);
+    const stoppedGuest = (row: StoredManagedMachine, intent: string | undefined, observation: Readonly<{ power?: unknown }> | undefined) =>
+        intent === 'stop' && observation?.power === 'stopped' && row.enrolledMachineId
+            ? { homeId: row.homeId, machineId: row.enrolledMachineId } : null;
     return await inManagedMachinePublicationTx(canonical, async tx => {
         const row = await readManagedMachineInTx(tx, canonical);
         const admitted = readManagedAdmissionState(row.admittedInput);
         const pending = readManagedIntentReportAuthority(row, canonical);
         if (!pending) throw new ManagedMachineError("request_conflict");
         const publishManagedStopPresence = async (observation: Readonly<{ power?: unknown }> | undefined): Promise<void> => {
-            if (pending.intent !== 'stop' || observation?.power !== 'stopped' || !row.enrolledMachineId) return;
-            const offline = await markManagedMachineOfflineInTx(tx, row.enrolledMachineId);
+            const scope = stoppedGuest(row, pending.intent, observation);
+            if (!scope) return;
+            await closeInstalledMachinePublishersInTx(tx, { ...scope, requestId: canonical.requestId });
+            const offline = await markManagedMachineOfflineInTx(tx, scope.machineId);
             if (offline) afterTx(tx, () => { void publishInactiveMachines([offline]); });
         };
         if (isStoredOpaquePresetMachine(row)) {
@@ -728,7 +734,13 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 : retryDelete ? { disposition: 'pending', reason: 'delete_requested' } : getActivePrismaRuntime().DbNull;
         }
         return await publish();
-    });
+    }, canonical.observation?.power === 'stopped' ? {
+        intent: 'content',
+        async readAdditionalAccountIdsInTx(tx, row) {
+            const scope = stoppedGuest(row, readManagedIntentReportAuthority(row, canonical)?.intent, canonical.observation);
+            return scope ? readInstalledMachinePublisherAccountIdsInTx(tx, scope) : [];
+        },
+    } : undefined);
 }
 
 /** Only the successful unsubmitted -> may-exist transition permits native acquisition. */
