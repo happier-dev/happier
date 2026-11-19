@@ -442,7 +442,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     request: createSessionReadBatchFetchBoundary(async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (input.nativeAgent && (path === '/v1/features' || path === '/v1/features/authenticated')) {
-        return Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true }, execution: { runs: { enabled: true } } } }));
+        return Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }));
       }
       if (input.coldShell && path === '/v1/features') {
         return Response.json(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }));
