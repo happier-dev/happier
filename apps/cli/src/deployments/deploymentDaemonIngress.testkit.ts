@@ -13,6 +13,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { createHostActionOperationRuntime, registerActionOperationRpcHandlers } from '@/daemon/actionOperations';
+import { createDaemonExternalActionContributedInvoker } from '@/daemon/externalActions/createDaemonExternalActionContributedInvoker';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { registerExternalActionRpcHandler, type ExternalActionRpcRegistrationOptions, type ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
@@ -22,6 +23,7 @@ import { APPROVAL_RPC_SCOPES, collectActionSpecRpcMethodsForScopes } from '@/rpc
 import { prepareInstalledRequesterAccountActionContext, resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { decodeStoredCredentials, encodeStoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -119,6 +121,11 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         custodyBinding: { serverId: home.serverId, installationId: home.installationId },
         resolveAccountId: async () => home.accountId,
     });
+    const invokeContributedAction = createDaemonExternalActionContributedInvoker({
+        managedProviderOperationAuthority,
+        observePluginExecution: actionOperations.observePluginExecution,
+        requestCurrentIntent: createCredentialedTargetActionCurrentIntent(credentials),
+    });
     async function prepareRequesterAccountContext(
         request: Parameters<NonNullable<ExternalActionRpcRegistrationOptions['prepareRequesterAccountContext']>>[0],
     ): ReturnType<NonNullable<ExternalActionRpcRegistrationOptions['prepareRequesterAccountContext']>> {
@@ -141,6 +148,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         return createCliActionExecutorFromCredentials({
             credentials: scopedCredentials, readCredentials: async () => scopedCredentials,
             pluginActionExecutionOwner: 'current_process',
+            invokeContributedAction,
             machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
             externalActionMachineInstallationId: home.installationId,
             externalActionMachineRequestPrivateKey: home.keys.secretKey,
