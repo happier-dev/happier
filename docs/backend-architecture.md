@@ -627,11 +627,21 @@ Home-login redemption prepares required authenticated descriptor publication bef
 
 In 0.3 development source, Home approval creation, expiry shortening and decisions publish a content-free Account change through that transaction owner. A visible approval reader demands its Homes through the existing Account-change subscriptions and concurrent Home connection lifecycle, including Homes outside the selected view. Connection-only demand does not acquire Session or Machine inventories and ends with the last visible observer; selecting the Home upgrades the same connection. Readers revalidate on Account wakes, reconnect and foreground. Discovery polling remains pending live proof of this replacement; hidden readers withdraw both polling and connection demand. These wakes never authorize approval, issuance or revocation: the existing fresh authority checks still decide every effect.
 
-### Blob storage (S3/MinIO)
-The server uses S3-compatible storage for user assets (e.g., avatars):
-- `storage/files.ts` configures the S3 client.
-- `uploadImage` processes and stores files and writes metadata to `UploadedFile`.
-- Public URLs are derived from `S3_PUBLIC_URL`.
+### Blob storage
+
+`storage/blob/files.ts` selects local disk or S3-compatible storage through
+`HAPPIER_FILES_BACKEND`. `uploadImage` processes public uploads and records their
+metadata in `UploadedFile`. In S3 mode, public objects use `S3_BUCKET` and
+`S3_PUBLIC_URL`.
+
+In 0.3 development, private Artifact bytes and new Account Pet assets use the
+selected private backend. For S3, provision `S3_PRIVATE_BUCKET` separately from
+`S3_BUCKET` and leave anonymous access disabled. A binary Artifact upload on a
+Home with no private bucket returns HTTP 503 with `private_storage_unavailable`
+and reason `s3_private_bucket_missing`. Public uploads remain available.
+Existing Account Pet locators created before backend selection still refer to
+private disk paths. Keep that volume available for reads and erasure while those
+locators exist.
 
 ### Redis
 A Redis client is initialized in `main.ts` and pinged at startup. It can be expanded for caching or pub/sub if needed.

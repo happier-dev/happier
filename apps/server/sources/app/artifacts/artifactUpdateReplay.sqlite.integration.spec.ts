@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1, type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
 import { encodeBase64 } from 'privacy-kit';
@@ -11,12 +11,58 @@ import { createHash } from 'node:crypto';
 import { request as requestHttp } from 'node:http';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import type { onSendHookHandler } from 'fastify';
+import { initFilesLocalFromEnv, initFilesS3FromEnv, loadFiles, writePublicFile } from '@/storage/blob/files';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'artifact-update-replay-',
     initAuth: false, initEncrypt: true, initFiles: true,
     env: { HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST: 'none' } }); }, 120_000);
 afterAll(async () => await harness?.close());
+
+it('refuses a binary upload with the missing private bucket reason while public S3 stays usable', async () => {
+    const putObject = vi.fn();
+    vi.doMock('minio', () => ({ Client: class {
+        bucketExists = async () => true;
+        putObject = putObject;
+    } }));
+    try {
+        await initFilesS3FromEnv({ S3_HOST: 'example.com', S3_PUBLIC_URL: 'https://cdn.example.com',
+            S3_BUCKET: 'public', S3_ACCESS_KEY: 'key', S3_SECRET_KEY: 'secret' });
+        await loadFiles();
+        await writePublicFile('avatars/example', Uint8Array.of(1));
+        expect(putObject).toHaveBeenCalledWith('public', 'avatars/example', Buffer.from([1]));
+        putObject.mockClear();
+        const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const artifactId = crypto.randomUUID();
+        const dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+            recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes });
+        const frame = encodeArtifactUploadFrameV1({ kind: 'create', artifactId, blobId: crypto.randomUUID(),
+            header: 'AgAD', body: 'AgAE', dataEncryptionKey: encodeBase64(dataEncryptionKey) }, { t: 'encrypted', c: 'AQ==' });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const expected = { error: 'private_storage_unavailable', reason: 's3_private_bucket_missing' };
+            const response = await app.inject({ method: 'POST', url: ARTIFACT_UPLOAD_PATH_V1,
+                headers: { 'x-test-user-id': owner.id, 'content-type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
+                payload: Buffer.from(frame) });
+            expect(response.statusCode, response.body).toBe(503);
+            expect(response.json()).toEqual(expected);
+
+            const jsonResponse = await app.inject({ method: 'POST', url: '/v1/artifacts/content/binary',
+                headers: { 'x-test-user-id': owner.id,
+                    'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) },
+                payload: { id: artifactId, header: 'AgAD', body: 'AgAE', dataEncryptionKey: encodeBase64(dataEncryptionKey),
+                    blob: { blobId: crypto.randomUUID(), content: { t: 'encrypted', c: 'AQ==' } } } });
+            expect(jsonResponse.statusCode, jsonResponse.body).toBe(503);
+            expect(jsonResponse.json()).toEqual(expected);
+        });
+        expect(await db.artifact.findUnique({ where: { id: artifactId } })).toBeNull();
+        expect(await db.uploadedFile.count({ where: { accountId: owner.id } })).toBe(0);
+        expect(putObject).not.toHaveBeenCalled();
+    } finally {
+        vi.doUnmock('minio');
+        initFilesLocalFromEnv();
+        await loadFiles();
+    }
+});
 
 it.each(['plain', 'e2ee'] as const)('recovers the accepted %s CAS operation without accepting a competing operation or changed payload', async mode => {
     const owner = await db.account.create({ data: { encryptionMode: mode,

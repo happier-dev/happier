@@ -5008,12 +5008,15 @@ database locally; selecting the adapter does not turn it into an API/worker spli
 - `S3_PORT`: optional S3 port.
 - `S3_USE_SSL`: `true`/`false` (default `true`).
 
-**Development 0.3 private Artifact storage**
-- `S3_PRIVATE_BUCKET`: a separate provisioned S3 bucket for binary Artifact bytes,
+**Development 0.3 private file storage**
+- `S3_PRIVATE_BUCKET`: a separate provisioned S3 bucket for binary Artifact bytes and new Account Pet assets,
   using the existing S3 connection and credentials. It must differ from the public
   `S3_BUCKET` and have no anonymous-access policy. The server does not change bucket
-  policies or fall back to the public bucket; missing or unsafe private storage
-  leaves private operations unavailable.
+  policies or fall back to the public bucket. Binary Artifact uploads return
+  HTTP 503 with `private_storage_unavailable` when the private store is unavailable.
+  The reason `s3_private_bucket_missing` identifies an unset or blank bucket.
+- Existing Account Pet locators continue to use their private disk paths. Keep
+  the original private files volume attached when upgrading an S3-backed Home.
 - The local files backend defaults to the existing private-files directory,
   separate from the public file root. Its development guard resolves both roots
   and refuses private IO when either contains the other, including symlinked

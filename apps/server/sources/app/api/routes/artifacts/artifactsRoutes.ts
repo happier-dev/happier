@@ -52,8 +52,13 @@ import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedV
 import { ProjectSourcePublicationPatchV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ArtifactOwedRecipientCensusPageV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ResourceOwedRecipientCensusQueryV1Schema } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import { PrivateBinaryStorageUnavailableResponseV1Schema } from '@happier-dev/protocol/storage/binaryBlobV1';
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = ARTIFACT_LIST_PAGE_MAX_ITEMS_V1;
+const artifactMutationUnavailableResponse = z.union([
+    z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']), statusCode: z.literal(503) }),
+    PrivateBinaryStorageUnavailableResponseV1Schema,
+]);
 
 /** Only the authentication decorator's verified binding can carry native publication custody. */
 function candidateMutationGuard(request: FastifyRequest, artifactId: string) {
@@ -529,7 +534,7 @@ export function artifactsRoutes(app: Fastify) {
                 500: z.object({
                     error: z.literal('Failed to create artifact')
                 }),
-                503: z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']), statusCode: z.literal(503) }),
+                503: artifactMutationUnavailableResponse,
             }
         }
     }, async (request, reply) => {
@@ -577,7 +582,7 @@ export function artifactsRoutes(app: Fastify) {
                 500: z.object({
                     error: z.literal('Failed to update artifact')
                 }),
-                503: z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']), statusCode: z.literal(503) }),
+                503: artifactMutationUnavailableResponse,
             }
         }
     }, async (request, reply) => {

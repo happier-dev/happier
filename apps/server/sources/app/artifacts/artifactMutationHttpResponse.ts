@@ -14,6 +14,7 @@ import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifa
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
+import { PrivateStorageUnavailableError } from '@/storage/blob/files';
 import type { ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
@@ -22,6 +23,12 @@ import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protoco
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
 export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
 export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; approvalInputCustody?: ApprovalInputCustody; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+
+export function readArtifactPrivateStorageHttpRefusal(error: unknown) {
+    return error instanceof PrivateStorageUnavailableError
+        ? { statusCode: 503 as const, body: { error: error.code, reason: error.reason } }
+        : null;
+}
 
 function memoryDecisionHttpFailure(error: string) {
     if (error === 'memory_decision_source_unavailable') return { statusCode: 404 as const, body: { error: 'memory_decision_source_unavailable' as const } };
@@ -90,6 +97,8 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
             if (!read.ok) return { statusCode: 500 as const, body: { error: 'Failed to create artifact' as const } };
             return { statusCode: 200 as const, body: { ...projectArtifactHttpRead(read.artifact), created: result.didWrite } };
         } catch (error) {
+            const storageRefusal = readArtifactPrivateStorageHttpRefusal(error);
+            if (storageRefusal) return storageRefusal;
             const databaseError = readDatabaseErrorCode(error);
             // A failed response read cannot certify rollback of the preceding
             // committed create. Keep that acknowledgement failure uncertain.
@@ -201,6 +210,8 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 ...(bodyUpdate && { bodyVersion: bodyUpdate.version }),
             } };
         } catch (error) {
+            const storageRefusal = readArtifactPrivateStorageHttpRefusal(error);
+            if (storageRefusal) return storageRefusal;
             const databaseError = readDatabaseErrorCode(error);
             if (databaseError) return { statusCode: 503 as const, body: { error: databaseError, statusCode: 503 as const } };
             log({ module: 'api', level: 'error' }, `Failed to update artifact: ${error}`);

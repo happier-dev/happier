@@ -5,6 +5,7 @@ import { isAccountPetEncryptedLibraryEntryV1, type AccountPetCreateResponseV1, t
 import { admitAccountPetEncryptedCreateRequestV1, isAccountPetEncryptedCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
 
 import type { PrivateFilesBackend } from "@/storage/privateFiles/privateFiles";
+import { ACCOUNT_PET_PRIVATE_FILE_PREFIX } from "@/storage/privateFiles/privateFileKeys";
 
 import {
     inspectPetAtlasWithSharp,
@@ -124,8 +125,7 @@ function createPrivateObjectKey(params: {
     mediaType: PetAssetMediaTypeV1 | typeof ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE;
 }): string {
     return [
-        "private",
-        "accounts",
+        ACCOUNT_PET_PRIVATE_FILE_PREFIX,
         keySegment(params.accountId),
         "pets",
         keySegment(params.petId),

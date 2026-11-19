@@ -7,9 +7,10 @@ import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, decodeArtifac
 import { encodeBase64 } from 'privacy-kit';
 import { TransferSessionStore, createTransferSessionLifecycle, readFiniteTransferConfig } from '@happier-dev/transfers/node';
 import { inReadSnapshot } from '@/storage/inTx';
+import { assertPrivateStorageAvailable } from '@/storage/blob/files';
 import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
-import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
+import { createArtifactHttpMutation, readArtifactPrivateStorageHttpRefusal, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
 import { stageArtifactBlobAccountEncryptionConversion, cancelArtifactBlobAccountEncryptionConversion } from '@/app/artifacts/artifactEncryptionConversionBlobService';
 import { log } from '@/utils/logging/log';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -85,6 +86,7 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                     decodeMetadata: decodeArtifactUploadMetadataV1,
                     onMetadata: async metadata => {
                         await admitDestination(request.userId, metadata);
+                        assertPrivateStorageAvailable();
                         const destination = metadata;
                         const session = await lifecycle.openUploadTransferSession({ target: {
                             destPath: request.userId, destDisplayPath: destination.artifactId,
@@ -139,9 +141,9 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
             } catch (error) {
                 await cancelStage();
                 const refusal = error instanceof UploadRefusal ? error.response
-                    : error instanceof BinaryUploadFrameErrorV1 && error.code === 'metadata_too_large'
+                    : readArtifactPrivateStorageHttpRefusal(error) ?? (error instanceof BinaryUploadFrameErrorV1 && error.code === 'metadata_too_large'
                         ? { statusCode: 413, body: { error: 'artifact_upload_metadata_too_large' } }
-                        : { statusCode: 400, body: { error: 'artifact_upload_failed' } };
+                        : { statusCode: 400, body: { error: 'artifact_upload_failed' } });
                 // One host record of the closed refusal: phase, class and code only, never content, keys or prose.
                 const refusalCode = refusal.body && typeof refusal.body === 'object' && 'error' in refusal.body
                     && typeof refusal.body.error === 'string' ? refusal.body.error : undefined;

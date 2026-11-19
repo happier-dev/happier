@@ -2,10 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
+import { initFilesS3FromEnv, loadFiles } from "@/storage/blob/files";
 import { createLocalPrivateFilesBackend } from "@/storage/privateFiles/privateFilesLocal";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -20,6 +22,7 @@ import {
     type PersistedAccountPet,
 } from "./accountPetLibraryPersistence";
 import { createAccountPetLibraryServices } from "./accountPetLibraryService";
+import { deleteDefaultAccountPetPrivateObject, getDefaultAccountPetLibraryServices } from "./accountPetLibraryRuntime";
 import { webpAtlasHeader } from "./accountPetAtlas.testkit";
 
 const WEBP_BYTES = webpAtlasHeader(PET_ATLAS_V1);
@@ -279,6 +282,68 @@ describe("account pet library services", () => {
             },
         });
     }
+
+    it("writes and erases new Pets in private S3 and keeps pre-upgrade disk locators readable and erasable", async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-legacy-"));
+        tempDirs.push(rootDir);
+        const env = harness.resetEnv({ HAPPIER_FILES_BACKEND: 's3', HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR: rootDir,
+            S3_HOST: 'example.com', S3_PUBLIC_URL: 'https://cdn.example.com', S3_BUCKET: 'public',
+            S3_PRIVATE_BUCKET: 'private-pets', S3_ACCESS_KEY: 'key', S3_SECRET_KEY: 'secret' });
+        const objects = new Map<string, Buffer>();
+        const putObject = vi.fn(async (bucket: string, key: string, bytes: Buffer) => { objects.set(`${bucket}/${key}`, bytes); });
+        const getObject = vi.fn(async (bucket: string, key: string) => Readable.from([objects.get(`${bucket}/${key}`)!]));
+        const removeObject = vi.fn(async (bucket: string, key: string) => { objects.delete(`${bucket}/${key}`); });
+        vi.doMock('minio', () => ({ Client: class {
+            bucketExists = async () => true;
+            getBucketPolicy = async () => '{"Statement":[]}';
+            putObject = putObject;
+            getObject = getObject;
+            removeObject = removeObject;
+        } }));
+        try {
+            await initFilesS3FromEnv(env);
+            await loadFiles();
+            const accountId = 'account-s3-pets';
+            await db.account.create({ data: { id: accountId, encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+            const services = getDefaultAccountPetLibraryServices();
+            const validated = await validateAccountPetCreateRequestV1(requestFor(WEBP_BYTES), {
+                inspectAtlas: async () => ({ width: PET_ATLAS_V1.width, height: PET_ATLAS_V1.height, hasAlpha: true }),
+            });
+            if (!validated.ok) throw new Error(validated.reason);
+            const sealed = sealAccountPetPackageV1({ validated, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(5) },
+                randomBytes: length => new Uint8Array(randomBytes(length)) });
+            if (!sealed.ok) throw new Error(sealed.reason);
+            const created = await services.createAccountPetForAccount({ accountId, accountEncryptionMode: 'e2ee',
+                storagePolicy: 'optional', request: sealed.request });
+            if (!created.ok) throw new Error(created.errorCode);
+            const petId = created.pet.accountPetId;
+            const row = await db.accountPetAsset.findFirstOrThrow({ where: { accountId, petPackageId: petId } });
+            const remoteKey = `private-pets/${row.objectKey}`;
+            expect([...objects.keys()]).toEqual([remoteKey]);
+            expect(putObject).toHaveBeenCalledTimes(1);
+            const read = () => services.readAccountPetAssetForAccount({ accountId, accountEncryptionMode: 'e2ee', petId, assetId: null });
+            const asset = await read();
+            expect(asset).toMatchObject({ ok: true, bytes: new Uint8Array(objects.get(remoteKey)!) });
+            expect(getObject).toHaveBeenCalledTimes(1);
+            await deleteDefaultAccountPetPrivateObject(row.objectKey);
+            expect(objects.size).toBe(0);
+            expect(removeObject).toHaveBeenCalledTimes(1);
+
+            // An installed server already has this legacy locator and file when upgrading.
+            if (!asset?.ok) throw new Error('Expected to open the sealed asset');
+            const legacyKey = `private/accounts/${accountId}/pets/${petId}/sha256/legacy.bin`;
+            const legacy = createLocalPrivateFilesBackend({ rootDir });
+            await legacy.writePrivateFile(legacyKey, asset.bytes);
+            await db.accountPetAsset.update({ where: { id: row.id }, data: { objectKey: legacyKey } });
+            expect(await read()).toEqual(asset);
+            expect((await services.deleteAccountPetForAccount({ accountId, petId })).ok).toBe(true);
+            await expect(legacy.readPrivateFile(legacyKey)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(getObject).toHaveBeenCalledTimes(1);
+            expect(removeObject).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.doUnmock('minio');
+        }
+    });
 
     it.each([
         {

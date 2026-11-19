@@ -1,5 +1,9 @@
 import { posix } from "node:path";
 
+// Existing locators use private/accounts/<account>/pets/... and were always written to disk.
+export const LEGACY_ACCOUNT_PET_PRIVATE_FILE_PREFIX = 'private/accounts/';
+export const ACCOUNT_PET_PRIVATE_FILE_PREFIX = 'account-pets';
+
 export function normalizePrivateFileKey(key: string): string {
     if (key.includes("\0")) {
         throw new Error("Invalid private file key");

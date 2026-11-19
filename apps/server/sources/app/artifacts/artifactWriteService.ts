@@ -14,7 +14,7 @@ import { artifactConversionBlobKey, artifactConversionBlobCustody, type Prepared
 import { db, getDbProviderFromEnv } from '@/storage/db';
 import { isPrismaErrorCode } from '@/storage/prisma';
 import { readArtifactStorageEnv } from '@/app/features/catalog/readFeatureEnv';
-import { deletePrivateFile } from '@/storage/blob/files';
+import { deletePrivateFile, PrivateStorageUnavailableError } from '@/storage/blob/files';
 import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema, decodeArtifactKindV1, getArtifactContentDeliveryPolicyV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
@@ -801,7 +801,7 @@ export async function createArtifact(params: {
         }
         // inTx already owns conflict/acquisition recovery. Preserve its terminal
         // typed refusal for HTTP callers rather than starting another budget.
-        if (isTransactionStorageError(error)) throw error;
+        if (isTransactionStorageError(error) || error instanceof PrivateStorageUnavailableError) throw error;
         return { ok: false, error: "internal" };
     } finally {
         if (!admitted) await discardArtifactBlobCandidate(preparedBlob);
@@ -1212,7 +1212,7 @@ export async function updateArtifact(params: {
         return result;
     } catch (error) {
         if (error instanceof InvalidApprovalTranscriptVisualPublicationError) return { ok: false, error: 'invalid-params' };
-        if (isTransactionStorageError(error)) throw error;
+        if (isTransactionStorageError(error) || error instanceof PrivateStorageUnavailableError) throw error;
         return { ok: false, error: "internal" };
     } finally {
         if (!admitted) await discardArtifactBlobCandidate(preparedBlob);

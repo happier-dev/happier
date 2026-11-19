@@ -336,6 +336,12 @@ Image support depends on how the image was built. Prebuilt `relay-server` images
 
 This is useful for quick experiments. For production, prefer Docker Compose (next section) or set a restart policy and use an env file.
 
+For 0.3 development images, provision a separate private bucket for binary
+Artifacts and new Account Pet assets. Keep anonymous access disabled. If you
+omit `S3_PRIVATE_BUCKET`, public uploads still work and binary Artifact uploads
+return HTTP 503 with the reason `s3_private_bucket_missing`. Keep the existing
+private files volume when upgrading a Home with Pets already stored on disk.
+
 ### Full flavor (Postgres)
 
 ```bash
@@ -348,6 +354,7 @@ docker run --rm -p 53288:53288 \
   -e S3_PORT='9000' \
   -e S3_USE_SSL='false' \
   -e S3_BUCKET='happier-public' \
+  -e S3_PRIVATE_BUCKET='happier-private' \
   -e S3_PUBLIC_URL='https://files.example.com/happier-public' \
   -e S3_ACCESS_KEY='...' \
   -e S3_SECRET_KEY='...' \
@@ -373,6 +380,7 @@ docker run --rm -p 53288:53288 \
   -e S3_PORT='9000' \
   -e S3_USE_SSL='false' \
   -e S3_BUCKET='happier-public' \
+  -e S3_PRIVATE_BUCKET='happier-private' \
   -e S3_PUBLIC_URL='https://files.example.com/happier-public' \
   -e S3_ACCESS_KEY='...' \
   -e S3_SECRET_KEY='...' \
@@ -486,6 +494,8 @@ services:
       S3_PORT: "9000"
       S3_USE_SSL: "false"
       S3_BUCKET: happier-public
+      # 0.3 development: provision this bucket with anonymous access disabled.
+      S3_PRIVATE_BUCKET: happier-private
       # For Minio behind a reverse proxy, set this to your public files URL.
       S3_PUBLIC_URL: https://files.example.com/happier-public
       S3_ACCESS_KEY: minioadmin
@@ -542,6 +552,8 @@ services:
       S3_PORT: "9000"
       S3_USE_SSL: "false"
       S3_BUCKET: happier-public
+      # 0.3 development: provision this bucket with anonymous access disabled.
+      S3_PRIVATE_BUCKET: happier-private
       S3_PUBLIC_URL: https://files.example.com/happier-public
       S3_ACCESS_KEY: minioadmin
       S3_SECRET_KEY: minioadmin

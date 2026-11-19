@@ -1,7 +1,7 @@
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import { db } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
-import { deletePrivateFile, writePrivateFile } from '@/storage/blob/files';
+import { assertPrivateStorageAvailable, deletePrivateFile, writePrivateFile } from '@/storage/blob/files';
 
 // Existing Artifact prefix bytes are retained: they already identify physical
 // UploadedFile custody independently of an Artifact's content/encryption mode.
@@ -86,6 +86,7 @@ export async function discardAccountPrivateFileCandidate(input: Readonly<{
 export async function writeAccountPrivateFileCandidate(input: Readonly<{
     accountId: string; path: string; writingReuseKey: string; rejectedReuseKey: string; bytes: Uint8Array;
 }>): Promise<void> {
+    assertPrivateStorageAvailable();
     const captured = await inTx(tx => captureAccountPrivateFileUploadInTx(tx, {
         accountId: input.accountId, path: input.path, reuseKey: input.writingReuseKey,
     }));

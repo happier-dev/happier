@@ -1,8 +1,9 @@
 import type { ClientOptions } from 'minio';
+import { PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1, type PrivateBinaryStorageUnavailableResponseV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
 
 import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, resolveLightPublicFilesDir, writeLightPublicFile } from '@/flavors/light/files';
 import { createLocalPrivateFilesBackendFromEnv, resolveLocalPrivateFilesDir } from '@/storage/privateFiles/privateFilesLocal';
-import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
+import { LEGACY_ACCOUNT_PET_PRIVATE_FILE_PREFIX, normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import type { PrivateFilesBackend } from '@/storage/privateFiles/privateFiles';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, sep } from 'node:path';
@@ -23,11 +24,22 @@ export type PublicFilesBackend = {
 }
 
 let backend: PublicFilesBackend | null = null;
-let privateBackend: PrivateFilesBackend | null = null;
+let initializePrivateBackend: (() => Promise<void>) | undefined;
+let legacyAccountPetFiles: PrivateFilesBackend | undefined;
 
 export class PrivateStorageUnavailableError extends Error {
-    readonly code = 'private_storage_unavailable';
-    constructor() { super('Private file storage is unavailable'); }
+    readonly code = PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1;
+    constructor(readonly reason: PrivateBinaryStorageUnavailableResponseV1['reason']) { super('Private file storage is unavailable'); }
+}
+
+type PrivateFileOperations = Omit<PrivateFilesBackend, 'init'>;
+let privateBackend: PrivateFileOperations | PrivateStorageUnavailableError = new PrivateStorageUnavailableError('backend_unavailable');
+
+function configurePrivateBackend(candidate: PrivateFileOperations, isAvailable: () => Promise<boolean>): void {
+    privateBackend = new PrivateStorageUnavailableError('backend_unavailable');
+    initializePrivateBackend = async () => {
+        privateBackend = await isAvailable() ? candidate : new PrivateStorageUnavailableError('backend_unavailable');
+    };
 }
 
 /** Reject public grants, including wildcard actions. Never change operator-owned bucket policy. */
@@ -88,37 +100,33 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
         },
         async deletePublicFile(path: string) { await s3client.removeObject(s3bucket, path); },
     };
-    privateBackend = null;
+    // Pre-backend-selection Pet locators always referred to private disk files.
+    legacyAccountPetFiles = createLocalPrivateFilesBackendFromEnv(env);
+    privateBackend = new PrivateStorageUnavailableError('s3_private_bucket_missing');
+    initializePrivateBackend = undefined;
     if (privateBucket) {
-        let available = false;
-        privateBackend = {
-            async init() {
-                available = false;
-                try {
-                    if (!await s3client.bucketExists(privateBucket)) return;
-                    const policy = await s3client.getBucketPolicy(privateBucket);
-                    available = !hasAnonymousGrant(policy);
-                } catch (error: unknown) {
-                    // MinIO/S3 reports the absence of any bucket policy explicitly.
-                    available = Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'NoSuchBucketPolicy');
-                }
-            },
+        configurePrivateBackend({
             async writePrivateFile(key, data) {
-                if (!available) throw new PrivateStorageUnavailableError();
                 await s3client.putObject(privateBucket, normalizePrivateFileKey(key), Buffer.from(data));
             },
             async readPrivateFile(key) {
-                if (!available) throw new PrivateStorageUnavailableError();
                 const stream = await s3client.getObject(privateBucket, normalizePrivateFileKey(key));
                 const chunks: Buffer[] = [];
                 for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
                 return new Uint8Array(Buffer.concat(chunks));
             },
             async deletePrivateFile(key) {
-                if (!available) throw new PrivateStorageUnavailableError();
                 await s3client.removeObject(privateBucket, normalizePrivateFileKey(key));
             },
-        };
+        }, async () => {
+            try {
+                if (!await s3client.bucketExists(privateBucket)) return false;
+                return !hasAnonymousGrant(await s3client.getBucketPolicy(privateBucket));
+            } catch (error: unknown) {
+                // MinIO/S3 reports the absence of any bucket policy explicitly.
+                return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'NoSuchBucketPolicy');
+            }
+        });
     }
 }
 
@@ -146,34 +154,19 @@ function resolveS3Credentials(
 
 export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): void {
     const localPrivate = createLocalPrivateFilesBackendFromEnv(env);
-    let available = false;
-    privateBackend = {
-        async init() {
-            available = false;
-            try {
-                await localPrivate.init();
-                const publicRoot = await realpath(resolveLightPublicFilesDir(env));
-                const privateRoot = await realpath(resolveLocalPrivateFilesDir(env));
-                const contains = (parent: string, child: string) => {
-                    const path = relative(parent, child);
-                    return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
-                };
-                available = !contains(publicRoot, privateRoot) && !contains(privateRoot, publicRoot);
-            } catch { available = false; }
-        },
-        async writePrivateFile(key, data) {
-            if (!available) throw new PrivateStorageUnavailableError();
-            await localPrivate.writePrivateFile(key, data);
-        },
-        async readPrivateFile(key) {
-            if (!available) throw new PrivateStorageUnavailableError();
-            return localPrivate.readPrivateFile(key);
-        },
-        async deletePrivateFile(key) {
-            if (!available || !localPrivate.deletePrivateFile) throw new PrivateStorageUnavailableError();
-            await localPrivate.deletePrivateFile(key);
-        },
-    };
+    legacyAccountPetFiles = undefined;
+    configurePrivateBackend(localPrivate, async () => {
+        try {
+            await localPrivate.init();
+            const publicRoot = await realpath(resolveLightPublicFilesDir(env));
+            const privateRoot = await realpath(resolveLocalPrivateFilesDir(env));
+            const contains = (parent: string, child: string) => {
+                const path = relative(parent, child);
+                return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
+            };
+            return !contains(publicRoot, privateRoot) && !contains(privateRoot, publicRoot);
+        } catch { return false; }
+    });
     backend = {
         async init() {
             await ensureLightFilesDir(env);
@@ -200,7 +193,7 @@ export async function loadFiles(): Promise<void> {
         throw new Error('Files backend not initialized');
     }
     await backend.init();
-    await privateBackend?.init();
+    await initializePrivateBackend?.();
 }
 
 export function getPublicUrl(path: string): string {
@@ -228,20 +221,44 @@ export async function deletePublicFile(path: string): Promise<void> {
     await backend.deletePublicFile(path);
 }
 
+function requirePrivateFilesBackend(): PrivateFileOperations {
+    if (privateBackend instanceof PrivateStorageUnavailableError) throw privateBackend;
+    return privateBackend;
+}
+
+export function assertPrivateStorageAvailable(): void {
+    requirePrivateFilesBackend();
+}
+
 export async function writePrivateFile(key: string, data: Uint8Array): Promise<void> {
-    if (!privateBackend) throw new PrivateStorageUnavailableError();
-    await privateBackend.writePrivateFile(key, data);
+    await requirePrivateFilesBackend().writePrivateFile(key, data);
 }
 
 export async function readPrivateFile(key: string): Promise<Uint8Array> {
-    if (!privateBackend) throw new PrivateStorageUnavailableError();
-    return await privateBackend.readPrivateFile(key);
+    return await requirePrivateFilesBackend().readPrivateFile(key);
 }
 
 export async function deletePrivateFile(key: string): Promise<void> {
-    if (!privateBackend?.deletePrivateFile) throw new PrivateStorageUnavailableError();
-    await privateBackend.deletePrivateFile(key);
+    await deleteFromPrivateBackend(requirePrivateFilesBackend(), key);
 }
+
+async function deleteFromPrivateBackend(files: PrivateFileOperations, key: string): Promise<void> {
+    if (!files.deletePrivateFile) throw new PrivateStorageUnavailableError('backend_unavailable');
+    await files.deletePrivateFile(key);
+}
+
+function accountPetBackendForExistingLocator(key: string): PrivateFileOperations {
+    return legacyAccountPetFiles && key.startsWith(LEGACY_ACCOUNT_PET_PRIVATE_FILE_PREFIX)
+        ? legacyAccountPetFiles : requirePrivateFilesBackend();
+}
+
+/** All new Pet writes follow the selected backend. Only historical locators route to disk on S3 Homes. */
+export const accountPetPrivateFiles = {
+    init: loadFiles,
+    writePrivateFile,
+    readPrivateFile: (key: string) => accountPetBackendForExistingLocator(key).readPrivateFile(key),
+    deletePrivateFile: (key: string) => deleteFromPrivateBackend(accountPetBackendForExistingLocator(key), key),
+} satisfies PrivateFilesBackend;
 
 function requiredEnv(env: NodeJS.ProcessEnv, key: string): string {
     const v = env[key]?.trim();

@@ -19,12 +19,12 @@ describe("accountPetLibraryRuntime", () => {
         expect(second).toBe(first);
     });
 
-    it("recreates default services when the private files root changes", async () => {
-        process.env.HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR = "/tmp/happier-private-files-one";
+    it("recreates default services when the Pet admission limits change", async () => {
+        process.env.HAPPIER_FEATURE_PETS_SYNC__MAX_MANIFEST_BYTES = "123";
         const { getDefaultAccountPetLibraryServices } = await import("./accountPetLibraryRuntime");
         const first = getDefaultAccountPetLibraryServices();
 
-        process.env.HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR = "/tmp/happier-private-files-two";
+        process.env.HAPPIER_FEATURE_PETS_SYNC__MAX_MANIFEST_BYTES = "456";
         const second = getDefaultAccountPetLibraryServices();
 
         expect(second).not.toBe(first);

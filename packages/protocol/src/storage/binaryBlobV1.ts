@@ -1,6 +1,13 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
+export const PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1 = 'private_storage_unavailable';
+export const PrivateBinaryStorageUnavailableResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  error: z.literal(PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1),
+  reason: z.enum(['s3_private_bucket_missing', 'backend_unavailable']),
+}));
+export type PrivateBinaryStorageUnavailableResponseV1 = z.infer<typeof PrivateBinaryStorageUnavailableResponseV1Schema>;
+
 /** Private binary identity; sensitive descriptors belong inside the resource content envelope. */
 export const BinaryBlobReferenceV1Schema = lazyZodSchema(() => z.strictObject({
   blobId: z.string().check(z.uuid()),
