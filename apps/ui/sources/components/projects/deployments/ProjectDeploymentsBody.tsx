@@ -246,9 +246,17 @@ const ProjectDeploymentsPage = React.memo(
     const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
     const routedDraft = newDefinition !== null || routeNewDefinition === DEPLOYMENT_NEW_REPOSITORY_DRAFT;
     const initialMachineId = routedDraft ? readProjectRouteStringParam(params.deployMachine) : null;
-    // An in-page draft is empty (null), a copy, or absent (undefined).
-    const [draftSource, setDraftSource] = React.useState<DeploymentEnvironmentDetailV1 | null>();
-    const drafting = routedDraft || draftSource !== undefined;
+    // An in-page draft belongs to the addressed selection from which it was opened.
+    const draftAddress = JSON.stringify([props.serverId, props.accountId, props.sourceId,
+      routeEnvironmentId, routeDeploymentId, routeDatabase, routeDefaults, destination.tab, destination.section]);
+    const [localDraft, setLocalDraft] = React.useState<Readonly<{
+      address: string;
+      source: DeploymentEnvironmentDetailV1 | null;
+    }>>();
+    const activeDraft = localDraft?.address === draftAddress ? localDraft : undefined;
+    if (localDraft !== activeDraft) setLocalDraft(undefined);
+    const draftSource = activeDraft?.source;
+    const drafting = routedDraft || activeDraft !== undefined;
     const selection = React.useMemo<Selection>(() => drafting && sourceAvailable ? DRAFTING : routeDefaults ? {
       environmentId: null, deploymentId: null, defaults: true,
     } : {
@@ -260,11 +268,7 @@ const ProjectDeploymentsPage = React.memo(
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {
       const current = selectionRef.current;
-      if (next.drafting) {
-        if (routedDraft) router.setParams({ newDefinition: undefined, deployMachine: undefined });
-        return;
-      }
-      setDraftSource(undefined);
+      setLocalDraft(undefined);
       const sameEnvironment = next.environmentId === current.environmentId;
       router.setParams({
         newDefinition: undefined,
@@ -276,7 +280,7 @@ const ProjectDeploymentsPage = React.memo(
         // Another Environment opens on its Overview.
         ...(sameEnvironment ? {} : { deploymentTab: undefined, deploymentSection: undefined }),
       });
-    }, [routedDraft, router]);
+    }, [router]);
     const navigateEnvironment = React.useCallback((next: DeploymentEnvironmentDestinationV1) => {
       router.setParams({
         deploymentTab: next.tab === 'overview' ? undefined : next.tab,
@@ -374,10 +378,10 @@ const ProjectDeploymentsPage = React.memo(
         if (approvalId) router.pushRetainingCurrent(buildApprovalHref(approvalId, props.serverId));
       },
     }), [approval.approvalPending, approval.requestApproval, approvalId, props.serverId, router, openRecoveryDestination]);
-    const startDraft = React.useCallback(() => {
-      setDraftSource(null);
-      setSelection(DRAFTING);
-    }, [setSelection]);
+    const startDraft = React.useCallback((source: DeploymentEnvironmentDetailV1 | null) => {
+      setLocalDraft({ address: draftAddress, source });
+      if (routedDraft) router.setParams({ newDefinition: undefined, deployMachine: undefined });
+    }, [draftAddress, routedDraft, router]);
     const openDefaults = React.useCallback(() => setSelection({ ...NOTHING_SELECTED, defaults: true }), [setSelection]);
     // Delete environment, Link and Unlink target run through one owner hook in the detail; the page holds their Actions.
     const deleteEnvironment = props.actions?.deleteEnvironment;
@@ -576,10 +580,7 @@ const ProjectDeploymentsPage = React.memo(
           readLogs={props.actions?.readLogs ?? null}
           domainActions={props.actions ?? null}
           environmentActions={props.actions ?? null}
-          onDuplicate={canCreate ? source => {
-            setDraftSource(source);
-            setSelection(DRAFTING);
-          } : undefined}
+          onDuplicate={canCreate ? startDraft : undefined}
           platformLink={platformLink}
           onDeleted={leaveDeleted}
           destination={destination}
@@ -655,7 +656,7 @@ const ProjectDeploymentsPage = React.memo(
                 stale={stale}
                 drafting={selection.drafting === true}
                 lifetime={props.lifetime}
-                onAdd={canCreate ? startDraft : null}
+                onAdd={canCreate ? () => startDraft(null) : null}
                 onSettings={openDefaults}
                 paging={{ hasPrevious: collection.hasPreviousPage, hasNext: collection.hasNextPage,
                   previous: collection.previousPage, next: collection.nextPage }}

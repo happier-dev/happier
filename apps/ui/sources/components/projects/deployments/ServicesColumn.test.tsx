@@ -6,7 +6,7 @@ import {
   type DeploymentReadControllerV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
 import {
   act,
@@ -14,6 +14,8 @@ import {
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -24,6 +26,11 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
+// Test Renderer keeps the real menu and substitutes its browser portal and focus boundaries.
+vi.mock('@/utils/web/reactDomCjs', async () =>
+  (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
+vi.mock('@/utils/web/radixCjs', async () =>
+  (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
   return createExpoRouterMock();
@@ -31,6 +38,8 @@ const routerMock = await vi.hoisted(async () => {
 vi.mock('expo-router', () => routerMock.module);
 afterEach(standardCleanup);
 
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 const { ServicesColumnView, readServicesColumnSelection } =
   await import('./ServicesColumn');
 type ServicesColumnGrouping = import('./ServicesColumn').ServicesColumnGrouping;
@@ -64,6 +73,7 @@ function controllerFor(
   items: DeploymentEnvironmentCollectionV1['items'],
   nextCursor: string | null = null,
   pages: Pick<DeploymentReadTransportV1, 'listDataServicePage' | 'listDomainPage'> = {},
+  scope = { serverId: 'home', accountId: 'account-owner' },
 ) {
   const unavailable = async () => ({
     ok: false as const,
@@ -80,7 +90,7 @@ function controllerFor(
     ...pages,
   };
   return createDeploymentReadControllerV1({
-    scope: { serverId: 'home', accountId: 'account-owner' },
+    scope,
     transport,
   });
 }
@@ -102,7 +112,7 @@ function Column(
   return (
     <ServicesColumnView
       read={read}
-      serverId="home"
+      serverId={props.controller.scope.serverId}
       lifetime={null}
       selection={props.selection}
       selectedServerId={props.selectedServerId}
@@ -217,35 +227,105 @@ describe('Services column', () => {
     controller.retire();
   });
 
-  it('opens the Project the open Environment belongs to, selects that Environment, and navigates rows to the one Environment route', async () => {
-    const controller = controllerFor(ITEMS);
-    const { screen, onNavigate } = await render(controller, {
-      kind: 'environment',
-      projectSourceId: 'source-shop',
-      environmentId: 'env-shop-production',
+  it('opens the addressed Environment from Services when a retained Project is duplicating another Environment', async () => {
+    const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
+    const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+    const { resolveCompactAppDestinations, resolveDestinationRefFromHref } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const { ModalProvider } = await import('@/modal');
+    const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+    const previous = storage.getState();
+    const serverId = await homes.addHome({ name: 'Services', serverUrl: 'https://services-column.test', accountId: 'alice', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    homes.answer(serverId, 'GET /v1/projects/sources/source-shop', { body: { ok: true, canManage: true,
+      source: { id: 'source-shop', revision: 1, name: 'Storefront', owner: { kind: 'account', accountId: 'alice' }, audience: [], createdByAccountId: 'alice' } } });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready',
+      features: FeaturesResponseSchema.parse({ features: { deployments: { enabled: true } }, capabilities: {} }) } });
+    storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, deployments: true } });
+
+    const homeItems = ITEMS.map(item => ({ ...item, environment: { ...item.environment, serverId } }));
+    const column = controllerFor(homeItems, null, {}, account.accountLifetime.scope);
+    const projectItems = homeItems.filter(item => item.environment.projectSourceId === 'source-shop');
+    const controller = createDeploymentReadControllerV1({
+      scope: { ...account.accountLifetime.scope, projectSourceId: 'source-shop' },
+      transport: {
+        listEnvironments: async () => ({ ok: true, value: { items: projectItems, nextCursor: null } }),
+        readEnvironment: async (_scope, environmentId) => {
+          const item = projectItems.find(candidate => candidate.environment.id === environmentId)!;
+          const fixture = createDeploymentEnvironmentDetailV1();
+          return { ok: true, value: { ...fixture, environment: item.environment,
+            content: { ...fixture.content, name: item.title }, targetLinks: [] } };
+        },
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'deployment_unavailable', retryable: true } }),
+      },
     });
-    expect(rowIds(screen)).toEqual([
-      'services-column:all',
-      'services-column:project:source-shop',
-      'services-column:environment:env-shop-staging',
-      'services-column:environment:env-shop-production',
-      'services-column:environment:env-api',
-      'services-column:project:unnamed',
-    ]);
-    expect(
-      selectedOf(screen, 'services-column:environment:env-shop-production'),
-    ).toBe(true);
-    await screen.pressByTestIdAsync(
-      'services-column:environment:env-shop-staging',
-    );
-    expect(onNavigate).toHaveBeenCalledWith(
-      '/deployments/source-shop?serverId=home&deploymentEnvironment=env-shop-staging',
-    );
-    await screen.pressByTestIdAsync('services-column:project:source-shop');
-    expect(onNavigate).toHaveBeenLastCalledWith(
-      '/deployments/source-shop?serverId=home',
-    );
-    controller.retire();
+    const pathname = '/deployments/source-shop';
+    const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+      externalSessions: false, inbox: false, workflows: false, friends: false,
+    } });
+    const project = <ProjectDeploymentsView controller={controller} demand={shown} lifetime={account.accountLifetime}
+      serverId={serverId} accountId="alice" sourceId="source-shop" actions={createDeploymentActions(account.accountLifetime, 'source-shop')} />;
+    const onNavigate = vi.fn();
+    function RetainedProject() {
+      const [href, setHref] = React.useState(`${pathname}?serverId=${serverId}&deploymentEnvironment=env-shop-production`);
+      const ref = resolveDestinationRefFromHref(catalog, href);
+      if (!ref) throw new Error(`Missing Environment destination for ${href}`);
+      return <ModalProvider>
+        <Column controller={column} selection={readServicesColumnSelection(pathname, ref.params.deploymentEnvironment ?? null)}
+          onNavigate={next => { onNavigate(next); setHref(next); }} />
+        <DestinationInstanceContext.Provider value={{ tabId: 'project-tab', pathname, ref, focused: true, visible: true,
+          isFocused: () => true, navigation: routerMock.module.router }}>
+          {project}
+        </DestinationInstanceContext.Provider>
+      </ModalProvider>;
+    }
+    const screen = await renderAccountScreen(<RetainedProject />);
+    const waitFor = (id: string) => waitForTestEvent(screen.subscribe, () => screen.findByTestId(id), node => node !== null);
+    const openedEnvironment = () => screen.findAllByType(PageHeader)
+      .find(node => node.props.testID === 'project-deployments.environment.header')?.props.title;
+    // The real menu registers layout listeners on the browser window.
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    try {
+      await waitFor('services-column:project:unnamed');
+      expect(rowIds(screen)).toEqual([
+        'services-column:all',
+        'services-column:project:source-shop',
+        'services-column:environment:env-shop-staging',
+        'services-column:environment:env-shop-production',
+        'services-column:environment:env-api',
+        'services-column:project:unnamed',
+      ]);
+      expect(selectedOf(screen, 'services-column:environment:env-shop-production')).toBe(true);
+      await waitFor('project-deployments.rail.add');
+      await waitFor('project-deployments.environment.menu');
+      expect(openedEnvironment()).toBe('Production');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitFor('project-deployments.environment.menu.duplicate');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.duplicate');
+      await waitFor('project-deployments.draft');
+      await screen.pressByTestIdAsync('services-column:environment:env-shop-staging');
+      expect(onNavigate).toHaveBeenCalledWith(`${pathname}?serverId=${serverId}&deploymentEnvironment=env-shop-staging`);
+      expect(screen.findByTestId('project-deployments.draft')).toBeNull();
+      await waitForTestEvent(screen.subscribe, () => expect(openedEnvironment()).toBe('Staging'));
+      await screen.pressByTestIdAsync('services-column:environment:env-shop-production');
+      await waitForTestEvent(screen.subscribe, () => expect(openedEnvironment()).toBe('Production'));
+      expect(screen.findByTestId('project-deployments.draft')).toBeNull();
+      await screen.pressByTestIdAsync('services-column:project:source-shop');
+      expect(onNavigate).toHaveBeenLastCalledWith(`${pathname}?serverId=${serverId}`);
+    } finally {
+      await screen.unmount();
+      controller.retire();
+      column.retire();
+      account.dispose();
+      await homes.reset();
+      storage.setState(previous);
+      vi.unstubAllGlobals();
+    }
   });
 
   it('counts the Account’s Environments only when the whole list is in one page', async () => {
