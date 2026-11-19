@@ -564,16 +564,19 @@ export function createTriageRouteWriteQueueV1(
       void drain();
     },
     adoptHostLocation(subPath) {
-      // The host publishes in the order it was asked, so an echo answers the OLDEST matching request: A, B, A
-      // asked and A published is the first A, and B's echo is still to come.
+      // The host can publish where it ends up rather than each step. Once every request is answered, the newest
+      // one's echo answers the earlier ones too and the list empties (QB-82).
+      if (activeWrite === null && pending === null && issued.at(-1) === subPath) {
+        hostAt = subPath;
+        issued = [];
+        return false;
+      }
+      // An older request's late echo: a newer one has already moved the host on, so it does not say where the host
+      // is. The host publishes in the order it was asked, so it answers the oldest matching request.
       const echo = issued.indexOf(subPath);
       if (echo !== -1) {
-        // This queue's own write: stale while a newer one was issued or is still waiting to be. A newer issued
-        // request has already moved the host on, so a stale echo does not say where the host is (QB-82).
-        const newerIssued = echo < issued.length - 1;
-        if (!newerIssued) hostAt = subPath;
         issued = issued.slice(echo);
-        return newerIssued || (pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath);
+        return true;
       }
       hostAt = subPath;
       issued = [];

@@ -177,6 +177,20 @@ describe('PRs & Issues route owner', () => {
     queue.dispose();
   });
 
+  it('follows Back to an earlier view once the host has answered the newest choice (QB-82)', async () => {
+    // Live READY240: the host publishes only where it ends up, so PRs & Issues, Tasks, PRs & Issues pressed quickly
+    // echo once. The newest echo answers every earlier choice; a later Back to Tasks is the reader's own move.
+    const tasks = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'mine' } });
+    const queue = createTriageRouteWriteQueueV1(hostApiWith({ methods: ['replacePageLocation'] }), 'tasks,mine');
+    for (const choice of [lens(), tasks, lens()]) {
+      queue.write(choice);
+      await queue.whenSettled();
+    }
+    expect(queue.adoptHostLocation('')).toBe(false);
+    expect(queue.adoptHostLocation('tasks,mine')).toBe(false);
+    queue.dispose();
+  });
+
   it('settles retired route requests without allowing a saved-view continuation to write', async () => {
     let finish!: (value: { subPath: string }) => void;
     const hostWrite = new Promise<{ subPath: string }>((resolve) => { finish = resolve; });
