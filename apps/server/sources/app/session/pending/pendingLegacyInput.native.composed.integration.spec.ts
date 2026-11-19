@@ -6,6 +6,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 
 import { db } from '@/storage/db';
+import { decodeStoredSessionMessage } from '@/storage/sessionMessageContent';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { sessionUpdateHandler } from '@/app/api/socket/sessionUpdateHandler';
@@ -91,7 +92,8 @@ it.each(['plain', 'e2ee'] as const)('commits %s legacy user text before native p
     const provider: AgentSessionRuntime = {
         async send() {
             providerCalls++;
-            committedBeforeSend = await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: storedSession.id, localId } } });
+            committedBeforeSend = decodeStoredSessionMessage(await db.sessionMessage.findUnique({ where: {
+                sessionId_localId: { sessionId: storedSession.id, localId } } }));
             return { status: 'rejected', diagnostic: { code: 'provider_configuration_unavailable', severity: 'error' }, retryable: true };
         },
         watch() { return { dispose() {} }; }, dispose() {},
@@ -124,7 +126,8 @@ it.each(['plain', 'e2ee'] as const)('commits %s legacy user text before native p
                 sessionId_localId: { sessionId: storedSession.id, localId } } })).toMatchObject({
                 content, status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'provider_unavailable_before_acceptance' }));
             expect(providerCalls).toBe(1);
-            expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: storedSession.id, localId } } }))
+            expect(decodeStoredSessionMessage(await db.sessionMessage.findUnique({ where: {
+                sessionId_localId: { sessionId: storedSession.id, localId } } })))
                 .toMatchObject({ content, deliveryResolution: null, acceptedTurnId: null });
             expect(await db.sessionMessage.count({ where: { sessionId: storedSession.id } })).toBe(1);
             const restored = await app.inject({ method: 'PATCH',
