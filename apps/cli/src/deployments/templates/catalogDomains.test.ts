@@ -59,7 +59,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 // Persistence/Artifact and native transport are the boundaries. Catalog admission,
 // reviewed-child issuance, template apply and Domain placement/settlement stay real.
-it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'optionalOnly', 'firstInstall', 'deployRetry', 'deployRollback', 'newProject', 'noProbe'] as const)('spends one Catalog create review on the real Domain owner: %s', async outcome => {
+it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'optionalOnly', 'firstInstall', 'deployRetry', 'deployRollback', 'newProject', 'noProbe', 'invalidAddress'] as const)('uses the real Domain owner for the Catalog create review: %s', async outcome => {
     const nativeRemedy = 'Caddy refused the route configuration. Check the Caddy admin service and retry adding the Domain.';
     const nativeFailureCause = { phase: 'deployment.domain.native_execution', errorClass: 'Error', errorCode: null, httpStatus: 503 };
     const state = outcome === 'active' || outcome === 'warning' ? outcome : outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'newProject' || outcome === 'noProbe' || outcome === 'optionalOnly' ? 'active' : 'failed';
@@ -395,7 +395,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         }
         expect(writes).toEqual([]); expect(contents.size).toBe(0);
         // Store's first install and retained retry share the instantiate Action root.
-        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'deployRollback' || outcome === 'optionalOnly' || outcome === 'nativeFailure';
+        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'deployRollback' || outcome === 'optionalOnly' || outcome === 'nativeFailure' || outcome === 'invalidAddress';
         const rootAction = templateRoot ? 'deployments.templates.instantiate' as const : 'deployments.environments.create' as const;
         let rootInput = templateRoot ? DeploymentTemplateInstantiateInputV1Schema.parse({
             mode: 'apply', serverId: input.serverId, machineId: 'target', projectSourceId: input.projectSourceId, templateRef,
@@ -404,6 +404,22 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             target: { kind: 'new', installationId: identity.installationId }, destination: { kind: 'stored' }, bindings: [],
             domainBindings: input.domainBindings,
         }) : input;
+        if (outcome === 'invalidAddress') {
+            const domainBindings = [{ templateDomainId: 'web', hostname: 'not a host' }];
+            const refusal = { ok: false, errorCode: 'template_domain_invalid',
+                details: { key: 'web', field: 'hostname', reason: 'invalid_hostname' } };
+            expect.soft(await templates.prepareCreate({ ...input, domainBindings }, { runtimeAccountId: accountId }))
+                .toMatchObject(refusal);
+            for (const surface of ['cli', 'agent'] as const) {
+                const preview = await executor.execute('deployments.templates.instantiate', { ...rootInput, domainBindings, mode: 'preview' }, {
+                    surface, authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
+                    serverId: input.serverId, actionRequestId: `catalog-invalid-${surface}`, executionRunTargetMachineId: 'target',
+                });
+                expect.soft(preview, surface).toMatchObject(refusal);
+            }
+            expect(writes).toEqual([]);
+            return;
+        }
         if (templateRoot) {
             const preview = await executor.execute('deployments.templates.instantiate', { ...rootInput, mode: 'preview' }, {
                 surface: 'agent', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,

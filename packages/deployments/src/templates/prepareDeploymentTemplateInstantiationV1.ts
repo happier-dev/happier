@@ -3,6 +3,8 @@ import type { StoredAppPresetInputV1, DeploymentEnvironmentContentV1, Environmen
 import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol';
 import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
 import { buildCatalogAppTemplateBindings } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { readDeploymentDomainHostnameV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 type TemplateRef = Extract<StoredAppPresetInputV1['definition'], { from: 'catalogApp' }>['templateRef'];
 export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
@@ -32,8 +34,10 @@ export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     template: Omit<NonNullable<DeploymentEnvironmentContentV1['template']>, 'definition'>;
 }> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'>;
 export class DeploymentTemplatePreparationErrorV1 extends Error {
-    constructor(readonly code: string, readonly details?: Readonly<{ key: string; dependency?: string }>) {
-        super(details ? `${code}: ${JSON.stringify(details.key)}` : code);
+    constructor(readonly code: string, readonly details?: Readonly<{ key: string; dependency?: string }
+        | { key: string; field: 'hostname'; reason: 'invalid_hostname' }>) {
+        const remedy = code === 'template_domain_invalid' ? readDeploymentRefusalRecoveryV1(code, details)?.remedy : undefined;
+        super(remedy ?? (details ? `${code}: ${JSON.stringify(details.key)}` : code));
         Object.assign(this, createActionExecuteFailureError({ ok: false, errorCode: code, error: this.message,
             ...(details ? { details } : {}) }));
     }
@@ -214,12 +218,12 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         if (!selected) return domain.required ? refuse('template_domain_required', { key: domain.key }) : [];
         // The existing own-server Domain route and probe contract is HTTP only.
         if (domain.protocol === 'tcp') return refuse('template_needs_review');
-        // Literal DNS labels only: IDNs arrive as punycode, never URL syntax or Caddy placeholders.
-        if (/[^a-z0-9.-]/.test(selected.hostname)
-            || selected.hostname.split('.').some(label => !label || label.startsWith('-') || label.endsWith('-'))) {
-            return refuse('template_needs_review');
+        // The receiver takes the canonical address; the form uses the same owner to normalize typed text.
+        const hostname = readDeploymentDomainHostnameV1(selected.hostname);
+        if (hostname === null || hostname !== selected.hostname) {
+            return refuse('template_domain_invalid', { key: domain.key, field: 'hostname', reason: 'invalid_hostname' });
         }
-        return [{ ...domain, hostname: selected.hostname }];
+        return [{ ...domain, hostname }];
     });
     const variables = new Map(template.variables.map(variable => [variable.key, variable]));
     const generatedDefaults = new Map(buildCatalogAppTemplateBindings(template).bindings.map(binding => [binding.name, binding]));

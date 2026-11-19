@@ -379,13 +379,14 @@ describe('stored template preparation', () => {
             .toEqual({ kind: 'value', value: `https://${hostname}/console` });
     });
 
-    it.each(['x{env.X}.com', 'x{env.x}.com', 'x\".com', "x'.com", 'x`.com', 'x$.com', 'x_.com', '-x.com', 'x-.com', 'x..com', 'bücher.example', 'x.com\n'])('refuses non-DNS template hostname %s with the existing typed reason', hostname => {
+    it.each(['not a host', 'x{env.X}.com', 'x{env.x}.com', 'x\".com', "x'.com", 'x`.com', 'x$.com', 'x_.com', '-x.com', 'x-.com', 'x..com', 'bücher.example', 'x.com\n'])('refuses non-DNS template hostname %s with the affected address field and reason', hostname => {
         const withDomain = DeploymentTemplateV1Schema.parse({ ...template,
             domains: [{ key: 'console', service: 'db', containerPort: 8080, protocol: 'https', required: true, path: '/console',
                 healthCheck: { path: '/ready', expectStatus: 204 } }] });
         expect(() => prepareDeploymentTemplateInstantiationV1({ template: withDomain, templateRef, source,
             bindings: [binding], domainBindings: [{ templateDomainId: 'console', hostname }] }))
-            .toThrowError(expect.objectContaining({ code: 'template_needs_review' }));
+            .toThrowError(expect.objectContaining({ code: 'template_domain_invalid',
+                details: { key: 'console', field: 'hostname', reason: 'invalid_hostname' } }));
     });
 
     it.each([false, true])('refuses undeclared Domain bindings, including mixed selections: %s', includeKnown => {

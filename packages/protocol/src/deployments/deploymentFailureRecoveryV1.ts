@@ -79,6 +79,7 @@ const recoveries = {
     required_fact_unavailable: recovery("Happier could not confirm the deployment's current state. Open its history to check what ran before trying again.", 'history', 'Review deployment history'),
     template_domain_route_required: recovery('This app needs a route for its address. Choose how to reach it, or leave the address out if the template makes it optional.', 'domains', 'Choose address'),
     template_domain_required: recovery('This template requires an address. Choose one in the app setup before installing.', 'domains', 'Set required address'),
+    template_domain_invalid: recovery('Enter a valid hostname in Address, such as app.example.com.', 'domains', 'Correct address'),
     template_domain_unknown: recovery('A supplied address is not declared by this template. Remove it or reload the template setup.', 'domains', 'Review addresses'),
     unsupported_domain: recovery('This template describes an address that Happier cannot set up. Review its address settings or choose another template.', 'domains', 'Review address'),
     native_route_unavailable: recovery('The address could not be connected to the app. Check its service, port, and serving machines, then verify the address again.', 'domains', 'Check route'),
