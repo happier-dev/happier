@@ -470,7 +470,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
             profile: null,
             labelsByKey: {},
             projection,
-        })[0]?.label).toBe('agentInput.agent.pi');
+        })[0]?.label).toBe('Pi');
     });
 
     it('returns the codex user home and per-profile connected-service sources when codex profiles exist', async () => {
