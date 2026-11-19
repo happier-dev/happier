@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type DeploymentTargetLinkOperationQuery, type TerminalActionOperationQuery } from './actionOperationSelectors';
-import { actionOperationStore, isActionOperationTerminal } from './actionOperationStore';
+import { actionOperationStore, isActionOperationTerminal, type ActionOperationReadOwner } from './actionOperationStore';
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
 import type { ServerAccountScopeLifetime } from '../scope/serverAccountScope';
 import type { ActionOperationProjectSourceQuery } from './qualifiedActionOperation';
@@ -47,6 +47,11 @@ export type AcceptedActionOperationRead = Readonly<{
     /** Follow this admitted invocation before its first operation snapshot arrives. */
     requestId?: string;
 }>;
+
+/** A definitive owner absence can precede the first snapshot of an admitted operation. */
+export function useActionOperationUnavailable(address: ActionOperationAddress | null, owner: ActionOperationReadOwner | undefined): boolean {
+    return useActionOperationSelector(() => address !== null && owner !== undefined && actionOperationStore.isOperationUnavailable(address, owner));
+}
 
 export function useActionOperation(address: ActionOperationAddress | null, acceptedRead?: AcceptedActionOperationRead) {
     const operation = useActionOperationSelector(() => (

@@ -602,6 +602,28 @@ describe('action operation store', () => {
         expect(projected.snapshot.state).toBe('running');
     });
 
+    it('keeps a definitive missing read until the operation is confirmed or advances', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const canonical = operation({ revision: 2, state: 'running', startedAt: 110 });
+        const address = operationAddress(canonical.operationId);
+        merge(store, [canonical]);
+        store.markOperationUnavailable({ ...address, ...canonical.scope, actionId: canonical.actionId, expectedRevision: 2 });
+        merge(store, [{ ...canonical, revision: 1 }]);
+        expect(selectors.selectById(store.getSnapshot(), address)).toMatchObject({
+            snapshot: canonical, isUnavailableProjection: true,
+        });
+        store.mergeSnapshots({ serverId: address.serverId, snapshots: [canonical], snapshotComplete: true });
+        expect(selectors.selectById(store.getSnapshot(), address)).toMatchObject({
+            snapshot: canonical, isUnavailableProjection: false,
+        });
+        store.markOperationUnavailable({ ...address, ...canonical.scope, actionId: canonical.actionId, expectedRevision: 2 });
+        merge(store, [{ ...canonical, revision: 3 }]);
+        expect(selectors.selectById(store.getSnapshot(), address)).toMatchObject({
+            snapshot: { revision: 3 }, isUnavailableProjection: false,
+        });
+    });
+
     it('dismisses only an unavailable nonterminal projection while retaining daemon truth', () => {
         const store = createActionOperationStore();
         const selectors = createActionOperationSelectors();

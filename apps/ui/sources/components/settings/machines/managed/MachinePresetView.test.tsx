@@ -534,6 +534,7 @@ describe('reachable preset detail', () => {
       expect(hook.getCurrent().reportedStatus).toBe('building');
       expect(hook.getCurrent().estimates).toBeNull();
       expect(hook.getCurrent().readySummary).toBeNull();
+      expect(hook.getCurrent().interrupted).toBe(true);
       expect(hook.getCurrent().operation).toBeNull();
       expect(hook.getCurrent().canCancel).toBe(false);
       expect(onChanged).not.toHaveBeenCalled();
@@ -553,6 +554,7 @@ describe('reachable preset detail', () => {
       await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
         snapshots: [{ ...snapshot, revision: 2, progress: { kind: 'indeterminate', steps: snapshot.progress.steps } }] }));
       expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
+      expect(hook.getCurrent().interrupted).toBe(false);
       expect(hook.getCurrent().canCancel).toBe(true);
       await hook.rerender();
       expect(onChanged).not.toHaveBeenCalled();
@@ -560,6 +562,7 @@ describe('reachable preset detail', () => {
         snapshots: [{ ...snapshot, revision: 3, state: 'succeeded', settledAt: 3 }] }));
       expect(onChanged).toHaveBeenCalledTimes(1);
       expect(hook.getCurrent().canCancel).toBe(false);
+      expect(hook.getCurrent().interrupted).toBe(true);
       await hook.rerender();
       expect(onChanged).toHaveBeenCalledTimes(1);
       expect(hook.getCurrent().reportedStatus).toBe('building');
@@ -586,8 +589,10 @@ describe('reachable preset detail', () => {
         { id: 'build-image', label: 'Build prepared image', state: 'running' as const },
         { id: 'save-image', label: 'Save prepared image', state: 'pending' as const },
       ] } };
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+    const ownerAnswer = createDeferred<unknown>();
     boundary.rpc.mockImplementation(async request => request.method === ACTION_OPERATION_RPC_METHODS_V2.get
-      ? { kind: 'found', operation: snapshot } : { kind: 'unsupported' });
+      ? ownerAnswer.promise : { kind: 'unsupported' });
     const opened = { ...createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened,
       prepared: { operationId: snapshot.operationId, status: 'building' as const,
         binding: { cliIdentity: 'supplier-identity', machineId: snapshot.scope.machineId, credentialConfigurations: [], configuration: {
@@ -600,7 +605,11 @@ describe('reachable preset detail', () => {
         [expect.objectContaining({ serverId: scopeId, accountId: 'owner', machineId: snapshot.scope.machineId,
           method: ACTION_OPERATION_RPC_METHODS_V2.get, payload: { operationId: snapshot.operationId, waitForTerminal: true } })],
       ])));
-      expect(hook.getCurrent().operation?.snapshot.state).toBe('running');
+      expect(hook.getCurrent().interrupted).toBe(false);
+      expect(hook.getCurrent().awaitingOperation).toBe(true);
+      expect(hook.getCurrent().canCancel).toBe(false);
+      await act(async () => ownerAnswer.resolve({ kind: 'found', operation: snapshot }));
+      await waitForHomeGovernance(() => expect(hook.getCurrent().operation?.snapshot.state).toBe('running'));
       expect(hook.getCurrent().interrupted).toBe(false);
       expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
     } finally { await hook.unmount(); }
@@ -769,7 +778,7 @@ describe('reachable preset detail', () => {
       await act(async () => publishHomeAccountChange(scopeId, [preset.id], { source: 'socket', changeKinds: ['account'] }));
       await waitForHomeGovernance(() => {
         expect(screen.getTextContent()).toContain(t(status === 'failed'
-          ? 'inbox.actionOperations.status.failed' : 'inbox.actionOperations.status.cancelled'));
+          ? 'inbox.actionOperations.status.failed' : 'machinePresets.prepareNotBuilt'));
         expect(screen.findByTestId('machine-preset.preparation.retry')).not.toBeNull();
       });
       expect(inputs).toHaveLength(1);

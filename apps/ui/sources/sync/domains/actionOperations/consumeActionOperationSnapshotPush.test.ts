@@ -4,6 +4,7 @@ import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from 
 import { getActionOperation, type ActionOperationRpc } from '@/sync/ops/actionOperations';
 
 import { createActionOperationStore } from './actionOperationStore';
+import { actionOperationSelectors } from './actionOperationSelectors';
 import { consumeActionOperationSnapshotPush } from './consumeActionOperationSnapshotPush';
 
 const snapshot: ActionOperationSnapshotV1 = {
@@ -29,6 +30,23 @@ const readSnapshot = (operationId: string) => getActionOperation({
 });
 
 describe('consumeActionOperationSnapshotPush', () => {
+    it.each(['running', 'succeeded'] as const)('retains historical state and scopes a definitive missing read to its live operation (%s)', async state => {
+        const store = createActionOperationStore();
+        const other = { ...snapshot, operationId: 'other-operation' };
+        const reported = state === 'running' ? snapshot : { ...snapshot, state, settledAt: 3 };
+        store.mergeSnapshots({ serverId: 'home-1', snapshots: [reported, other] });
+        const missing = (async () => ({ kind: 'not_found' })) as ActionOperationRpc;
+        await consumeActionOperationSnapshotPush({
+            update: { type: 'action-operation-updated', machineId: 'machine-1', content: { t: 'plain', v: reported } },
+            accountEncryptionMode: 'plain', accountId: 'account-1', sourceServerId: 'home-1', store,
+            readSnapshot: operationId => getActionOperation({ machineId: 'machine-1', serverId: 'home-1',
+                accountId: 'account-1', requireCurrentDomainFacts: true, operationId, rpc: missing }),
+        });
+        expect(actionOperationSelectors.selectById(store.getSnapshot(), { serverId: 'home-1', operationId: snapshot.operationId }))
+            .toMatchObject({ snapshot: reported, isUnavailableProjection: state === 'running' });
+        expect(actionOperationSelectors.selectById(store.getSnapshot(), { serverId: 'home-1', operationId: other.operationId }))
+            .toMatchObject({ snapshot: other, observation: 'available', isUnavailableProjection: false });
+    });
     it.each(['plain', 'e2ee'] as const)('retains the admitted pre-dispatch reboot basis when the target disappears (%s)', async mode => {
         const store = createActionOperationStore();
         const reboot = ActionOperationSnapshotV1Schema.parse({ ...snapshot, actionId: 'machines.reboot',

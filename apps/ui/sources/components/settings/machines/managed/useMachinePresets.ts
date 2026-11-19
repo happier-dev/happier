@@ -32,7 +32,7 @@ import { refreshManagedProvisionerAvailability } from './managedProvisionerAvail
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { useActionOperation, useActionOperationUnavailable } from '@/sync/domains/actionOperations/useActionOperations';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 import { canRequestActionOperationStop } from '@/components/inbox/actionOperations/actionOperationPresentation';
@@ -111,11 +111,19 @@ export function useMachinePresetPreparation(input: Readonly<{
     // finite owner from the private prepared binding instead of guessing that
     // a building row is interrupted while its Action is still running.
     const operationMachineId = currentAccepted?.machineId ?? prepared?.binding.machineId ?? null;
-    const observed = useActionOperation({ serverId: binding?.isCurrent() ? binding.scope.serverId : null, operationId },
-        operationMachineId && binding ? { machineId: operationMachineId,
-            actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, lifetime: binding } : undefined);
+    const address = binding?.isCurrent() && operationId ? { serverId: binding.scope.serverId, operationId } : null;
+    const owner = address && binding && operationMachineId ? { machineId: operationMachineId,
+        accountId: binding.scope.accountId, actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1 } : undefined;
+    const observed = useActionOperation(address, owner ? { ...owner, lifetime: binding } : undefined);
     const operation = binding?.isCurrent() && observed?.snapshot.scope.accountId === binding.scope.accountId
+        && (!operationMachineId || operationMachineId === observed.snapshot.scope.machineId)
         && observed.snapshot.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 ? observed : null;
+    const ownerUnavailable = useActionOperationUnavailable(address, owner);
+    const operationUnavailable = operation?.isUnavailableProjection === true || ownerUnavailable;
+    const preparing = prepared?.status === 'building' || currentAccepted !== null;
+    const awaitingOperation = preparing && owner !== undefined && operation === null && !operationUnavailable;
+    const interrupted = preparing && (operationUnavailable || operation === null && !awaitingOperation
+        || prepared?.status === 'building' && operation !== null && isActionOperationTerminal(operation.snapshot.state));
     const previous = React.useRef({ scopeKey, operationId, state: operation?.snapshot.state });
     React.useEffect(() => {
         const state = operation?.snapshot.state;
@@ -124,7 +132,7 @@ export function useMachinePresetPreparation(input: Readonly<{
         previous.current = { scopeKey, operationId, state };
     }, [scopeKey, operationId, operation?.snapshot.state]);
     const stopControl = useActionOperationStopControl(operation);
-    const canCancel = operation !== null && canRequestActionOperationStop(operation.snapshot, operation.observation);
+    const canCancel = !operationUnavailable && operation !== null && canRequestActionOperationStop(operation.snapshot, operation.observation);
     const openOperation = React.useCallback(() => {
         if (operation) openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId });
     }, [operation]);
@@ -139,7 +147,7 @@ export function useMachinePresetPreparation(input: Readonly<{
     return { prepared, estimates, steps, readySummary, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
         pending: pendingScope === scopeKey && !approval.approvalPending,
         error: failure?.scopeKey === scopeKey ? failure.code : null,
-        approval, operation, openOperation, canCancel, stopControl };
+        approval, operation, openOperation, canCancel, stopControl, interrupted, awaitingOperation };
 }
 
 type MachinePresetQueryValue = Pick<OpenedManagedMachinePresetV1, 'id' | 'controller'> | Pick<MachinePresetHistoryData, 'preset'>;

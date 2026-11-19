@@ -81,6 +81,10 @@ export function observeActionOperation(input: OperationObservation & (
                     operationId, waitForTerminal: true });
                 if (finished) return;
                 if (read.kind === 'not_found') {
+                    actionOperationStore.markOperationUnavailable({ serverId: input.serverId, accountId: input.accountId,
+                        machineId: input.machineId, operationId,
+                        actionId: input.requestIdentity ? input.requestIdentity.actionId : input.actionId,
+                        expectedRevision: selected?.revision });
                     if (retained?.revision === selected?.revision) { retained = null; retainedComplete = false; }
                     return;
                 }

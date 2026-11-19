@@ -18,6 +18,12 @@ import {
 
 export type ActionOperationObservation = 'available' | 'reconnecting' | 'unavailable';
 
+export type ActionOperationReadOwner = Readonly<{ accountId: string; machineId: string; actionId: string }>;
+
+function sameReadOwner(left: ActionOperationReadOwner, right: ActionOperationReadOwner): boolean {
+    return left.accountId === right.accountId && left.machineId === right.machineId && left.actionId === right.actionId;
+}
+
 /** Ordinary admitted Machine facts, not a second reboot receipt or authority. */
 export type MachineRebootReadFacts = Readonly<{
     installationId: string | null;
@@ -53,6 +59,7 @@ export type ActionOperationStoreSnapshot = Readonly<{
     operationsByKey: ReadonlyMap<string, QualifiedActionOperation>;
     machineObservationByKey: ReadonlyMap<string, ActionOperationObservation>;
     unavailableOperationKeys: ReadonlySet<string>;
+    missingOperationOwnerByKey: ReadonlyMap<string, ActionOperationReadOwner>;
     seenAtByOperationKey: ReadonlyMap<string, Readonly<{ seenAt: number; revision: number }>>;
     dismissedRecentOperationKeys: ReadonlySet<string>;
     dismissedUnavailableOperationKeys: ReadonlySet<string>;
@@ -67,6 +74,8 @@ export type ActionOperationStore = Readonly<{
     readWorkerStatusRevision(scope: ServerAccountScope, machineId: string): number;
     subscribeWorkerStatus(scope: ServerAccountScope, machineIds: readonly string[], listener: () => void): () => void;
     mergeSnapshots(input: Readonly<{ serverId: string | null; snapshots: readonly ActionOperationSnapshotV1[]; snapshotComplete?: true }>): void;
+    isOperationUnavailable(address: ActionOperationAddress, owner: ActionOperationReadOwner): boolean;
+    markOperationUnavailable(input: ActionOperationAddress & ActionOperationReadOwner & Readonly<{ expectedRevision?: number }>): void;
     reobserveMachineAgentIsolation(input: Readonly<{
         serverId: string; accountId: string; machineId: string; operationId: string;
         recovery: NonNullable<QualifiedActionOperation['agentIsolationRecovery']>;
@@ -109,6 +118,7 @@ const EMPTY_STATE: ActionOperationStoreSnapshot = Object.freeze({
     operationsByKey: new Map(),
     machineObservationByKey: new Map(),
     unavailableOperationKeys: new Set<string>(),
+    missingOperationOwnerByKey: new Map(),
     seenAtByOperationKey: new Map(),
     dismissedRecentOperationKeys: new Set<string>(),
     dismissedUnavailableOperationKeys: new Set<string>(),
@@ -171,6 +181,17 @@ export function createActionOperationStore(): ActionOperationStore {
     const listeners = new Set<() => void>();
     const workerStatusChanges = createWorkerStatusChanges();
     const publish = (next: ActionOperationStoreSnapshot, persist = true, changedOperationKeys: Iterable<string> = []) => {
+        if (next.operationsByKey !== state.operationsByKey && next.missingOperationOwnerByKey.size > 0) {
+            let missingOperationOwnerByKey: Map<string, ActionOperationReadOwner> | undefined;
+            for (const key of changedOperationKeys) {
+                const missingOwner = next.missingOperationOwnerByKey.get(key);
+                const snapshot = next.operationsByKey.get(key)?.snapshot;
+                if (!missingOwner || !snapshot || !sameReadOwner(missingOwner, { ...snapshot.scope, actionId: snapshot.actionId })) continue;
+                missingOperationOwnerByKey ??= new Map(next.missingOperationOwnerByKey);
+                missingOperationOwnerByKey.delete(key);
+            }
+            if (missingOperationOwnerByKey) next = Object.freeze({ ...next, missingOperationOwnerByKey });
+        }
         if (persist && (next.seenAtByOperationKey !== state.seenAtByOperationKey
             || next.dismissedRecentOperationKeys !== state.dismissedRecentOperationKeys)) {
             persistence.save(next);
@@ -183,6 +204,37 @@ export function createActionOperationStore(): ActionOperationStore {
 
     const store: ActionOperationStore = {
         getSnapshot: () => state,
+        isOperationUnavailable(address, owner) {
+            const key = actionOperationAddressKey(address);
+            const snapshot = state.operationsByKey.get(key)?.snapshot;
+            if (!snapshot) {
+                const missingOwner = state.missingOperationOwnerByKey.get(key);
+                return !!missingOwner && sameReadOwner(owner, missingOwner);
+            }
+            return state.unavailableOperationKeys.has(key)
+                && sameReadOwner(owner, { ...snapshot.scope, actionId: snapshot.actionId });
+        },
+        markOperationUnavailable(input) {
+            const key = actionOperationAddressKey(input);
+            const current = state.operationsByKey.get(key)?.snapshot;
+            if (!current) {
+                // Only a direct read of a known accepted operation can record absence before a snapshot.
+                if (input.expectedRevision !== undefined) return;
+                const owner = state.missingOperationOwnerByKey.get(key);
+                if (owner && sameReadOwner(owner, input)) return;
+                const { accountId, machineId, actionId } = input;
+                const missingOperationOwnerByKey = new Map(state.missingOperationOwnerByKey).set(key, { accountId, machineId, actionId });
+                publish(Object.freeze({ ...state, missingOperationOwnerByKey }), false);
+                return;
+            }
+            // A definitive read retires only its own live projection, never newer pushes or terminal history.
+            if (!sameReadOwner(input, { ...current.scope, actionId: current.actionId })
+                || current.revision !== input.expectedRevision || isActionOperationTerminal(current.state)) return;
+            if (state.unavailableOperationKeys.has(key)) return;
+            const unavailableOperationKeys = new Set(state.unavailableOperationKeys);
+            unavailableOperationKeys.add(key);
+            publish(Object.freeze({ ...state, unavailableOperationKeys }));
+        },
         retainNewSessionContinuation(address, resume) {
             const key = actionOperationAddressKey(address);
             const current = state.operationsByKey.get(key);
@@ -222,6 +274,15 @@ export function createActionOperationStore(): ActionOperationStore {
                 const incoming = qualifyActionOperationSnapshot(serverId, snapshot);
                 const incomingOperationKey = operationKey(incoming);
                 const incomingMachineKey = machineKey(incoming);
+                const current = (operationsByKey ?? state.operationsByKey).get(incomingOperationKey);
+                // A full read can confirm a missing projection recovered at the same revision.
+                // At that revision the only allowed change is enrichment of a list summary.
+                const sameCompleteRevision = input.snapshotComplete && current && (state.unavailableOperationKeys.has(incomingOperationKey) || !current.snapshotComplete)
+                    && current.snapshot.revision === snapshot.revision
+                    && (sameStrictJsonValue(current.snapshot, snapshot)
+                        || !current.snapshotComplete && sameStrictJsonValue(current.snapshot, projectActionOperationListSnapshotV1(snapshot)));
+                const advances = canMergeSnapshot(current?.snapshot, snapshot);
+                if (!sameCompleteRevision && !advances) continue;
                 if (state.unavailableOperationKeys.has(incomingOperationKey)) {
                     unavailableOperationKeys ??= new Set(state.unavailableOperationKeys);
                     unavailableOperationKeys.delete(incomingOperationKey);
@@ -230,14 +291,11 @@ export function createActionOperationStore(): ActionOperationStore {
                     dismissedUnavailableOperationKeys ??= new Set(state.dismissedUnavailableOperationKeys);
                     dismissedUnavailableOperationKeys.delete(incomingOperationKey);
                 }
-                const current = (operationsByKey ?? state.operationsByKey).get(incomingOperationKey);
-                // A list and a full read describe the same immutable revision. Only
-                // enrich its omitted result/provenance; never replace changed facts.
-                const completeUpgrade = input.snapshotComplete && current && !current.snapshotComplete
-                    && current.snapshot.revision === snapshot.revision
-                    && (sameStrictJsonValue(current.snapshot, snapshot)
-                        || sameStrictJsonValue(current.snapshot, projectActionOperationListSnapshotV1(snapshot)));
-                if (!completeUpgrade && !canMergeSnapshot(current?.snapshot, snapshot)) continue;
+                if ((machineObservationByKey ?? state.machineObservationByKey).get(incomingMachineKey) !== 'available') {
+                    machineObservationByKey ??= new Map(state.machineObservationByKey);
+                    machineObservationByKey.set(incomingMachineKey, 'available');
+                }
+                if (!advances && current?.snapshotComplete) continue;
                 const qualified = input.snapshotComplete ? Object.freeze({ ...incoming, snapshotComplete: true as const }) : incoming;
                 seenAtByOperationKey = bindPredecessorSeenRevision(qualified, seenAtByOperationKey);
                 // A new revision of the uncertain old receipt cannot erase a
@@ -250,10 +308,6 @@ export function createActionOperationStore(): ActionOperationStore {
                 operationsByKey.set(incomingOperationKey, Object.freeze({ ...qualified,
                     ...(current?.resumeNewSession ? { resumeNewSession: current.resumeNewSession } : {}),
                     ...(recovery ? { agentIsolationRecovery: recovery } : {}) }));
-                if ((machineObservationByKey ?? state.machineObservationByKey).get(incomingMachineKey) !== 'available') {
-                    machineObservationByKey ??= new Map(state.machineObservationByKey);
-                    machineObservationByKey.set(incomingMachineKey, 'available');
-                }
             }
             if (!operationsByKey && !machineObservationByKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys) return;
             publish(Object.freeze({

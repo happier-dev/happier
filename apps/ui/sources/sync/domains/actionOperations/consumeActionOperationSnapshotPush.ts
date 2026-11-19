@@ -101,11 +101,21 @@ export async function refreshActionOperationSnapshot(params: Readonly<{
     let snapshot = params.operation.snapshot;
     const { accountId, machineId } = snapshot.scope;
     const store = params.store ?? actionOperationStore;
+    const address = { serverId: sourceServerId, operationId: snapshot.operationId };
+    const key = actionOperationAddressKey(address);
+    const retainedRevision = store.getSnapshot().operationsByKey.get(key)?.snapshot.revision;
     const unavailable = () => store.setMachineObservation({ serverId: sourceServerId, machineId }, 'unavailable');
     let snapshotComplete = false;
     try {
         const response = await params.readSnapshot(snapshot.operationId);
         if (!shouldContinue()) return;
+        if (response.kind === 'not_found') {
+            if (retainedRevision !== undefined && retainedRevision <= snapshot.revision) {
+                store.markOperationUnavailable({ ...address, accountId, machineId,
+                    actionId: snapshot.actionId, expectedRevision: retainedRevision });
+            }
+            return;
+        }
         if (response.kind !== 'found' || response.operation.operationId !== snapshot.operationId
             || response.operation.actionId !== snapshot.actionId
             || response.operation.scope.accountId !== accountId
@@ -119,9 +129,7 @@ export async function refreshActionOperationSnapshot(params: Readonly<{
         snapshotComplete = true;
     } catch (error) {
         if (!shouldContinue()) return;
-        const retained = store.getSnapshot().operationsByKey.get(actionOperationAddressKey({
-            serverId: sourceServerId, operationId: snapshot.operationId,
-        }))?.snapshot;
+        const retained = store.getSnapshot().operationsByKey.get(key)?.snapshot;
         // Supported ../0.2 has no V2 method. Never synthesize a partial rich record
         // or overwrite retained current facts with its released-reader projection.
         if (!(isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error))
@@ -132,9 +140,7 @@ export async function refreshActionOperationSnapshot(params: Readonly<{
         }
     }
     store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot], ...(snapshotComplete ? { snapshotComplete: true } : {}) });
-    const operation = store.getSnapshot().operationsByKey.get(actionOperationAddressKey({
-        serverId: sourceServerId, operationId: snapshot.operationId,
-    }));
+    const operation = store.getSnapshot().operationsByKey.get(key);
     // The store owns revision/lifecycle advancement. An earlier read may finish
     // after a newer observation; present only the accepted canonical snapshot.
     if (!operation || !sameStrictJsonValue(operation.snapshot, snapshot)) return;

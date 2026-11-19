@@ -6,7 +6,7 @@ import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { actionOperationStore } from './actionOperationStore';
-import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention, useManagedMachineActionOperation, useTerminalActionOperationState, useDeploymentTargetLinkOperations } from './useActionOperations';
+import { readAllActionOperations, useActionOperation, useActionOperationUnavailable, useActionOperationsHaveAttention, useManagedMachineActionOperation, useTerminalActionOperationState, useDeploymentTargetLinkOperations } from './useActionOperations';
 // Collect the real lazy reader graph before tests hold a finite owner answer pending.
 import './observeActionOperationByRequestId';
 
@@ -86,6 +86,62 @@ describe('useActionOperations', () => {
         await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
         expect(hook.getCurrent()).toBeNull();
         expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);
+    });
+
+    it.each(['running', 'succeeded'] as const)('retires only the exact cached live projection when its owner definitively reports not_found (%s)', async state => {
+        const answer = createDeferred<unknown>();
+        operationRpc.mockReturnValue(answer.promise);
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home', accountId: 'requester' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const running: ActionOperationSnapshotV1 = { version: 1, operationId: 'lost', revision: 1,
+            actionId: 'machines.presets.prepare', state: 'running', scope: { accountId: 'requester', machineId: 'builder' },
+            title: 'Prepare preset', createdAt: 1, cancellation: 'supported' };
+        const selected = state === 'running' ? running : { ...running, state, settledAt: 2 };
+        const completed: ActionOperationSnapshotV1 = { ...running, operationId: 'completed', state: 'succeeded', settledAt: 2 };
+        const other: ActionOperationSnapshotV1 = { ...running, operationId: 'other' };
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [selected, completed, other] }));
+        const hook = await renderHook(() => useActionOperation({ serverId: 'home', operationId: 'lost' },
+            { machineId: 'builder', actionId: running.actionId, lifetime }));
+        tree = hook.tree;
+        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
+        expect(hook.getCurrent()?.isUnavailableProjection).toBe(false);
+        await act(async () => answer.resolve({ kind: 'not_found' }));
+        await vi.waitFor(() => expect(hook.getCurrent()?.isUnavailableProjection).toBe(state === 'running'));
+        expect(hook.getCurrent()?.snapshot).toEqual(selected);
+        expect(readAllActionOperations().find(operation => operation.snapshot.operationId === 'completed')).toMatchObject({
+            snapshot: completed, isUnavailableProjection: false,
+        });
+        expect(readAllActionOperations().find(operation => operation.snapshot.operationId === 'other')).toMatchObject({
+            snapshot: other, isUnavailableProjection: false, observation: 'available',
+        });
+    });
+
+    it.each(['not_found', 'transport'])('distinguishes an accepted address with no snapshot from a transport failure (%s)', async outcome => {
+        const answer = createDeferred<unknown>();
+        operationRpc.mockReturnValue(answer.promise);
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home', accountId: 'requester' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const address = { serverId: 'home', operationId: 'accepted-without-push' };
+        const owner = { accountId: 'requester', machineId: 'builder', actionId: 'machines.presets.prepare' };
+        const hook = await renderHook(() => ({
+            operation: useActionOperation(address, { ...owner, lifetime }),
+            unavailable: useActionOperationUnavailable(address, owner),
+            otherAccountUnavailable: useActionOperationUnavailable(address, { ...owner, accountId: 'viewer' }),
+        }));
+        tree = hook.tree;
+        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
+        const { createRpcCallError } = await import('@/sync/runtime/rpcErrors');
+        const { RPC_ERROR_CODES } = await import('@happier-dev/protocol/rpc/errors');
+        await act(async () => {
+            if (outcome === 'not_found') answer.resolve({ kind: 'not_found' });
+            else answer.reject(createRpcCallError({ error: 'Disconnected', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE }));
+        });
+        expect(hook.getCurrent()).toEqual({ operation: null, unavailable: outcome === 'not_found', otherAccountUnavailable: false });
+        act(() => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [{ version: 1,
+            operationId: address.operationId, revision: 1, actionId: 'machines.presets.prepare', state: 'running',
+            scope: { accountId: 'requester', machineId: 'builder' }, title: 'Prepare preset', createdAt: 1, cancellation: 'supported' }] }));
+        expect(hook.getCurrent().unavailable).toBe(false);
+        expect(hook.getCurrent().operation?.snapshot.state).toBe('running');
     });
 
     it('binds terminal outcome to its target Home, Account and actual worker without rerendering on unrelated operations', async () => {
