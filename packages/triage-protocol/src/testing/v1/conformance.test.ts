@@ -314,10 +314,10 @@ describe('Triage sources V1 contribution conformance', () => {
 
         const result = checkTriageSourceContributionV1(manifest);
         expect(result.ok).toBe(false);
-        expect(result.ok === false && result.errors.join(' ')).toContain('exactly one');
+        expect(result.ok === false && result.errors.join(' ')).toContain('contribution');
     });
 
-    it('rejects a manifest declaring two Triage sources contributions', () => {
+    it('accepts multiple Triage sources and checks the second source independently', () => {
         const manifest = mutableManifest();
         const contribution = manifest.contributes.targetedPluginContributions[0]!;
         // The canonical parser already rejects a duplicated local id, so the
@@ -327,9 +327,12 @@ describe('Triage sources V1 contribution conformance', () => {
         second.id = 'example-forge-mirror';
         manifest.contributes.targetedPluginContributions.push(second);
 
+        expect(checkTriageSourceContributionV1(manifest).ok).toBe(true);
+
+        delete second.surfaces;
         const result = checkTriageSourceContributionV1(manifest);
         expect(result.ok).toBe(false);
-        expect(result.ok === false && result.errors.join(' ')).toContain('exactly one');
+        expect(result.ok === false && result.errors.join(' ')).toContain("'detail' surface binding");
     });
 
     it('rejects a contribution declaring a different protocol wire epoch', () => {

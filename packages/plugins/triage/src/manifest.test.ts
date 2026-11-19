@@ -60,7 +60,7 @@ describe('Triage plugin manifest', () => {
     }
     expect(aliases?.find(alias => alias.pathname === '/zen/new')?.subPath).toBeUndefined();
   });
-  it('conforms to the public source contract for its built-in task source', () => {
+  it('conforms to the public source contract for its built-in sources', () => {
     const result = checkTriageSourceContributionV1(PLUGIN_MANIFEST);
     expect(result.ok, result.ok ? undefined : result.errors.join('\n')).toBe(true);
   });
@@ -401,7 +401,6 @@ describe('Triage plugin manifest', () => {
   it('declares the one target-owned V1 source contribution point', () => {
     const expectedPoint = {
       id: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-      maxContributionsPerContributor: 1,
       protocols: [{
         id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
         version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -412,6 +411,7 @@ describe('Triage plugin manifest', () => {
       .filter(point => point.id === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1);
     expect(sourcePoints).toHaveLength(1);
     expect(sourcePoints[0]).toMatchObject(expectedPoint);
+    expect(sourcePoints[0]).not.toHaveProperty('maxContributionsPerContributor');
     // The public target reference may also carry the Protocol-owned semantic
     // decoder. This assertion owns only the stable routing identity.
     expect(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1).toMatchObject({

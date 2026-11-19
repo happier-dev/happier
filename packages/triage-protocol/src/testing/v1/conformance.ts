@@ -82,8 +82,7 @@ function collectSurfaceErrors(declared: unknown, errors: string[]): void {
 }
 
 /**
- * Checks the source-level declaration for exactly one Triage source
- * contribution.
+ * Checks every Triage source contribution declared by the manifest.
  *
  * The canonical SDK parser owns manifest structure. This helper only composes
  * that parsed declaration with the public Triage sources V1 role contract;
@@ -115,72 +114,73 @@ export function checkTriageSourceContributionV1(
         contribution.target.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1
         && contribution.target.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1
     ));
-    if (contributions.length !== 1) {
+    if (contributions.length === 0) {
         return Object.freeze({
             ok: false,
             errors: Object.freeze([
-                `Triage sources V1 requires exactly one '${TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1}/`
-                + `${TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1}' contribution; found ${contributions.length}.`,
+                `Triage sources V1 requires a '${TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1}/`
+                + `${TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1}' contribution.`,
             ]),
         });
     }
 
-    const contribution = contributions[0]!;
     const errors: string[] = [];
-    if (
-        contribution.protocol.id !== TriageSourcesContributionProtocolV1.id
-        || contribution.protocol.version !== TriageSourcesContributionProtocolV1.version
-    ) {
-        errors.push(
-            `Triage source contribution must declare protocol '${TriageSourcesContributionProtocolV1.id}'`
-            + ` version ${TriageSourcesContributionProtocolV1.version}.`,
-        );
-    }
-    collectDescriptorErrors(contribution.descriptor, errors);
-
     const actionsById = new Map(contributes.actions.map((action) => [action.id, action]));
-    for (const role of Object.keys(contribution.operations)) {
-        if (!Object.hasOwn(sourceOperations, role)) {
-            errors.push(`Triage sources V1 does not define source role '${role}'.`);
+    for (const contribution of contributions) {
+        if (
+            contribution.protocol.id !== TriageSourcesContributionProtocolV1.id
+            || contribution.protocol.version !== TriageSourcesContributionProtocolV1.version
+        ) {
+            errors.push(
+                `Triage source contribution must declare protocol '${TriageSourcesContributionProtocolV1.id}'`
+                + ` version ${TriageSourcesContributionProtocolV1.version}.`,
+            );
         }
-    }
+        collectDescriptorErrors(contribution.descriptor, errors);
 
-    for (const role of Object.keys(sourceOperations) as Array<keyof typeof sourceOperations>) {
-        const operation = sourceOperations[role];
-        const declaration = operation.declaration;
-        const actionId = contribution.operations[role];
-        if (actionId === undefined) {
-            if (declaration.required) {
-                errors.push(`Triage sources V1 requires the '${role}' source role binding.`);
+        for (const role of Object.keys(contribution.operations)) {
+            if (!Object.hasOwn(sourceOperations, role)) {
+                errors.push(`Triage sources V1 does not define source role '${role}'.`);
             }
-            continue;
         }
 
-        const action = actionsById.get(actionId);
-        if (!action) {
-            errors.push(`Triage source role '${role}' references undeclared Action '${actionId}'.`);
-            continue;
+        for (const role of Object.keys(sourceOperations) as Array<keyof typeof sourceOperations>) {
+            const operation = sourceOperations[role];
+            const declaration = operation.declaration;
+            const actionId = contribution.operations[role];
+            if (actionId === undefined) {
+                if (declaration.required) {
+                    errors.push(`Triage sources V1 requires the '${role}' source role binding.`);
+                }
+                continue;
+            }
+
+            const action = actionsById.get(actionId);
+            if (!action) {
+                errors.push(`Triage source role '${role}' references undeclared Action '${actionId}'.`);
+                continue;
+            }
+            if (!includesRequiredStrings(action.surfaces, declaration.surfaces)) {
+                errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible surface.`);
+            }
+            if (action.dangerLevel !== declaration.dangerLevel) {
+                errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible danger level.`);
+            }
+            if (!pluginJsonValuesEqual(action.resultSchema, declaration.resultSchema.jsonSchema)) {
+                errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible result schema.`);
+            }
+            // Sources use the generic authority contract or one exact canonical
+            // credential specialization, never an arbitrary narrowing.
+            if (declaration.input.kind !== 'protocolDefined'
+                || (!pluginJsonValuesEqual(action.inputSchema, declaration.input.schema.jsonSchema)
+                    && !pluginJsonValuesEqual(action.inputSchema, TriageSourceConnectedAccountInputsV1[role].jsonSchema)
+                    && !pluginJsonValuesEqual(action.inputSchema, TriageSourceCredentialInputsV1[role].jsonSchema))) {
+                errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible input schema.`);
+            }
         }
-        if (!includesRequiredStrings(action.surfaces, declaration.surfaces)) {
-            errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible surface.`);
-        }
-        if (action.dangerLevel !== declaration.dangerLevel) {
-            errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible danger level.`);
-        }
-        if (!pluginJsonValuesEqual(action.resultSchema, declaration.resultSchema.jsonSchema)) {
-            errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible result schema.`);
-        }
-        // Sources use the generic authority contract or one exact canonical
-        // credential specialization, never an arbitrary narrowing.
-        if (declaration.input.kind !== 'protocolDefined'
-            || (!pluginJsonValuesEqual(action.inputSchema, declaration.input.schema.jsonSchema)
-                && !pluginJsonValuesEqual(action.inputSchema, TriageSourceConnectedAccountInputsV1[role].jsonSchema)
-                && !pluginJsonValuesEqual(action.inputSchema, TriageSourceCredentialInputsV1[role].jsonSchema))) {
-            errors.push(`Triage source role '${role}' Action '${actionId}' has an incompatible input schema.`);
-        }
+
+        collectSurfaceErrors(contribution.surfaces, errors);
     }
-
-    collectSurfaceErrors(contribution.surfaces, errors);
 
     return errors.length === 0
         ? Object.freeze({ ok: true, manifest: parsedManifest })
