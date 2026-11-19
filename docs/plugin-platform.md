@@ -2027,6 +2027,13 @@ The Event reader admits its selected body through the same Protocol load
 ingester before using its Event declaration. Earlier full-body lists remain
 readable. Publication and claim admission remain strict.
 
+In unreleased 0.3 source, demand for an Event's declared setup Action joins that
+plugin's existing release-less Account declaration claim before exposing usable
+source configuration. Background publication and setup share the Account Data
+owner's retained admission result. Ordinary activation and daemon readiness stay
+independent of that optional Account publication; a refused setup claim remains
+a typed Action failure before its handler runs.
+
 In unreleased 0.3 source, the existing Account/plugin intent stores each distinct
 release-less manifest body once under its canonical manifest digest. Machine and
 legacy declarations retain their identity envelopes and refer to that row-local

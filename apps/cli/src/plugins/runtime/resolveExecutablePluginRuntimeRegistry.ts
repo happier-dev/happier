@@ -5185,6 +5185,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
         refreshSystemToolRegistries();
     }
 
+    async function claimReleaseLessDeclaration(pluginId: string): Promise<void> {
+        if (scopedActionRuntime || !releaseLessDeclarationsByPluginId.get(pluginId)?.claimsAccountIntent) return;
+        // Publication admits the existing candidate, including dormant targets.
+        const occurrenceId = candidateOccurrenceIdsByPluginId.get(pluginId);
+        if (!occurrenceId) return;
+        const lifecycle = resolveRuntimeConsumerLifecycle(pluginId);
+        await accountStorageHost.claimReleaseLessDeclaration({ pluginId, occurrenceId,
+            signal: lifecycle.retirementSignal,
+            isOccurrenceCurrent: () => lifecycle.isCurrent()
+                && candidateOccurrenceIdsByPluginId.get(pluginId) === occurrenceId });
+    }
+
     async function activateContributionsOnDemand(
         demands: Parameters<typeof activatedRegistry.activateContributionsOnDemand>[0],
     ): Promise<Awaited<ReturnType<typeof activatedRegistry.activateContributionsOnDemand>>> {
@@ -5204,6 +5216,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const scmDiagnosticsByPluginId = readCurrentScmBackendDiagnostics();
         for (const result of results) {
             refreshPluginDiagnostics(result.pluginId, scmDiagnosticsByPluginId);
+        }
+        for (const demand of demands) {
+            if (demand.family !== 'actions') continue;
+            const source = authoritativeContributes.automationEligibleEvents?.find(entry =>
+                entry.setupAction.identity.pluginId === demand.pluginId
+                && entry.setupAction.identity.localId === demand.localId);
+            // A usable source must join its declaration admission. Ordinary
+            // activation and daemon readiness do not wait for Account publication.
+            if (source) await claimReleaseLessDeclaration(source.event.identity.pluginId);
         }
         return results;
     }
@@ -6807,19 +6828,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         async claimReleaseLessDeclarations(): Promise<void> {
             if (scopedActionRuntime) return;
             const failures: PluginError[] = [];
-            for (const [pluginId, declaration] of releaseLessDeclarationsByPluginId) {
-                if (!declaration.claimsAccountIntent) continue;
-                // Declaration publication admits the existing candidate, not
-                // executable effect authority. Dormant targets have no active
-                // runtime occurrence yet, but their source was admitted above.
-                const occurrenceId = candidateOccurrenceIdsByPluginId.get(pluginId);
-                if (!occurrenceId) continue;
-                const lifecycle = resolveRuntimeConsumerLifecycle(pluginId);
+            for (const pluginId of releaseLessDeclarationsByPluginId.keys()) {
                 try {
-                    await accountStorageHost.claimReleaseLessDeclaration({ pluginId, occurrenceId,
-                        signal: lifecycle.retirementSignal,
-                        isOccurrenceCurrent: () => lifecycle.isCurrent()
-                            && candidateOccurrenceIdsByPluginId.get(pluginId) === occurrenceId });
+                    await claimReleaseLessDeclaration(pluginId);
                 } catch (error) {
                     failures.push(new PluginError({
                         code: isPluginError(error) ? error.code : 'plugin_account_declaration_publication_failed',
