@@ -10,7 +10,6 @@ import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredConten
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
@@ -439,11 +438,13 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   } });
   expect(await actor.executeAsPerson('actions.policy.set', { actionId: 'workflow.trigger.remove',
     audience: 'mcp', mode: 'ask_first' })).toMatchObject({ ok: true });
+  // The person client and retained Workflow caller are separate hosts. Read the
+  // persisted choice through the caller's policy owner before exercising it.
+  expect(await actor.execute('actions.policy.get', { actionId: 'workflow.trigger.remove',
+    audience: 'mcp' })).toMatchObject({ ok: true, result: { mode: 'ask_first' } });
   const requiredCleanup = await actor.execute('workflow.trigger.remove', {
     automationId: cleanupSaved.set.automationId, triggerId: cleanupSaved.triggerId,
-  }, { ...cleanupContext,
-    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {},
-      approvalRequiredSurfaces: { 'workflow.trigger.remove': ['mcp'] } }) });
+  }, cleanupContext);
   expect(requiredCleanup, JSON.stringify(requiredCleanup.ok ? { ok: true } : {
     ok: false, errorCode: requiredCleanup.errorCode, failureCause: requiredCleanup.failureCause,
   })).toMatchObject({ ok: true, result: {
@@ -451,10 +452,10 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   } });
   expect(await actor.executeAsPerson('actions.policy.set', { actionId: 'workflow.trigger.remove',
     audience: 'mcp', mode: 'allowed' })).toMatchObject({ ok: true });
+  expect(await actor.execute('actions.policy.get', { actionId: 'workflow.trigger.remove',
+    audience: 'mcp' })).toMatchObject({ ok: true, result: { mode: 'allowed' } });
   expect(await actor.execute('workflow.trigger.remove', { automationId: saved[0]!.set.automationId,
-    triggerId: saved[0]!.triggerId }, { surface: 'mcp',
-    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {},
-      approvalWaivedSurfaces: { 'workflow.trigger.remove': ['mcp'] } }) })).toMatchObject({ ok: true });
+    triggerId: saved[0]!.triggerId }, { surface: 'mcp' })).toMatchObject({ ok: true });
   expect(await actor.executeAsPerson('actions.policy.reset', { actionId: 'workflow.trigger.remove',
     audience: 'mcp' })).toMatchObject({ ok: true });
   expect(await actor.execute('workflow.trigger.remove', { automationId: saved[0]!.set.automationId,
