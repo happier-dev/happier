@@ -13,7 +13,8 @@ import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/s
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { authorizeResolvedAgentNativeExecLaunchForHost, createStablePluginExecService, spawnAuthorizedHostExecLaunchForHost,
-    issueAgentNativeLaunchQualifierForHost, type HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
+    installPreauthorizedPluginExecSpawnForHost, issueAgentNativeLaunchQualifierForHost,
+    type HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { createPublicAcpSession } from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
@@ -58,6 +59,10 @@ describe('runner native launch authority', () => {
             const pi = buildPiRpcLaunch({ happierToolsExtension: { extensionPath: join(runtimeHome, 'tools.mjs'), configPath: join(runtimeHome, 'tools.json') } });
             const openCode = buildOpenCodeManagedServerSpawnSpec({ id: 'fixture', dialect: 'v2', systemToolId: 'opencode-cli' });
             if (openCode.mode.kind !== 'spawn') throw new Error('Expected owned OpenCode server');
+            if (openCode.clientAccess?.kind !== 'hostBasic') throw new Error('Expected managed OpenCode authentication');
+            const passwordKey = openCode.clientAccess.injectPasswordEnvironmentKey;
+            if (!passwordKey) throw new Error('Expected managed OpenCode password injection');
+            const password = 'fixture-managed-server-password';
             const requiredFiles = variant === 'Pi' ? pi.requiredFiles : variant === 'OpenCode managed service' ? openCode.mode.launch.requiredFiles : undefined;
             const args = variant === 'Pi' ? pi.args : variant === 'OpenCode managed service' ? openCode.mode.launch.args ?? [] : ['--version'];
             let selectedMaterials: { relativePath: string; contentBase64: string }[] = [];
@@ -69,7 +74,7 @@ describe('runner native launch authority', () => {
                     sessionMcpContext: { v: 1 as const, socketPath: join(root, 'mcp.sock'), bearerToken: 'selected-session' } } }) };
             const exec = createStablePluginExecService({ signal: controller.signal,
                 isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath }),
-                resolvePath: async () => cwd });
+                resolvePath: async () => cwd, environment: { UNSELECTED_AMBIENT: 'fixture-ambient' } });
             const services = { ...unavailable, exec, availability: (id: Parameters<typeof unavailable.availability>[0]) =>
                 id === 'exec' ? { status: 'available' as const } : unavailable.availability(id) };
             const host = createRunnerDaemonPluginServicesHost({ createInvocation: async () => ({
@@ -84,8 +89,13 @@ describe('runner native launch authority', () => {
                 locator: { module: './agent.js', export: 'createRuntime', runtimeApiVersion: 1 },
                 normalizedModulePath: '/plugins/fixture/agent.js', loadMode: 'immutable-js',
             });
+            let authorizePreparedLaunch: import('@/plugins/runtime/invocation/services/exec').HostPreparedPluginExecLaunchAuthorizer | undefined;
             const runnerServices = await prepareRunnerDaemonPluginServices({
                 invocationId: 'private-cwd', signal: controller.signal, local: unavailable,
+                bindManagedServices: input => {
+                    authorizePreparedLaunch = input.authorizePreparedLaunch;
+                    return unavailable.managedServices;
+                },
                 dispatch: async (operation, options) => {
                     const result = await host.dispatch({ sessionId: 'session-1',
                         runner: { pid: 123, processStartTimeMs: 1, processCommandHash: '4'.repeat(64), snapshotIdentity: 'snapshot-1' },
@@ -103,6 +113,17 @@ describe('runner native launch authority', () => {
                 }
                 const result = variant === 'ordinary'
                     ? await runnerServices.exec.run({ executable, args: ['--version'], cwd: { root: 'workspace', relativePath: '' } })
+                    : variant === 'OpenCode managed service'
+                    ? await (async () => {
+                        if (!authorizePreparedLaunch) throw new Error('Expected managed launch authorization');
+                        // Shape of the request after the supervisor injects its per-launch credential.
+                        const request = { executable, args, cwd: { root: 'workspace' as const, relativePath: '' },
+                            env: { [passwordKey]: password }, requiredFiles, stdin: new Uint8Array() };
+                        const installed = installPreauthorizedPluginExecSpawnForHost(exec, request, { command: process.execPath },
+                            authorizePreparedLaunch);
+                        try { return await exec.run(request); }
+                        finally { installed.dispose(); }
+                    })()
                     : await (async () => {
                         const launch = await authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec,
                             { command: process.execPath, args, cwd, env: {}, requiredFiles, stdin: new Uint8Array() },
@@ -117,6 +138,10 @@ describe('runner native launch authority', () => {
                 expect(frame).toMatchObject({ cwd, executable: process.execPath, args: variant === 'ordinary' ? ['--version'] : [...args],
                     nativeIdentity: { username: memberIdentity.username, home: cwd, agentUid: 994, agentGid: 994 } });
                 expect(output.cwd).toBe(process.cwd());
+                if (variant === 'OpenCode managed service') {
+                    expect(frame.environment).not.toHaveProperty('UNSELECTED_AMBIENT');
+                    expect(frame.environment).toHaveProperty(passwordKey, password);
+                }
             } finally { controller.abort(); await host.dispose(); }
         });
     });

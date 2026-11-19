@@ -75,8 +75,9 @@ const OptionalConnectedAccountsServiceScopeSchema = {
 };
 const HttpMethodSchema =
     lazyZodSchema(() => z.enum(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']));
+const StringRecordKeySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const StringRecordSchema = lazyZodSchema(() => z.record(
-    z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    StringRecordKeySchema,
     BoundedTextSchema,
 ).check(z.refine((value) => Object.keys(value).length <= 512)));
 const RunnerDaemonHostEventDeliveryScopeV1Schema = lazyZodSchema(() => z.union([
@@ -1235,6 +1236,7 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
             args: z.array(z.string()),
             requiredFiles: z.optional(z.array(BoundedTextSchema)),
             env: StringRecordSchema,
+            launchEnvironmentKeys: z.optional(z.array(StringRecordKeySchema)),
             cwd: z.optional(z.string()),
             stdin: z.optional(Base64Schema),
             timeoutMs: z.optional(SafeNonNegativeIntegerSchema),

@@ -10356,6 +10356,15 @@ without the field remain valid. The scoped 0.2 frontier
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no runner/daemon plugin-service
 protocol module.
 
+Unreleased 0.3 resolved native Exec tuples can carry optional
+`launchEnvironmentKeys` across the private runner/daemon bridge. Exec selects
+these names from the explicit launch request before merging the inherited
+environment. The daemon uses the same isolation filter for ordinary and resolved
+launches. Managed-service credentials reach the isolated child through its
+launch frame. The field carries names only, and omission preserves the prior
+selection behavior. Reload the matching runner and daemon together because
+earlier strict development readers reject the new field. The scoped `../0.2`
+frontier `73c533b470ac33a7605b50689b6cd93089a3ae6f` has no reader for this tuple.
 
 Unreleased 0.3 `ScmHostingRepositoryGetResponseV1` failures may carry the
 existing optional `ActionFailureCauseV1`. Both objects remain closed. Matching

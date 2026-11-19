@@ -2840,7 +2840,7 @@ export async function prepareRunnerDaemonPluginServices(
         },
         async authorizeResolvedAgentNativeLaunch(launch, options) {
             assertAvailable('exec');
-            const { stdin, release: _release, requiredFiles, ...tuple } = launch;
+            const { stdin, release: _release, requiredFiles, launchEnvironmentKeys, ...tuple } = launch;
             const raw = parseObjectResult(await dispatch<unknown>({
                 kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...requestBase(),
                 agentLaunchKind: options?.agentLaunchKind ?? 'exec',
@@ -2849,6 +2849,7 @@ export async function prepareRunnerDaemonPluginServices(
                     selectedMaterials: [...options.mcpLaunchMaterial.selectedMaterials] } } : {}),
                 launch: { ...tuple, args: [...tuple.args],
                     ...(requiredFiles === undefined ? {} : { requiredFiles: [...requiredFiles] }),
+                    ...(launchEnvironmentKeys === undefined ? {} : { launchEnvironmentKeys: [...launchEnvironmentKeys] }),
                     ...(stdin === undefined ? {} : { stdin: Buffer.from(stdin).toString('base64') }) },
             }, options), 'plugin_exec_launch_authorization_invalid', 'Daemon returned an invalid process launch authorization');
             return readAuthorizedExecLaunch(raw);

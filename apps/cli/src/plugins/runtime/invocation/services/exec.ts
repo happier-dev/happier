@@ -284,7 +284,7 @@ export type ResolvedPluginExecutable = Readonly<{
 
 /** Original host authority finalizes a tuple only after local declaration checks. */
 export type HostPreparedPluginExecLaunchAuthorizer = (
-    launch: HostAuthorizedPluginExecLaunch,
+    launch: HostAuthorizedPluginExecLaunch & Pick<ResolvedHostExecLaunch, 'launchEnvironmentKeys'>,
     signal: AbortSignal,
     nativeLaunch?: AgentNativeLaunchQualifier,
 ) => Promise<HostAuthorizedPluginExecLaunch>;
@@ -869,7 +869,11 @@ export function resolveStablePluginExecInvocation(input: Readonly<{
 }
 
 type ResolvedHostExecLaunch = Omit<HostAuthorizedPluginExecLaunch, 'windowsVerbatimArguments' | 'release' | 'launcherCwd'>
-    & Readonly<{ release?: () => void }>;
+    & Readonly<{
+        /** Explicit invocation keys selected before merging the ambient environment. */
+        launchEnvironmentKeys?: readonly string[];
+        release?: () => void;
+    }>;
 
 function validateExecLaunchInput(input: Readonly<{
     maxStdoutBytes?: number; maxStderrBytes?: number; timeoutMs?: number; stdin?: Uint8Array; cwd?: unknown;
@@ -987,8 +991,6 @@ async function resolveExecRequesterIdentity(input: Readonly<{
 /** The one final tuple producer, after the caller's executable/effect admission. */
 async function finalizeHostExecLaunch(input: Readonly<{
     launch: ResolvedHostExecLaunch;
-    /** Explicit invocation values, excluding the ambient host environment. */
-    launchEnvironmentKeys?: readonly string[];
     requestedCwd?: string;
     projectLaunch?: HostProjectNativeLaunchAdmission;
     agentIsolation?: HostAgentIsolationLaunchContext;
@@ -1004,6 +1006,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
     signal: AbortSignal;
     assertCurrent(): void;
 }>): Promise<HostAuthorizedPluginExecLaunch> {
+    const { launchEnvironmentKeys, ...resolvedLaunch } = input.launch;
     let released = false;
     let nativeExecutable: ResolvedPluginExecutable | undefined;
     let secretRedactionLease = input.launch.secretRedactionLease;
@@ -1081,7 +1084,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             }) : { args, environment: { ...environment, ...material.environment }, selectedMaterials: material.selectedMaterials };
             assertCurrent();
             const launch = createUnixAgentIdentityLaunch({ ...material, ...selectedFiles, executable: command, cwd: isolated.cwd,
-                selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(input.launchEnvironmentKeys ?? [])],
+                selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(launchEnvironmentKeys ?? [])],
                 nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
                 sessionMcpContext: material.sessionMcpContext });
@@ -1100,7 +1103,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
         if (input.projectLaunch?.status === 'ready') await input.projectLaunch.verifyCurrent?.();
         assertCurrent();
         return Object.freeze({
-            ...input.launch,
+            ...resolvedLaunch,
             command: invocation.command,
             args: Object.freeze([...invocation.args]),
             env: Object.freeze({ ...environment }),
@@ -1757,6 +1760,7 @@ export function createStablePluginExecService(params: Readonly<{
             return fail('plugin_exec_managed_launch_authorization_unavailable', 'Physical process launch authorization is unavailable');
         }
         validateExecLaunchInput(request);
+        const launchEnvironmentKeys = Object.keys(request.env ?? {});
         // A placed Session's Agent names its workspace by the target path; this
         // Machine's admission resolves and authorizes the Session path instead.
         const hostCwd = typeof request.cwd === 'string' ? resolveSessionHostCwd(request.cwd) : undefined;
@@ -1785,8 +1789,7 @@ export function createStablePluginExecService(params: Readonly<{
             }
             const authorizedLaunch = { ...launch, ...(request.requiredFiles ? { requiredFiles: request.requiredFiles } : {}) };
             return hostAgentIsolation || params.agentIsolation ? await finalizeHostExecLaunch({
-                launch: authorizedLaunch,
-                launchEnvironmentKeys: Object.keys(request.env ?? {}),
+                launch: { ...authorizedLaunch, launchEnvironmentKeys },
                 ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
                 agentIsolation: hostAgentIsolation ?? params.agentIsolation, agentNativeLaunch,
                 ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
@@ -1887,7 +1890,6 @@ export function createStablePluginExecService(params: Readonly<{
             signal,
             assertCurrent,
             projectLaunch,
-            launchEnvironmentKeys: Object.keys(request.env ?? {}),
             ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
             agentIsolation: hostAgentIsolation ?? params.agentIsolation,
             agentNativeLaunch,
@@ -1906,6 +1908,7 @@ export function createStablePluginExecService(params: Readonly<{
                 args: [...(resolved.args ?? []), ...(request.args ?? [])],
                 ...(request.requiredFiles ? { requiredFiles: [...request.requiredFiles] } : {}),
                 env: environment,
+                launchEnvironmentKeys,
                 ...(cwd ? { cwd } : {}),
                 ...(request.stdin ? { stdin: new Uint8Array(request.stdin) } : {}),
                 ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
@@ -1952,7 +1955,10 @@ export function createStablePluginExecService(params: Readonly<{
         }
         if (!preauthorized?.authorizePreparedLaunch) return finalized;
         try {
-            const authorized = await preauthorized.authorizePreparedLaunch(finalized, signal);
+            const authorized = await preauthorized.authorizePreparedLaunch({
+                ...finalized,
+                ...(launchEnvironmentKeys.length ? { launchEnvironmentKeys } : {}),
+            }, signal);
             try { assertCurrent(); }
             catch (error) { await authorized.release(); throw error; }
             return authorized;
