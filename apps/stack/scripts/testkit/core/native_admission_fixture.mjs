@@ -265,6 +265,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     // client must not report the test runner's real jobs-scope kernel peak.
     await writeFile(join(proc, 'admission_memory.mjs'), 'export const readJobScopePeakKiB = () => null;\n');
     await copyFile(join(dirname(admissionClientSourcePath), '../dev_targets/command_resources.mjs'), join(targets, 'command_resources.mjs'));
+    const nativeCustody = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_custody_preparation.mjs')).href;
+    await writeFile(join(targets, 'native_custody_preparation.mjs'), `export * from ${JSON.stringify(nativeCustody)};\n`);
   } catch (error) {
     // The old launcher remains executable for the pre-replacement RED run.
     if (error.code !== 'ENOENT' || process.env.HAPPIER_TEST_NATIVE_ADMISSION_CLIENT) throw error;
