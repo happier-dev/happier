@@ -50,8 +50,9 @@ describe('DeepSec native Provider constraints', () => {
         endpoint: { ...input.binding.endpoint, publicHeaders: { 'x-team': 'coding' } } } })).rejects.toThrow('public headers');
       await expect(adapter.materialize({ ...input, credential: { kind: 'none' } })).rejects.toThrow('API key');
       await expect(adapter.materialize({ ...input, credential: { kind: 'apiKey', value: 'fixture-key',
-        transport: { ...input.binding.runtimeCredentialTransport!, protocols: ['anthropic-messages'] } },
-      })).rejects.toThrow('selected transport');
+        transport: { ...input.binding.runtimeCredentialTransport!,
+          destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } } },
+      })).rejects.toThrow('does not support this credential transport');
     } finally { await activation.dispose(); }
   });
 
@@ -61,9 +62,11 @@ describe('DeepSec native Provider constraints', () => {
       const adapter = activation.registration('agents', 'deepsec')?.providerBinding;
       if (!adapter) throw new Error('Expected DeepSec Provider adapter');
       const input = createInput();
+      // The host admits protocol, runtime use and value before materialization
+      // (providerBindings/adapter.ts assertCredentialMatchesBinding).
       await expect(adapter.materialize({ ...input, binding: { ...input.binding,
         runtimeCredentialTransport: null }, credential: { kind: 'apiKey', value: 'fixture-key',
-          transport: { ...input.binding.runtimeCredentialTransport!,
+          transport: { ...input.binding.runtimeCredentialTransport!, protocols: ['anthropic-messages'], uses: ['probe'],
             destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
       })).resolves.toMatchObject({ kind: 'spawnEnv' });
     } finally { await activation.dispose(); }

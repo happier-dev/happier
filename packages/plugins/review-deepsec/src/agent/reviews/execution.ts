@@ -5,7 +5,7 @@ import {
   type AgentExecutionRunRuntimeFactory,
   type AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import {
   REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeV1Schema,
@@ -168,38 +168,11 @@ function selectedScopeUnavailable(path?: string): SelectedScopeResolution {
   };
 }
 
-function selectedScopePathEscape(path: string): SelectedScopeResolution {
-  return {
-    status: 'failed',
-    diagnostics: [{
-      code: 'path_escape',
-      severity: 'error',
-      messageKey: 'plugins.fs.scopedPathList.pathEscape',
-      path,
-    }],
-  };
-}
-
-function isSafeScopeRelativePath(path: string): boolean {
-  const normalized = path.trim().replace(/\\/g, '/');
-  if (!normalized || isAbsolute(path) || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
-    return false;
-  }
-  return !normalized.split('/').some((segment) => segment === '..');
-}
-
-function isOutsideWorkspaceRelativePath(path: string): boolean {
-  return !path
-    || isAbsolute(path)
-    || path === '..'
-    || path.startsWith(`..${sep}`);
-}
-
 /**
  * SCM owns selected paths relative to its worktree; the plugin runtime owns
  * the admitted execution cwd. Bridge those two coordinate systems once, then
- * ask the host filesystem boundary to prove each resolved path remains inside
- * that cwd (including after symlink resolution).
+ * let the host filesystem boundary, the one containment decider, prove each
+ * resolved path stays inside that cwd (traversal, absolute and symlink escapes).
  */
 async function resolveSelectedScopePaths(params: Readonly<{
   context: AgentRuntimeContext;
@@ -221,14 +194,7 @@ async function resolveSelectedScopePaths(params: Readonly<{
   const paths: string[] = [];
   for (const selectedPath of scope.selectedPaths) {
     if (params.signal.aborted) throw params.signal.reason;
-    if (!isSafeScopeRelativePath(selectedPath)) return selectedScopePathEscape(selectedPath);
-
-    const absolutePath = resolve(worktreeRoot, selectedPath);
-    const workspaceRelativePath = relative(cwd, absolutePath);
-    if (isOutsideWorkspaceRelativePath(workspaceRelativePath)) {
-      return selectedScopePathEscape(selectedPath);
-    }
-    const normalizedPath = workspaceRelativePath.replace(/\\/g, '/');
+    const normalizedPath = relative(cwd, resolve(worktreeRoot, selectedPath)).replace(/\\/g, '/');
     try {
       const stat = await params.context.services.fs.stat({
         root: 'workspace',

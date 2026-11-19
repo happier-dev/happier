@@ -795,6 +795,35 @@ describe('activate', () => {
     expect(fixture.run).not.toHaveBeenCalled();
   });
 
+  it('leaves lexical traversal to the host filesystem boundary, its one containment decider', async () => {
+    const fixture = createRuntimeContext({
+      async stat() {
+        throw Object.assign(new Error('Filesystem path traversal is not allowed'), {
+          code: 'plugin_fs_path_denied',
+        });
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-selected-traversal',
+      mode: 'selected_files',
+      paths: ['../outside.ts'],
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(readStructuredOutput(events)).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_scope_failed' },
+      diagnostics: [{ code: 'scope_path_unavailable', path: '../outside.ts' }],
+    });
+    expect(fixture.stat).toHaveBeenCalledWith({ root: 'workspace', relativePath: '../outside.ts' },
+      { signal: expect.any(AbortSignal) });
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
   it('rejects a selected directory before readiness or process launch', async () => {
     const fixture = createRuntimeContext({
       async stat() {

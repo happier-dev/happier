@@ -51,13 +51,11 @@ async function materialize(input: AgentProviderBindingMaterializeInput) {
   const route = resolveDeepSecProviderRoute({ ...input.binding.endpoint, model: input.binding.selection.model.id });
   if (Object.keys(input.binding.endpoint.publicHeaders).length) throw new Error('DeepSec Provider binding cannot preserve custom public headers');
   if (input.credential.kind !== 'apiKey') throw new Error('DeepSec Provider binding requires an API key to suppress native subscription fallback');
+  // The host admits the value, protocol and runtime use before materialization;
+  // this adapter maps only the native bearer destination it can forward.
   const { transport, value } = input.credential;
-  if (!value || !transport.protocols.includes(input.binding.endpoint.protocol) || !transport.uses.includes('runtime')
-    || transport.destination.kind !== 'httpHeader') {
-    throw new Error('DeepSec Provider credential does not match the selected transport');
-  }
-  const header = transport.destination.name.toLowerCase();
-  if (header !== 'authorization' || transport.destination.format !== 'bearer') {
+  if (transport.destination.kind !== 'httpHeader' || transport.destination.name.toLowerCase() !== 'authorization'
+    || transport.destination.format !== 'bearer') {
     throw new Error('DeepSec Provider binding does not support this credential transport');
   }
   const values = buildDeepSecLaunchEnvironment({
