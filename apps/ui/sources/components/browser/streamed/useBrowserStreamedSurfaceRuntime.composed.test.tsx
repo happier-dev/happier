@@ -1261,10 +1261,11 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
     });
 
     it.each([
-        { retainedDuplicate: false, refused: false },
-        { retainedDuplicate: true, refused: false },
-        { retainedDuplicate: false, refused: true },
-    ])('saves binary downloads or surfaces their typed refusal through files.save (duplicate: $retainedDuplicate, refused: $refused)', async ({ retainedDuplicate, refused }) => {
+        { retainedDuplicate: false, refused: false, takeover: false },
+        { retainedDuplicate: true, refused: false, takeover: false },
+        { retainedDuplicate: false, refused: true, takeover: false },
+        { retainedDuplicate: false, refused: false, takeover: true },
+    ])('saves binary downloads or surfaces their typed refusal through files.save (duplicate: $retainedDuplicate, refused: $refused, takeover: $takeover)', async ({ retainedDuplicate, refused, takeover }) => {
         const actionHome = await network.addHome(home.serverUrl, home.accountId, { serverIdentityId: 'srv_browser_stream' });
         const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
         await restoreServerAccountForTest({ serverUrl: home.serverUrl, serverIdentityId: 'srv_browser_stream',
@@ -1313,11 +1314,11 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     message: { kind: 'frame', frame: { v: 1, streamId, sequence: sequence++, timestampMs: 1, codecId: 'image.mjpeg',
                         payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } });
             };
-            await act(async () => deliver({ viewerInput: { controlling: true, controlEpoch: 3 }, interactionState: {
+            await act(async () => deliver({ viewerInput: { controlling: !takeover, controlEpoch: 3 }, interactionState: {
                 dialog: null, fileChooser: null, downloads: [{ downloadId: 'binary', name: 'binary.dat', state: 'completed', receivedBytes: 6, totalBytes: 6 }] } }));
             const bytes = new Uint8Array([0, 255, 128, 13, 10, 42]);
             const requested: number[] = [];
-            boundary.relaySend = raw => {
+            boundary.relaySend = async raw => {
                 const envelope = MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw);
                 if (envelope.message.kind !== 'sideband_control' || envelope.message.control.kind !== 'browser_input') return;
                 const { event, eventId } = envelope.message.control;
@@ -1329,6 +1330,12 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                         navigationGenerationBefore: 0, navigationGenerationAfter: 0, controlEpochBefore: 3, controlEpochAfter: 3 }) });
                     return;
                 }
+                if (takeover && event.offset === 0) {
+                    // First human input takes control before its result is published.
+                    deliver({ viewerInput: { controlling: true, controlEpoch: 4 } });
+                    await flushHookEffects();
+                }
+                if (takeover && event.offset > 0) expect(envelope.message.control.controlEpoch).toBe(4);
                 // The source can return a shorter range to account for its metadata overhead.
                 const chunk = bytes.slice(event.offset, event.offset + 2);
                 deliver({ inputResult: BrowserAutomationActionResultV1Schema.parse({ v: 1, automationRequestId: eventId, status: 'succeeded',
@@ -1359,6 +1366,8 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 expect(technicalDetails).toMatchObject({ code: 'owner_disconnected' });
                 return;
             }
+            await vi.waitFor(() => expect(click).toHaveBeenCalledOnce());
+            expect(alert.mock.calls).toEqual([]);
             expect(requested).toEqual([8000, 8000, 8000]);
             expect(click).toHaveBeenCalledOnce();
             expect(blobs).toHaveLength(1);

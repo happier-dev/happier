@@ -26,7 +26,7 @@ import { resolveBrowserDaemonStreamTarget } from '@/sync/domains/browser/store';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import type { BrowserOpenFirstUse } from '@/sync/domains/browser/firstUse/browserFirstUse';
 
-import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
+import type { BrowserStreamedSurfaceRuntime, BrowserViewerInputEvent } from '../adapters/BrowserStreamedTarget';
 import { BrowserStreamedSurfaceScope } from './BrowserStreamedSurfaceScope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createBrowserStreamInputRelay } from './inputRelay';
@@ -277,14 +277,18 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     // daemon last projected to this stream; it refuses a stale one, so no epoch means nothing to send.
     const controlEpoch = metadata?.viewerInput?.controlEpoch;
     const inputStopped = playerState?.phase === 'stopped' || playerState?.phase === 'error';
+    const hasControlEpoch = controlEpoch !== undefined;
+    const sendInputEvent = useEventCallback((event: BrowserViewerInputEvent, eventId: string, sequence: number) => {
+        if (!sendControl || !sourceId || !streamId || controlEpoch === undefined) throw new Error('stream_closed');
+        sendControl({ v: 1, kind: 'browser_input', streamId, sourceId, eventId,
+            // Spreading a member of the operand union keeps its kind; TS cannot re-narrow the spread.
+            controlEpoch, event: { ...event, target: 'page', sequence } as BrowserInputEventV1 });
+    });
+    // A takeover updates the next input's epoch without closing requests already on this stream.
     const inputRelay = React.useMemo(() => {
-        if (!sendControl || !sourceId || !streamId || controlEpoch === undefined || input.enabled === false || inputStopped) return null;
-        return createBrowserStreamInputRelay({ streamId, nextSequence: () => inputSequence.current++, send: (event, eventId, sequence) => {
-            sendControl({ v: 1, kind: 'browser_input', streamId, sourceId, eventId,
-                // Spreading a member of the operand union keeps its kind; TS cannot re-narrow the spread.
-                controlEpoch, event: { ...event, target: 'page', sequence } as BrowserInputEventV1 });
-        } });
-    }, [controlEpoch, input.enabled, inputStopped, sendControl, sourceId, streamId]);
+        if (!sendControl || !sourceId || !streamId || !hasControlEpoch || input.enabled === false || inputStopped) return null;
+        return createBrowserStreamInputRelay({ streamId, nextSequence: () => inputSequence.current++, send: sendInputEvent });
+    }, [hasControlEpoch, input.enabled, inputStopped, sendControl, sendInputEvent, sourceId, streamId]);
     inputRelayRef.current = inputRelay;
     React.useEffect(() => () => inputRelay?.dispose(), [inputRelay]);
     const sendInput = inputRelay?.send;
