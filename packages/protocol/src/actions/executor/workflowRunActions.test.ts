@@ -33,6 +33,7 @@ import { getActionSpec } from '../actionSpecs.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actionCatalog.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
+import { ActionSessionAddressV1Schema } from '../sessionTargetV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 import { createActionExecutor } from '../actionExecutor.js';
@@ -220,6 +221,103 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspac
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each(['admitted', 'wrong_session'] as const)('retains the accepted Review Session scope in its child Workflow: %s', async scenario => {
+    // Captured Q10 shape: detached repository Review inside an accepted Hunt Run.
+    const address = { serverId: 'home', sessionId: 'review-target' };
+    const reviewer = { kind: 'session' as const, session: scenario === 'wrong_session'
+      ? { ...address, sessionId: 'unrelated-session' } : address };
+    const selection = { target: { kind: 'detached' as const }, cwd: '/repo', scope: 'repository' as const,
+      reviewers: [reviewer], instructions: 'Inspect the complete isolated repository. Preserve files.' };
+    const authored = { version: 1, defaults: {}, inputs: [{ name: 'reviewSession', valueType: 'json', required: true,
+      inputType: { hostType: 'session' } }], blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
+      input: Object.fromEntries(Object.entries(selection).map(([key, value]) => [key, { kind: 'literal', value }])) }] };
+    const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition: authored,
+      context: { source: { kind: 'inline' }, inputs: { reviewSession: address }, machineId: 'machine-a',
+        executionTarget: { kind: 'session' }, workspaceTarget: { project: {
+          machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+        origin: { kind: 'direct', originSessionId: 'origin-1' }, authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        resolveSessionTarget: async () => ({ address, machineId: 'machine-a' }),
+        readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: { type: 'object' } }) } });
+    if (!materialized.ok) throw new Error(JSON.stringify(materialized.error));
+    const snapshot = { ...runSnapshot(), acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      acceptedSnapshot: materialized.snapshot,
+    })) };
+    const rootId = '22222222-2222-4222-8222-222222222222';
+    const invocationId = '33333333-3333-4333-8333-333333333333';
+    const rows = [rootId, invocationId].map((id, position) => {
+      const index = WorkflowRunInvocationIndexV1Schema.parse({ id, runId, parentRecordId: position ? rootId : null,
+        sequence: String(position), memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'running',
+        createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt });
+      const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+        blockKind: position ? 'action' : 'root', invocationPath: { blockId: position ? 'review' : '$root', scope: [] },
+        attempt: '0', logicalInvocationRecordId: id });
+      return { index, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+          recordId: id, sequence: index.sequence, parentRecordId: index.parentRecordId, memberOrdinal: '0', attempt: '0' }, progress,
+      })) };
+    });
+    const resolveAgentStartContext: NonNullable<ActionExecutorDeps['resolveAgentStartContext']> = async () => ({
+      caller: { kind: 'originless', runId, runDepth: 0, runOriginSessionId: 'origin-1' },
+      baseline: { machineId: 'machine-a', directory: '/repo' }, roles: {}, callerPermissionCeiling: 'yolo',
+      ledSubtreeSessionIds: [], workDepthLimit: 4,
+    });
+    let childSnapshot: WorkflowAcceptedSnapshotV1 | undefined;
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') {
+        if (operation.runId === runId) return snapshot;
+        throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      }
+      if (operation.operation === 'invocations.list') {
+        const selected = rows.filter(row => (operation.invocationId === undefined || operation.invocationId === row.index.id)
+          && (operation.parentRecordId === undefined || operation.parentRecordId === row.index.parentRecordId)
+          && (operation.memberOrdinal === undefined || operation.memberOrdinal === row.index.memberOrdinal));
+        return { invocations: selected.map(row => row.index), parentRevision: 0, keyCensus: snapshot.keyCensus,
+          progressEnvelopesByInvocationId: Object.fromEntries(selected.map(row => [row.index.id, row.contentEnvelope])) };
+      }
+      if (operation.operation === 'admit') {
+        const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+          envelope: parseWorkflowStoredContentEnvelopeV1(String(operation.acceptedEnvelope))!,
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: operation.runId } });
+        if (opened.kind !== 'available') throw new Error('child_snapshot_unavailable');
+        childSnapshot = opened.content;
+        return { kind: 'created', run: { ...snapshot.run, id: operation.runId } };
+      }
+      throw new Error('unexpected_storage_operation');
+    } }), prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+      machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveAgentStartContext,
+      sessionList: async () => { throw new Error('accepted_scope_must_not_recheck_session_list'); },
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        resolveSessionTarget: async value => ({ address: ActionSessionAddressV1Schema.parse(value), machineId: 'machine-a' }),
+        readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } }),
+    });
+    const records = createInMemoryReviewRecordPortV1();
+    const scopeReads: string[] = [];
+    const executor = createActionExecutor({ resolveAgentStartContext, reviewRecords: () => records,
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
+      resolveSessionReference: async ({ sessionId }) => {
+        scopeReads.push(sessionId ?? '');
+        return { kind: 'unique', address };
+      },
+    });
+    const result = await executor.execute('review.start', selection, { surface: 'agent', serverId: 'home',
+      defaultSessionId: 'origin-1', callerPermissionMode: 'yolo',
+      actionRequestId: `${runId}/${invocationId}/0`,
+      actionCaller: { kind: 'workflowRun', runId, authorization: materialized.snapshot.authorization },
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } });
+    expect(scopeReads).toEqual([address.sessionId]);
+    if (scenario === 'wrong_session') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'subtree_denied', details: { blockId: 'step-1-reviewer-1' } });
+      expect(childSnapshot).toBeUndefined();
+    } else {
+      expect(result).toMatchObject({ ok: true });
+      expect(childSnapshot?.materializedLeaves.find(leaf => leaf.blockId === 'step-1-reviewer-1'))
+        .toMatchObject({ participantBindings: { selections: [{ participant: { kind: 'session', session: address } }] } });
+    }
+  });
+
   it.each(['refused', 'unresolved', 'accepted'] as const)('settles a composed Review only when its Workflow admission is definitely %s', async outcome => {
     const records = createInMemoryReviewRecordPortV1();
     let binding: ReviewRoundBindingV1 | undefined;

@@ -1084,7 +1084,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     // A new Workflow admits its own leaves; the caller's leaf stamp belongs
     // only to dispatch of the original admitted Action.
     const { agentStartWorkDepth: _parentStartDepth, agentStartWorkspaceWrites: _parentWorkspaceWrites,
-      reviewReviewerLaunchInputs: _parentReviewLaunchInputs, workflowStartProject: _workflowStartProject, ...caller } = args.context;
+      reviewReviewerLaunchInputs: _parentReviewLaunchInputs, workflowStartProject: _workflowStartProject,
+      workflowStartSessionScope, ...caller } = args.context;
     const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
     args = { ...args, context: caller };
     if (combined) {
@@ -1409,7 +1410,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           resolveAgentStartContext: deps.resolveAgentStartContext,
           sessionList: deps.sessionList ?? (async () => { throw new Error('session_scope_unavailable'); }),
           sessionRead: deps.sessionRead,
-        });
+          resolveServerProfileScopeId: deps.resolveServerProfileScopeId,
+        }, undefined, undefined, workflowStartSessionScope);
         return failure === null;
       },
     } };

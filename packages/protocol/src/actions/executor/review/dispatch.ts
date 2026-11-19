@@ -390,11 +390,12 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, initialComparison, comparisonCapture?.input, transcript?.ok ? transcript.instructions : undefined);
           // The child Workflow consumes the same resolved Machine/workspace as
           // this Review; retain the original signed target for every effect.
-          const workflowContext = comparisonTarget && comparisonCwd ? { ...ctx,
-            workflowStartProject: comparisonTarget.project ?? {
+          const workflowContext = { ...ctx,
+            ...(workflowScope ? { workflowStartSessionScope: workflowScope } : {}),
+            ...(comparisonTarget && comparisonCwd ? { workflowStartProject: comparisonTarget.project ?? {
               machineId: comparisonTarget.machineId, directory: comparisonCwd,
-            },
-          } : ctx;
+            } } : {}),
+          };
           const started = await executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
             source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, workflowContext);
           if (!started.ok) {

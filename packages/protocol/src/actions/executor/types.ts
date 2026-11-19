@@ -943,6 +943,8 @@ export type ActionExecutorContext = Readonly<{
 
   /** Host-resolved placement for an internal Workflow start; the signed Action target remains unchanged. */
   workflowStartProject?: import('../../workflows/workflowWorkspaceV1.js').WorkflowProjectTargetV1;
+  /** Already-resolved parent invocation scope, consumed only by its child Workflow start. */
+  workflowStartSessionScope?: import('../../workflows/workflowSessionScopeV1.js').WorkflowSessionScopeV1;
 
   /**
    * Disables interception for the one action execution nested directly inside
