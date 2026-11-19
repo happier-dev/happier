@@ -6,6 +6,9 @@ import type {
   TeamCredentialProviderModelSelectionV1,
 } from '@happier-dev/protocol';
 
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 
@@ -40,8 +43,20 @@ function normalizeWaitTimeoutSeconds(timeoutMs: unknown): number | undefined {
   return Number.isSafeInteger(seconds) && seconds >= 1 ? seconds : undefined;
 }
 
+function projectUnsupportedRunFailure(message?: string) {
+  const reason = message === 'unsupported' ? '' : redactBugReportSensitiveText(message ?? '').trim();
+  return createActionExecuteFailureError({
+    ok: false,
+    errorCode: 'unsupported',
+    error: reason || 'The selected runner does not support the requested configuration.',
+  });
+}
+
 function readCanonicalTextResult(result: ActionExecuteResult): string {
-  if (!result.ok) throw stableFailure(result.errorCode);
+  if (!result.ok) {
+    if (result.errorCode === 'unsupported') throw projectUnsupportedRunFailure(result.error);
+    throw stableFailure(result.errorCode);
+  }
 
   const started = readRecord(result.result);
   const wait = readRecord(started.wait);
@@ -49,11 +64,13 @@ function readCanonicalTextResult(result: ActionExecuteResult): string {
     const code = normalizeNonEmptyString(wait.code) ?? 'execution_run_wait_unavailable';
     throw stableFailure(code);
   }
+  const observation = readRecord(wait.result);
   if (wait.status !== 'succeeded') {
+    const failure = readRecord(readRecord(observation.run).error);
+    if (failure.code === 'unsupported') throw projectUnsupportedRunFailure(normalizeNonEmptyString(failure.message));
     throw stableFailure('execution_run_failed');
   }
 
-  const observation = readRecord(wait.result);
   const output = observation.latestToolResult;
   if (typeof output !== 'string') {
     throw stableFailure('execution_run_output_invalid');

@@ -4829,7 +4829,9 @@ Pickers show what Auto would pick through `agents.models.list` with purpose
 For a `no_tools` task, Auto and the picker require the Agent's positive
 `capabilities.tools.noTools` declaration on that Machine. A missing or false
 declaration excludes the Agent. Native launch still enforces the chosen policy
-for retained explicit choices. Pi declares no-tools support as false and
+for retained explicit choices. Replay reports an unsupported summary runner
+through the existing failure result so the person can choose a compatible
+runner or replay recent messages. Pi declares no-tools support as false and
 refuses an exclusive empty tool allowlist before native launch.
 
 The commit message stores its choice in the Account setting

@@ -135,6 +135,7 @@ export async function continueSessionWithReplay(
             type: 'error',
             errorCode: recipeResult.errorCode,
             errorMessage: recipeResult.errorMessage,
+            ...(recipeResult.errorDetail ? { errorDetail: recipeResult.errorDetail } : {}),
         };
     }
     const recipe = recipeResult.recipe;

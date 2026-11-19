@@ -1,4 +1,5 @@
 import type { SessionForkPoint } from '@happier-dev/protocol';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
@@ -43,7 +44,12 @@ export type ReplaySeededSpawnRecipe = Readonly<{
 
 export type BuildReplaySeededSpawnRecipeResult =
   | Readonly<{ ok: true; recipe: ReplaySeededSpawnRecipe }>
-  | Readonly<{ ok: false; errorCode: SpawnSessionErrorCode; errorMessage: string }>;
+  | Readonly<{
+    ok: false;
+    errorCode: SpawnSessionErrorCode;
+    errorMessage: string;
+    errorDetail?: SessionSpawnLaunchErrorV1;
+  }>;
 
 export type BuildReplaySeededSpawnRecipeParams = Readonly<{
   credentials: StoredCredentials;
@@ -118,6 +124,14 @@ export async function buildReplaySeededSpawnRecipe(
       ? { deps: { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog } }
       : {}),
   });
+  if (resolvedSeed.status === 'summary_refused') {
+    return {
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: resolvedSeed.message,
+      errorDetail: { kind: 'launch_error', code: resolvedSeed.code, message: resolvedSeed.message },
+    };
+  }
   if (resolvedSeed.status === 'unavailable') {
     return {
       ok: false,

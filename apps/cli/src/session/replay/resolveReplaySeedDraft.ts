@@ -7,6 +7,7 @@ import {
   type HappierReplayDialogItem,
 } from '@happier-dev/agents';
 import type { SessionWorkStateV1 } from '@happier-dev/protocol';
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { logger } from '@/ui/logger';
 import { LlmTaskRunnerUnavailableError } from '@/agent/executionRuns/tasks/llmTaskRunner';
@@ -122,6 +123,7 @@ export type ReplaySeedDraftResolution =
       sourceCutoffSeqInclusive: number;
       referencedSessionMediaWorkspacePaths: readonly string[];
     }>
+  | Readonly<{ status: 'summary_refused'; code: 'unsupported'; message: string }>
   /** Retrieval succeeded and the source carries no replayable dialog. */
   | Readonly<{ status: 'no_source_dialog' }>
   /** Bounded retrieval or decryption failed; what the source holds is unknown. */
@@ -255,7 +257,7 @@ export async function resolveReplaySeedDraft(params: Readonly<{
   }
   const referencedSessionMediaWorkspacePaths = readReferencedSessionMediaWorkspacePaths(hydrated);
 
-  const summaryText = await (async () => {
+  const summary = await (async () => {
     if (params.strategy !== 'summary_plus_recent') return null;
     const hydratedSynopsis = typeof hydrated.synopsisText === 'string' ? hydrated.synopsisText.trim() : '';
     if (hydratedSynopsis) return hydratedSynopsis;
@@ -273,7 +275,14 @@ export async function resolveReplaySeedDraft(params: Readonly<{
         const trimmed = typeof generated === 'string' ? generated.trim() : '';
         if (trimmed) return trimmed;
       } catch (error) {
-        // The seed falls back to recent messages; the reason stays visible.
+        if (isActionExecuteFailure(error) && error.errorCode === 'unsupported') {
+          return {
+            status: 'summary_refused',
+            code: error.errorCode,
+            message: `${error.error} Choose a compatible summary runner or use recent messages.`,
+          } as const;
+        }
+        // Other summary failures preserve the best-effort recent-message replay.
         logger.warn('[replay] summary unavailable; seeding recent messages', {
           code: (error as { code?: unknown } | null)?.code ?? 'replay_summary_failed',
           ...(error instanceof LlmTaskRunnerUnavailableError ? { reason: error.reason } : {}),
@@ -284,6 +293,8 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     return null;
   })();
 
+  if (summary && typeof summary !== 'string') return summary;
+  const summaryText = summary;
   const effectiveStrategy: HappierReplayStrategy =
     params.strategy === 'summary_plus_recent' && summaryText ? 'summary_plus_recent' : 'recent_messages';
 

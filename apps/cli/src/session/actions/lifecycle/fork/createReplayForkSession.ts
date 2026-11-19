@@ -108,7 +108,7 @@ export async function createReplayForkSession(params: Readonly<{
     if (!recipeResult.ok) {
         return {
             ok: false,
-            errorCode: recipeResult.errorCode,
+            errorCode: recipeResult.errorDetail?.code ?? recipeResult.errorCode,
             errorMessage: recipeResult.errorMessage,
         };
     }

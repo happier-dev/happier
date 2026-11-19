@@ -1,6 +1,7 @@
 import type { ExecutionRunReplaySeedRequest } from '@happier-dev/protocol';
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { configuration } from '@/configuration';
+import { VoiceAgentError } from '@/agent/voice/agent/voiceAgentTypes';
 import { readStoredCredentials } from '@/persistence';
 import type { ReplaySeedDraftResolution } from '@/session/replay/resolveReplaySeedDraft';
 
@@ -50,6 +51,10 @@ export const VoiceAgentProfile: ExecutionRunIntentProfile = {
       candidateLimit: configuration.replaySeedCandidateLimit,
       summaryRunner: replay.summaryRunner ?? null,
     }).catch((): ReplaySeedDraftResolution => ({ status: 'unavailable' }));
+
+    if (replaySeed.status === 'summary_refused') {
+      throw new VoiceAgentError(replaySeed.code, replaySeed.message);
+    }
 
     // A voice run seeds when there is something to seed with. Both an empty
     // source and a failed retrieval leave the run unseeded here; only the
