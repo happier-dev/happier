@@ -4,6 +4,7 @@ import { readRequesterAccountActionContext, type RetainedRequesterAccountCustody
 import { configuration } from '@/configuration';
 import type { preparePrivateProjectOpenCheckout, PrivateProjectCheckoutOpenRuntime } from './privateProjectOpenCheckout';
 import { randomUUID } from 'node:crypto';
+import { posix } from 'node:path';
 import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type ProjectOpenSyncMaterializationResultV1, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
@@ -11,8 +12,8 @@ import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/exp
 import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2, type ManagedWorkspaceLocatorV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceRefV1, workspaceAddressFromRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
 import type { ScmBackendRegistry } from '@/scm/registry';
@@ -20,7 +21,11 @@ import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/worksp
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readProjectAccountRows, createProjectAccountSnapshotMutation, mutateProjectAccountOrganization, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
-import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManagedRoot, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { registerManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { openSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
+import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
+import { mapHolderWorkspacePath } from '@/workspaces/source/holderWorkspaceCommand';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { materializeWorkspaceSyncForOpen } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { WorkspaceSyncPreparationRefusal } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
@@ -56,6 +61,11 @@ export type ProjectOpenRuntime = Readonly<{
   workspaceSyncAdapter?: WorkspaceSyncHandoffAdapter;
   /** The daemon retains the native namespace; host filesystem preparation never handles it. */
   materializeManagedProjectTarget?(input: OpenProjectInputV1, context: RpcHandlerContext): Promise<OpenProjectResultV1>;
+  openManagedProjectWorkspace?(request: Readonly<{
+    workspace: Pick<ManagedWorkspaceLocatorV2, 'serverId' | 'managedId' | 'controller' | 'rootPath'>;
+    requesterAccountId: string;
+    lifetime: AbortSignal;
+  }>): Promise<Parameters<typeof registerManagedWorkspaceTarget>[0]['target']>;
   /** Installed host key lends transport signatures, never requester authority. */
   requesterMachineRpcSigning?: Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }>;
   /** The chosen installed child forwards only its admitted original Project SOURCE purpose. */
@@ -130,6 +140,16 @@ async function resolveProjectRequester(runtime: ProjectOpenRuntime, context: Rpc
   return { rows: { credentials, serverId: runtime.serverId, signal: context.signal }, credentials };
 }
 
+async function listOpenedProject(requester: ProjectRequester, ref: WorkspaceRefV1, signal: AbortSignal): Promise<void> {
+  // A reviewed child of another Action keeps its parent binding and stays a Session folder.
+  if (requester.rows.authorization && !isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId)) return;
+  await mutateProjectAccountOrganization({ ...requester.rows, serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id,
+    mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(error => {
+    signal.throwIfAborted();
+    logger.warnLocalFile('[Project Open] Listing unavailable', { code: codeOf(error) });
+  });
+}
+
 function admitOpenSource(input: OpenProjectInputV1 & { source: Extract<OpenProjectInputV1['source'], { kind: 'source' }> },
   runtime: ProjectOpenRuntime, requester: ProjectRequester, context: RpcHandlerContext) {
   const transport = createCliProjectSourceActionDeps({ serverHttpBaseUrl: runtime.serverHttpBaseUrl,
@@ -182,6 +202,8 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
   let retainedRequesterCustody: RetainedRequesterAccountCustody | undefined;
   let privateSyncOperationId: string | undefined;
   let relationshipRetained = false;
+  let managedTargetLifetime: AbortController | undefined;
+  let managedTargetRetained = false;
   try {
     context.signal.throwIfAborted();
     if (!await context.verifyMachineAdmissionCurrent()) return refused('machine_access_denied');
@@ -190,6 +212,50 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       return await runtime.materializeManagedProjectTarget({ ...input, serverId: homeId }, context);
     }
     const requester = await resolveProjectRequester(authorityRuntime, context);
+    if (input.materialization.kind === 'attach' && input.materialization.targetManaged) {
+      const destination = input.materialization.targetManaged;
+      if (!runtime.openManagedProjectWorkspace || input.source.kind !== 'folder'
+        || !posix.isAbsolute(input.source.path)) return refused('workspace_target_unavailable');
+      const rootPath = posix.normalize(input.source.path);
+      const directory = mapHolderWorkspacePath(rootPath, rootPath, input.subdir ?? '');
+      managedTargetLifetime = new AbortController();
+      const cancel = () => managedTargetLifetime?.abort(context.signal.reason);
+      context.signal.addEventListener('abort', cancel, { once: true });
+      try {
+        context.signal.throwIfAborted();
+        const target = await runtime.openManagedProjectWorkspace({ workspace: { ...destination, serverId: homeId, rootPath },
+          requesterAccountId: admission.actorAccountId, lifetime: managedTargetLifetime.signal });
+        const signal = AbortSignal.any([target.lifetime, context.signal]);
+        const argv = [target.holderPath, 'workspace', '--root', rootPath];
+        const channel = target.openChannel(argv, signal);
+        try {
+          const source = createHolderWorkspaceSource({ id: destination.managedId, rootPath,
+            holder: openSessionHolderWorkspaceChannel(channel), helperPath: target.helperPath });
+          if (!(await source.stat(directory)).isDirectory()) return refused('workspace_target_unavailable');
+        } finally { channel.end(); }
+        signal.throwIfAborted();
+        return await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, async () => {
+          let acceptedRefId: string | undefined;
+          effectsIssued = true;
+          const accepted = await createProjectAccountSnapshotMutation(requester.rows)(current => {
+            signal.throwIfAborted();
+            const materialized = materializeWorkspaceRefForManagedRoot(current.workspaceRefs, {
+              ...destination, serverId: homeId, rootPath, nowMs: Date.now(), createId: randomUUID,
+            });
+            acceptedRefId = materialized.workspaceRef.id;
+            return { ...current, workspaceRefs: materialized.workspaceRefs };
+          }, signal);
+          if (accepted.status !== 'applied' && accepted.status !== 'unchanged') return outcomeUnknown(`Account row acceptance returned ${accepted.status}`);
+          const ref = accepted.snapshot.workspaceRefs.find(row => row.id === acceptedRefId);
+          if (!ref || !isManagedWorkspaceRefV2(ref)) return outcomeUnknown('Managed Workspace row was absent from accepted Account rows');
+          const workspace = workspaceAddressFromRefV2(ref);
+          if (workspace.kind !== 'managed') return outcomeUnknown('Managed Workspace address was unavailable');
+          managedTargetRetained = registerManagedWorkspaceTarget({ workspace, target });
+          await listOpenedProject(requester, ref, signal);
+          return { kind: 'opened', workspace, directory, setup: 'notRequired', facts: { projectKey: ref.projectKey ?? ref.id } };
+        });
+      } finally { context.signal.removeEventListener('abort', cancel); }
+    }
     const executionIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: homeId,
       sessionRequester: context.requesterSessionBootstrap?.attribution,
       sessionRequesterHomeServerIdentityId: context.requesterSessionBootstrap?.homeServerIdentityId });
@@ -490,17 +556,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       }) : { kind: 'missing' as const };
       if (acceptedRef.kind !== 'resolved') return outcomeUnknown(`Accepted Workspace row readback was ${acceptedRef.kind}`);
       const workspace = workspaceAddressFromRefV1(acceptedRef.ref);
-      // Opening a Project is the person adding it to their Projects list (owner 11-08), whoever invokes
-      // projects.open for them. A reviewed child of another Action (a Session's project files) keeps its root
-      // Action's binding and stays a Session folder. The list is not the open: a failed write leaves it unlisted.
-      if (!requester.rows.authorization || isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId)) {
-        await mutateProjectAccountOrganization({ ...requester.rows, serverId: acceptedRef.ref.serverId,
-          projectKey: acceptedRef.ref.projectKey ?? acceptedRef.ref.id,
-          mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(error => {
-          context.signal.throwIfAborted();
-          logger.warnLocalFile('[Project Open] Listing unavailable', { code: codeOf(error) });
-        });
-      }
+      await listOpenedProject(requester, acceptedRef.ref, context.signal);
       let setup: Opened['setup'];
       try {
         const association = await resolveProjectSetupAcceptedWorkspace({ address: workspace, ...requester.rows,
@@ -547,6 +603,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
     if (codeOf(error) === 'repository_subfolder_missing') return refused('repository_subfolder_missing', error);
     return effectsIssued ? outcomeUnknown('Exception after materialization or row submission') : refused(context.signal.aborted ? 'cancelled' : codeOf(error), context.signal.aborted ? undefined : error);
   } finally {
+    if (!managedTargetRetained) managedTargetLifetime?.abort();
     try {
       try {
         const retained = privateSyncOperationId

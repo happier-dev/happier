@@ -1,11 +1,11 @@
-import { spawn } from 'node:child_process';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex } from 'node:stream';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import axios from 'axios';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 
@@ -13,7 +13,11 @@ import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision
 import { spawnSessionHolderChild, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 
 import { createFilesystemEffectAdmission, type FilesystemEffectSessionContext } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
-import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from './sessionTargetWorkspaces';
+import { runWithWorkspaceSourceDemand } from '@/workspaces/source/workspaceSource';
+import { openProject } from '@/workspaces/activation/openProject';
+import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { registerManagedWorkspaceTarget, registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from './sessionTargetWorkspaces';
 
 /**
  * Files/Git for a Session placed on a target: the daemon's filesystem admission
@@ -47,6 +51,87 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             return channel;
         },
     };
+
+    it('accepts a confined guest folder as an exact Project Account row', async () => {
+        const serverId = 'srv_managed_account_project';
+        const serverUrl = 'https://managed-project.invalid';
+        const controller = { machineId: 'machine', installationId: 'installation' };
+        const lifetime = new AbortController();
+        await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl });
+        const rows: unknown[] = [];
+        const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 0 } });
+        const post = vi.spyOn(axios, 'post').mockImplementation(createProjectAccountRowsHttpBoundary(rows));
+        onTestFinished(() => { lifetime.abort(); get.mockRestore(); post.mockRestore(); });
+        const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+        let opened = 0;
+        const runtime = { serverId, serverHttpBaseUrl: serverUrl, machineId: controller.machineId, accountId: 'owner',
+            readCredentials: async () => credentials,
+            openManagedProjectWorkspace: async () => ({ lifetime: lifetime.signal,
+                holderPath: holderExecutable!, helperPath: helperExecutable!,
+                openChannel(argv: readonly string[]) { opened += 1; return operations.openChannel(argv); } }),
+        };
+        const context = { signal: lifetime.signal, callerAuthority: 'present_user',
+            machineAdmission: { ...controller, actorAccountId: 'owner', custodianAccountId: 'owner', role: 'manage', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true } as const;
+        const request = { serverId, machineId: controller.machineId,
+            source: { kind: 'folder', path: guestRoot },
+            materialization: { kind: 'attach', targetManaged: { managedId: 'managed-machine', controller } },
+        } as const;
+        await expect(openProject({ ...request, subdir: '../' }, runtime, context))
+            .resolves.toMatchObject({ kind: 'refused', code: 'workspace_root_unsafe' });
+        expect(opened).toBe(0);
+        expect(rows).toEqual([]);
+        const result = await openProject(request, runtime, context);
+        expect(result).toMatchObject({ kind: 'opened', workspace: { kind: 'managed', v: 2, serverId,
+            controller, managedId: 'managed-machine', rootPath: guestRoot }, directory: guestRoot });
+        if (result.kind !== 'opened' || result.workspace.kind !== 'managed') throw Error('managed workspace unavailable');
+        const source = resolveSessionTargetWorkspace({ workspace: result.workspace });
+        await expect(runWithWorkspaceSourceDemand(source!, () => source!.readFile(join(guestRoot, 'a.txt'))))
+            .resolves.toEqual(Buffer.from('in the target\n'));
+        expect(opened).toBe(2);
+    });
+
+    it('F2: overlapping managed workspace requests reuse one holder and the last release closes it', async () => {
+        const lifetime = new AbortController();
+        const workspace = {
+            v: 2 as const, kind: 'managed' as const, workspaceId: 'managed-project', managedId: 'row-2', serverId: 'home',
+            controller: { machineId: 'machine', installationId: 'install' }, rootPath: guestRoot,
+        };
+        const exits: Promise<number | null>[] = [];
+        let openChannels = 0;
+        try {
+            registerManagedWorkspaceTarget({ workspace, target: {
+                lifetime: lifetime.signal, holderPath: holderExecutable!, helperPath: helperExecutable!,
+                openChannel(argv) {
+                    openChannels += 1;
+                    const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+                    exits.push(new Promise((resolve, reject) => {
+                        child.once('error', reject);
+                        child.once('exit', resolve);
+                    }));
+                    return Duplex.from({ readable: child.stdout!, writable: child.stdin! });
+                },
+            } });
+            expect(openChannels).toBe(0);
+            const source = resolveSessionTargetWorkspace({ workspace });
+            expect(source?.kind).toBe('target');
+            expect(resolveSessionTargetWorkspace({ workspace: { ...workspace, controller: { ...workspace.controller,
+                installationId: 'other-install' } } })).toBeNull();
+            expect(resolveSessionTargetWorkspace({ workspace, sessionId: 'unrelated-session' })).toBeNull();
+            expect(openChannels).toBe(0);
+
+            const request = () => runWithWorkspaceSourceDemand(source!, () => source!.readFile(join(guestRoot, 'a.txt')));
+            const content = Buffer.from('in the target\n');
+            await expect(Promise.all([request(), request(), request()])).resolves.toEqual([content, content, content]);
+            expect(openChannels).toBe(1);
+            await expect(exits[0]).resolves.toBe(0);
+            await expect(request()).resolves.toEqual(content);
+            expect(openChannels).toBe(2);
+            await expect(exits[1]).resolves.toBe(0);
+            lifetime.abort();
+            expect(resolveSessionTargetWorkspace({ workspace })).toBeNull();
+        } finally { lifetime.abort(); }
+    });
 
     it('selects directory-only descendants and physical aliases, keeps source identity, and leaves sibling folders local', async () => {
         const lifetime = new AbortController();

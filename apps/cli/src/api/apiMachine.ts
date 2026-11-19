@@ -243,7 +243,7 @@ import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSy
 import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
 import { projectVerifiedExternalActionRequesterContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createReadFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/readFileHandler';
-import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { currentWorkspaceSource, runWithWorkspaceSourceDemand } from '@/workspaces/source/workspaceSource';
 import { createWriteFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/writeFileHandler';
 import { createDirectoryRpcActionExecutor } from '@/rpc/handlers/fileSystem/directoryHandlers';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FILESYSTEM_MUTATION_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -610,6 +610,7 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
     workspaceSyncHandoffAdapter?: WorkspaceSyncHandoffAdapter;
     /** Daemon-owned workspace-sync controller and target-local RPC authority. */
     workspaceSync?: MachineRpcHandlerDeps['workspaceSync'];
+    openManagedProjectWorkspace?: NonNullable<MachineRpcHandlerDeps['projectOpen']>['openManagedProjectWorkspace'];
 }>;
 
 export type ApiMachineDaemonStatePublicationOptions = Readonly<{
@@ -2157,6 +2158,7 @@ export class ApiMachineClient {
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,
             selectWorkspaceSource: (context, input) => this.filesystemEffectAdmission.selectWorkspaceSource(context, input),
+            admitWorkspaceSource: this.filesystemEffectAdmission.rpc,
             resolveRequester: this.filesystemEffectAdmission.resolveRpcRequester,
             nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
                 readMemberFolderOwner: path => this.readMemberFolderOwner(path) },
@@ -2486,6 +2488,9 @@ export class ApiMachineClient {
                 ...(executionRunRuntimeAccountId ? {
                     projectOpen: {
                         ...deps?.projectOpen,
+                        ...(this.lifecycleDependencies.openManagedProjectWorkspace ? {
+                            openManagedProjectWorkspace: this.lifecycleDependencies.openManagedProjectWorkspace,
+                        } : {}),
                         privateCheckout: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
                         serverId: executionRunServerId,
                         serverHttpBaseUrl: resolveServerHttpBaseUrl(),
@@ -2934,7 +2939,7 @@ export class ApiMachineClient {
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs }) : null;
         // The workspace source is chosen once per admitted Action; every effect below reads it.
-        return async (request) => runWithWorkspaceSource(this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
+        return async (request) => runWithWorkspaceSourceDemand(this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
             const requester = await this.filesystemEffectAdmission.resolveActionRequester?.(request.context);
             const source = currentWorkspaceSource();
             // A member of a target Session is served by the target's source (owner ruling 2026-11-12);

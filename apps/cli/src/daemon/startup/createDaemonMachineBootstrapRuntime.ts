@@ -170,6 +170,7 @@ export function createDaemonMachineBootstrapRuntime(
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     workspaceSyncHandoffAdapter?: WorkspaceSyncHandoffAdapter;
     workspaceSync?: ApiMachineClientLifecycleDependencies['workspaceSync'];
+    openManagedProjectWorkspace?: ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace'];
     onMachineMetadataChanged?: ApiMachineClientLifecycleDependencies['onMachineMetadataChanged'];
     onProjectOperationInspection?: ApiMachineClientLifecycleDependencies['onProjectOperationInspection'];
     createWorkspaceSyncRuntime?: (input: Readonly<{
@@ -533,6 +534,7 @@ export function createDaemonMachineBootstrapRuntime(
               ? { workspaceSyncHandoffAdapter }
               : {}),
             ...(workspaceSync ? { workspaceSync } : {}),
+            ...(params.openManagedProjectWorkspace ? { openManagedProjectWorkspace: params.openManagedProjectWorkspace } : {}),
             ...(workspaceRuntime?.createProjectFiniteRuntime
               ? { createProjectFiniteRuntime: workspaceRuntime.createProjectFiniteRuntime }
               : {}),

@@ -90,7 +90,7 @@ export type ManagedWorkspaceSyncTargetAuthority = Readonly<{
 const MANAGED_TARGET_ROLES: ReadonlySet<string> = new Set(['bootstrap', 'exec', 'putFile', 'stream']);
 
 /**
- * The retained-row check shared by admitted Session and Account sync targets:
+ * The retained-row check shared by admitted Session, Project and Account Sync targets:
  * every call: controlled by this controller and installation, in this Home,
  * bound to a resource and not being deleted. The guest each channel reaches is
  * the row's own resource, so a rebuild (new resource) ends the authority too.
@@ -109,6 +109,9 @@ type ManagedNativeInvocationInput = ManagedMachineReconciliationInput | (Omit<Ma
 }>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
     action: 'workspace.sync.relationship.create';
     workspaceSyncTarget: ManagedWorkspaceSyncTargetAuthority;
+}>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
+    action: 'projects.open';
+    projectWorkspaceTarget: Readonly<{ lifetime: AbortSignal }>;
 }>);
 
 export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, provider: ManagedMachineFullV1['launch']['provider'], localId: string,
@@ -346,8 +349,9 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     const admittedRestore = params.action === 'deployments.backups.restore'
         && params.options.context?.operationAcceptance?.actionId === params.action;
     const targetAuthority = params.action === 'session.spawn_new' && 'sessionTarget' in params ? params.sessionTarget
-        : params.action === 'workspace.sync.relationship.create' && 'workspaceSyncTarget' in params ? params.workspaceSyncTarget : undefined;
-    // Both admitted lifetimes use the same controller-owned resource and channel authority.
+        : params.action === 'workspace.sync.relationship.create' && 'workspaceSyncTarget' in params ? params.workspaceSyncTarget
+        : params.action === 'projects.open' && 'projectWorkspaceTarget' in params ? params.projectWorkspaceTarget : undefined;
+    // Admitted lifetimes use the same controller-owned resource and channel authority.
     if (targetAuthority && managedTargetRow(machine, params.input) === undefined) throw new ManagedMachineControllerError('admission_unavailable');
     const assertManagedTargetCurrent = (requested: unknown) => {
         if (!targetAuthority) throw new ManagedMachineControllerError('admission_unavailable');

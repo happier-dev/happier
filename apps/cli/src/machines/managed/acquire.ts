@@ -1,6 +1,6 @@
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
-import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ManagedWorkspaceLocatorV2, ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { managedMachineSetupHasWorkV1, prepareManagedOpaquePresetAcquireV1 } from '@happier-dev/cli-common/machines/managed';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
@@ -593,6 +593,13 @@ export type ManagedWorkspaceSyncTarget = Pick<ManagedSessionTarget,
     'id' | 'platform' | 'home' | 'exec' | 'putFile' | 'openChannel' | 'ensureWorkspaceRuntime'>
     & Partial<Pick<ManagedSessionTarget, 'holderPath' | 'helperPath'>>;
 
+export type ManagedProjectWorkspaceTargetRequest = Readonly<{
+    workspace: Pick<ManagedWorkspaceLocatorV2, 'serverId' | 'managedId' | 'controller' | 'rootPath'>;
+    requesterAccountId: string;
+    lifetime: AbortSignal;
+    holder: ManagedSessionTargetRequest['holder'];
+}>;
+
 export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcquisitionDriverInput) {
     const inFlight = new Map<string, Promise<JsonValue | null>>();
     async function reconcileOnce(params: Parameters<typeof reconcileManagedMachine>[0]): Promise<void> {
@@ -628,14 +635,18 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
     }
     async function openTarget(request: ManagedSessionTargetRequest): Promise<ManagedSessionTarget>;
     async function openTarget(request: ManagedWorkspaceSyncTargetRequest): Promise<ManagedWorkspaceSyncTarget>;
-    async function openTarget(targetRequest: ManagedSessionTargetRequest | ManagedWorkspaceSyncTargetRequest): Promise<ManagedSessionTarget | ManagedWorkspaceSyncTarget> {
+    async function openTarget(request: ManagedProjectWorkspaceTargetRequest): Promise<ManagedSessionTarget>;
+    async function openTarget(targetRequest: ManagedSessionTargetRequest | ManagedWorkspaceSyncTargetRequest | ManagedProjectWorkspaceTargetRequest): Promise<ManagedSessionTarget | ManagedWorkspaceSyncTarget> {
         const sync = 'relationshipId' in targetRequest ? targetRequest : undefined;
-        const request = 'sessionId' in targetRequest ? targetRequest : {
-            ...targetRequest, sessionId: undefined, committedSessionId: undefined, onNativeAbsent: undefined, operation: undefined,
+        const session = 'sessionId' in targetRequest ? targetRequest : undefined;
+        const request = session ?? {
+            ...targetRequest, managedId: 'workspace' in targetRequest ? targetRequest.workspace.managedId : targetRequest.managedId,
+            committedSessionId: undefined, onNativeAbsent: undefined, operation: undefined,
         };
-        if (sync && (sync.workspace.managedId !== sync.managedId || sync.workspace.serverId !== input.homeId
-            || sync.workspace.controller.machineId !== input.controller.machineId
-            || sync.workspace.controller.installationId !== input.controller.installationId)) {
+        const workspace = 'workspace' in targetRequest ? targetRequest.workspace : undefined;
+        if (workspace && (sync && workspace.managedId !== sync.managedId || workspace.serverId !== input.homeId
+            || workspace.controller.machineId !== input.controller.machineId
+            || workspace.controller.installationId !== input.controller.installationId)) {
             throw new ManagedMachineControllerError('admission_unavailable');
         }
         const preparationSignal = request.operation
@@ -646,7 +657,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const initial = await readCurrent(request.managedId, preparationSignal);
         if (!initial || initial.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
         const admitsRequester = (row: ManagedMachineV1): boolean => row.custodianAccountId === request.requesterAccountId
-            || (!sync && row.acquisitionMode === 'resource-bound' && Boolean(request.committedSessionId)
+            || (Boolean(session) && row.acquisitionMode === 'resource-bound' && Boolean(request.committedSessionId)
                 && row.enrollmentAccountId === request.requesterAccountId);
         if (!admitsRequester(initial)) throw new ManagedMachineControllerError('managed_target_access_unavailable');
         // The authority ends with its admitted lifetime, and when the row stops admitting this requester
@@ -655,7 +666,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
         const finiteSignal = AbortSignal.any([preparationSignal, revoked.signal]);
         const hydrator = createManagedPresetHydrator(input);
-        const options = { requestId: sync ? `workspace-sync-target:${sync.relationshipId}` : `session-target:${request.sessionId}`,
+        const options = { requestId: sync ? `workspace-sync-target:${sync.relationshipId}`
+            : session ? `session-target:${session.sessionId}` : `project-workspace-target:${request.managedId}`,
             signal: lifetime, context: request.operation };
         const admit = async (row: ManagedMachineV1 | null, signal = lifetime): Promise<ManagedMachineFullV1> => {
             if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
@@ -672,7 +684,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const authority = createManagedNativeInvocation({ input, options, machine: current,
             ...(sync ? { action: 'workspace.sync.relationship.create' as const,
                 workspaceSyncTarget: { relationshipId: sync.relationshipId, lifetime } }
-                : { action: 'session.spawn_new' as const, sessionTarget: { sessionId: request.sessionId!, lifetime } }) }, () => current!);
+                : session ? { action: 'session.spawn_new' as const, sessionTarget: { sessionId: session.sessionId, lifetime } }
+                    : { action: 'projects.open' as const, projectWorkspaceTarget: { lifetime } }) }, () => current!);
         const invoke = authority.invoke;
         if (!current.resource) throw new ManagedMachineControllerError('admission_unavailable');
         const correlation = { resource: current.resource };
@@ -804,6 +817,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         openSessionTarget: (request: ManagedSessionTargetRequest) => openTarget(request),
         /** The Account relationship owns this channel independently of any creating Session. */
         openWorkspaceSyncTarget: (request: ManagedWorkspaceSyncTargetRequest) => openTarget(request),
+        /** A Project attaches only this custodian's resource on its exact controller. */
+        openProjectWorkspaceTarget: (request: ManagedProjectWorkspaceTargetRequest) => openTarget(request),
         async snapshotAdmitted({ machine, label, reason, options }: ManagedNativeSnapshotRequest): Promise<MachineProvisionerSnapshotResultV1> {
             options.signal?.throwIfAborted();
             const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>

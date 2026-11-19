@@ -3,6 +3,16 @@ import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMat
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('OpenProject V1 wire admission', () => {
+  it('admits a managed folder attach only through the chosen controller', () => {
+    const input = { serverId: 'home', machineId: 'controller', source: { kind: 'folder', path: '/guest/project' },
+      materialization: { kind: 'attach',
+        targetManaged: { managedId: 'row', controller: { machineId: 'controller', installationId: 'installation' } } } };
+    expect(OpenProjectInputV1Schema.parse(input)).toEqual(input);
+    expect(OpenProjectInputV1Schema.safeParse({ ...input, machineId: 'another-controller' }).success).toBe(false);
+    expect(OpenProjectInputV1Schema.safeParse({ ...input, source: { kind: 'workspace', workspaceId: 'unrelated' } }).success).toBe(false);
+    expect(OpenProjectInputV1Schema.safeParse({ ...input, cloneSource: true }).success).toBe(false);
+  });
+
   it('binds a native sync destination to its actual installed controller', () => {
     const input = { serverId: 'home', machineId: 'controller',
       source: { kind: 'workspace', workspaceId: 'original', checkout: {

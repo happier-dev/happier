@@ -9,11 +9,12 @@ import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import type { RpcHandler } from '@/api/rpc/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
-import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { registerManagedWorkspaceTarget, registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createHostScmCommandRunner } from '@/scm/runtime';
@@ -26,6 +27,37 @@ const holderPath = resolveSessionHolderExecutablePath();
 const helperPath = resolveProcessCustodySupportExecutable('linux');
 const devcontainerImage = process.env.HAPPIER_TEST_SCM_DEVCONTAINER_IMAGE;
 const dockerPath = process.env.HAPPIER_TEST_SCM_DOCKER_BIN ?? 'docker';
+
+it('refuses an exact managed SCM request when the guest source is not registered', async () => {
+    const handlers = new Map<string, RpcHandler>();
+    const admission = createFilesystemEffectAdmission({});
+    registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler as RpcHandler); } }, process.cwd(),
+        { machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource });
+    const request = { v: 1, kind: 'targeted_action_rpc', input: { cwd: process.cwd() }, target: {
+        v: 2, kind: 'managed', serverId: 'home', workspaceId: 'project', managedId: 'guest',
+        controller: { machineId: 'controller', installationId: 'install' }, rootPath: process.cwd(),
+    } };
+    await expect(handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!(request, undefined)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+});
+
+it('refuses an unadmitted SCM requester before opening a registered managed workspace', async () => {
+    const lifetime = new AbortController();
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'project', managedId: 'guest',
+        controller: { machineId: 'controller', installationId: 'install' }, rootPath: process.cwd() } as const;
+    const handlers = new Map<string, RpcHandler>();
+    const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+    let channels = 0;
+    try {
+        registerManagedWorkspaceTarget({ workspace, target: { lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
+            openChannel() { channels += 1; throw new Error('Unexpected guest channel'); } } });
+        registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler as RpcHandler); } }, process.cwd(),
+            { machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc });
+        const response = await handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ v: 1, kind: 'targeted_action_rpc',
+            input: { cwd: process.cwd() }, target: workspace }, { signal: lifetime.signal });
+        expect(response).toMatchObject({ success: false, actionErrorCode: 'filesystem_identity_custody_unavailable' });
+        expect(channels).toBe(0);
+    } finally { lifetime.abort(); }
+});
 
 describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('directory-only daemon SCM placement', () => {
     const status = { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, operation: {} };
@@ -141,15 +173,15 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             }
             const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
             if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT && placed) {
-                const source = admission.selectWorkspaceSource(undefined, { cwd: root });
+                const source = await admission.selectWorkspaceSource(undefined, { cwd: root });
                 expect(source).toMatchObject({ kind: 'target', id: expect.stringContaining(':directory-rpc-session') });
                 await mkdir(join(root, 'nested'));
                 const alias = join(directory, 'alias');
                 await symlink(root, alias);
                 for (const cwd of [join(root, 'nested'), join(root, 'not-created'), join(alias, 'nested')]) {
-                    expect(admission.selectWorkspaceSource(undefined, { cwd }).kind).toBe('target');
+                    expect((await admission.selectWorkspaceSource(undefined, { cwd })).kind).toBe('target');
                 }
-                expect(admission.selectWorkspaceSource(undefined, { cwd: `${root}-sibling` }).kind).toBe('local');
+                expect((await admission.selectWorkspaceSource(undefined, { cwd: `${root}-sibling` })).kind).toBe('local');
             }
             const registration = createGitScmBackendRuntimeRegistration();
             const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
@@ -215,7 +247,16 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             if (caller === 'other-member') {
                 // Another person's placed root is never reached through its holder; their own child decides.
                 expect(memberLaunches).toEqual([method]);
-                expect(response).toMatchObject({ success: false, actionErrorCode: 'agent_isolation_unavailable' });
+                if (method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+                    expect(ScmComparisonCaptureOutputSchema.parse(response)).toMatchObject({
+                        success: false,
+                        errorCode: 'DIFF_UNAVAILABLE',
+                        effectAttempted: false,
+                        failureCause: { phase: 'scm.requester.native_preparation', errorCode: 'agent_isolation_unavailable' },
+                    });
+                } else {
+                    expect(response).toMatchObject({ success: false, actionErrorCode: 'agent_isolation_unavailable' });
+                }
                 await expect(readFile(join(root, '.git/executions'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
                 return;
             }

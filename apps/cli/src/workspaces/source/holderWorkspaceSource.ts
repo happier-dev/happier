@@ -89,6 +89,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
   guestRootPath?: string;
   /** The workspace client; a function is asked on every operation (a client that lost its holder is replaced there). */
   holder: SessionHolderChild | (() => SessionHolderChild);
+  hold?: () => () => void;
   /** The digest-checked process-custody helper inside the target. */
   helperPath: string;
 }>): WorkspaceSource {
@@ -205,7 +206,14 @@ export function createHolderWorkspaceSource(input: Readonly<{
     write({ op: 'put', relativePath: relative(target), sizeBytes: bytes.byteLength, expect }, bytes);
   const watch = (target: string, recursive: boolean, onEvent: (event: Readonly<{ path: string; kind: 'directory' | 'file' | 'unknown'; event: string }>) => void,
     onReady?: () => void, onUnavailable?: (error: Error) => void): (() => void) => {
-    const stream: SessionHolderStreamProcess = holder().spawnStream({ op: 'watch', path: relative(target), recursive });
+    const release = input.hold?.();
+    let stream: SessionHolderStreamProcess;
+    try {
+      stream = holder().spawnStream({ op: 'watch', path: relative(target), recursive });
+    } catch (error) {
+      release?.();
+      throw error;
+    }
     let rest = '';
     stream.stdout.on('data', (chunk: Buffer) => {
       rest += chunk.toString('utf8');
@@ -219,12 +227,14 @@ export function createHolderWorkspaceSource(input: Readonly<{
     });
     stream.once('spawn', () => onReady?.());
     stream.once('error', (error: Error) => onUnavailable?.(error));
+    if (release) stream.once('close', release);
     return () => { stream.kill('SIGTERM'); };
   };
   const source: WorkspaceSource = {
     nativeHelperPath: input.helperPath,
     kind: 'target' as const,
     id: input.id,
+    ...(input.hold ? { hold: input.hold } : {}),
     commandPaths: {
       toCommandPath: target => mapHolderWorkspacePath(root, guestRoot, target),
       fromCommandPath: target => mapHolderWorkspacePath(guestRoot, root, target),

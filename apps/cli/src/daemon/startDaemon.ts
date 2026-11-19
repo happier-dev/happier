@@ -4356,6 +4356,10 @@ export async function startDaemon(
         isShuttingDown: isDaemonQuiescing,
         admissionDrain,
         managedActivity: { activity: managedActivity, admissionDrain },
+        openManagedProjectWorkspace: (request) => managedMachinePolicyAdapter.openProjectWorkspaceTarget({
+          ...request, lifetime: AbortSignal.any([request.lifetime, homeTransportCancellation.signal]),
+          holder: { version: configuration.currentCliVersion, resolveArtifacts: readSessionTargetHolderArtifacts },
+        }),
         machineReboot: {
           nativeAdmission: machineNativeEffectAdmission,
           vitals: { host: () => machineVitals?.host() ?? null },

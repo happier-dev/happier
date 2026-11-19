@@ -6,7 +6,7 @@ import { logger } from '@/ui/logger';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { readWorkspaceSourcePlacement, runWithWorkspaceSource, selectWorkspaceSource,
+import { readWorkspaceSourcePlacement, runWithWorkspaceSourceDemand, selectWorkspaceSource,
   type WorkspaceSource, type WorkspaceSourcePlacement, type WorkspaceTargetSourceResolver } from '@/workspaces/source/workspaceSource';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
 import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
@@ -228,7 +228,7 @@ export function createFilesystemEffectRpcRegistrar(
     registrar.registerHandler<TRequest, unknown>(method, async (input, context) => {
       // The source is chosen once here; every consumer the handler reaches reads it.
       const source = admission.selectWorkspaceSource(context, input);
-      const ownerEffect = async () => await runWithWorkspaceSource(source, async () => await handler(input, context));
+      const ownerEffect = () => runWithWorkspaceSourceDemand(source, () => handler(input, context));
       if (admission.executeRpc) return await admission.executeRpc(method, input, context, ownerEffect, projectFailure, source);
       const failure = await admission.rpc(context, source);
       return failure ? projectFailure(failure) : await ownerEffect();

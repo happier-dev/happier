@@ -116,10 +116,10 @@ import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import { readStoredCredentials } from '@/persistence';
 import { sendFileReviewNoteToSession } from '@/session/services/sendFileReviewNote';
 import type { FileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
-import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { ManagedWorkspaceScmRpcRequestV1Schema, TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { createHostScmCommandRunner, isRequesterScmCommandRunnerSelected, resolveCwd, runWithRequesterScmCommandRunner } from '@/scm/runtime';
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import type { FilesystemEffectAdmission, FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { isScmActionId } from '@happier-dev/protocol/actions/executor/actionFamilies';
@@ -128,7 +128,7 @@ import { resolve as resolvePath } from 'node:path';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
-import { bindWorkspaceSourceRegistrar, currentWorkspaceSource, runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { bindWorkspaceSourceRegistrar, currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 import { runWithScmAccountScope } from '@/scm/accountScope';
@@ -145,7 +145,8 @@ export function registerScmHandlers(
         deliverFileAtRevision?: Parameters<typeof executeScmActionOperation>[0]['deliverFileAtRevision'];
         prepareFileBytesExport?: Parameters<typeof executeScmActionOperation>[0]['prepareFileBytesExport'];
         /** The filesystem admission's source decision, shared so SCM reads the same workspace. */
-        selectWorkspaceSource?: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource;
+        selectWorkspaceSource?: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource | Promise<WorkspaceSource>;
+        admitWorkspaceSource?: FilesystemEffectAdmission['rpc'];
         /** The filesystem admission's requester decision, shared so SCM runs where that person may run. */
         resolveRequester?: (context: RpcHandlerContext) => Promise<FilesystemEffectRequester>;
         /** The member execution owner (as bash, Project Open and Sync use it). */
@@ -270,7 +271,7 @@ export function registerScmHandlers(
             return await runAsMember(context, identity, method, projectRoot, input, comparisons ? run : undefined, identity.requester.accountId);
         } finally { await requester?.dispose(); }
     };
-    const selectSource = (request: unknown, context: RpcHandlerContext | undefined): WorkspaceSource => {
+    const selectSource = async (request: unknown, context: RpcHandlerContext | undefined): Promise<WorkspaceSource> => {
         const targeted = request && typeof request === 'object' && 'kind' in request && request.kind === 'targeted_action_rpc'
             ? TargetedActionRpcRequestV1Schema.safeParse(request) : null;
         const directory = targeted?.success && targeted.data.target.kind === 'machine' ? targeted.data.target.project?.directory : undefined;
@@ -283,36 +284,49 @@ export function registerScmHandlers(
             method: string,
             handler: RpcHandler<TRequest, TResponse>,
         ): void {
-            rpcHandlerManager.registerHandler(method, (request, context) => {
-                const selected = selectSource(request, context);
-                return runWithWorkspaceSource(selected, () => {
-                const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
-                const machinePolicy = deps?.accessPolicy ?? resolveFilesystemAccessPolicy();
+            rpcHandlerManager.registerHandler(method, async (request, context) => {
                 const wrapped = request && typeof request === 'object' && 'kind' in request
                     && request.kind === 'targeted_action_rpc';
-                const target = wrapped ? TargetedActionRpcRequestV1Schema.safeParse(request) : null;
+                const managed = wrapped && unwrapTarget && isScmLocalRepositoryReadRpcMethod(method)
+                    ? ManagedWorkspaceScmRpcRequestV1Schema.safeParse(request).data : undefined;
+                if (managed && (!deps?.selectWorkspaceSource || managed.target.controller.machineId !== deps.machineId)) {
+                    return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
+                }
+                const target = wrapped && !managed ? TargetedActionRpcRequestV1Schema.safeParse(request) : null;
                 if (target && (!target.success || target.data.target.kind !== 'machine'
                     || target.data.target.machineId !== deps?.machineId)) {
                     return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
                 }
-                const root = target?.success && target.data.target.kind === 'machine'
-                    ? target.data.target.project?.directory : undefined;
-                // A member read never resolves the selected root here: the member child does.
-                return runAsAdmittedRequester(context, method, root, target?.success ? target.data.input : request, selected, () => {
-                const scoped = root ? resolveCwd(root, workingDirectory, machinePolicy) : null;
-                // A selected root can narrow Machine access, never expand it.
-                // Resolve this on the receiving filesystem, including symlinks.
-                if (scoped && !scoped.ok) {
-                    return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: scoped.error };
+                const root = managed?.target.rootPath ?? (target?.success && target.data.target.kind === 'machine'
+                    ? target.data.target.project?.directory : undefined);
+                const semanticInput = managed ? managed.input : target?.success ? target.data.input : request;
+                const selected = managed && deps?.selectWorkspaceSource
+                    ? await deps.selectWorkspaceSource(context, { workspace: managed.target, rootPath: root })
+                    : await selectSource(request, context);
+                if (managed) {
+                    if (!deps?.admitWorkspaceSource) return refused('filesystem_identity_custody_unavailable');
+                    const failure = await deps.admitWorkspaceSource(context, selected);
+                    if (failure) return refused(failure.errorCode);
                 }
-                const accessPolicy: FilesystemAccessPolicy = scoped
-                    ? { kind: 'restrictedRoots', roots: [scoped.cwd] } : machinePolicy;
-                return scmRpcOperationContextStorage.run(
-                    { context: operationContext, workingDirectory: scoped?.cwd ?? workingDirectory, accessPolicy },
-                    // Raw SCM methods consume semantic input; Action-spec RPCs
-                    // retain the same envelope for their canonical target parser.
-                    () => handler((unwrapTarget && target?.success ? target.data.input : request) as TRequest, operationContext));
-                });
+                return runWithWorkspaceSourceDemand(selected, () => {
+                    const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
+                    const machinePolicy = deps?.accessPolicy ?? resolveFilesystemAccessPolicy();
+                    const handle = () => {
+                        // The managed source confines paths on the guest. A local Project narrows
+                        // the Machine's existing path policy, including its local symlink facts.
+                        const scoped = managed ? { ok: true as const, cwd: managed.target.rootPath }
+                            : root ? resolveCwd(root, workingDirectory, machinePolicy) : null;
+                        if (scoped && !scoped.ok) {
+                            return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: scoped.error };
+                        }
+                        const accessPolicy: FilesystemAccessPolicy = scoped
+                            ? { kind: 'restrictedRoots', roots: [scoped.cwd] } : machinePolicy;
+                        return scmRpcOperationContextStorage.run(
+                            { context: operationContext, workingDirectory: scoped?.cwd ?? workingDirectory, accessPolicy },
+                            () => handler((unwrapTarget ? semanticInput : request) as TRequest, operationContext));
+                    };
+                    // Local member placement resolves the root in its own child.
+                    return managed ? handle() : runAsAdmittedRequester(context, method, root, semanticInput, selected, handle);
                 });
             });
         },

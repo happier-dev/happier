@@ -3,6 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { ManagedWorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 
 import {
   ExternalActionTargetV1Schema,
@@ -41,6 +42,14 @@ export const TargetedActionRpcRequestV1Schema = lazyZodSchema(() => z.strictObje
 })));
 
 export type TargetedActionRpcRequestV1 = z.infer<typeof TargetedActionRpcRequestV1Schema>;
+
+/** SCM reads address a guest directly. Older targeted RPC readers reject this target arm. */
+export const ManagedWorkspaceScmRpcRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  kind: z.literal('targeted_action_rpc'),
+  input: z.unknown(),
+  target: ManagedWorkspaceAddressV2Schema,
+}));
 
 export function createTargetedActionRpcRequestV1(
   input: unknown,

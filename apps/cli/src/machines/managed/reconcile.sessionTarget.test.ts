@@ -511,6 +511,39 @@ describe('Session placement on a managed target (driver)', () => {
     const syncWorkspace = { v: 2 as const, kind: 'managed' as const, id: 'native-workspace', serverId: homeId,
         managedId: machine.id, controller: machine.controller!, rootPath: '/home/u/workspace', createdAtMs: 0 };
 
+    it('admits a Project target under the Account custodian and revokes its channels on a managed-row push', async () => {
+        const h = harness({ guest: true, holdStream: true });
+        const lifetime = new AbortController();
+        onTestFinished(() => lifetime.abort());
+        let row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        let reads = 0;
+        let listener: Parameters<NonNullable<ManagedMachineAcquisitionDriverInput['subscribeManagedMachineChanges']>>[0] | undefined;
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => { reads++; return row; },
+            subscribeManagedMachineChanges: next => { listener = next; return () => { listener = undefined; }; } });
+        const request = { workspace: syncWorkspace, requesterAccountId: 'owner', lifetime: lifetime.signal, holder };
+        await expect(driver.openProjectWorkspaceTarget({ ...request, workspace: { ...syncWorkspace,
+            controller: { ...syncWorkspace.controller, installationId: 'other-installation' } } }))
+            .rejects.toMatchObject({ code: 'admission_unavailable' });
+        expect(reads).toBe(0);
+        await expect(driver.openProjectWorkspaceTarget({ ...request, requesterAccountId: 'someone-else' }))
+            .rejects.toMatchObject({ code: 'managed_target_access_unavailable' });
+        expect(h.calls).toEqual([]);
+        const target = await driver.openProjectWorkspaceTarget(request);
+        const first = target.openChannel(['holder', 'workspace'], lifetime.signal);
+        const closed = new Promise(resolve => first.once('close', resolve));
+        first.resume();
+        await expect.poll(() => h.calls.includes('stream')).toBe(true);
+        expect(reads).toBe(2);
+        await listener?.({ kind: 'managed', managedIds: ['unrelated'] });
+        expect(reads).toBe(2);
+        row = { ...row, desired: 'delete' };
+        await listener?.({ kind: 'managed', managedIds: [row.id] });
+        await closed;
+        expect(reads).toBe(3);
+        expect(target.lifetime.aborted).toBe(true);
+        expect(h.calls.every(role => ['bootstrap', 'exec', 'putFile', 'stream'].includes(role))).toBe(true);
+    });
+
     it.skipIf(process.platform === 'win32')('places requested holder artifacts through the admitted Sync target native port', async () => {
         const guestHome = await mkdtemp(join(tmpdir(), 'sync-target-holder-'));
         const lifetime = new AbortController();

@@ -1,10 +1,10 @@
 import type { Duplex } from 'node:stream';
 import { realpathSync } from 'node:fs';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
+import { workspaceTargetUnavailable, type WorkspaceSourcePlacement, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 
-import { openSessionHolderWorkspaceClient, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
+import { openSessionHolderWorkspaceChannel, openSessionHolderWorkspaceClient, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
-import type { WorkspaceSource, WorkspaceSourcePlacement } from '@/workspaces/source/workspaceSource';
 import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 /**
@@ -26,7 +26,9 @@ export type SessionTargetWorkspaceTarget = Readonly<{
     openChannel(argv: readonly string[]): Duplex;
 }>;
 
-type Entry = {
+type SessionEntry = {
+    readonly kind: 'session';
+    readonly sessionId: string;
     readonly target: SessionTargetWorkspaceTarget;
     readonly primarySocketPath: string;
     readonly workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
@@ -35,7 +37,65 @@ type Entry = {
     source?: WorkspaceSource;
 };
 
-const entries = new Map<string, Entry>();
+type ManagedWorkspace = NonNullable<WorkspaceSourcePlacement['workspace']>;
+type ManagedEntry = Readonly<{ kind: 'managed'; source: WorkspaceSource }>;
+type WorkspaceEntry = SessionEntry | ManagedEntry;
+const entries = new Map<string, WorkspaceEntry>();
+const sessionWorkspaces = new Map<string, string>();
+
+function managedWorkspaceKey(workspace: ManagedWorkspace): string {
+    return JSON.stringify(['managed', workspace.serverId, workspace.controller.machineId,
+        workspace.controller.installationId, workspace.managedId, workspace.workspaceId, workspace.rootPath]);
+}
+
+/** The target lifetime comes from managed custody. Only provider channels follow panel demand. */
+export function registerManagedWorkspaceTarget(input: Readonly<{
+    workspace: ManagedWorkspace;
+    target: Readonly<{ lifetime: AbortSignal; holderPath: string; helperPath: string;
+        openChannel(argv: readonly string[], signal: AbortSignal): Duplex }>;
+}>): boolean {
+    const { target, workspace } = input;
+    const key = managedWorkspaceKey(workspace);
+    if (target.lifetime.aborted || entries.has(key)) return false;
+    let demands = 0;
+    let active: { channel: Duplex; holder: SessionHolderChild } | undefined;
+    const close = () => {
+        const previous = active;
+        active = undefined;
+        previous?.channel.end();
+    };
+    const entry: ManagedEntry = { kind: 'managed', source: createHolderWorkspaceSource({
+        id: key, rootPath: workspace.rootPath, helperPath: target.helperPath,
+        hold: () => {
+            demands += 1;
+            return () => { if (--demands === 0) close(); };
+        },
+        holder: () => {
+            if (target.lifetime.aborted || demands === 0) {
+                throw workspaceTargetUnavailable();
+            }
+            if (!active || active.channel.destroyed || active.holder.holderConnectionFailed) {
+                close();
+                const channel = target.openChannel([target.holderPath, 'workspace', '--root', workspace.rootPath], target.lifetime);
+                active = { channel, holder: openSessionHolderWorkspaceChannel(channel) };
+            }
+            return active.holder;
+        },
+    }) };
+    entries.set(key, entry);
+    target.lifetime.addEventListener('abort', () => {
+        if (entries.get(key) === entry) entries.delete(key);
+        close();
+    }, { once: true });
+    return true;
+}
+
+function sessionWorkspaceEntry(sessionId: string): SessionEntry | undefined {
+    const key = sessionWorkspaces.get(sessionId);
+    if (!key) return undefined;
+    const entry = entries.get(key);
+    return entry?.kind === 'session' ? entry : undefined;
+}
 
 export function registerSessionTargetWorkspace(input: Readonly<{
     sessionId: string;
@@ -46,16 +106,24 @@ export function registerSessionTargetWorkspace(input: Readonly<{
     baseline?: WorkspaceManifest;
 }>): void {
     if (input.lifetime.aborted) return;
-    const entry: Entry = { target: input.target, primarySocketPath: input.primarySocketPath, workspace: input.workspace,
+    const key = JSON.stringify(['session', input.target.id, input.primarySocketPath, input.workspace.targetRoot]);
+    const entry: SessionEntry = { kind: 'session', sessionId: input.sessionId, target: input.target,
+        primarySocketPath: input.primarySocketPath, workspace: input.workspace,
         ...(input.baseline ? { baseline: input.baseline } : {}) };
-    entries.set(input.sessionId, entry);
+    const previousKey = sessionWorkspaces.get(input.sessionId);
+    if (previousKey && previousKey !== key && entries.get(previousKey)?.kind === 'session') entries.delete(previousKey);
+    entries.set(key, entry);
+    sessionWorkspaces.set(input.sessionId, key);
     input.lifetime.addEventListener('abort', () => {
-        if (entries.get(input.sessionId) === entry) entries.delete(input.sessionId);
+        if (entries.get(key) === entry) {
+            entries.delete(key);
+            if (sessionWorkspaces.get(input.sessionId) === key) sessionWorkspaces.delete(input.sessionId);
+        }
         entry.client?.detach();
     }, { once: true });
 }
 
-function workspaceClient(entry: Entry): SessionHolderChild {
+function workspaceClient(entry: SessionEntry): SessionHolderChild {
     // A client that never reached the holder (Agent not started yet) or lost it is replaced on the next request.
     if (!entry.client || entry.client.holderConnectionFailed) {
         entry.client?.detach();
@@ -67,7 +135,7 @@ function workspaceClient(entry: Entry): SessionHolderChild {
 
 /** Terminals consume the same live Session placement as Files/Git; the Session owns this shared client. */
 export function resolveSessionTargetPtyTarget(sessionId: string): Readonly<{ rootPath: string; openHolder(): SessionHolderChild }> | null {
-    const entry = entries.get(sessionId);
+    const entry = sessionWorkspaceEntry(sessionId);
     return entry ? { rootPath: entry.workspace.hostRoot, openHolder: () => workspaceClient(entry) } : null;
 }
 
@@ -75,37 +143,43 @@ function physicalPath(path: string): string | null {
     try { return realpathSync(expandHomeDirPath(path)); } catch { return null; }
 }
 
-function findWorkspaceAt(path: string, readRoot: (entry: Entry) => string | null): [string, Entry] | undefined {
-    let revoked: [string, Entry] | undefined;
-    for (const registration of entries) {
-        const entry = registration[1];
+function findWorkspaceAt(path: string, readRoot: (entry: SessionEntry) => string | null): SessionEntry | undefined {
+    let revoked: SessionEntry | undefined;
+    for (const [key, entry] of entries) {
+        if (entry.kind !== 'session' || sessionWorkspaces.get(entry.sessionId) !== key) continue;
         const root = readRoot(entry);
         if (!root || !isCanonicalAbsolutePathInsideRoot(root, path)) continue;
-        if (!entry.target.lifetime.aborted) return registration;
-        revoked ??= registration;
+        if (!entry.target.lifetime.aborted) return entry;
+        revoked ??= entry;
     }
     return revoked;
 }
 
-function findWorkspaceByDirectory(path: string): [string, Entry] | undefined {
+function findWorkspaceByDirectory(path: string): SessionEntry | undefined {
     const lexical = findWorkspaceAt(path, entry => entry.workspace.hostRoot);
-    if (lexical && !lexical[1].target.lifetime.aborted) return lexical;
+    if (lexical && !lexical.target.lifetime.aborted) return lexical;
     const requestedPath = physicalPath(path);
     const physical = requestedPath ? findWorkspaceAt(requestedPath, entry => physicalPath(entry.workspace.hostRoot)) : undefined;
-    if (physical && !physical[1].target.lifetime.aborted) return physical;
+    if (physical && !physical.target.lifetime.aborted) return physical;
     // A revoked-only root must keep its target refusal, including when it no longer exists.
     return lexical ?? physical;
 }
 
 /** `resolveWorkspaceTarget` for filesystem admission, including directory-only Git panel requests. */
 export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
+    // An exact managed address can only resolve by its workspace identity.
+    if (placement.workspace) {
+        const key = managedWorkspaceKey(placement.workspace);
+        if (placement.sessionId && sessionWorkspaces.get(placement.sessionId) !== key) return null;
+        const entry = entries.get(key);
+        return entry?.kind === 'managed' ? entry.source : null;
+    }
     // Explicit Session scope selects its own placement, including a revoked target.
-    const [sessionId, entry] = placement.sessionId
-        ? [placement.sessionId, entries.get(placement.sessionId)] as const
-        : (placement.rootPath ? findWorkspaceByDirectory(placement.rootPath) : undefined) ?? [];
+    const entry = placement.sessionId ? sessionWorkspaceEntry(placement.sessionId)
+        : placement.rootPath ? findWorkspaceByDirectory(placement.rootPath) : undefined;
     if (!entry) return null;
     const client = workspaceClient(entry);
-    entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.hostRoot,
+    entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${entry.sessionId}`, rootPath: entry.workspace.hostRoot,
         guestRootPath: entry.workspace.targetRoot, holder: client, helperPath: entry.target.helperPath });
     return entry.source!;
 }
@@ -116,7 +190,7 @@ export function resolveSessionTargetWorkspaceTransfer(sessionId: string): Readon
     workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
     baseline: WorkspaceManifest | null;
 }> | null {
-    const entry = entries.get(sessionId);
+    const entry = sessionWorkspaceEntry(sessionId);
     if (!entry) return null;
     return {
         workspace: entry.workspace,

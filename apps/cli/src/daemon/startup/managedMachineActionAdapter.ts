@@ -477,6 +477,15 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     await new Promise(settle => request.lifetime.addEventListener('abort', settle, { once: true }));
                 }).catch(reject);
             }),
+        openProjectWorkspaceTarget: (request: import('@/machines/managed/acquire').ManagedProjectWorkspaceTargetRequest) =>
+            new Promise<import('@/machines/managed/acquire').ManagedSessionTarget>((resolve, reject) => {
+                void withBoundDriver(params, request.lifetime, async driver => {
+                    const target = await driver.openProjectWorkspaceTarget(request);
+                    resolve(target);
+                    if (target.lifetime.aborted) return;
+                    await new Promise(settle => target.lifetime.addEventListener('abort', settle, { once: true }));
+                }).catch(reject);
+            }),
         snapshotAdmitted: async (request: import('@/machines/managed/acquire').ManagedNativeSnapshotRequest) =>
             withBoundDriver(params, request.options.signal, driver => driver.snapshotAdmitted(request)),
         supportsNativeLifetimeRenewal: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<boolean> =>

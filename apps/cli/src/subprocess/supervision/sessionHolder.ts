@@ -1283,17 +1283,24 @@ export function attachSessionHolderWorkspaceClient(socketPath: string, target?: 
 }
 
 /** Existing holder frames over one admitted provider pipe, before an Agent exists. */
-export function attachSessionHolderWorkspaceChannel(channel: Duplex): Promise<SessionHolderChild> {
+export function openSessionHolderWorkspaceChannel(channel: Duplex, onReady?: (client: SessionHolderChild) => void): SessionHolderChild {
     const client = new SessionHolderChild('workspace-stdio');
+    client.attachWorkspaceChannel(channel, hello => {
+        client.holderPid = hello.holderPid;
+        onReady?.(client);
+    });
+    return client;
+}
+
+export function attachSessionHolderWorkspaceChannel(channel: Duplex): Promise<SessionHolderChild> {
     return new Promise((resolve, reject) => {
-        let attached = false;
-        const failed = () => { if (!attached) reject(new PluginError({ code: 'agent_cli_target_unavailable',
-            message: 'The Session target workspace channel is unavailable', retryable: false })); };
+        const failed = () => reject(new PluginError({ code: 'agent_cli_target_unavailable',
+            message: 'The Session target workspace channel is unavailable', retryable: false }));
         channel.once('error', failed);
         channel.once('close', failed);
-        client.attachWorkspaceChannel(channel, hello => {
-            attached = true;
-            client.holderPid = hello.holderPid;
+        openSessionHolderWorkspaceChannel(channel, client => {
+            channel.removeListener('error', failed);
+            channel.removeListener('close', failed);
             resolve(client);
         });
     });

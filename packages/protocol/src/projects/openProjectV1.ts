@@ -15,10 +15,11 @@ import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '..
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PathSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.refine(value => !value.includes('\0'))));
+const OpenManagedTargetSchema = lazyZodSchema(() => z.pick(ManagedWorkspaceRefV2WriteSchema, { managedId: true, controller: true }));
 
 /** Closed choices consumed by the incumbent SCM and Sync realization owners. */
 export const WorkspaceActivationRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('attach') }),
+  z.strictObject({ kind: z.literal('attach'), targetManaged: z.optional(OpenManagedTargetSchema) }),
   z.strictObject({
     kind: z.literal('worktree'),
     checkout: SessionAuthoringCheckoutCreationDraftV1Schema,
@@ -32,7 +33,7 @@ export const WorkspaceActivationRequestV1Schema = lazyZodSchema(() => z.discrimi
   z.strictObject({
     kind: z.literal('sync'),
     targetPath: PathSchema,
-    targetManaged: z.optional(z.pick(ManagedWorkspaceRefV2WriteSchema, { managedId: true, controller: true })),
+    targetManaged: z.optional(OpenManagedTargetSchema),
     workspaceAction: HandoffWorkspaceActionV1Schema.check(z.refine(action => action.kind !== 'none')),
   }),
 ]).check(z.refine(value => value.kind !== 'clone'
@@ -63,9 +64,12 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   if (input.cloneSource && input.materialization.kind !== 'attach') {
     context.addIssue({ code: 'custom', path: ['cloneSource'], message: 'Clone source facts require attachment' });
   }
-  if (input.materialization.kind === 'sync' && input.materialization.targetManaged
+  if ((input.materialization.kind === 'attach' || input.materialization.kind === 'sync') && input.materialization.targetManaged
     && input.materialization.targetManaged.controller.machineId !== input.machineId) {
-    context.addIssue({ code: "custom", path: ['materialization', 'targetManaged'], message: 'Native sync destination must match its controller Machine' });
+    context.addIssue({ code: "custom", path: ['materialization', 'targetManaged'], message: 'Native destination must match its controller Machine' });
+  }
+  if (input.materialization.kind === 'attach' && input.materialization.targetManaged && (input.source.kind !== 'folder' || input.cloneSource)) {
+    context.addIssue({ code: 'custom', path: ['materialization', 'targetManaged'], message: 'Native attachment selects a folder' });
   }
   if ((input.source.kind === 'workspace' || input.source.kind === 'source') && input.source.checkout) {
     if (input.source.checkout.serverId !== input.serverId

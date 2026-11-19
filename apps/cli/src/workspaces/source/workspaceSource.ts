@@ -3,6 +3,9 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Dirent, Stats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { ManagedWorkspaceAddressV2Schema, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+
 import type { DirectoryTopologyWatchTarget, StartDirectoryTopologyWatcherOptions } from '@/integrations/watcher/startDirectoryTopologyWatcher';
 import type { StartFileWatcherOptions } from '@/integrations/watcher/startFileWatcher';
 import { localWorkspaceSource } from './localWorkspaceSource';
@@ -58,6 +61,8 @@ export interface WorkspaceSource {
   readonly nativeHelperPath?: string;
   /** Identity for keys that dedupe per workspace (watches, caches): never shared across sources. */
   readonly id: string;
+  /** Keep an admitted Agent-less holder channel alive for the duration of one consumer. */
+  hold?(): () => void;
   /** Translate absolute paths passed to or reported by a command whose root has another name in its OS. */
   readonly commandPaths?: Readonly<{ toCommandPath(path: string): string; fromCommandPath(path: string): string }>;
   /** Publication effects. Read-only sources omit these operations. */
@@ -116,7 +121,11 @@ export interface WorkspaceSource {
 export type WorkspaceTool = 'ripgrep' | 'difftastic';
 
 /** Placement facts of one admitted request; selection reads nothing else. */
-export type WorkspaceSourcePlacement = Readonly<{ sessionId?: string; rootPath?: string }>;
+export type WorkspaceSourcePlacement = Readonly<{
+  sessionId?: string;
+  rootPath?: string;
+  workspace?: Extract<WorkspaceAddressV2, { kind: 'managed' }>;
+}>;
 
 /**
  * Supplied by the Session placement owner (session host): returns the target
@@ -138,14 +147,30 @@ const selectedSource = new AsyncLocalStorage<WorkspaceSource>();
 // Resolved at call time: module cycles (local source ↔ tool integrations) must not capture an uninitialized binding.
 let unboundSource: WorkspaceSource | undefined;
 
+export function workspaceTargetUnavailable(): PluginError {
+  return new PluginError({ code: 'workspace_target_unavailable', message: 'The managed workspace is unavailable' });
+}
+
 /** The single source decision, made once at request admission. */
 export function selectWorkspaceSource(placement: WorkspaceSourcePlacement, resolveTarget?: WorkspaceTargetSourceResolver): WorkspaceSource {
-  return resolveTarget?.(placement) ?? localWorkspaceSource;
+  const target = resolveTarget?.(placement);
+  if (target?.kind === 'target') return target;
+  if (placement.workspace) throw workspaceTargetUnavailable();
+  return target ?? localWorkspaceSource;
 }
 
 /** Bind the admitted request's source for every consumer reached by `effect`. */
 export function runWithWorkspaceSource<T>(source: WorkspaceSource, effect: () => T): T {
   return selectedSource.run(source, effect);
+}
+
+export async function runWithWorkspaceSourceDemand<T>(source: WorkspaceSource, effect: () => T | Promise<T>): Promise<T> {
+  const release = source.hold?.();
+  try {
+    return await runWithWorkspaceSource(source, effect);
+  } finally {
+    release?.();
+  }
 }
 
 /** Bind each arrival's selected source before its handler runs (registrars without their own admission wrapper). */
@@ -155,7 +180,7 @@ export function bindWorkspaceSourceRegistrar(
 ): RpcHandlerRegistrar {
   return { ...registrar, registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
     registrar.registerHandler<TRequest, TResponse>(method, (input, context) =>
-      runWithWorkspaceSource(select(context, input), () => handler(input, context)));
+      runWithWorkspaceSourceDemand(select(context, input), () => handler(input, context)));
   } };
 }
 
@@ -178,12 +203,16 @@ export function replaceUnboundWorkspaceSource(source: WorkspaceSource | undefine
   return () => { unboundSource = previous; };
 }
 
+function readField(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+}
+
 function readString(value: unknown, key: string): string | undefined {
-  const field = value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+  const field = readField(value, key);
   return typeof field === 'string' && field.length > 0 ? field : undefined;
 }
 
-/** The placement facts an admitted request carries: its Session and addressed workspace root. */
+/** The placement facts an admitted request carries: its Session and workspace address. */
 export function readWorkspaceSourcePlacement(
   context: Readonly<{ sessionActionOrigin?: Readonly<{ caller: Readonly<{ sessionId: string }> }>; authorization?: unknown }> | undefined,
   input: unknown,
@@ -192,5 +221,12 @@ export function readWorkspaceSourcePlacement(
   const sessionId = context?.sessionActionOrigin?.caller.sessionId
     ?? (readString(authorization, 'kind') === 'session.write' ? readString(authorization, 'sessionId') : undefined);
   const rootPath = readString(input, 'rootPath') ?? readString(input, 'directory') ?? readString(input, 'cwd');
-  return { ...(sessionId ? { sessionId } : {}), ...(rootPath ? { rootPath } : {}) };
+  const address = readField(input, 'workspace');
+  const workspace = address === undefined ? undefined : ManagedWorkspaceAddressV2Schema.safeParse(address);
+  if (workspace?.success === false) throw workspaceTargetUnavailable();
+  return {
+    ...(sessionId ? { sessionId } : {}),
+    ...(rootPath ? { rootPath } : {}),
+    ...(workspace?.success ? { workspace: workspace.data } : {}),
+  };
 }
