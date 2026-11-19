@@ -97,6 +97,7 @@ type ManagedMachinePresetResizeProjectionBasisV1 = Readonly<{
 type ManagedMachinePresetReadSnapshotBasisV1 = Readonly<{
     originalRead: ManagedOpaquePresetReadV1;
     resizeBasis?: ManagedMachinePresetResizeProjectionBasisV1;
+    imageRevision?: number;
 }>;
 const managedMachinePresetReadSnapshotBasisV1: unique symbol = Symbol('managedMachinePresetReadSnapshotBasisV1');
 type ManagedMachineReadSnapshotWithBasisV1 = ManagedMachineReadSnapshotV1 & Readonly<{
@@ -280,6 +281,11 @@ function readManagedMachineReadSnapshotBasis(machine: ManagedMachineReadSnapshot
     return projection.success ? basis : null;
 }
 
+/** Source revision of the prepared image actually selected at this Machine's admission. */
+export function readManagedMachinePresetImageRevision(machine: ManagedMachineReadSnapshotV1): number | undefined {
+    return readManagedMachineReadSnapshotBasis(machine)?.imageRevision;
+}
+
 /** The current Account mode, not a recipient census, owns the mode of a new private body. */
 async function resolveWriterMode(scope: ServerAccountScope, signal?: AbortSignal): Promise<WriterMode | null> {
     let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
@@ -304,10 +310,14 @@ async function openManagedMachineReadSnapshot(read: ManagedMachineReadV1,
     const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: machine.preset.id,
         mode, projection: presetContent, custody });
     const hydrated = content ? hydrateManagedOpaquePresetMachineV1({ machine, opened: content }) : null;
+    // Cold admissions may retain a ready image receipt without selecting it.
+    const imageRevision = hydrated && content?.preparationExecution && content.prepared?.status === 'ready'
+        ? content.prepared.builtFromRevision : undefined;
     return attachManagedMachineReadSnapshotBasis(hydrated ?? machine, {
         originalRead: read,
         ...(hydrated && content ? { resizeBasis: { presetId: machine.preset.id, contentEncryptionMode: mode,
             recipientProjection: presetContent, resize: content.resize } } : {}),
+        ...(imageRevision === undefined ? {} : { imageRevision }),
     });
 }
 

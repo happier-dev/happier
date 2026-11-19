@@ -12,6 +12,7 @@ installHomeGovernanceBoundaries(harness);
 const {
     createMachinePresetCollectionClient, hasOpenedManagedMachinePresetCreationV1,
     isOpenedManagedMachinePresetV1, openManagedMachineReadSnapshots, readManagedMachineReadForSnapshot,
+    readManagedMachinePresetImageRevision,
     prepareManagedMachinePresetResizeOverrideForSnapshot,
 } = await import('./machinePresetCollectionClient');
 const { captureManagedMachinePresetCustodyV1 } = await import('./managedMachinePresetCustody');
@@ -52,17 +53,30 @@ afterEach(async () => {
 });
 
 describe('machine preset content envelopes', () => {
-    it.each(['opened', 'unopened', 'legacy'] as const)('retains the original %s managed read for native control without exposing its carrier in the row', async form => {
+    it.each(['opened', 'warm', 'unopened', 'legacy'] as const)('retains the original %s managed read for native control without exposing its carrier in the row', async form => {
         const { ManagedMachineReadV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
         const serverId = await harness.addHome({ name: 'Retained managed read', serverUrl: 'https://retained-managed-read.example',
             serverIdentityId: 'srv_retained_managed_read', accountId: 'owner', currentAccount: true });
         const structural = { id: 'managed-read', homeId: 'srv_retained_managed_read', custodianAccountId: 'owner', controller,
             allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const prepared = {
+            operationId: 'prepared-once', status: 'ready', builtFromRevision: 2,
+            binding: { configuration: { launch: { provider: launch.provider, schemaVersion: 1, choices: launch.choices } },
+                cliIdentity: 'supplier', credentialConfigurations: [] },
+            artifact: { contributionRef: launch.provider, schemaVersion: 1, value: {} },
+        };
+        const reviewedFacts = {
+            launch, controller, optionStatus: 'unavailable',
+            billing: { location: 'local', stoppedBilling: 'not-billed' }, prerequisites: [],
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } satisfies import('@happier-dev/protocol/machines/managed/managedConfigurationV1').ManagedConfigurationFactsV1;
         const read = ManagedMachineReadV1Schema.parse(form === 'legacy' ? { ...structural, launch } : {
             machine: { ...structural, preset: { id: 'retained-preset', revision: 3, contentEncryptionMode: 'plain' } },
             presetContent: { content: { t: 'plain', v: form === 'unopened' ? { v: 1, name: 'No launch' }
-                : { v: 1, name: 'Private row', launch } }, recipientEnvelope: null },
+                : { v: 1, name: 'Private row', launch, prepared, ...(form === 'warm'
+                    ? { reviewedFacts, preparationExecution: { launch, binaryPath: '/prepared/happier' } } : {}) } }, recipientEnvelope: null },
         });
         const [snapshot] = await openManagedMachineReadSnapshots({ serverId, accountId: 'owner' }, [read]);
         if (!snapshot) throw new Error('Expected the retained managed snapshot');
@@ -71,6 +85,7 @@ describe('machine preset content envelopes', () => {
         expect(ManagedMachineReadV1Schema.safeParse(retained).success).toBe(true);
         expect(snapshot).not.toHaveProperty('presetContent');
         expect(snapshot.launch !== undefined).toBe(form !== 'unopened');
+        expect(readManagedMachinePresetImageRevision(snapshot)).toBe(form === 'warm' ? 2 : undefined);
         if (form === 'unopened') expect(await prepareManagedMachinePresetResizeOverrideForSnapshot(
             { serverId, accountId: 'owner' }, snapshot, { cpuCores: 4 })).toEqual({ kind: 'failed', code: 'content_unavailable' });
         expect(harness.requests.filter(request => request.path.startsWith('/v1/machines/'))).toEqual([]);
