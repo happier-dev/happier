@@ -1,5 +1,5 @@
 import { createManagedNativeObservationWait, executeManagedMachinePowerIntent,
-    ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from '@happier-dev/cli-common/machines/managed';
+    assertManagedPowerIntentConfirmed, ManagedMachineControllerError, settleManagedNativeIntent } from '@happier-dev/cli-common/machines/managed';
 import { ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema,
     ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -51,40 +51,18 @@ export async function executeCliManagedAccountPower(input: Readonly<{
     if (!submitted.submitted) throw new ManagedMachineControllerError('native_intent_unconfirmed');
     const invoke = createCliManagedAccountNativeInvocation({ machine, provisioner, selected,
         context: input.context, signal: input.signal, requestId });
-    let power: Awaited<ReturnType<typeof executeManagedMachinePowerIntent>>;
-    try {
-        power = await executeManagedMachinePowerIntent({ machine, invoke, io: { signal: input.signal },
+    const power = await settleManagedNativeIntent({
+        invoke: () => executeManagedMachinePowerIntent({ machine, invoke, io: { signal: input.signal },
             guestStartup: { transport: provisioner.bootstrapTransport,
                 channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
-            waitForObservation: createManagedNativeObservationWait(input.signal) });
-    } catch (error) {
-        try {
-            await input.post('report-intent', await hydrator.prepareControllerReport('report-intent', { ...correlation, result: {
-                kind: error instanceof ManagedMachineNativeEffectGuardRefusal ? 'refused' : 'unknown',
-                code: error instanceof ManagedMachineControllerError ? error.code : 'native_intent_unconfirmed',
-            } }, input.signal), ManagedControllerMachineOutputV1Schema, null);
-        } catch (reportError) {
-            logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));
-        }
-        throw error;
-    }
-    const nativeFailure = power.guestStartupError ?? (power.result.kind === 'refused'
-        ? new ManagedMachineControllerError(power.result.code, undefined,
-            power.result.nativeCause ? { kind: 'managedNative', nativeCause: power.result.nativeCause } : undefined) : undefined);
-    try {
-        await input.post('report-intent', await hydrator.prepareControllerReport('report-intent', { ...correlation, result: power.result, observation: power.observation }, input.signal), ManagedControllerMachineOutputV1Schema, null);
-    } catch (reportError) {
-        const failure = nativeFailure ?? ManagedMachineControllerError.fromUnknownNativeResult(power.result);
-        if (!failure) throw reportError;
-        logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));
-        throw failure;
-    }
-    if (nativeFailure) throw nativeFailure;
-    if (power.result.kind !== 'confirmed' || !power.observation
-        || (machine.desired === 'start' || machine.desired === 'resume') && (power.observation.availability !== 'present'
-            || power.observation.storage === 'lost' || power.observation.power !== 'running')) {
-        throw new ManagedMachineControllerError('native_intent_unconfirmed');
-    }
+            waitForObservation: createManagedNativeObservationWait(input.signal) }),
+        report: async outcome => await input.post('report-intent',
+            await hydrator.prepareControllerReport('report-intent', { ...correlation, ...outcome }, input.signal),
+            ManagedControllerMachineOutputV1Schema, null),
+        onReportFailure: reportError => logger.warn('[MANAGED MACHINE] Native outcome report failed',
+            projectActionFailureCauseV1(reportError, 'machines.managed.power.set')),
+    });
+    assertManagedPowerIntentConfirmed(machine, power);
     const operationId = input.context.operationAcceptance?.operationId;
     return ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision,
         ...(operationId ? { operation: { operationId } } : {}) });

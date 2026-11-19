@@ -1,6 +1,6 @@
 import { MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMachineControllerError, createManagedNativeObservationWait, prepareManagedMachineDeleteIntent, settleManagedMachineDeleteIntent,
-    executeManagedMachinePowerIntent, executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
+    assertManagedPowerIntentConfirmed, executeManagedMachinePowerIntent, settleManagedMachineResize, settleManagedNativeIntent } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
     ManagedControllerMachineOutputV1Schema, ManagedControllerResizeReportV1Schema, ManagedOpaquePresetResizeInputV1Schema,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -56,24 +56,24 @@ export async function executeUiManagedAccountControl(params: Readonly<{
                     ...(opaque === null ? {} : { normalizer: opaque.normalizer }) });
                 const credential = createUiManagedAccountCredential({ account: params.account, home: client.home, signal: params.signal });
                 const native = createUiManagedAccountNative({ ...params, requestId }, admitted, () => machine, () => undefined, credential);
-                const output = await executeManagedMachineResize({ machine, size, provisioner, invoke: native.invoke,
+                const result = await settleManagedMachineResize({ machine, size, provisioner, invoke: native.invoke, requestId,
                     io: { signal: params.signal },
                     guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: provisioner.bootstrapTransport },
-                    waitForObservation: createManagedNativeObservationWait(params.signal) });
-                if (opaque !== null) {
-                    const report = opaque.prepareResizeReport({ homeId: machine.homeId, managedId: machine.id, requestId,
-                        result: output.result, ...(output.observation === undefined ? {} : { observation: output.observation }) });
-                    if (!report) return failure('content_unavailable');
-                    await post('report-resize', ManagedControllerResizeReportV1Schema.parse(report), ManagedControllerMachineOutputV1Schema, null);
-                    return { ok: true, result: {
-                        result: report.result, presetContent: report.presetContent,
-                        ...(report.observation === undefined ? {} : { observation: report.observation }),
-                    } };
-                }
-                await client.home.row('report-resize', ManagedControllerResizeReportV1Schema.parse({
-                    homeId: machine.homeId, managedId: machine.id, requestId, ...output,
-                }), null);
-                return { ok: true, result: output };
+                    waitForObservation: createManagedNativeObservationWait(params.signal),
+                    report: async body => {
+                        if (opaque === null) {
+                            const { result, observation } = body;
+                            await client.home.row('report-resize', ManagedControllerResizeReportV1Schema.parse(body), null);
+                            return { result, ...(observation === undefined ? {} : { observation }) };
+                        }
+                        const report = opaque.prepareResizeReport(body);
+                        if (!report) throw new ManagedMachineControllerError('content_unavailable');
+                        await post('report-resize', ManagedControllerResizeReportV1Schema.parse(report), ManagedControllerMachineOutputV1Schema, null);
+                        return { result: report.result, presetContent: report.presetContent,
+                            ...(report.observation === undefined ? {} : { observation: report.observation }) };
+                    },
+                });
+                return { ok: true, result };
             }
             const accepted = (): ActionExecuteResult => ({ ok: true, result: { kind: 'accepted', managedId: machine.id,
                 intentRevision: machine.intentRevision,
@@ -93,7 +93,7 @@ export async function executeUiManagedAccountControl(params: Readonly<{
             machine = normalizeUiManagedAccountMachine(opaque?.normalizer, submitted.machine);
             const outstanding = machine.submittedNativeEffect;
             if (!submitted.submitted && (control.action !== MANAGED_DELETE_ACTION_ID_V1 || outstanding?.intent !== 'delete')) {
-                return failure('action_outcome_unknown');
+                return failure('native_intent_unconfirmed');
             }
             const correlation = outstanding ? { ...client.home.correlation(machine), requestId: outstanding.requestId,
                 expectedIntentRevision: outstanding.intentRevision, controller: outstanding.controller } : client.home.correlation(machine);
@@ -104,23 +104,14 @@ export async function executeUiManagedAccountControl(params: Readonly<{
                 });
                 return accepted();
             }
-            const wait = createManagedNativeObservationWait(params.signal);
-            const power = await executeManagedMachinePowerIntent({ machine, invoke: native.invoke,
-                guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: admitted.provisioner.bootstrapTransport },
-                io: { signal: params.signal }, waitForObservation: wait });
-            const nativeFailure = power.guestStartupError ?? (power.result.kind === 'refused'
-                ? new ManagedMachineControllerError(power.result.code, undefined,
-                    power.result.nativeCause ? { kind: 'managedNative', nativeCause: power.result.nativeCause } : undefined) : undefined);
-            try {
-                machine = await client.home.row('report-intent', { ...correlation, result: power.result, observation: power.observation }, null);
-            } catch (reportError) {
-                if (!nativeFailure) throw reportError;
-                log.log(JSON.stringify(projectActionFailureCauseV1(reportError, control.action)));
-            }
-            if (nativeFailure) throw nativeFailure;
-            if (power.result.kind !== 'confirmed' || !power.observation) {
-                return failure(power.result.kind === 'confirmed' ? 'action_outcome_unknown' : power.result.code ?? 'action_outcome_unknown');
-            }
+            const power = await settleManagedNativeIntent({
+                invoke: () => executeManagedMachinePowerIntent({ machine, invoke: native.invoke,
+                    guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: admitted.provisioner.bootstrapTransport },
+                    io: { signal: params.signal }, waitForObservation: createManagedNativeObservationWait(params.signal) }),
+                report: async outcome => { machine = await client.home.row('report-intent', { ...correlation, ...outcome }, null); },
+                onReportFailure: error => log.log(JSON.stringify(projectActionFailureCauseV1(error, control.action))),
+            });
+            assertManagedPowerIntentConfirmed(machine, power);
             return accepted();
         } finally {
             opaque?.dispose();

@@ -58,8 +58,9 @@ afterEach(async () => {
 });
 
 describe('Account native power through the original reviewed role port', () => {
-    it.each(['confirmed', 'refused', 'unknown', 'inspect-unavailable', 'after-idle', 'delayed'] as const)('uses one admitted retained intent, outcome=%s', async outcome => {
+    it.each(['confirmed', 'refused', 'unknown', 'dispatch-failed', 'inspect-unavailable', 'after-idle', 'delayed'] as const)('uses one admitted retained intent, outcome=%s', async outcome => {
         const refused = outcome === 'refused';
+        const dispatchFailed = outcome === 'dispatch-failed';
         const homeId = `srv_native_power_${outcome}`;
         const serverUrl = `https://native-power-${outcome}.example.test`;
         const accountId = 'owner';
@@ -108,7 +109,8 @@ describe('Account native power through the original reviewed role port', () => {
             if (path.endsWith('/report-intent')) {
                 const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
                 expect(body).toMatchObject({ expectedIntentRevision: 3, requestId: 'original-power',
-                    result: { kind: outcome === 'unknown' ? 'unknown' : 'confirmed' } });
+                    result: { kind: outcome === 'unknown' || dispatchFailed ? 'unknown' : 'confirmed' } });
+                if (dispatchFailed) expect(body).toMatchObject({ result: { code: 'native_intent_unconfirmed' } });
                 if (outcome === 'delayed') expect(body).toMatchObject({ observation: {
                     observedAt: 30, availability: 'present', power: 'running', storage: 'retained',
                 } });
@@ -149,6 +151,7 @@ describe('Account native power through the original reviewed role port', () => {
                         availability: 'present', power: inspections < (outcome === 'delayed' ? 3 : 2) ? 'stopped' : 'running',
                         storage: 'retained' } };
                 }
+                if (dispatchFailed) return { ok: false, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
                 return { ok: true, result: outcome === 'unknown'
                     ? { kind: 'unknown', code: 'action_outcome_unknown' } : { kind: 'confirmed' } };
             } }) };
@@ -162,8 +165,12 @@ describe('Account native power through the original reviewed role port', () => {
         if (refused) {
             expect(result).toMatchObject({ ok: false, errorCode: 'managed_power_required' });
             expect(native).toEqual([]);
+        } else if (dispatchFailed) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
+            expect(native).toEqual(['inspect', 'power']);
+            expect(paths.filter(path => path.endsWith('/report-intent'))).toHaveLength(1);
         } else if (outcome === 'unknown' || outcome === 'inspect-unavailable') {
-            expect(result).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+            expect(result).toMatchObject({ ok: false, errorCode: outcome === 'unknown' ? 'action_outcome_unknown' : 'native_intent_unconfirmed' });
             expect(native).toEqual(['inspect', 'power', 'inspect']);
         } else if (outcome === 'after-idle') {
             expect(result).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: machine.id, intentRevision: 3 } });

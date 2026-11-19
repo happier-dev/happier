@@ -1,18 +1,21 @@
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, MachineProvisionerResizeResultV1Schema, managedMachineResizeRequiresRestartV1,
     readMachineProvisionerResizeCapabilityV1, type MachineProvisionerSizeV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import type { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ManagedNativeInvocation, ManagedNativeInvocationIO } from './reconcile.js';
 import { executeManagedMachinePowerIntent } from './power.js';
 
-/** Finite admitted resize: the approved size is immutable; only native observation settles it. */
+type ResizeOutput = ReturnType<typeof ManagedResizeOutputV1Schema.parse>;
+type NativeResizeOutput = Exclude<ResizeOutput, { presetContent: unknown }>;
+
+/** Finite admitted resize: the approved size is immutable and native observation settles it. */
 export async function executeManagedMachineResize(input: Readonly<{
     machine: ManagedMachineFullV1; size: MachineProvisionerSizeV1; provisioner: Pick<MachineProvisionerContributionV1, 'actions' | 'resize'>; invoke: ManagedNativeInvocation;
     io?: ManagedNativeInvocationIO;
     guestStartup?: Parameters<typeof executeManagedMachinePowerIntent>[0]['guestStartup'];
     waitForObservation?(): Promise<unknown>;
-}>): Promise<ReturnType<typeof ManagedResizeOutputV1Schema.parse>> {
+}>): Promise<NativeResizeOutput> {
     const { machine, invoke, io } = input;
     if (!input.provisioner.actions.resize) {
         const dimension = MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.find(key => input.size[key] !== undefined)!;
@@ -77,4 +80,16 @@ export async function executeManagedMachineResize(input: Readonly<{
         && MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.every(dimension => input.size[dimension] === undefined || observation!.size?.[dimension] === input.size[dimension]);
     return { result: confirmed ? { kind: 'confirmed' } : { kind: 'unknown', code: result.kind === 'unknown' ? result.code ?? 'resize_unconfirmed' : 'resize_unconfirmed',
         ...(result.kind === 'unknown' && result.nativeCause ? { nativeCause: result.nativeCause } : {}) }, observation };
+}
+
+/** Bind the native result to its admitted request, then acknowledge it through the host's Home transport. */
+export async function settleManagedMachineResize(input: Parameters<typeof executeManagedMachineResize>[0] & Readonly<{
+    requestId: string;
+    report(body: Readonly<{ homeId: string; managedId: string; requestId: string }> & NativeResizeOutput): Promise<ResizeOutput>;
+}>): Promise<ResizeOutput> {
+    const { machine } = input;
+    const outcome = await executeManagedMachineResize(input);
+    return ManagedResizeOutputV1Schema.parse(await input.report({
+        homeId: machine.homeId, managedId: machine.id, requestId: input.requestId, ...outcome,
+    }));
 }

@@ -9,6 +9,16 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
+/** A provider acknowledgement alone cannot complete a foreground Power Action. */
+export function assertManagedPowerIntentConfirmed(machine: ManagedMachineFullV1,
+    { result, observation }: Awaited<ReturnType<typeof executeManagedMachinePowerIntent>>): void {
+    if (result.kind === 'confirmed' && observation
+        && (machine.desired !== 'start' && machine.desired !== 'resume'
+            || observation.availability === 'present' && observation.storage !== 'lost' && observation.power === 'running')) return;
+    throw ManagedMachineControllerError.fromUnknownNativeResult(result)
+        ?? new ManagedMachineControllerError('code' in result ? result.code ?? 'native_intent_unconfirmed' : 'native_intent_unconfirmed');
+}
+
 export async function executeManagedMachinePowerIntent(input: Readonly<{
     machine: ManagedMachineFullV1;
     invoke: ManagedNativeInvocation;

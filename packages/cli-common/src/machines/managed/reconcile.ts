@@ -5,7 +5,7 @@ import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/mach
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
-    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+    readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerDestroyResultV1Schema, type MachineProvisionerPowerResultV1Schema, type MachineProvisionerRebuildResultV1Schema, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildManagedConfigurationFactsV1, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -17,6 +17,47 @@ export { captureManagedPendingNativeIdentity, captureManagedSubmittedNativeIdent
     type CapturedManagedNativeIdentity } from './issuedNativeIdentity.js';
 export { bindManagedMachineRoleCredentials, captureManagedMachineRoleCredentialConfigurationsV1,
     projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1 } from './roleCredentials.js';
+
+type NativeIntentResult = ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse>
+    | ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>;
+type NativeIntentReport<R extends NativeIntentResult> = Readonly<{ result: R; observation?: ProviderObservationV1 }>;
+type FailedDispatch = Extract<ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse>, { kind: 'refused' | 'unknown' }>;
+
+const NATIVE_INTENT_UNCONFIRMED = 'native_intent_unconfirmed';
+
+/** Report a submitted native attempt once, retaining its failure if Home cannot acknowledge the report. */
+export async function settleManagedNativeIntent<T extends (NativeIntentReport<NativeIntentResult> & {
+    guestStartupError?: ManagedMachineControllerError;
+}) | undefined>(input: Readonly<{
+    invoke(): Promise<T>;
+    report(outcome: NativeIntentReport<NonNullable<T>['result'] | FailedDispatch>): Promise<unknown>;
+    onReportFailure(error: unknown): void;
+}>): Promise<T> {
+    let outcome: T;
+    try { outcome = await input.invoke(); }
+    catch (error) {
+        const result = error instanceof ManagedMachineNativeEffectGuardRefusal
+            ? { kind: 'refused' as const, code: error.code }
+            : { kind: 'unknown' as const, code: NATIVE_INTENT_UNCONFIRMED };
+        try { await input.report({ result }); }
+        catch (reportError) { input.onReportFailure(reportError); }
+        throw error;
+    }
+    if (!outcome) return outcome;
+    const { result, observation, guestStartupError } = outcome;
+    const failure = guestStartupError ?? (result.kind === 'refused'
+        ? new ManagedMachineNativeRefusal(result.code, undefined,
+            result.nativeCause ? { kind: 'managedNative', nativeCause: result.nativeCause } : undefined) : undefined);
+    try { await input.report({ result, ...(observation === undefined ? {} : { observation }) }); }
+    catch (error) {
+        const nativeFailure = failure ?? ManagedMachineControllerError.fromUnknownNativeResult(result);
+        if (!nativeFailure) throw error;
+        input.onReportFailure(error);
+        throw nativeFailure;
+    }
+    if (failure) throw failure;
+    return outcome;
+}
 
 export type ManagedNativeRole = MachineProvisionerRoleV1;
 /** The live byte channel of the `stream` role, for the life of its invocation. */

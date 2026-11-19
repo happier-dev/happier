@@ -24,8 +24,7 @@ import { ManagedAdmissionInputV1Schema, isManagedPresetAcquireInputV1, managedWo
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { isManagedMetadataControlActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataControlResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
+import { settleManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1, isManagedCreationCleanupV1,
@@ -1071,19 +1070,22 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         : 'size' in request.input ? request.input.size
                             : (() => { throw new ManagedMachineControllerError('credential_unavailable'); })();
                     let native: ReturnType<typeof createManagedNativeInvocation> | undefined;
-                    const resize = await executeManagedMachineResize({ machine, provisioner,
-                        size,
+                    const resize = await settleManagedMachineResize({ machine, provisioner,
+                        size, requestId: options.requestId,
                         invoke: (role, body, io) => {
                             native ??= createManagedNativeInvocation({ input, options, client, machine, action }, () => machine);
                             return native.invoke(role, body, io);
                         }, io: { signal: options.signal },
                         guestStartup: { transport: provisioner.bootstrapTransport,
                             channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
-                        waitForObservation: createManagedNativeObservationWait(options.signal) });
-                    const reported = await hydrator.prepareResizeReport({ homeId: machine.homeId,
-                        managedId: machine.id, requestId: options.requestId, ...resize }, options.signal);
-                    await client.post('/v1/machines/managed/controller/report-resize', reported.report, ManagedControllerMachineOutputV1Schema, null);
-                    return projectNativeJsonValueForTransport(ManagedResizeOutputV1Schema.parse(reported.output));
+                        waitForObservation: createManagedNativeObservationWait(options.signal),
+                        report: async body => {
+                            const { report, output } = await hydrator.prepareResizeReport(body, options.signal);
+                            await client.post('/v1/machines/managed/controller/report-resize', report, ManagedControllerMachineOutputV1Schema, null);
+                            return output;
+                        },
+                    });
+                    return projectNativeJsonValueForTransport(resize);
                 }
                 client.assertConnection(admission.machine);
                 if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');

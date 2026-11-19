@@ -56,7 +56,7 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     const submitted = await input.post('submit-intent', correlation(), ManagedControllerSubmitOutputV1Schema);
     machine = hydrator.normalize(submitted.machine);
     const outstanding = machine.submittedNativeEffect;
-    if (!submitted.submitted && outstanding?.intent !== 'delete') throw new ManagedMachineControllerError('action_outcome_unknown');
+    if (!submitted.submitted && outstanding?.intent !== 'delete') throw new ManagedMachineControllerError('native_intent_unconfirmed');
     const retainedCorrelation = outstanding ? { ...correlation(), requestId: outstanding.requestId,
         expectedIntentRevision: outstanding.intentRevision, controller: outstanding.controller } : correlation();
     machine = await settleManagedMachineDeleteIntent({ machine, invoke, io: { signal: input.signal },

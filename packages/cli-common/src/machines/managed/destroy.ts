@@ -1,7 +1,7 @@
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { reconcileManagedAcquisitionIdentity, type ManagedMachineReconciliation, type ManagedReconciliationReportHome,
+import { reconcileManagedAcquisitionIdentity, settleManagedNativeIntent, type ManagedMachineReconciliation, type ManagedReconciliationReportHome,
     type ManagedNativeInvocation, type ManagedNativeInvocationIO } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
@@ -62,18 +62,11 @@ export async function settleManagedMachineDeleteIntent(input: Readonly<{
     const wait = createManagedNativeObservationWait(input.io?.signal);
     for (;;) {
         input.io?.signal?.throwIfAborted();
-        const deletion = await executeManagedMachineDeleteIntent({ machine, invoke: input.invoke, io: input.io });
-        const nativeFailure = deletion.result.kind === 'refused'
-            ? new ManagedMachineControllerError(deletion.result.code, undefined,
-                deletion.result.nativeCause ? { kind: 'managedNative', nativeCause: deletion.result.nativeCause } : undefined) : undefined;
-        try { machine = await input.report(deletion); }
-        catch (reportError) {
-            const failure = nativeFailure ?? ManagedMachineControllerError.fromUnknownNativeResult(deletion.result);
-            if (!failure) throw reportError;
-            input.onNativeFailureReportError(reportError);
-            throw failure;
-        }
-        if (nativeFailure) throw nativeFailure;
+        const deletion = await settleManagedNativeIntent({
+            invoke: () => executeManagedMachineDeleteIntent({ machine, invoke: input.invoke, io: input.io }),
+            report: async outcome => { machine = await input.report(outcome); },
+            onReportFailure: input.onNativeFailureReportError,
+        });
         if (machine.allocation === 'confirmed-absent' && !machine.submittedNativeEffect) return machine;
         if (deletion.result.kind !== 'accepted' && deletion.result.kind !== 'pending') {
             throw new ManagedMachineControllerError(deletion.result.kind === 'confirmed' ? 'native_intent_unconfirmed'
