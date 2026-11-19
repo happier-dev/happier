@@ -29,7 +29,11 @@ function projectReadReceipt(read: ReceiptRead, header = read.deployment): Receip
         failureSummary: read.failureSummary,
     };
 }
-async function readReceiptEnvironment(context: BackgroundServiceContext, serverId: string, environmentId: string): Promise<Environment> {
+async function readReceiptEnvironment(
+    context: Pick<PluginInvocationContext, 'services' | 'signal'>,
+    serverId: string,
+    environmentId: string,
+): Promise<Environment> {
     const read = await context.services.actions.execute('deployments.environments.get', {
         serverId, environmentId,
     }, { signal: context.signal });
