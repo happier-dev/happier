@@ -5,6 +5,7 @@ import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
 import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +19,8 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 }));
 
 // Load the real renderer during collection; cold module transforms are setup, not an interaction timeout.
+// The app entry initializes Sync before any theme result reads its Account-scoped Redo owner.
+await loadSyncSingletonForTests();
 await import('./MCPToolView');
 
 describe('MCPToolView', () => {
