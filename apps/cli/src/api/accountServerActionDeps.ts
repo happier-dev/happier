@@ -26,6 +26,9 @@ import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/acco
 import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereServerOutputV1Schema } from '@happier-dev/protocol/auth/accountSessions';
+import { isReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ReviewHumanStateV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { executeCliReviewHumanAction } from '@/api/reviewHumanAction';
 import { bindHomeDomainActionHttpRequestV1, bindPublicProfilePreparedHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { bindPublicProfileActionPorts } from '@happier-dev/protocol/actions/executor/publicProfileActions';
@@ -101,7 +104,7 @@ import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Sche
 import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { ActionExecuteFailureSchema, parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 export type AccountServerActionDeps = Pick<
@@ -1180,6 +1183,77 @@ export function createAccountServerActionDeps(input: Readonly<{
     homeDomainAction: async ({ actionId, input: actionInput, preparedRequest, context: actionContext, signal, archiveSession }) => {
       const mismatch = await accountServerTargetMismatch(actionContext);
       if (mismatch) return mismatch;
+      // Both ordinary Home Actions and sealed Review transport use this HTTP settlement owner.
+      const requestHome = async (request: Readonly<{ method: string; path: string; body?: unknown }>,
+        outputSchema: z.ZodMiniType, sideEffectClass: ReturnType<typeof getActionSpec>['sideEffectClass']): Promise<unknown> => {
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+          return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        }
+        const labelActionId = actionContext.presentUserApproval?.actionId
+          ?? actionContext.externalActionExecutionAuthorization?.binding.actionId;
+        const requestHeaders = resolveRequestHeaders({
+          context: actionContext,
+          effectActionId: actionId === TEAM_CREDENTIAL_GET_ACTION_ID_V1 && labelActionId
+            && isTeamCredentialRetainedLabelActionIdV1(labelActionId) ? labelActionId : actionId,
+          method: request.method,
+          path: request.path,
+          ...(request.body === undefined ? {} : { body: request.body }),
+        });
+        if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
+        const dispatch = await dispatchAccountServerActionHttpRequest({
+          headers: requestHeaders.headers,
+          method: request.method,
+          path: request.path,
+          ...(request.body === undefined ? {} : { body: request.body }),
+          ...(signal ? { signal } : {}),
+          sideEffectClass,
+        });
+        if (!dispatch.ok) return dispatch;
+        // Reads require current custody before disclosure. A committed mutation's
+        // acknowledgement remains true even if its original Account retires.
+        if (sideEffectClass === 'read'
+          && input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+          return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        }
+        const { response } = dispatch;
+        if (response.status >= 400) {
+          // The Home completed the transaction and confirmed that every attempt
+          // rolled back. This is a definite typed failure, never response-loss
+          // ambiguity for the already-issued mutation.
+          const confirmedRollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
+          if (confirmedRollback) {
+            return { ok: false, errorCode: confirmedRollback.code, error: confirmedRollback.code };
+          }
+          // A Home that named its refusal is answering, not failing — including a
+          // 403 that carries a governance code, which is an authorization outcome
+          // rather than a broken credential.
+          const named = readHomeDomainActionErrorV1(response.data);
+          if (named) {
+            return { ok: false, errorCode: named.code, error: named.code, details: named.details };
+          }
+          if (isAuthenticationStatus(response.status)) {
+            throw createAuthenticationHttpStatusError(
+              response.status,
+              `Authentication failed while executing Home Action (${response.status})`,
+              response.data,
+            );
+          }
+          // An older or feature-disabled Home has no such operation at all.
+          if ([404, 405, 501].includes(response.status)) {
+            return {
+              ok: false,
+              errorCode: 'unsupported_action',
+              error: `unsupported_action:${actionId}`,
+            };
+          }
+          throw createHttpStatusError(response.status, `Failed to execute Home Action (${response.status})`);
+        }
+        return settleAccountServerActionHttpOutput({
+          data: response.data,
+          outputSchema,
+          sideEffectClass,
+        });
+      };
       if (isSessionSectionActionIdV1(actionId)) {
         const sectionCreateFolderId = actionId === 'session.sections.create' && actionContext.actionRequestId
           ? `folder_${createHash('sha256').update(`session.sections.create\0${actionContext.actionRequestId}`).digest('hex').slice(0, 32)}`
@@ -1248,6 +1322,35 @@ export function createAccountServerActionDeps(input: Readonly<{
             SetSessionFolderAssignmentResponseSchema, { folderId }),
         });
       }
+      if (isReviewHumanActionIdV1(actionId)) {
+        const accountId = actionContext.runtimeAccountId ?? readAccountIdFromToken(credentials.token);
+        if (!accountId) return { ok: false, errorCode: 'review_verdict_content_unavailable', error: 'review_verdict_content_unavailable' };
+        try {
+          const opened = await executeCliReviewHumanAction({ actionId, input: actionInput, accountId, credentials,
+            serverHttpBaseUrl, ...(signal ? { signal } : {}),
+            authorizationHeaders: async request => requireExternalActionHeaders(resolveRequestHeaders({
+              context: actionContext, effectActionId: actionId, ...request,
+            })),
+            request: async (method, path, body) => {
+              const result = await requestHome({ method, path, ...(body === undefined ? {} : { body }) },
+                ReviewHumanStateV1Schema, method === 'GET' ? 'read' : getActionSpec(actionId).sideEffectClass);
+              const failure = parseActionExecuteFailure(result);
+              if (failure) throw createActionExecuteFailureError(failure);
+              return result;
+            },
+          });
+          if (getActionSpec(actionId).sideEffectClass === 'read'
+            && input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+            return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+          }
+          return opened;
+        } catch (error) {
+          const failure = parseActionExecuteFailure(error)
+            ?? parseActionExecuteFailure(error instanceof Error ? error.cause : undefined);
+          if (failure) return failure;
+          throw error;
+        }
+      }
       // Assignment acknowledgements contain only ids, not private display
       // envelopes. Do not capture keys or project them as inventory snapshots.
       const hasOrganizationDisplay = actionId === 'session.tags.list'
@@ -1260,73 +1363,8 @@ export function createAccountServerActionDeps(input: Readonly<{
         : bindHomeDomainActionHttpRequestV1(actionId,
           organizationDisplay ? organizationDisplay.prepareInput(actionId, actionInput) : actionInput);
       await organizationDisplay?.assertCurrent();
-      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
-        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-      }
-      const labelActionId = actionContext.presentUserApproval?.actionId
-        ?? actionContext.externalActionExecutionAuthorization?.binding.actionId;
-      const requestHeaders = resolveRequestHeaders({
-        context: actionContext,
-        effectActionId: actionId === TEAM_CREDENTIAL_GET_ACTION_ID_V1 && labelActionId
-          && isTeamCredentialRetainedLabelActionIdV1(labelActionId) ? labelActionId : actionId,
-        method: request.method,
-        path: request.path,
-        ...(request.body === undefined ? {} : { body: request.body }),
-      });
-      if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
-      const dispatch = await dispatchAccountServerActionHttpRequest({
-        headers: requestHeaders.headers,
-        method: request.method,
-        path: request.path,
-        ...(request.body === undefined ? {} : { body: request.body }),
-        ...(signal ? { signal } : {}),
-        sideEffectClass: getActionSpec(actionId).sideEffectClass,
-      });
-      if (!dispatch.ok) return dispatch;
-      // Reads require current custody before disclosure. A committed mutation's
-      // acknowledgement remains true even if its original Account retires.
-      if (getActionSpec(actionId).sideEffectClass === 'read'
-        && input.isCredentialCurrent && !await input.isCredentialCurrent()) {
-        return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-      }
-      const { response } = dispatch;
-      if (response.status >= 400) {
-        // The Home completed the transaction and confirmed that every attempt
-        // rolled back. This is a definite typed failure, never response-loss
-        // ambiguity for the already-issued mutation.
-        const confirmedRollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
-        if (confirmedRollback) {
-          return { ok: false, errorCode: confirmedRollback.code, error: confirmedRollback.code };
-        }
-        // A Home that named its refusal is answering, not failing — including a
-        // 403 that carries a governance code, which is an authorization outcome
-        // rather than a broken credential.
-        const named = readHomeDomainActionErrorV1(response.data);
-        if (named) {
-          return { ok: false, errorCode: named.code, error: named.code, details: named.details };
-        }
-        if (isAuthenticationStatus(response.status)) {
-          throw createAuthenticationHttpStatusError(
-            response.status,
-            `Authentication failed while executing Home Action (${response.status})`,
-            response.data,
-          );
-        }
-        // An older or feature-disabled Home has no such operation at all.
-        if ([404, 405, 501].includes(response.status)) {
-          return {
-            ok: false,
-            errorCode: 'unsupported_action',
-            error: `unsupported_action:${actionId}`,
-          };
-        }
-        throw createHttpStatusError(response.status, `Failed to execute Home Action (${response.status})`);
-      }
-      const settled = settleAccountServerActionHttpOutput({
-        data: response.data,
-        outputSchema: homeDomainActionOutputSchemaV1(actionId, preparedRequest),
-        sideEffectClass: getActionSpec(actionId).sideEffectClass,
-      });
+      const settled = await requestHome(request, homeDomainActionOutputSchemaV1(actionId, preparedRequest),
+        getActionSpec(actionId).sideEffectClass);
       await organizationDisplay?.assertCurrent();
       if (organizationDisplay && !(settled !== null && typeof settled === 'object' && 'ok' in settled && settled.ok === false)) {
         return organizationDisplay.projectOutput(actionId, settled);
