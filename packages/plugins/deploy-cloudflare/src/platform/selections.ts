@@ -9,6 +9,7 @@ import { CloudflareProviderRefusal, cloudflareHasNextPage, cloudflareRemoteTunne
   cloudflareResponseOperation, readCloudflareResponse } from './cloudflareRoutes.js';
 import { readSelectedZone } from './zone.js';
 import { CLOUDFLARE_CONNECTOR_DEFAULTS } from './connectorDefaults.js';
+import type { tunnelConfigureInput } from './tunnel.js';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 const closed = { policy: 'closed' } as const;
@@ -25,7 +26,8 @@ const selectionsResult = union([
   object({ kind: literal('ready'), zones: array(zoneOption), options: array(selectionOption, { maxItems: 0 }),
     defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema,
     dnsRecordAction: PluginContributionIdentityV1Schema.optional() }, closed),
-  object({ kind: literal('ready'), options: array(selectionOption), defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
+  object({ kind: literal('ready'), options: array(selectionOption), createOption: selectionOption.optional(),
+    defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
   object({ kind: literal('unavailable'), options: array(selectionOption, { maxItems: 0 }), reason: text, requiredFact: text, remedy: text,
     providerStatus: number().optional(), defaults: defaultsSchema, connectorDiscovery: connectorDiscoverySchema }, closed),
 ]);
@@ -65,8 +67,8 @@ function selectionRecovery(reason: string): { requiredFact: string; remedy: stri
 /** An omitted zone lists the configured Account's zones when the token allows it.
  * A permission refusal leaves the caller able to supply an explicit zone.
  * Tunnels belong to an Account, not a zone: validate that exact zone first,
- * then offer remote tunnels using the connected Account identity and canonical
- * connector pin unless the caller deliberately supplies overrides.
+ * then offer adoption and creation using the same connected Account identity
+ * and canonical connector pin unless the caller deliberately supplies overrides.
  * Cloudflare v4 list contract checked 2026-11-07:
  * https://developers.cloudflare.com/api/resources/zones/methods/list/
  * https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/methods/list/
@@ -104,6 +106,11 @@ const readSelectionsImpl = async (input: Parameters<SelectionHandler>[0], contex
   const operation = zoneId === undefined ? 'GET /zones' : cloudflareResponseOperation('GET', collection);
   const options: Array<ReturnType<typeof selectionOption.parse>> = [];
   const zones: Array<ReturnType<typeof zoneOption.parse>> = [];
+  const tunnelOption = (selectedZoneId: string, label: string, tunnel: ReturnType<typeof tunnelConfigureInput.parse>['tunnel']):
+    ReturnType<typeof selectionOption.parse> => ({ label, selection: { provider: { kind: 'builtin', id: 'cloudflareNamed' },
+      config: { hostname: input.hostname, controller: { accountId, zoneId: selectedZoneId,
+        connector, tunnel, owned: [], dnsOwnership: [] } },
+      credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: input.credentialRef } }] } });
   try {
     for (let page = 1; ; page += 1) {
       context.signal.throwIfAborted();
@@ -137,13 +144,14 @@ const readSelectionsImpl = async (input: Parameters<SelectionHandler>[0], contex
           continue;
         }
         if (!cloudflareRemoteTunnel(row, accountId)) continue;
-        options.push({ label: row.name, selection: { provider: { kind: 'builtin', id: 'cloudflareNamed' },
-          config: { hostname: input.hostname, controller: { accountId, zoneId,
-            connector, tunnel: { kind: 'adopt', tunnelId: row.id, name: row.name }, owned: [], dnsOwnership: [] } },
-          credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: input.credentialRef } }] } });
+        options.push(tunnelOption(zoneId, row.name, { kind: 'adopt', tunnelId: row.id, name: row.name }));
       }
-      if (!cloudflareHasNextPage(native, page, operation)) return zoneId === undefined
-        ? { kind: 'ready', zones, options: [], defaults, connectorDiscovery } : { kind: 'ready', options, defaults, connectorDiscovery };
+      if (cloudflareHasNextPage(native, page, operation)) continue;
+      if (zoneId === undefined) {
+        return { kind: 'ready', zones, options: [], defaults, connectorDiscovery };
+      }
+      const name = input.hostname.toLowerCase();
+      return { kind: 'ready', options, createOption: tunnelOption(zoneId, name, { kind: 'create', name }), defaults, connectorDiscovery };
     }
   } catch (error) {
     context.signal.throwIfAborted();

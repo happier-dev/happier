@@ -21,6 +21,10 @@ const selection = { provider: { kind: 'builtin', id: 'cloudflareNamed' },
     tunnel: { kind: 'adopt', tunnelId: tunnel.id, name: tunnel.name }, owned: [], dnsOwnership: [] } },
   credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: credentialRef } }] };
 
+const createOption = { label: expect.any(String), selection: { ...selection,
+  config: { ...selection.config, controller: { ...selection.config.controller,
+    tunnel: { kind: 'create', name: input.hostname } } } } };
+
 // Native Cloudflare v4 zone/list envelopes; HTTP is the only replaced boundary.
 async function fixture() {
   const requests: HttpRequest[] = [];
@@ -104,7 +108,7 @@ it('reports missing selected provider account metadata without using the profile
     expect(await state.invoke({ credentialRef, hostname: input.hostname })).toMatchObject({ kind: 'unavailable',
       options: [], reason: 'account_id_unavailable', requiredFact: 'cloudflareAccountId', remedy: expect.any(String), defaults: { connector: { imageRef: expect.any(String), version: expect.any(String) } } });
     expect(state.requests).toEqual([]);
-    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }],
+    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], createOption,
       defaults: { connector: defaults.connector }, connectorDiscovery });
   } finally { await state.kit.dispose(); }
 });
@@ -113,7 +117,7 @@ it('registers one read-only Account Action producing complete deliberate selecti
   const state = await fixture();
   try {
     state.providerAccount('c'.repeat(32));
-    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }],
+    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], createOption,
       defaults: { ...defaults, accountId: 'c'.repeat(32) }, connectorDiscovery });
     expect(entry.manifest.contributes.actions.find(row => row.id === action)).toMatchObject({ readOnly: true,
       execution: { target: 'account' }, surfaces: expect.arrayContaining(['ui', 'agent']), hostAccess: ['tunnel.manage', 'cloudflare-api'] });
@@ -201,7 +205,7 @@ it('reads every native page before filtering eligible remote tunnels for the exp
       { ...tunnel, deleted_at: '2026-11-01T00:00:00Z' },
     ], result_info: { page: 1, per_page: 3, total_count: 4 } });
     state.page(2, { success: true, result: [tunnel], result_info: { page: 2, per_page: 3, total_count: 4 } });
-    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], defaults, connectorDiscovery });
+    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], createOption, defaults, connectorDiscovery });
     expect(state.requests.slice(1).map(request => new URL(request.url).searchParams.get('page'))).toEqual(['1', '2']);
     expect(state.requests.slice(1).every(request => new URL(request.url).searchParams.get('is_deleted') === 'false')).toBe(true);
   } finally { await state.kit.dispose(); }
@@ -211,16 +215,17 @@ it('uses the native empty page as the end when optional pagination metadata is o
   const state = await fixture();
   try {
     state.page(1, { success: true, result: [{ ...tunnel, config_src: undefined, remote_config: true, status: 'down' }] });
-    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], defaults, connectorDiscovery });
+    expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], createOption, defaults, connectorDiscovery });
     expect(state.requests.slice(1).map(request => new URL(request.url).searchParams.get('page'))).toEqual(['1', '2']);
   } finally { await state.kit.dispose(); }
 });
 
-it('settles an empty vendor inventory as ready without inventing connector absence', async () => {
+it('offers an app-managed tunnel even when there are no existing tunnels to adopt', async () => {
   const state = await fixture();
   try {
     state.page(1, { success: true, result: [] });
-    expect(await state.invoke()).toEqual({ kind: 'ready', options: [], defaults, connectorDiscovery });
+    expect(await state.invoke()).toEqual({ kind: 'ready', options: [], createOption, defaults, connectorDiscovery });
+    expect(state.requests.every(request => request.method === 'GET')).toBe(true);
   } finally { await state.kit.dispose(); }
 });
 
