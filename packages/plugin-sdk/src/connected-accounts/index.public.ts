@@ -148,3 +148,7 @@ export {
   normalizeConnectedAccountAccessTokenFingerprint,
   type ConnectedAccountAccessTokenFingerprint,
 } from './tokenFingerprint.js';
+
+export { resolveConnectedAccountPlanLabel } from '../connectedAccounts.js';
+export { ConnectedServiceLimitCategoryV1Schema } from '../connectedAccounts.js';
+export type { ConnectedAccountRequestAuthUseV1 } from '../connectedAccounts.js';

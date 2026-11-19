@@ -3,7 +3,7 @@ import {
     readClaudeOauthCredentialOrganizationId,
     readClaudeOauthProfileSubscriptionStatus,
 } from '@happier-dev/protocol/providers/claude/oauth-profile';
-import { resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { resolveConnectedAccountPlanLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLAUDE_ACCOUNT_USAGE_PLAN_METADATA } from '../../../../connectedAccounts/planLabels.js';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {

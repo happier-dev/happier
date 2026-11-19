@@ -617,3 +617,7 @@ export const buildConnectedServiceCredentialRecord: (
             }>;
         }>,
 ) => ConnectedServiceCredentialRecordV1 = buildProtocolConnectedServiceCredentialRecord;
+
+export { resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+export { ConnectedServiceLimitCategoryV1Schema } from '@happier-dev/protocol/connect/connectedServiceLimitCategory';
+export type { ConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';

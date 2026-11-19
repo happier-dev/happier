@@ -1,7 +1,7 @@
 import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import type { AgentAccountUsageMeter } from '@happier-dev/plugin-sdk/agents/runtime';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/plugin-sdk/connected-accounts';
-import { resolveConnectedAccountPlanLabel } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { resolveConnectedAccountPlanLabel } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from '../../../../connectedAccounts/planLabels.js';
 
 export const CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS = 5 * 60 * 1000;
