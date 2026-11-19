@@ -19502,6 +19502,7 @@ const it: WorkflowTriggersCopy = {
         automationsLoadFailed: "Impossibile caricare le automazioni.",
         empty: "Qui non è ancora in esecuzione nessun workflow.",
         startsUnavailable: "Impossibile leggere cosa può avviare un workflow qui.",
+        startsNeedMachineOnline: "La macchina deve essere online per vedere cosa può avviare i workflow.",
         startsHere: "Parte da qui",
         title: "Automazioni",
         info: 'Ciò che parte da questa sessione e ciò che vi scrive.',

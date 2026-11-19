@@ -19436,6 +19436,7 @@ const ja: WorkflowTriggersCopy = {
         automationsLoadFailed: "オートメーションを読み込めませんでした。",
         empty: "ここで実行されるワークフローはまだありません。",
         startsUnavailable: "ここでワークフローを開始できるものを読み込めませんでした。",
+        startsNeedMachineOnline: "ワークフローを開始できる条件を表示するには、マシンをオンラインにしてください。",
         startsHere: "ここから開始",
         title: "オートメーション",
         info: 'このセッションから始まるものと、ここに書き込むもの。',

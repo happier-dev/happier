@@ -141,7 +141,9 @@ export const SubjectTriggersSectionContent = React.memo(
     // cannot succeed. While they load its place is held unseen, so the common case (starts exist) lands without moving
     // Automate…; none settles it away, and starts that could not be read say so in the section.
     const linkSlot = !link ? 'none' : link.whenStatus === 'ready' ? link.whenOptions.length > 0 ? 'offered' : 'none'
-      : link.whenStatus === 'loading' ? 'pending' : link.whenStatus === 'unavailable' ? 'unavailable' : 'none';
+      : link.whenStatus === 'loading' ? 'pending'
+        : link.whenStatus === 'machineOffline' ? 'offline'
+          : link.whenStatus === 'unavailable' ? 'unavailable' : 'none';
     const router = useRouter();
     const { status } = read;
     const legacy = 'serverId' in props.subject || props.subject.kind === 'action' ? null : props.subject;
@@ -292,7 +294,10 @@ export const SubjectTriggersSectionContent = React.memo(
                 onOpenWorkflow={openWorkflow}
               />
             ))}
-        {/* Starts that could not be read say so under the rows they belong to, before the host's own rows. */}
+        {linkSlot === 'offline' && !unsettled && status !== 'failed' && props.offlineStatedAbove !== true ? (
+          <SurfaceStateCard testID="subject-triggers-starts-offline" size="line" kind="unavailable"
+            title={t('workflows.triggers.section.startsNeedMachineOnline')} />
+        ) : null}
         {linkSlot === 'unavailable' && !unsettled && status !== 'failed' && props.offlineStatedAbove !== true ? (
           <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
             title={t('workflows.triggers.section.startsUnavailable')}

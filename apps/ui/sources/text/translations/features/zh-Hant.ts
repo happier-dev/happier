@@ -19376,6 +19376,7 @@ const zhHant: WorkflowTriggersCopy = {
         automationsLoadFailed: "無法載入自動化。",
         empty: "這裡還沒有執行任何工作流程。",
         startsUnavailable: "無法讀取這裡可以啟動工作流程的內容。",
+        startsNeedMachineOnline: "機器需要上線才能查看可啟動工作流程的條件。",
         startsHere: "從此處開始",
         title: "自動化",
         info: '從此工作階段啟動的內容，以及寫入此工作階段的內容。',

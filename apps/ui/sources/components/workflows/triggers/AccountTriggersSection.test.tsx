@@ -713,6 +713,35 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
         await screen.unmount();
     });
+    it('keeps Environment Automations rows and explains that their starts need the catalog Machine online', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const machineId = 'workflow-catalog-machine';
+        await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [
+            createMachineFixture({ id: machineId, active: false, activeAt: 1 }),
+        ]);
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], nextCursor: null, skippedNotSharedCount: 0,
+            attached: [{ automationId: 'daily-deploy-check', triggerId: 't1', workflowDefinitionId: null,
+                relation: 'direct', enabled: true, revision: 1,
+                summary: { kind: 'schedule', schedule: trigger('t1').schedule },
+                setUpBy: { accountId: 'account-a', displayName: 'Owner' } }],
+        }) });
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={{ kind: 'environment', machineId, environmentId: 'qa-live' }}
+                serverId={serverId} subjectName="Production" />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers:daily-deploy-check:t1')).not.toBeNull());
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.triggers.section.startsNeedMachineOnline'));
+            expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+        } finally {
+            await screen.unmount();
+        }
+    });
     it('shows a single Automations state while its rows are pending and its starts are unreachable', async () => {
         const { SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');

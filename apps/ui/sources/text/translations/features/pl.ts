@@ -19526,6 +19526,7 @@ const pl: WorkflowTriggersCopy = {
         automationsLoadFailed: "Nie udało się wczytać automatyzacji.",
         empty: "Nie uruchamia się tu jeszcze żaden workflow.",
         startsUnavailable: "Nie udało się odczytać, co może tu uruchomić workflow.",
+        startsNeedMachineOnline: "Maszyna musi być online, aby wyświetlić, co może uruchomić przepływy pracy.",
         startsHere: "Startuje tutaj",
         title: "Automatyzacje",
         info: 'To, co startuje z tej sesji, i to, co w niej zapisuje.',

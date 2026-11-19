@@ -16,6 +16,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { useAccountWorkflowEditor } from './AccountTriggersSection';
 import { projectAccountTriggerRows, type AccountTriggerRow, type TriggerSubject } from './accountTriggerRows';
@@ -74,7 +75,7 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
     }>) | null;
     link: Readonly<{
         whenOptions: readonly WorkflowLinkTriggerStartOption[];
-        whenStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
+        whenStatus: 'idle' | 'loading' | 'ready' | 'machineOffline' | 'unavailable';
         draft: ResourceAutomationLinkDraft | null;
         setDraft(draft: ResourceAutomationLinkDraft | null): void;
         missingAudience: ReturnType<typeof useDocumentShareController>['missingAudience'];
@@ -204,10 +205,13 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         enabled: demanded && subject !== null && accountLifetime !== null, accountLifetime });
     const eventsReady = eventCatalog.status === 'ready'
         || (eventCatalog.status === 'idle' && actionCatalog.machineId === null);
+    const [catalogMachine] = useMachinePresenceSummaries(serverId,
+        demanded && subject && actionCatalog.machineId ? [actionCatalog.machineId] : [], accountLifetime);
     const whenStatus = !demanded || !subject || accountLifetime === null ? 'idle'
-        : actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported' || eventCatalog.status === 'unavailable' ? 'unavailable'
-            : eventCatalog.status === 'idle' && !eventsReady ? 'idle'
-                : actionCatalog.phase === 'ready' && eventsReady ? 'ready' : 'loading';
+        : actionCatalog.phase === 'ready' && eventsReady ? 'ready'
+            : catalogMachine?.reachability === 'unreachable' ? 'machineOffline'
+                : actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported' || eventCatalog.status === 'unavailable' ? 'unavailable'
+                    : eventCatalog.status === 'idle' && !eventsReady ? 'idle' : 'loading';
     const whenOptions = React.useMemo(() => whenStatus === 'ready' && subject
         ? buildResourceWorkflowTriggerStartOptions({ subject, actions: actionCatalog.specs,
             events: eventCatalog.events, machineId: actionCatalog.machineId }) : EMPTY_WHEN_OPTIONS,

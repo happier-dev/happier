@@ -18996,6 +18996,7 @@ const de: WorkflowTriggersCopy = {
         automationsLoadFailed: "Automatisierungen konnten nicht geladen werden.",
         empty: "Hier läuft noch kein Workflow.",
         startsUnavailable: "Konnte nicht lesen, was hier einen Workflow starten kann.",
+        startsNeedMachineOnline: "Die Maschine muss online sein, damit die Workflow-Auslöser angezeigt werden können.",
         startsHere: "Startet hier",
         title: "Automatisierungen",
         info: 'Was von dieser Sitzung aus startet und was hierhin schreibt.',

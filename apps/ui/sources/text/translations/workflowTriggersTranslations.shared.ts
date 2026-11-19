@@ -96,6 +96,7 @@ export const en = {
         automationsLoadFailed: "Couldn’t load automations.",
         empty: "No workflows run here yet.",
         startsUnavailable: "Couldn’t read what can start a workflow here.",
+        startsNeedMachineOnline: "Workflow starts need their Machine online.",
         title: "Automations",
         startsHere: 'Starts here',
         info: 'What starts from this session, and what writes into it.',

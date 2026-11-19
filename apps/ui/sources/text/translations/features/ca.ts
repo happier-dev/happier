@@ -19516,6 +19516,7 @@ const ca: WorkflowTriggersCopy = {
         automationsLoadFailed: "No s’han pogut carregar les automatitzacions.",
         empty: "Encara no s’hi executa cap flux de treball.",
         startsUnavailable: "No s’ha pogut llegir què pot iniciar un flux de treball aquí.",
+        startsNeedMachineOnline: "La màquina ha d’estar connectada per veure com es poden iniciar els fluxos de treball.",
         startsHere: "Comença aquí",
         title: "Automatitzacions",
         info: 'El que s’inicia des d’aquesta sessió i el que hi escriu.',
