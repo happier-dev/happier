@@ -1,7 +1,7 @@
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -41,6 +41,7 @@ import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/o
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readDeploymentChildResult } from '../../deploymentChild';
 import { prepareRollbackForHost } from '../../prepareRollbackForHost';
+import { readOwnServerDeploymentStageLogs } from './stageLog';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentTargetForHost,
     type OwnServerDeploymentTargetHostInput, type OwnServerDeploymentRequest, type OwnServerDeploymentReceipt,
     type OwnServerDeploymentMemberRouteEnrollmentForHost } from './ownServerDeploymentTarget';
@@ -367,16 +368,22 @@ function createSettlementNoticeHttpBoundary(serverHttpBaseUrl: string) {
 }
 
 it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retained rollback without build',
-    'activation failure diagnostic', 'activation failure diagnostic with cleanup', 'preactivation failure fleet', 'unverified incumbent joining'] as const)(
+    'activation failure diagnostic', 'activation failure diagnostic with cleanup', 'preactivation failure fleet', 'unverified incumbent joining',
+    'unhealthy first deploy on a receiving Machine', 'unhealthy first deploy on the local Machine',
+    'unhealthy first deploy with a native removal refusal'] as const)(
     'restores native members to U after %s', { timeout: 300_000 }, async (scenario, testContext) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-own-server-rollout-'));
     const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
         controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
     const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
     const activationFailure = scenario.startsWith('activation failure diagnostic');
+    const unhealthyFirstDeploy = scenario.startsWith('unhealthy first deploy');
+    const localFirstDeploy = scenario === 'unhealthy first deploy on the local Machine';
+    const cleanupRefused = scenario === 'unhealthy first deploy with a native removal refusal';
     const unverified = scenario === 'unverified incumbent joining';
     const preactivationFailure = scenario === 'preactivation failure fleet';
-    const machineIds = preactivationFailure ? ['machine-a', 'machine-b'] : scenario === 'retained rollback without build' || unverified || activationFailure
+    const machineIds = preactivationFailure ? ['machine-a', 'machine-b']
+        : scenario === 'retained rollback without build' || unverified || activationFailure || unhealthyFirstDeploy
         ? ['machine-a'] : ['machine-a', 'machine-b', 'machine-c'];
     let selectedMachine = machineIds[0];
     const tools = new Map<string, Awaited<ReturnType<typeof createOwnServerDockerBoundary>>>();
@@ -523,11 +530,12 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
                     }
                     if (!result.ok) dispatchErrors.push(`${input.phase}:${input.machineId}:${result.errorCode}`);
                     stages.push(`${input.phase}:${input.machineId}:end`);
-                    return result;
+                    return unhealthyFirstDeploy ? readDeploymentChildResult(JSON.parse(JSON.stringify(result))) : result;
                 },
             };
             hosts.set(machineId, host);
-            targets.set(machineId, createOwnServerDeploymentTargetForHost(host));
+            const { dispatchMember: _dispatchMember, ...directHost } = host;
+            targets.set(machineId, createOwnServerDeploymentTargetForHost(localFirstDeploy ? directHost : host));
         }
         let sourceRevision = 0;
         const candidate = async (version: string, onFailure: 'rollbackAll' | 'keepPartial', previous?: OwnServerDeploymentReceipt) => {
@@ -573,6 +581,49 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             expect(failed.receipt.content.failure).toMatchObject({ phase: 'activate' });
             expect((await tools.get('machine-a')!.readInvocations()).some(command =>
                 command.args.includes('up') || command.args.includes('rm'))).toBe(false);
+            return;
+        }
+        if (unhealthyFirstDeploy) {
+            const failed = await candidate('unhealthy-candidate', 'rollbackAll');
+            const docker = tools.get('machine-a')!;
+            await docker.failImageHealth(failed.image.configDigest);
+            if (cleanupRefused) await writeFile(join(root, 'machine-a', 'tools', 'refuse-container-removal'), '');
+            const outcome = await onMachine('machine-a', () => targets.get('machine-a')!.execute(failed.request));
+            const failure = { code: 'native_failed', phase: 'activate', effectAttempted: true,
+                failureCause: { phase: 'deployment.native.compose.deployment_health_check_failed',
+                    errorClass: 'Error', errorCode: 'deployment_health_check_failed', httpStatus: null } };
+            const candidateDirectory = join(await environmentRoot('machine-a'), 'releases', failed.receipt.deployment.id);
+            expect(failed.receipt.deployment.state).toBe('failed');
+            expect(link.activeDeploymentId).toBeUndefined();
+            expect(failed.receipt.content.failure).toMatchObject(failure);
+            expect.soft(outcome).toMatchObject({ ok: false, errorCode: 'native_failed', details: { failure,
+                ...(cleanupRefused ? { cleanupFailure: { phase: 'cleanup', failureCause: {
+                    errorCode: 'native_service_control_unconfirmed',
+                } } } : {}),
+            } });
+            expect.soft(failed.receipt.content.machineResults[0]?.steps).toContainEqual(expect.objectContaining({
+                id: 'own-server-candidate-cleanup', state: cleanupRefused ? 'failed' : 'succeeded',
+            }));
+            if (cleanupRefused) {
+                expect(failed.receipt.content.ownServer?.stageLogs).toContainEqual(expect.objectContaining({
+                    machineId: 'machine-a', excerpt: expect.objectContaining({
+                        text: expect.stringContaining('native_service_control_unconfirmed'),
+                    }),
+                }));
+                expect(await docker.readContainerIds()).toHaveLength(1);
+                expect((await stat(candidateDirectory)).isDirectory()).toBe(true);
+            } else {
+                expect.soft(await docker.readContainerIds()).toEqual([]);
+                await expect(stat(candidateDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+                const { deploymentRoot } = await resolveOwnServerDeploymentIdentityForHost({
+                    happierHomeDir: join(root, 'machine-a'), serverId: 'home', environmentId: environment.environment.id,
+                });
+                expect(await readOwnServerDeploymentStageLogs({ deploymentRoot, serverId: profile.homeConnectionDescriptor!.homeServerIdentityId,
+                    machineId: 'machine-a', installationId: identities.get('machine-a')!.installationId,
+                }, failed.receipt, { ref: 'activate' })).toMatchObject({
+                    kind: 'page', page: { text: expect.stringContaining('container candidate is unhealthy') },
+                });
+            }
             return;
         }
         if (activationFailure) {

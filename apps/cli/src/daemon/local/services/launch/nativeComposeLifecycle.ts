@@ -3,7 +3,8 @@ import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } f
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
-import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { logger } from '@/ui/logger';
 import { readSQLiteRuntimeAvailabilityV1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
@@ -1704,42 +1705,49 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                                 projectActionFailureCauseV1(captureError, 'deployment.logs.capture', { allowUnknownErrorCode: false }));
                         }
                     }
-                    const details = record(error) && record(error.details) ? error.details : undefined;
-                    if (request.cleanupOnFailure && !request.signal?.aborted
-                        && ['deployment_activation_failed', 'native_compose_command_failed'].includes(String(details?.reason))) {
-                        const listed = (await run(['ps', '--all', '--no-trunc', '--filter',
-                            `label=com.docker.compose.project=${projectName}`, '--format', '{{.ID}}'], request.signal)).stdout.trim().split('\n').filter(Boolean);
-                        const introduced = listed.filter(id => !preexisting.includes(id));
-                        // A successful listing also proves cleanup settled when
-                        // up failed before introducing any candidate containers.
-                        const rows: unknown = introduced.length
-                            ? JSON.parse((await run(['inspect', '--type', 'container', ...introduced], request.signal)).stdout) : [];
-                        if (!Array.isArray(rows) || rows.length !== introduced.length) throw error;
-                        const expected = new Map<string, string>();
-                        for (const row of rows) {
-                            if (!record(row) || typeof row.Id !== 'string' || !introduced.includes(row.Id) || typeof row.Image !== 'string'
-                                || !record(row.Config) || !record(row.Config.Labels)
-                                || row.Config.Labels['com.docker.compose.project'] !== projectName
-                                || typeof row.Config.Labels['com.docker.compose.service'] !== 'string'
-                                || !current.services.includes(row.Config.Labels['com.docker.compose.service'])) throw error;
-                            await identity.prove(row.Image, pin(row.Config.Labels['com.docker.compose.service']));
-                            expected.set(row.Id, row.Config.Labels['com.docker.compose.service']);
+                    if (isPluginError(error) && request.cleanupOnFailure && !request.signal?.aborted && isJsonObject(error.details)) {
+                        const reason = error.details.reason;
+                        const attemptedNativeEffect = parseActionExecuteFailure(error.cause)?.effectAttempted === true;
+                        if (attemptedNativeEffect || reason === 'deployment_activation_failed' || reason === 'native_compose_command_failed') {
+                            let cleanupFailure: ActionFailureCauseV1 | undefined;
+                            try {
+                                // The activation owner still has the before-up ids,
+                                // the pinned images and the admitted source directory.
+                                const snapshot = await generation.snapshot(request.signal);
+                                const rows = snapshot.rows.filter(row => !preexisting.includes(row.Id));
+                                const expected = new Map<string, string>();
+                                for (const row of rows) {
+                                    const labels = record(row.Config) && record(row.Config.Labels) ? row.Config.Labels : undefined;
+                                    const service = labels?.['com.docker.compose.service'];
+                                    if (labels?.['com.docker.compose.project.working_dir'] !== input.source.rootPath
+                                        || typeof row.Image !== 'string' || typeof service !== 'string' || !current.services.includes(service)) {
+                                        nativeRefusal('deployment_generation_required', 'deployment.native.compose.cleanup', 'deployment_generation_required');
+                                    }
+                                    await identity.prove(row.Image, pin(service));
+                                    expected.set(row.Id, service);
+                                }
+                                const freshPreviewVolumes = preexistingPreviewVolumes ? selectNativeComposePreviewVolumeNames({
+                                    projectName, targets: previewTargets, expected, observations: rows,
+                                    ownedNames: await readNativeComposeProjectVolumeNames({ projects: [projectName],
+                                        run: args => run(args, request.signal) }),
+                                }).filter(name => !preexistingPreviewVolumes.has(name)) : [];
+                                const cleanupRun = (args: readonly string[]) => run(args, request.signal, undefined, false, authority);
+                                const removed = rows.length
+                                    ? await removeWitnessedProjectResources({ ids: rows.map(row => row.Id), project: projectName,
+                                        services: current.services, run: cleanupRun })
+                                    : await removeUnusedNativeComposeNetworks({ projects: [projectName], run: cleanupRun }) === null;
+                                if (!removed) nativeRefusal('native_service_control_unconfirmed', 'deployment.native.compose.cleanup',
+                                    'native_service_control_unconfirmed');
+                                const volumeFailure = await settleNativeComposeVolumeRemoval({ names: freshPreviewVolumes, run: cleanupRun });
+                                if (volumeFailure) nativeRefusal(volumeFailure.reason, 'deployment.native.compose.cleanup', volumeFailure.reason);
+                            } catch (cleanupError) {
+                                cleanupFailure = projectActionFailureCauseV1(cleanupError, 'deployment.native.compose.cleanup');
+                            }
+                            throw new PluginError({ ...error.data, details: { ...error.details,
+                                firstDeployCleanup: cleanupFailure ? 'failed' : 'removed',
+                                ...(cleanupFailure ? { cleanupFailure } : {}),
+                            } }, error.cause === undefined ? undefined : { cause: error.cause });
                         }
-                        const freshPreviewVolumes = preexistingPreviewVolumes ? selectNativeComposePreviewVolumeNames({
-                            projectName, targets: previewTargets, expected, observations: rows,
-                            ownedNames: await readNativeComposeProjectVolumeNames({ projects: [projectName],
-                                run: args => run(args, request.signal) }),
-                        }).filter(name => !preexistingPreviewVolumes.has(name)) : [];
-                        const cleanupRun = (args: readonly string[]) => run(args, request.signal, undefined, false, authority);
-                        const removed = introduced.length
-                            ? await removeWitnessedProjectResources({ ids: introduced, project: projectName, services: current.services, run: cleanupRun })
-                            : await removeUnusedNativeComposeNetworks({ projects: [projectName], run: cleanupRun }) === null;
-                        const volumeFailure = removed ? await settleNativeComposeVolumeRemoval({ names: freshPreviewVolumes,
-                            run: args => run(args, request.signal, undefined, false, authority) }) : undefined;
-                        if (removed && !volumeFailure) throw new PluginError({ code: 'native_failed', message: 'First deployment failed; introduced resources were removed',
-                            details: { reason: String(details?.reason), firstDeployCleanup: 'removed' },
-                            ...(isPluginError(error) && error.data.failureCause ? { failureCause: error.data.failureCause } : {}) },
-                            error instanceof Error && error.cause !== undefined ? { cause: error.cause } : undefined);
                     }
                     throw error;
                 } finally { stopLending(); await launch.release(); }

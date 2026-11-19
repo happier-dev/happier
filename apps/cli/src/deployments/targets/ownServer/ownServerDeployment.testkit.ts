@@ -531,6 +531,11 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     if (state.containers.some(row => row.Config.Labels['com.docker.compose.project'] === project && row.State.ExitCode)) {
         process.stderr.write('container exited (2)\n'); process.exit(1);
     }
+    if (args.includes('--wait') && state.containers.some(row => row.Config.Labels['com.docker.compose.project'] === project
+        && row.State.Health?.Status === 'unhealthy')) {
+        process.stderr.write('container candidate is unhealthy\n');
+        process.exit(1);
+    }
     if (state.activationCommandFailure === 'afterCreate') {
         process.stderr.write('OCI runtime create failed: exec: /private-missing-entrypoint-sentinel: no such file or directory\n');
         process.exit(1);
@@ -865,6 +870,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     for (const row of state.containers) if (args.includes(row.Id)) row.State.Status = 'exited';
     save();
 } else if (args[0] === 'container' && args[1] === 'rm') {
+    if (fs.existsSync(path.join(__dirname, 'refuse-container-removal'))) {
+        process.stderr.write('Docker could not remove the candidate\n');
+        process.exitCode = 1; return;
+    }
     if (args.includes('--volumes')) throw new Error('fixture_volume_removal_denied');
     if (!args.includes('--force') && state.containers.some(row => args.includes(row.Id) && row.State.Status === 'running')) {
         process.exitCode = 1; return;

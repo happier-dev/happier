@@ -4,7 +4,7 @@ import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
 import { readDeploymentOutputValidation } from '../../outputValidation';
 import { projectDeploymentFailure } from '../../deploymentFailure';
-import { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentSettledV1, type DeploymentEnvironmentDetailV1, type DeploymentMachineResultV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
@@ -139,7 +139,9 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                     await read();
                 }
             }
-            return result();
+            // This failed activation authored its cleanup step, and the
+            // child response carries the separate cleanup diagnostic.
+            return phase === 'activate' && cleanup?.state === 'failed' ? dispatched : result();
         }
         if (!dispatched.ok && phase !== 'observe') await preserveFailure(target.machineId, target.installationId, phase, dispatched);
         return !dispatched.ok && phase === 'cleanup' ? projectOwnServerCandidateCleanupFailure(dispatched) : dispatched;
@@ -322,7 +324,14 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             const row = member(target.machineId);
             if (!executed.ok && executed.errorCode === 'outcome_unknown' || row?.activation === 'outcome_unknown') return await write('outcome_unknown');
             if (!executed.ok || row?.activation !== 'succeeded' || row.health === 'unhealthy' || row.health === 'unknown') {
-                let cleanupFailure: ActionExecuteFailure | undefined;
+                const details = !executed.ok ? executed.details : undefined;
+                const nativeCleanup = details && typeof details === 'object' && 'cleanupFailure' in details
+                    ? DeploymentExecutionFailureDetailsV1Schema.shape.cleanupFailure.safeParse(details.cleanupFailure).data
+                    : undefined;
+                let cleanupFailure: ActionExecuteFailure | undefined = nativeCleanup ? {
+                    ok: false, errorCode: nativeCleanup.code, error: nativeCleanup.code,
+                    ...(nativeCleanup.failureCause ? { failureCause: nativeCleanup.failureCause } : {}),
+                } : undefined;
                 const migrationRan = receipt.content.steps.some(step => step.id === MIGRATION_STEP && step.state !== 'skipped');
                 const migrationPolicy = initial.environment.content.ownServer?.migrationFailurePolicy;
                 // Post-migration policy is independent of the no-migration
@@ -342,6 +351,9 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                         }
                     }
                     else for (const currentMember of attempted) {
+                        // A failed first activation has already tried removal
+                        // while it held the native generation witness.
+                        if (nativeCleanup && currentMember.machineId === target.machineId) continue;
                         const cleaned = await dispatch(currentMember, 'cleanup', receipt.deployment.id);
                         if (!cleaned.ok) cleanupFailure ??= cleaned;
                         if (!current()) return finishChild(cleaned);

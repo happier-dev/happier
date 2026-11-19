@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -10,7 +10,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentOwnServerContentV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, environmentSecretBindingIdentityV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentRuntimeProjectionV1, DeploymentMachineResultV1 } from '@happier-dev/deployments/contracts/v1';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -35,7 +35,7 @@ import { assertIrohServicePublications } from './privateServicePublication';
 import { admitOwnServerDeploymentSource, admitOwnServerDeploymentTargetLink, admitOwnServerDeploymentTargetSource,
     selectOwnServerRetainedServingSource } from './ownServerTargetAdmission';
 import { projectOwnServerDeploymentReview } from './ownServerDeploymentReview';
-import { captureOwnServerDeploymentStageLog, openOwnServerDeploymentStageLog } from './stageLog';
+import { captureOwnServerDeploymentStageLog, openOwnServerDeploymentStageLog, retainDeploymentStageLogAfterCandidateRemoval } from './stageLog';
 import { recordDeploymentSourceProgress } from './sourceOperationLog';
 import { createOwnServerSourceRetention, projectOwnServerUnsettledDeploymentIds } from './releaseRetention';
 import { readDeploymentUniformTargetLinkRevisionV1 } from '@/deployments/deploymentUniformProof';
@@ -1051,7 +1051,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 receipt = capture.receipt;
                 return capture.output;
             });
-            let committed = false;
+            let abortSourceOnExit = true;
             let activated = false;
             let candidate: NativeComposeEnvironmentProject | undefined;
             let retained: Awaited<ReturnType<typeof prepare>> | undefined;
@@ -1431,7 +1431,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             await prepared.runtime.enrollAppServices({ render: activationRender, project, services: handles,
                                 deployment: selected.deployment, nativeContext: context, signal: snapshot.signal });
                         }
-                        await prepared.source.commit(); committed = true;
+                        await prepared.source.commit(); abortSourceOnExit = false;
                         const staged = await stage(row(project.health));
                         if (!staged.ok) return staged;
                         observeServices({ environment: snapshot.environment, receipt, deploymentId: selected.deployment.id, runtime: prepared.runtime,
@@ -1440,7 +1440,34 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     } finally { await project.dispose(); }
                 });
             } catch (error) {
-                if (activated && !committed) { await prepared.source.commit(); committed = true; }
+                const native = error instanceof PluginError && isJsonObject(error.details) ? error.details : undefined;
+                const nativeRemoved = native?.firstDeployCleanup === 'removed';
+                let cleanupFailure: ActionExecuteFailure | undefined;
+                if (nativeRemoved) {
+                    // Native confirmed absence while this invocation still owns
+                    // the candidate materialization's exact filesystem custody.
+                    abortSourceOnExit = false;
+                    try {
+                        await prepared.source.abort();
+                        if (prepared.stageOutput) {
+                            await prepared.stageOutput.close();
+                            await retainDeploymentStageLogAfterCandidateRemoval({
+                                deploymentRoot: prepared.runtime.source.deploymentRoot,
+                                environmentInstanceId: prepared.source.environmentInstanceId,
+                                deploymentId: prepared.source.deploymentId,
+                            });
+                        }
+                    } catch (cleanupError) {
+                        cleanupFailure = failure(failureCode(cleanupError, false), cleanupError, 'deployment.cleanup.source');
+                    }
+                } else if (activated && abortSourceOnExit) {
+                    await prepared.source.commit(); abortSourceOnExit = false;
+                }
+                if (native?.firstDeployCleanup === 'failed') {
+                    const cause = ActionFailureCauseV1Schema.safeParse(native.cleanupFailure);
+                    cleanupFailure = { ok: false, errorCode: 'native_service_control_unconfirmed',
+                        error: 'Candidate native removal could not be confirmed', ...(cause.success ? { failureCause: cause.data } : {}) };
+                }
                 const code = failureCode(error, snapshot.signal.aborted);
                 const uncertain = code === 'outcome_unknown' || isProjectNativeProcessUncertain(error) || activated && snapshot.signal.aborted;
                 let failed: DeploymentMachineResultV1 = { ...previous, machineId: host.machineId, installationId: input.installationId,
@@ -1449,15 +1476,24 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     health: activated && !uncertain ? 'unhealthy' : previous?.health ?? 'unknown',
                     incumbentStopped,
                     ...(restored ? { restoration: uncertain ? 'outcome_unknown' : 'failed' } : {}) };
-                if (error instanceof PluginError && error.details !== null && typeof error.details === 'object' && !Array.isArray(error.details)
-                    && 'firstDeployCleanup' in error.details
-                    && error.details.firstDeployCleanup === 'removed') failed = recordOwnServerCandidateCleanup({
-                    ...failed, currentDeploymentId: undefined, health: 'unknown' }, 'succeeded');
+                if (nativeRemoved || cleanupFailure) {
+                    failed = recordOwnServerCandidateCleanup(nativeRemoved
+                        ? { ...failed, currentDeploymentId: undefined, health: 'unknown' } : failed, cleanupFailure ? 'failed' : 'succeeded');
+                }
+                if (cleanupFailure && prepared.stageOutput) {
+                    const reason = cleanupFailure.failureCause?.errorCode ?? cleanupFailure.errorCode;
+                    prepared.stageOutput.appendRedacted('stderr', Buffer.from(`\nCandidate cleanup failed (${reason}).\n`));
+                }
                 const projected = failure(uncertain ? 'outcome_unknown' : code, error);
                 const written = await stage(failed, { code, phase: input.phase === 'restore' ? 'restore' : 'activate',
                     ...(projected.failureCause ? { failureCause: projected.failureCause } : {}),
                     ...(typeof projected.effectAttempted === 'boolean' ? { effectAttempted: projected.effectAttempted } : {}) });
-                return written.ok ? projected : written;
+                if (!written.ok) return written;
+                if (!cleanupFailure) return projected;
+                return { ...projected, details: { cleanupFailure: {
+                    code: cleanupFailure.errorCode, phase: 'cleanup',
+                    ...(cleanupFailure.failureCause ? { failureCause: cleanupFailure.failureCause } : {}),
+                } } };
             } finally {
                 try {
                     try { await incumbent?.dispose(); }
@@ -1473,7 +1509,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     finally {
                         try { await prepared.project.dispose(); }
                         finally {
-                            try { if (!committed) await prepared.source.abort(); }
+                            try { if (abortSourceOnExit) await prepared.source.abort(); }
                             finally { try { await prepared.runtime.release(); } finally { await prepared.stageOutput?.close(); } }
                         }
                     }

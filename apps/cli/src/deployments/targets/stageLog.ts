@@ -1,8 +1,8 @@
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHash } from 'node:crypto';
 import { writeSync } from 'node:fs';
-import { mkdir, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, mkdir, readdir, realpath, rename } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { DeploymentReceiptDetailV1, DeploymentStageLogV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { createProtectedLocalStateFileExclusive, ensureProtectedLocalStateDirectory,
@@ -53,6 +53,44 @@ async function stageDirectory(input: Placement, create: boolean): Promise<string
         await ensureProtectedLocalStateDirectory(path, { authority: create ? 'owned' : 'admitted', createIfMissing: create });
     }
     return path;
+}
+
+const missing = (error: unknown) => error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
+
+async function retainedStageParent(input: Placement, create: boolean): Promise<string> {
+    const path = join(dirname(await stageParent(input, false)), 'stage-logs');
+    await ensureProtectedLocalStateDirectory(path, { createIfMissing: create });
+    return path;
+}
+
+/** Only first-deploy cleanup moves a log. Existing and active release logs keep their original location. */
+export async function resolveRetainedDeploymentStageLogRootForHost(input: Placement): Promise<string> {
+    try { return dirname(await stageDirectory(input, false)); }
+    catch (error) { if (!missing(error)) throw error; }
+    const root = join(await retainedStageParent(input, false), input.deploymentId);
+    for (const path of [root, join(root, '.happier')]) {
+        await ensureProtectedLocalStateDirectory(path, { createIfMissing: false });
+    }
+    return root;
+}
+
+/** Preserve the same closed log and cursor after its source owner has rolled back the candidate files. */
+export async function retainDeploymentStageLogAfterCandidateRemoval(input: Placement): Promise<void> {
+    const directory = await stageDirectory(input, false);
+    const release = dirname(directory);
+    const releaseEntries = await readdir(release);
+    const logEntries = await readdir(directory);
+    if (releaseEntries.length !== 1 || releaseEntries[0] !== '.happier'
+        || logEntries.length !== 1 || logEntries[0] !== 'deploy.log') return unavailable();
+    const log = await openProtectedLocalStateFile(join(directory, 'deploy.log'), 'r');
+    await log.close();
+    const retained = join(await retainedStageParent(input, true), input.deploymentId);
+    const occupied = await lstat(retained).catch((error: unknown) => {
+        if (!missing(error)) throw error;
+        return undefined;
+    });
+    if (occupied) return unavailable();
+    await rename(release, retained);
 }
 
 /** Only already-sanitized supervisor chunks enter this operation-owned file. */
@@ -257,8 +295,8 @@ async function readStageLogPage(host: Readonly<{
     const listeners = observers.get(path) ?? new Set<(change: StageLogChange) => void>();
     if (options?.ref !== undefined) { listeners.add(changed); observers.set(path, listeners); }
     try {
-        const directory = await stageDirectory(placement, false);
-        const handle = await openProtectedLocalStateFile(join(directory, 'deploy.log'), 'r');
+        const root = await resolveRetainedDeploymentStageLogRootForHost(placement);
+        const handle = await openProtectedLocalStateFile(join(root, DEPLOYMENT_STAGE_LOG_RELATIVE_PATH), 'r');
         try {
             const stat = await handle.stat({ bigint: true });
             const sourceRevision = createHash('sha256').update(JSON.stringify([environmentInstanceId,

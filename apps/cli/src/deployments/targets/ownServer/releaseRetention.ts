@@ -12,7 +12,7 @@ import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspace
 import { removeStoragePath, readStoragePathIdentity } from '@/storage/trash/removeStoragePath';
 import { resolveContainedWorkspaceMaterializationPath } from '@/scm/workspace/workspaceMaterializationSafety';
 import { createDeploymentManifestInputReader, resolveDeploymentSourcePathForHost } from './exactCommitRelease';
-import type { OwnServerStageLogProvenance } from './stageLog';
+import { resolveRetainedDeploymentStageLogRootForHost, type OwnServerStageLogProvenance } from './stageLog';
 import { logger } from '@/ui/logger';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRetentionRequest } from './ownServerDeploymentTarget';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentIdentityForHost } from './paths';
@@ -246,13 +246,14 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                     }
                     for (const { deploymentId, log } of logs) {
                         const placement = { deploymentRoot: runtime.deploymentRoot, environmentInstanceId, deploymentId };
-                        const path = resolveDeploymentSourcePathForHost(placement);
-                        const physicalRoot = resolveDeploymentSourcePathForHost({ ...placement, deploymentRoot: await realpath(runtime.deploymentRoot) });
-                        const assertRoot = async () => {
-                            await runtime.assertCurrent();
-                            if (await realpath(path) !== physicalRoot) refuse('deployment_source_unavailable');
-                        };
-                        await pruneOperationLog({ physicalRoot, log, nativeBindSources, assertRoot });
+                        try {
+                            const physicalRoot = await resolveRetainedDeploymentStageLogRootForHost(placement);
+                            const assertRoot = async () => {
+                                await runtime.assertCurrent();
+                                if (await resolveRetainedDeploymentStageLogRootForHost(placement) !== physicalRoot) refuse('deployment_source_unavailable');
+                            };
+                            await pruneOperationLog({ physicalRoot, log, nativeBindSources, assertRoot });
+                        } catch (error) { if (!absent(error)) throw error; }
                     }
                 });
             } finally { await runtime.release(); }

@@ -1740,9 +1740,11 @@ preserve typed transport failure codes without copying private exception text.
 In 0.3 development source, a known failed rollout also returns its Home,
 Environment, target-link and receipt identity with the recorded failure phase.
 Approval settlement retains this strict payload only when it matches the request.
-A failed candidate cleanup remains explicit alongside the original failure,
-so the caller can locate the receipt and distinguish an activation failure from
-an incomplete removal.
+When Compose starts a first candidate and then refuses activation under
+rollback-all, its Machine uses the pre-activation inventory and source custody
+to remove the candidate's containers and release directory. The receipt records
+the cleanup result. On a removal refusal, the action carries the cleanup cause
+alongside the activation failure, and the protected stage log retains the reason.
 Both Actions still accept prepared callers, and storage accepts only prepared
 content references. Content preparation does not invoke a separate Artifact
 Action or ask for a second child confirmation.
@@ -2678,7 +2680,9 @@ stored and build source custody use the same manifest provenance; builder custod
 is published before native build effects. Stage-log descriptors retain the Machine,
 installation and pinned `.happier/deploy.log` path; local cursor identity detects
 rotation without persisting an inode witness in the receipt. Writers create the log
-exclusively and never recreate a missing retained log. The native Compose adapter
+exclusively and never recreate a missing retained log. First-deploy cleanup moves
+the closed, log-only directory out of the runtime releases so the same receipt
+and cursor can still read it. The normal log retention policy applies there too. The native Compose adapter
 records repeated Volume/Network progress notifications once per resource transition
 and command; ordinary diagnostics, application bytes and separate build/runtime
 source progress remain unchanged. Cleanup removes only unchanged

@@ -6,6 +6,8 @@ export {
     type DeploymentStageLogWriter as OwnServerDeploymentStageLogWriter,
     resolveDeploymentStageLogPathForHost as resolveOwnServerStageLogPathForHost,
     openDeploymentStageLog as openOwnServerDeploymentStageLog,
+    resolveRetainedDeploymentStageLogRootForHost,
+    retainDeploymentStageLogAfterCandidateRemoval,
     type DeploymentStageLogReceipt as OwnServerStageLogReceipt,
     type DeploymentStageLogReadOptions as OwnServerStageLogReadOptions,
     readDeploymentStageLogs as readOwnServerDeploymentStageLogs
