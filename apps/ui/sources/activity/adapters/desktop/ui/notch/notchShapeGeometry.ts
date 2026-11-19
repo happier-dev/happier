@@ -102,12 +102,14 @@ export function resolveNotchBodySize(
   return params.content;
 }
 
+/** The concave shoulders flowing into the edge; a body with no area yet (unmeasured content) has none to flow from. */
 export function resolveNotchShoulder(
   form: NotchForm,
   dock: NotchDock,
   metrics: NotchMetrics,
+  body: NotchSize,
 ): number {
-  if (!isNotchEdgeDock(dock)) return 0;
+  if (!isNotchEdgeDock(dock) || body.width <= 0 || body.height <= 0) return 0;
   return form === 'tip' ? metrics.tipShoulder : metrics.shoulder;
 }
 

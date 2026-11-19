@@ -16,6 +16,7 @@ import { happierSurfaceGradientWebStyle, happierSvgGradientStop } from '@happier
 import { resolveGlassNotchPaint } from '@/components/ui/glass/glassMaterial';
 import { useGlassRuntimeEnvironment } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { useGlassMaterialSettings } from '@/components/ui/glass/useGlassMaterialSettings';
+import { nonScrollingClipStyle } from '@/components/ui/surfaces/nonScrollingClip';
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -98,6 +99,20 @@ type ShoulderPlacement = Readonly<{
 const SHOULDER_UNIT_PATH = buildNotchShoulderPath(1);
 
 /**
+ * The island's plane paint (lab R6): the body fills with it, and every mark standing on the plane cuts its
+ * needs-you dot's ring from it, so no ring reads as a darker halo on the plane.
+ */
+export function useNotchPlanePaint(): string {
+  const { theme } = useUnistyles();
+  const glassSettings = useGlassMaterialSettings();
+  const glassEnvironment = useGlassRuntimeEnvironment();
+  return React.useMemo(
+    () => resolveGlassNotchPaint(theme.colors.overlay.stageImmersive, glassSettings, glassEnvironment),
+    [theme.colors.overlay.stageImmersive, glassSettings, glassEnvironment],
+  );
+}
+
+/**
  * The desktop notch: one island on every dock. Docked, it sits flush on its edge, square on that side,
  * with concave shoulders flowing into the edge and rounded free corners; Floating rounds every corner
  * and carries the floating cast shadow. It rests as a tip, stands at the standard size around its
@@ -143,12 +158,7 @@ export function NotchShape(
   const reduceMotion = useReducedMotionPreference();
   const windowSize = useWindowDimensions();
   const metrics = resolveNotchMetrics(theme);
-  const glassSettings = useGlassMaterialSettings();
-  const glassEnvironment = useGlassRuntimeEnvironment();
-  const paint = React.useMemo(
-    () => resolveGlassNotchPaint(theme.colors.overlay.stageImmersive, glassSettings, glassEnvironment),
-    [theme.colors.overlay.stageImmersive, glassSettings, glassEnvironment],
-  );
+  const paint = useNotchPlanePaint();
   const foot = resolveNotchFootFinish(resolveThemeSurfaceFinish(theme, 'floating'));
   const seam = resolveNotchCameraSeamStops(metrics.thickness);
   const seamId = `notch-seam-${React.useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -186,7 +196,7 @@ export function NotchShape(
     panelHeight,
     maxPanelHeight: null,
   });
-  const shoulder = resolveNotchShoulder(props.form, props.dock, metrics);
+  const shoulder = resolveNotchShoulder(props.form, props.dock, metrics, body);
   const corner = resolveNotchCorner(props.form, metrics, body);
   const cameraOffset = resolveNotchCameraOffset({
     form: props.form,
@@ -503,9 +513,10 @@ const styles = StyleSheet.create((theme) => ({
   shoulder: {
     position: 'absolute',
   },
+  // The island clips without scrolling: a scrolled island would draw its panel off the planner's rect.
   body: {
     position: 'absolute',
-    overflow: 'hidden',
+    ...nonScrollingClipStyle(),
   },
   foot: {
     position: 'absolute',

@@ -39,14 +39,14 @@ describe('notch shape geometry', () => {
       resolveNotchExtent(
         'top',
         top,
-        resolveNotchShoulder('standard', 'top', metrics),
+        resolveNotchShoulder('standard', 'top', metrics, top),
       ),
     ).toEqual({ width: 236, height: 32 });
     expect(
       resolveNotchExtent(
         'floating',
         top,
-        resolveNotchShoulder('standard', 'floating', metrics),
+        resolveNotchShoulder('standard', 'floating', metrics, top),
       ),
     ).toEqual({ width: 220, height: 32 });
 
@@ -64,9 +64,20 @@ describe('notch shape geometry', () => {
       resolveNotchExtent(
         'left',
         left,
-        resolveNotchShoulder('standard', 'left', metrics),
+        resolveNotchShoulder('standard', 'left', metrics, left),
       ),
     ).toEqual({ width: 32, height: 136 });
+  });
+
+  it('draws no shoulders around a body with nothing in it yet', () => {
+    // Before its content is measured the island has no area: shoulders there would hang off nothing.
+    for (const dock of ['top', 'left', 'right'] as const) {
+      const unmeasured = resolveNotchBodySize({ form: 'standard', dock, metrics, camera: null,
+        content: { width: 0, height: 0 }, panelHeight: 0, maxPanelHeight: null });
+      expect(resolveNotchShoulder('standard', dock, metrics, unmeasured)).toBe(0);
+      expect(resolveNotchShoulder('open', dock, metrics, { width: metrics.openWidth, height: 0 })).toBe(0);
+    }
+    expect(resolveNotchShoulder('open', 'left', metrics, { width: metrics.openWidth, height: 200 })).toBe(metrics.shoulder);
   });
 
   it('rests as a sliver of the island on its edge, or as the camera block on the camera notch', () => {

@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { nonScrollingClipStyle } from '@/components/ui/surfaces/nonScrollingClip';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
@@ -62,16 +63,6 @@ function extractSurfaceStyle(chromeStyle: ThemeSurfaceChromeStyle) {
     };
 }
 
-/**
- * A floating surface clips its content to its rounded box. On the web it clips without becoming a scroll
- * container (`overflow: clip`): its glass layer reaches past the box (the software-backdrop reach), so a
- * `hidden` box could be scrolled, and focusing a field inside it (a filter's search) shifted the whole body
- * sideways under the box's edge (owner 11-15 A7).
- */
-function floatingSurfaceClip(): ViewStyle {
-    return (Platform.OS === 'web' ? { overflow: 'clip' } : { overflow: 'hidden' }) as ViewStyle;
-}
-
 const stylesheet = StyleSheet.create((theme) => {
     // Every floating surface stands on the floating hairline (`border.modal`) and its raised edge; the
     // shadow only grounds it (menus at the menu step, popovers at the popover step). In-flow sheets
@@ -91,7 +82,7 @@ const stylesheet = StyleSheet.create((theme) => {
         },
         modalClipSurface: {
             borderRadius: OVERLAY_BORDER_RADIUS,
-            ...floatingSurfaceClip(),
+            ...nonScrollingClipStyle(),
             ...resolveThemeSurfaceBorderStyle({
                 borderColor: theme.colors.border.modal,
                 edge: resolveThemeRaisedEdge(theme, 'modal'),
@@ -105,7 +96,7 @@ const stylesheet = StyleSheet.create((theme) => {
         },
         themedSurfaceClip: {
             borderRadius: OVERLAY_BORDER_RADIUS,
-            ...floatingSurfaceClip(),
+            ...nonScrollingClipStyle(),
             ...extractSurfaceStyle(themedSurfaceChromeStyle),
         },
     };

@@ -344,6 +344,24 @@ describe('DesktopActivityOverlayRoute', () => {
         }
     });
 
+    it('keeps the settled left-dock island at the planner\'s rect: it clips without becoming a scroll container', async () => {
+        // A `hidden` island scrolls when focus lands on content past its rest width (the panel's pin at
+        // x≈428 in a 32 pt rest window), and the scroll then carries the open panel off the island
+        // (Round 7: panel drawn at x -426…38 in a 464 pt island at x 0). `clip` cannot scroll.
+        reducedMotion.value = true;
+        const frame = {
+            dock: 'left' as const,
+            growth: { x: 'right' as const, y: null },
+            anchorOffset: { x: 0, y: 0 },
+            islandRect: { x: 0, y: 0, width: 32, height: 140 },
+        };
+        const screen = await renderRoute({ ...createWindowState(), frame });
+        const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
+            ? Object.assign({}, ...style.map(flatten)) : (style as Record<string, unknown>) ?? {};
+        expect(notchForm(screen)).toBe('standard');
+        expect(flatten(screen.findByTestId('desktop-activity-overlay-notch-body')?.props.style).overflow).toBe('clip');
+    });
+
     it('opens on a click, tells native the new extent before moving, and acquires detail demand', async () => {
         const screen = await renderRoute(createWindowState());
         expect(notchForm(screen)).toBe('standard');
