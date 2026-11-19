@@ -29,15 +29,16 @@ async function pickFromMore(screen: Awaited<ReturnType<typeof renderScreen>>, ca
 }
 
 describe('ReviewCommentCard', () => {
-    it('renders a native sealed finding through the same body as Review detail', async () => {
-        const comment = buildReviewCommentFixture({ reviewId: 'review-1', findingId: 'finding-1', finding: {
+    it('renders a dismissed native sealed finding with Ignore selected despite its older acceptance', async () => {
+        const comment = buildReviewCommentFixture({ reviewId: 'review-1', findingId: 'finding-1', state: 'dismissed', reviewTriageStatus: 'accept', finding: {
             id: 'finding-1', title: 'A native finding', summary: 'Original explanation', severity: 'high', category: 'correctness',
             whyItMatters: 'Its impact', evidence: 'Verified evidence',
         }, body: 'Current explanation' });
-        const screen = await renderScreen(<ReviewCommentCard comment={comment} labels={reviewCommentLabelsFixture} />);
+        const screen = await renderScreen(<ReviewCommentCard comment={comment} labels={reviewCommentLabelsFixture} actions={{ onDecide: () => {} }} />);
         expect(screen.findHostByTestId('review-finding-body:comment-1')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Current explanation');
         expect(screen.getTextContent()).toContain('Verified evidence');
+        expect(screen.findByTestId('review-finding-triage:comment-1:reject')?.props.accessibilityState).toMatchObject({ checked: true });
     });
 
     it('offers Open and Dismiss for a proposal, never an invalid Resolve', async () => {
