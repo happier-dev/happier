@@ -173,6 +173,27 @@ describe('transcript markers', () => {
     ]);
   });
 
+  it('ends a turn after its own error and late tool rows, before the next prompt or turn, with closing spacing', () => {
+    const error: Message = { kind: 'agent-event', id: 'm3', localId: null, seq: 3, createdAt: 3,
+      event: { type: 'message', message: 'The agent stopped with an error.' } } as Message;
+    const { rows, getMessageById } = rowsFor([user(1), agent(2), error, tool(4, 'Bash'), user(5), agent(6), agent(7)]);
+    const turnEnds = projectTranscriptTurnEnds([
+      // Failed: its end anchor is the reply; the error and a delegate tool row were recorded after it.
+      { turnId: 'turn-1', status: 'failed', startedAt: 0, updatedAt: 6_000, terminalAt: 6_000,
+        transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 2 } },
+      { turnId: 'turn-2', status: 'completed', startedAt: 10_000, updatedAt: 19_000, terminalAt: 19_000,
+        transcriptAnchors: { startSeqInclusive: 5, endSeqInclusive: 6 } },
+      // A context-only turn with no prompt row starts at seq 7: turn 2's line stays before it.
+      { turnId: 'turn-3', status: 'in_progress', startedAt: 20_000, updatedAt: 20_000, transcriptAnchors: { startSeqInclusive: 7 } },
+    ]);
+    const marked = insertTranscriptMarkers({ items: rows, sessionId: 's1', getMessageById, newDividerAfterSeq: null, turnEnds });
+    expect(shape(marked)).toEqual(['m1', 'm2', 'm3', 'tool-group-header', 'tool-group-footer', 'transcript-marker:turn-end:turn-1',
+      'm5', 'm6', 'transcript-marker:turn-end:turn-2', 'm7']);
+    expect(marked.filter((row) => row.kind === 'transcript-marker').map((row) => row.kind === 'transcript-marker' ? row.marker : null))
+      .toEqual([{ type: 'turn-end', outcome: 'stopped', durationMs: 6_000, joinsChanges: false },
+        { type: 'turn-end', outcome: 'worked', durationMs: 9_000, joinsChanges: false }]);
+  });
+
   it('draws no New when nothing read precedes it, and leaves rows untouched when nothing is placed', () => {
     const { rows, getMessageById } = rowsFor([user(1), agent(2)]);
     expect(

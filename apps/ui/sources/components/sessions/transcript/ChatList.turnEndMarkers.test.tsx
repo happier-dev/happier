@@ -184,7 +184,7 @@ const messages = [
 type Row = Readonly<{
   kind: string;
   id: string;
-  marker?: Readonly<{ type: string; outcome?: string; durationMs?: number }>;
+  marker?: Readonly<{ type: string; outcome?: string; durationMs?: number; joinsChanges?: boolean }>;
 }>;
 function rowShape(data: readonly Row[] | undefined): string[] {
   return (data ?? []).map((row) =>
@@ -195,9 +195,13 @@ function rowShape(data: readonly Row[] | undefined): string[] {
 afterEach(standardCleanup);
 
 describe('Session open → settled turns and read cursor → transcript markers', () => {
-  it.each([true, false])(
-    'places New at the opened read cursor and each settled turn line (show duration: %s)',
-    async (showTurnDuration) => {
+  it.each([
+    { showTurnDuration: true, turnsAtOpen: true },
+    { showTurnDuration: false, turnsAtOpen: true },
+    { showTurnDuration: true, turnsAtOpen: false },
+  ])(
+    'places New at the opened read cursor and each settled turn line (show duration: $showTurnDuration, turns at open: $turnsAtOpen)',
+    async ({ showTurnDuration, turnsAtOpen }) => {
       resetChatListHarness({ platformOs: 'web' });
       const locks = installWebLockManagerMock();
       let connection:
@@ -272,6 +276,8 @@ describe('Session open → settled turns and read cursor → transcript markers'
           </AppSessionTranscriptSourceProvider>
         ) : null;
       }
+      // A Session opened again has its turn facts from the earlier visit; a cold open gets them after first paint.
+      if (turnsAtOpen) await sync.ensureSessionVisibleForMessageRoute(sessionId, { serverId, includeTurnsProjection: true });
       const screen = await renderScreen(<OpenTranscript />);
       await flushHookEffects({ cycles: 40 });
       await act(async () => {
@@ -305,7 +311,7 @@ describe('Session open → settled turns and read cursor → transcript markers'
       expect(newIndex).toBeLessThan(at(3));
       const turnA = rows.indexOf('marker:transcript-marker:turn-end:turn-a');
       const turnB = rows.indexOf('marker:transcript-marker:turn-end:turn-b');
-      if (showTurnDuration) {
+      if (showTurnDuration && turnsAtOpen) {
         // Each line closes its own turn, ahead of the next turn's divider and prompt.
         expect(turnA).toBeGreaterThan(at(2));
         expect(turnA).toBeLessThan(newIndex);
@@ -315,14 +321,15 @@ describe('Session open → settled turns and read cursor → transcript markers'
           .filter((row) => row.marker?.type === 'turn-end')
           .map((row) => row.marker);
         expect(markers).toEqual([
-          { type: 'turn-end', outcome: 'worked', durationMs: 72_000 },
-          { type: 'turn-end', outcome: 'stopped', durationMs: 40_000 },
+          { type: 'turn-end', outcome: 'worked', durationMs: 72_000, joinsChanges: false },
+          { type: 'turn-end', outcome: 'stopped', durationMs: 40_000, joinsChanges: false },
         ]);
         const lines = screen
           .findAllHostsByTestId('transcript-turn-duration')
           .map((node) => [node.props.children].flat().join(''));
         expect(lines).toEqual(['session.transcriptTurnEnd.workedFor', 'session.transcriptTurnEnd.stoppedAfter']);
       } else {
+        // Off, or turn facts that arrived after first paint for turns already settled: nothing moves in.
         expect([turnA, turnB]).toEqual([-1, -1]);
         expect(screen.findAllHostsByTestId('transcript-turn-duration')).toEqual(
           [],

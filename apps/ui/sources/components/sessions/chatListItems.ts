@@ -22,7 +22,8 @@ export function resolveChatListMessageRowType(message: Message | null): ChatList
 
 export type TranscriptMarker =
     | Readonly<{ type: 'new' }>
-    | Readonly<{ type: 'turn-end'; outcome: 'worked' | 'stopped'; durationMs: number }>;
+    /** `joinsChanges`: the line sits directly above its turn's changes card, as one turn-end block. */
+    | Readonly<{ type: 'turn-end'; outcome: 'worked' | 'stopped'; durationMs: number; joinsChanges: boolean }>;
 
 export type ChatListItem =
     | {

@@ -362,10 +362,11 @@ export function buildTranscriptRowShellSignature(params: Readonly<{
     }
 
     if (item.kind === 'transcript-marker') {
-        // One line of meta text either way; the duration changes words inside it, never its height.
+        // One line of meta text; the duration changes words inside it, never its height. The spacing below a
+        // turn-end line depends on whether a changes card follows it.
         return {
             ...base,
-            structuralKey: item.marker.type,
+            structuralKey: item.marker.type === 'turn-end' ? `turn-end:${item.marker.joinsChanges ? 'changes' : 'closing'}` : item.marker.type,
             expansionKey: 'tools:none|thinking:none',
             rowState: 'stable',
         };

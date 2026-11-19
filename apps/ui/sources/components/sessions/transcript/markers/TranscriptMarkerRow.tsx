@@ -45,7 +45,7 @@ export const TranscriptMarkerRow = React.memo(function TranscriptMarkerRow(
     <View style={[styles.column, columnStyle]}>
       <Text
         testID="transcript-turn-duration"
-        style={styles.duration}
+        style={[styles.duration, marker.joinsChanges ? styles.durationAboveChanges : styles.durationClosingTurn]}
         accessibilityRole="text"
         numberOfLines={1}
       >
@@ -73,6 +73,14 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.tabular(),
     color: theme.colors.text.tertiary,
     marginHorizontal: theme.space.s16,
+  },
+  // The line closes its turn: the space below it is larger than the message band above it, so it reads as
+  // the end of this turn rather than the start of the next.
+  durationClosingTurn: {
+    paddingBottom: theme.space.s24,
+  },
+  // Directly above its turn's changes card, as one turn-end block.
+  durationAboveChanges: {
     paddingBottom: theme.space.s8,
   },
 }));

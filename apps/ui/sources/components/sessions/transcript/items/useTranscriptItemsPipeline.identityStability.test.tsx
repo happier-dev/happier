@@ -29,6 +29,8 @@ function Source(props: React.PropsWithChildren) {
 
 type ItemsPipelineDeps = Parameters<typeof useTranscriptItemsPipeline>[0];
 
+const NO_TRANSCRIPT_MARKERS = Object.freeze({ newDividerAfterSeq: null, turnEnds: Object.freeze([]) });
+
 function createRef<T>(current: T): { current: T } {
     return { current };
 }
@@ -92,6 +94,7 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): ItemsPipeli
         sessionThinking: false,
         targetWindowState: inactiveWindowState,
         transcriptToolCallsCollapsedPreviewCountSetting: 3,
+        transcriptMarkers: NO_TRANSCRIPT_MARKERS,
     } satisfies ItemsPipelineDeps;
 }
 
@@ -181,6 +184,40 @@ describe('useTranscriptItemsPipeline identity stability', () => {
         expect(hook.getCurrent().decomposedItems.map((item) => item.kind)).toEqual([
             'tool-group-header', 'tool-group-tool', 'tool-group-tool', 'tool-group-footer',
         ]);
+        await hook.unmount();
+    });
+
+    it('keeps transcript markers and their rows stable while nothing changes, and patches only the turn that settled', async () => {
+        const text = (id: string, seq: number, kind: 'user-text' | 'agent-text'): Message => ({ kind, id, localId: null, createdAt: seq, seq, text: id } as Message);
+        const messages = [text('m1', 1, 'user-text'), text('m2', 2, 'agent-text'), text('m3', 3, 'user-text'), text('m4', 4, 'agent-text'),
+            text('m5', 5, 'user-text'), text('m6', 6, 'agent-text')];
+        const byId = Object.fromEntries(messages.map((message) => [message.id, message]));
+        const rowsFor = (count: number) => messages.slice(0, count).map((message) => ({ kind: 'message' as const, id: `msg:${message.id}`,
+            messageId: message.id, seq: message.seq ?? null, createdAt: message.createdAt }));
+        const turnEnd = (turnId: string, startSeq: number, endSeq: number) => ({ turnId, startSeq, endSeq, nextTurnStartSeq: endSeq + 1,
+            outcome: 'worked' as const, durationMs: 72_000, endedAtMs: 72_000 });
+        const base = { ...buildDeps(createStableMembers()), getMessageById: (id: string) => byId[id] ?? null };
+        const depsWith = (count: number, turnEnds: ReturnType<typeof turnEnd>[]) => ({ ...base, items: rowsFor(count),
+            transcriptMarkers: { newDividerAfterSeq: 2, turnEnds } });
+        const initialItems = rowsFor(4);
+        const initial = { ...depsWith(4, [turnEnd('a', 1, 2), turnEnd('b', 3, 4)]), items: initialItems };
+        const hook = await renderHook((value: typeof initial) => useTranscriptItemsPipeline(value), { initialProps: initial, wrapper: Source });
+        const first = hook.getCurrent().decomposedItems;
+        expect(first.map((item) => item.id)).toEqual(['msg:m1', 'msg:m2', 'transcript-marker:turn-end:a', 'transcript-marker:new',
+            'msg:m3', 'msg:m4', 'transcript-marker:turn-end:b']);
+
+        // Unrelated renders, and a turns refresh that carries equal facts in new objects: nothing is re-published.
+        for (let pass = 0; pass < 5; pass += 1) {
+            await hook.rerender({ ...initial, transcriptMarkers: { newDividerAfterSeq: 2, turnEnds: [turnEnd('a', 1, 2), turnEnd('b', 3, 4)] } });
+            expect(hook.getCurrent().decomposedItems).toBe(first);
+        }
+
+        // A third turn settles: its line is the only new marker; every earlier row and marker keeps its identity.
+        await hook.rerender({ ...depsWith(6, [turnEnd('a', 1, 2), turnEnd('b', 3, 4), turnEnd('c', 5, 6)]) });
+        const next = hook.getCurrent().decomposedItems;
+        const previousById = new Map(first.map((item) => [item.id, item]));
+        const replaced = next.filter((item) => previousById.get(item.id) !== item).map((item) => item.id);
+        expect(replaced).toEqual(['msg:m5', 'msg:m6', 'transcript-marker:turn-end:c']);
         await hook.unmount();
     });
 
