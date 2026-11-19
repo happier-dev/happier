@@ -29,11 +29,8 @@ import { createCommittedContributedActionInvoker } from './createCommittedContri
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { createCliManagedAccountNativeInvocationForLaunch } from '@/machines/managed/accountNative';
 import { createPluginAccountBundledSelectionV1, resolvePluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
-import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 function executeContributedAction(request: Parameters<typeof dispatchContributedAction>[0]) {
     const localId = String(request.actionId).split('/').at(-1)!;
@@ -41,11 +38,7 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
-    it.each([
-        { signed: false, role: 'preparationDestroy', allowed: true },
-        { signed: true, role: 'preparationDestroy', allowed: true },
-        { signed: true, role: 'preparationBuild', allowed: false },
-    ])('enforces retained-image Archive admission through the original-host native adapter ($signed, $role)', async ({ signed, role, allowed }) => {
+    it('enforces retained-image Archive admission through the original-host native adapter', async () => {
         const authored = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
         // The captured Lima Archive child permits CLI as well as plugin invocation.
         const manifest = normalizePluginManifestV2({ ...authored, contributes: { ...authored.contributes,
@@ -83,14 +76,7 @@ describe('managed native-role custody at contributed dispatch', () => {
             },
             routeHostChildAction: async ({ input, context }) => {
                 if (!input || typeof input !== 'object' || !('input' in input)) throw new Error('Expected native envelope');
-                if (!signed) return invoke({ action, input: input.input, context });
-                const actionId = formatQualifiedPluginActionId(action);
-                return invokeHostAdmittedSignedReviewedChildV1({
-                    context: { surface: 'cli', authority: 'account_automation', actionRequestId: 'archive' },
-                    child: { actionId, role, inputDigest: computeActionInputApprovalDigestV1(actionId, input.input),
-                        input: PluginJsonValueV2Schema.parse(input.input) },
-                    execute: (body, receivedContext) => invoke({ action, input: body, context: receivedContext }),
-                });
+                return invoke({ action, input: input.input, context });
             },
         });
         const archiveInput = { homeId: 'home', id: 'preset', expectedRevision: 5 };
@@ -100,9 +86,8 @@ describe('managed native-role custody at contributed dispatch', () => {
             presentUserConfirmation: { actionId: 'machines.presets.archive', inputDigest: computeActionInputApprovalDigestV1('machines.presets.archive', archiveInput),
                 requestId: 'archive', accountId: 'owner', serverId: 'home' },
         });
-        expect(result, JSON.stringify(result)).toMatchObject(allowed ? { ok: true }
-            : { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid', effectAttempted: false });
-        expect(destroyed).toBe(allowed);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        expect(destroyed).toBe(true);
     });
 
     it.each([true, false])('settles the original host SSH trust before a bootstrap handler opens its key (approved=%s)', async approved => {

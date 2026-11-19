@@ -4,7 +4,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { MACHINE_PROVISIONER_EFFECT_ROLES_V1, readMachineProvisionerActionRolesV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { readAccessProviderActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { readHostAdmittedReviewedChildRoleV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { PluginProcessHandle, PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
 import type { ResolvedActionContribution, ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -144,15 +144,9 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
     const identity = params.action.pluginId ? { pluginId: params.action.pluginId, localId: params.action.definition.id } : undefined;
     const admitted = identity ? readHostReviewedChildOperationV1(params.approvalContext,
       formatQualifiedPluginActionId(identity), params.input) : null;
-    const admittedRole = identity ? readHostAdmittedReviewedChildRoleV1(params.approvalContext,
-      formatQualifiedPluginActionId(identity), params.input) : null;
-    // Signed ingress retains the exact admitted leaf role and operand, rather
-    // than reconstructing the original host's in-process parent operation.
     const admittedPreparation = admitted?.parent.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
       || admitted?.parent.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1
-        && matches.some(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy')
-      || !admitted && (admittedRole === 'preparationBuild' || admittedRole === 'preparationInspect' || admittedRole === 'preparationDestroy')
-        && matches.some(({ role }) => role === admittedRole);
+        && matches.some(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy');
     if (!identity || !admittedPreparation || params.operation) return invalid();
     const purposes = resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry: params.contributes,
       qualifiedActionId: buildQualifiedPluginContributionKey(identity) });
