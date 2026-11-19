@@ -51,6 +51,7 @@ export const DevcontainerNativeOperationSchema = defineProtocolUnion([
   DevcontainerResourceSchema,
   defineProtocolObject({ managedMachineId: text, launch: DevcontainerLaunchSchema,
     homeOnControllerHost: defineProtocolLiteral(true).optional(),
+    cleanupOnly: defineProtocolLiteral(true).optional(),
     nativeResourceId: defineProtocolString({ pattern: '^[a-f0-9]{64}$' }).optional() }, closed),
 ]);
 export type DevcontainerLaunch = ProtocolSchemaOutput<typeof DevcontainerLaunchSchema>;

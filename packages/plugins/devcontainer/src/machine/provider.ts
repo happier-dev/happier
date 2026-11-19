@@ -44,11 +44,13 @@ function mountArgument(fields: readonly string[]) {
   return fields.map(value => /[,"\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join(',');
 }
 function commandFailure(result: PluginProcessResult,
-  command: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>['command']): Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }> {
+  command: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>['command'],
+  outputMayContainSetup = command === 'up'): Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }> {
   const observed = result.termination.observed;
+  const exitCode = observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
+  if (outputMayContainSetup) return { localCause: 'native_command_failed', command, exitCode };
   const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
-  return { localCause: 'native_command_failed', command,
-    exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
+  return { localCause: 'native_command_failed', command, exitCode,
     ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
     ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}) };
 }
@@ -322,7 +324,7 @@ export function createDevcontainerProvider(input: Readonly<{
           if (!completed(ownership)) { nativeCause = commandFailure(ownership, command); fail('native_setup_failed'); }
           if (source.setupScript) {
             const setup = await childExec(launch, id, ['sh', '-c', source.setupScript], undefined, false, managedMachineId);
-            if (!completed(setup)) { nativeCause = commandFailure(setup, command); fail('native_setup_failed'); }
+            if (!completed(setup)) { nativeCause = commandFailure(setup, command, true); fail('native_setup_failed'); }
           }
           const ready = await childExec(launch, id, ['sh', '-c', ': > "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId);
           if (!completed(ready)) { nativeCause = commandFailure(ready, command); fail('native_setup_failed'); }
@@ -364,12 +366,14 @@ export function createDevcontainerProvider(input: Readonly<{
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
       }
       const { outcome: result, homeOnControllerHost, setupCleanupConfirmed } = await realize(launch, managedMachineId, undefined, guestHome);
-      if (result.kind === 'unknown' && result.recovery.reason === 'native_setup_failed') {
-        return setupCleanupConfirmed ? { kind: 'rejected' as const, code: 'native_setup_failed', ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) } : result;
-      }
-      return result.kind === 'bound' ? result : { kind: 'pending' as const, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}), nativeOperationRef: {
+      if (result.kind === 'bound') return result;
+      const cleanupOnly = result.recovery.reason === 'native_setup_failed';
+      const failure = result.nativeCause ? { nativeCause: result.nativeCause } : {};
+      if (cleanupOnly && setupCleanupConfirmed) return { kind: 'rejected' as const, code: 'native_setup_failed', ...failure };
+      return { kind: 'pending' as const, ...failure, nativeOperationRef: {
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
           ...(homeOnControllerHost ? { homeOnControllerHost: true as const } : {}),
+          ...(cleanupOnly ? { cleanupOnly: true as const } : {}),
           ...(/^[a-f0-9]{64}$/u.test(result.recovery.reference) ? { nativeResourceId: result.recovery.reference } : {}) },
       } };
     },
@@ -387,6 +391,10 @@ export function createDevcontainerProvider(input: Readonly<{
       const operation = DevcontainerNativeOperationSchema.parse(raw);
       const launch = 'launch' in operation ? operation.launch : operation;
       try {
+        if ('launch' in operation && operation.cleanupOnly) {
+          if (await resolveDestroyResource(operation) !== null) fail('native_setup_failed');
+          return { kind: 'rejected' as const, code: 'managed_not_found' as const };
+        }
         const matching = await inventory(launch, operation.managedMachineId);
         if (matching.length !== 1 || ('containerId' in operation && matching[0] === operation.containerId)
           || ('launch' in operation && operation.nativeResourceId !== undefined && matching[0] !== operation.nativeResourceId)

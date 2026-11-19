@@ -4269,11 +4269,12 @@ Contribution-family membership and normalization are Protocol-owned. In developm
 
 The development-only `machineProvisioners` family declares native launch and resource schemas and same-plugin Account or daemon Action roles through its [Protocol owner](../packages/protocol/src/plugins/contributions/machineProvisioners.ts). Discovery reads descriptors without importing provisioner leaves; selected or retained contribution demand activates only the needed leaf through the existing `activate(api)` Action ABI. Roles receive raw declared launch choices or resource values, and options receive the provider-declared query value. The host retains qualified resource references, controller and occurrence identity, current-row custody and captured credentials separately. Effectful roles require that private admission; ordinary contributed Action calls cannot supply it. Retained reads may use the same row custody, while initial checks and options can pin a private captured-account lease without inventing a managed row. Native enrollment accepts buffered argv/private-stdin execution through the same ordinary enrollment recipe; live output is optional. Buffered pairing uses the existing auth request, controller approval and auth wait producers, not another installer or enrollment authority. Only the selected guest process receives any invocation-private output observer and inherited task budget; captured preflight processes do not. A provisioner may also declare the optional `bootstrapTransport.stream` role (input `{resource, argv}`, result `{termination}` only): a long-lived non-PTY duplex byte channel for one guest argv, used to reach the per-Session holder in a guest that runs no Happier daemon. The Action spawns the provider's native carrier with `ExecService.spawn(…, {outputDelivery:'invocation'})`; the host feeds that process's stdin from its private invocation channel and observes its stdout, with no timeout, captured output or new lifetime owner (the channel lives as long as the invocation; destroying it aborts the invocation). The returned termination describes the local carrier only: a channel that ends never proves the guest process exited. Devcontainer (`docker exec --interactive` / `devcontainer exec`), Lima (`limactl shell`) and Coder (`coder ssh`) implement it; omitting it means the provider has no channel.
 
-The Devcontainer provisioner retains a finished setup hook's exit code. It uses
-the same exact-container removal and absence observation as Delete. When absence
-is confirmed, the existing acquisition rejection settles the managed row as
-`confirmed-absent`. Unverified cleanup retains recovery and never enrolls a guest
-whose setup failed.
+The Devcontainer provisioner retains a finished setup hook's exit code and
+keeps hook output out of the public Action failure cause. It uses the same
+exact-container removal and absence observation as Delete. Confirmed absence
+settles the managed row as `confirmed-absent`. If removal is unconfirmed, the
+provisioner retains an operation handle for Delete and prevents that handle
+from being used to enroll the guest.
 
 An explicit managed guest diagnostic read sends `allowWake: false` on the existing
 native exec role. The provisioner must execute only on an already reachable running
