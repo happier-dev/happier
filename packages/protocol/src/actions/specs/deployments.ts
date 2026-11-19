@@ -333,6 +333,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
           : null;
       },
     } : {}),
+    ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 && previewForInput ? {
+      executionPlacements: ['account', 'machine'],
+      executionPlacementForInput: (input: unknown): 'account' | 'machine' => previewForInput(input) ? 'machine' : 'account',
+    } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),

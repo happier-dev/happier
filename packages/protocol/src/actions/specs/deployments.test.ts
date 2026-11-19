@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
-import { getActionSpec, listActionSpecsForSurface } from '../actionSpecs.js';
+import { getActionSpec, listActionSpecsForSurface, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
 import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 import { bindHomeDomainHttpRequestV1 } from '../homeDomainHttpBinding.js';
@@ -15,6 +15,22 @@ import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor
 import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentCandidatePublicationV1, projectDeploymentNativeAdmissionV1 } from '../externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope,
   signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
+
+it.each(['cli', 'agent', 'mcp', 'ui'] as const)('routes Environment update previews to their installed owner on %s', surface => {
+  const spec = getActionSpec('deployments.environments.update');
+  const input = { serverId: 'srv_B9Y0FjUw17MU4Rqng6KUK6mB5JYXri0G',
+    environmentId: 'cmwm2589n0c81iemco4dghjs8', expectedRevision: 5,
+    contentArtifactId: '258f4448-1dde-83da-b71e-222d07e42f90', contentHeaderVersion: 1, contentBodyVersion: 1,
+    mode: 'preview', patch: { previewTemplate: { v: 1, enabled: true, forkPreviews: 'off',
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/qa-sweep-171-preview-20261117' },
+      runtimeTargetLinkId: 'cmwm260n70c8jiemcyhvpmnj8', domain: null, bindingBlueprints: [], data: [] },
+    buildMachineId: 'cb73e641-17ff-4f73-affc-ede3cbf73bcf' } };
+  expect(spec.inputSchema.safeParse(input).success).toBe(true);
+  expect(resolveActionExecutionPlacementForInput(spec, input, undefined, surface)).toBe('machine');
+  expect(resolveActionExecutionPlacementForInput(spec, { ...input, patch: undefined, defaultsFor: 'previews' }, undefined, surface)).toBe('machine');
+  const { mode: _mode, ...apply } = input;
+  expect(resolveActionExecutionPlacementForInput(spec, apply, undefined, surface)).toBe('account');
+});
 
 describe('Deployment Action front door', () => {
   it('admits candidate backup configuration on the controller before a runtime target exists', () => {

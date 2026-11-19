@@ -1385,9 +1385,6 @@ export function createCliActionDeps(params: CliActionDepsParams,
         return output.success ? output.data : executionRunActionFailure('invalid_action_output');
       }
       const spec = getActionSpec(actionId);
-      if (actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 && spec.safetyForInput?.(input) === 'safe') {
-        return deploymentStorage(actionId, input, context);
-      }
       const placement = resolveActionExecutionPlacementForInput(spec, input, context.actionCaller, context.surface ?? 'cli');
       if (!isDeploymentEnvironmentPlacementActionV1(actionId, input, placement, { canPrepareAccountBindings: true })) {
         return deploymentStorage(actionId, input, context);
