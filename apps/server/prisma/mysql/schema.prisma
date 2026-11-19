@@ -4100,6 +4100,7 @@ model AccountPluginIntent {
     pluginId               String @db.VarChar(256)
     desiredVersion         String? @db.VarChar(256)
     enabled                Boolean  @default(false)
+    projectScope           Json?
     offlineUiHosting       String   @default("disabled")
     writableCollections    Json
     releaseLessDeclaration Json?

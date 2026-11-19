@@ -10,6 +10,7 @@ import { PluginAccountCollectionContributionV1Schema } from '../data/collectionC
 import { PluginCollectionCandidatePreparationBindingV1Schema } from '../data/collectionsV1.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiArtifactDigestV1Schema } from '../ui/artifactIntegrity.js';
+import { PluginProjectScopeV1Schema } from './accountIntentV1.js';
 import {
   PluginAccountAvailabilityIntentReadResponseV1Schema,
   PluginAccountAvailabilityIntentsListResponseV1Schema,
@@ -144,6 +145,8 @@ export const PluginAvailabilityIntentSetActionInputV1Schema = lazyZodSchema(() =
   pluginId: asProtocolZod(PluginIdSchema),
   desiredVersion: z.nullable(PluginReleaseRefV1Schema.shape.version),
   enabled: z.boolean(),
+  /** Omission keeps the existing scope. Null restores access in every Project. */
+  projectScope: z.optional(z.nullable(PluginProjectScopeV1Schema)),
   offlineUiHosting: z.enum(['disabled', 'enabled']),
   writableCollections: z.array(PluginCollectionContractRefV1Schema),
   expectedRevision: z.nullable(IntentRevisionSchema),

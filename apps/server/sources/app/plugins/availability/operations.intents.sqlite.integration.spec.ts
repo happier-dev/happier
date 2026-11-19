@@ -40,6 +40,27 @@ describe("Availability intent reads on SQLite", () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
+    it("stores a project restriction in Account enablement and preserves it across existing writers", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const accountId = account.id;
+        const pluginId = "com.acme.project-reach";
+        const enable = { pluginId, desiredVersion: null, enabled: true,
+            offlineUiHosting: "disabled", writableCollections: [] };
+        const projectScope = { kind: "only", projectKeys: ["project-a", "project-b"] };
+        const selected = await operations.setIntent({ accountId, input: { ...enable, expectedRevision: null, projectScope } });
+        expect(selected.intent).toMatchObject({ projectScope });
+        const inPlace = await operations.setIntent({ accountId, input: { ...enable, expectedRevision: selected.intent.revision } });
+        expect(inPlace.intent).toEqual(selected.intent);
+        const read = await operations.readIntent({ accountId, input: { pluginId } });
+        expect(read.intent).toEqual(selected.intent);
+        const listed = await operations.listIntentIds({ accountId, input: {} });
+        expect(listed.intentReads[0]?.response.intent).toEqual(selected.intent);
+        const cleared = await operations.setIntent({ accountId, input: { ...enable,
+            expectedRevision: selected.intent.revision, projectScope: null } });
+        expect(cleared.intent.projectScope).toBeUndefined();
+        expect(cleared.intent.revision).not.toBe(selected.intent.revision);
+    });
+
     it("lists declaration digests from the body-free summary for compacted and per-Machine stores", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const compactedId = "com.acme.sqlite-compacted";

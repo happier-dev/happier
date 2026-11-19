@@ -1,4 +1,5 @@
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
+import type { PluginAccountPluginIntentV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 
@@ -13,6 +14,7 @@ export async function updateIntentRow(tx: Tx, input: Readonly<{
     revision: bigint;
     desiredVersion: string | null;
     enabled: boolean;
+    projectScope: PluginAccountPluginIntentV1['projectScope'];
     offlineUiHosting: 'disabled' | 'enabled';
     writableCollections: readonly PluginCollectionContractRefV1[];
     releaseLessDeclarationText: string | null;
@@ -26,6 +28,7 @@ export async function updateIntentRow(tx: Tx, input: Readonly<{
         UPDATE ${identifier('AccountPluginIntent')}
         SET ${identifier('desiredVersion')} = ${input.desiredVersion},
             ${identifier('enabled')} = ${input.enabled},
+            ${identifier('projectScope')} = ${json(input.projectScope === undefined ? null : JSON.stringify(input.projectScope))},
             ${identifier('offlineUiHosting')} = ${input.offlineUiHosting},
             ${identifier('writableCollections')} = ${json(JSON.stringify(input.writableCollections))},
             ${identifier('releaseLessDeclaration')} = ${json(input.releaseLessDeclarationText)},

@@ -4099,6 +4099,7 @@ model AccountPluginIntent {
     pluginId               String
     desiredVersion         String?
     enabled                Boolean  @default(false)
+    projectScope           Json?
     offlineUiHosting       String   @default("disabled")
     writableCollections    Json
     releaseLessDeclaration Json?

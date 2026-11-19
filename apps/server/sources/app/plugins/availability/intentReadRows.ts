@@ -9,6 +9,7 @@ type IntentReadRow = Readonly<{
     pluginId: string | null;
     desiredVersion: string | null;
     enabled: boolean | number;
+    projectScopeText: string | null;
     offlineUiHosting: string;
     writableCollectionsText: string;
     releaseLessDeclarationText: string | null;
@@ -51,6 +52,7 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
             ${column('i', 'pluginId')} AS ${identifier('pluginId')},
             ${column('i', 'desiredVersion')} AS ${identifier('desiredVersion')},
             ${column('i', 'enabled')} AS ${identifier('enabled')},
+            ${text('projectScope')} AS ${identifier('projectScopeText')},
             ${column('i', 'offlineUiHosting')} AS ${identifier('offlineUiHosting')},
             ${text('writableCollections')} AS ${identifier('writableCollectionsText')},
             ${input.omitDeclarations || summarize ? prisma.sql`NULL`
@@ -95,6 +97,7 @@ export function decodeIntentReadRow(row: IntentReadRow) {
         pluginId: row.pluginId!,
         desiredVersion: row.desiredVersion,
         enabled: row.enabled === true || row.enabled === 1,
+        projectScope: row.projectScopeText === null ? null : JSON.parse(row.projectScopeText) as unknown,
         offlineUiHosting: row.offlineUiHosting,
         writableCollections: JSON.parse(row.writableCollectionsText) as unknown,
         releaseLessDeclaration: row.releaseLessDeclarationText === null ? null : JSON.parse(row.releaseLessDeclarationText) as unknown,

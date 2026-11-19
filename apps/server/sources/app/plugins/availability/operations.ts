@@ -208,6 +208,7 @@ type StoredIntentRow = Readonly<{
     pluginId: string;
     desiredVersion: string | null;
     enabled: boolean;
+    projectScope: unknown;
     offlineUiHosting: string;
     writableCollections: unknown;
     releaseLessDeclaration: unknown;
@@ -308,6 +309,7 @@ function intentFromRow(row: Omit<StoredIntentRow, "releaseLessDeclaration">) {
         pluginId: row.pluginId,
         desiredVersion: row.desiredVersion,
         enabled: row.enabled,
+        ...(row.projectScope == null ? {} : { projectScope: row.projectScope }),
         offlineUiHosting: row.offlineUiHosting,
         writableCollections: row.writableCollections,
         revision: row.revision.toString(),
@@ -497,6 +499,7 @@ const INTENT_METADATA_SELECT = {
     pluginId: true,
     desiredVersion: true,
     enabled: true,
+    projectScope: true,
     offlineUiHosting: true,
     writableCollections: true,
     revision: true,
@@ -519,6 +522,7 @@ async function transitionIntentTx(input: Readonly<{
     next: Readonly<{
         desiredVersion: string | null;
         enabled: boolean;
+        projectScope?: PluginAvailabilityIntentSetActionOutputV1['intent']['projectScope'] | null;
         offlineUiHosting: "disabled" | "enabled";
         writableCollections: readonly PluginCollectionContractRefV1[];
         /** Only a release-less intent carries a claimed declaration. */
@@ -561,9 +565,13 @@ async function transitionIntentTx(input: Readonly<{
         offlineUiHosting: next.offlineUiHosting,
         writableCollections: toPrismaJson(prepared.contracts),
     };
+    const projectScope = next.projectScope === undefined
+        ? (current ? intentFromRow(current).projectScope : undefined)
+        : (next.projectScope ?? undefined);
     if (!current) {
         const created = await tx.accountPluginIntent.create({
             data: { accountId, pluginId, ...data, revision: BigInt(0),
+                projectScope: projectScope === undefined ? getActivePrismaRuntime().DbNull : toPrismaJson(projectScope),
                 releaseLessDeclaration: releaseLessDeclarationText === null ? getActivePrismaRuntime().DbNull
                     : JSON.parse(releaseLessDeclarationText) as Prisma.InputJsonValue },
             select: INTENT_METADATA_SELECT,
@@ -580,6 +588,7 @@ async function transitionIntentTx(input: Readonly<{
     }
     const updated = await updateIntentRow(tx, {
         accountId, pluginId, revision: current.revision, ...next,
+        projectScope,
         writableCollections: prepared.contracts,
         releaseLessDeclarationText,
     });
@@ -596,7 +605,7 @@ async function transitionIntentTx(input: Readonly<{
         });
     }
     await markAvailabilityChangedTx(tx, accountId, pluginId);
-    return { intent: intentFromRow({ ...current, ...data, revision: current.revision + BigInt(1) }) };
+    return { intent: intentFromRow({ ...current, ...data, projectScope, revision: current.revision + BigInt(1) }) };
 }
 
 /** Maps Data readiness and CAS races to the typed Availability contract. */
@@ -2254,6 +2263,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
     }>): Promise<PluginAvailabilityIntentSetActionOutputV1> {
         const input = parseOperationInput(PluginAvailabilityIntentSetActionInputV1Schema, params.input);
         const expectedRevision = parseExpectedIntentRevision(input.expectedRevision);
+        const projectScope = input.projectScope ? { ...input.projectScope,
+            projectKeys: [...new Set(input.projectScope.projectKeys)].sort() } : input.projectScope;
 
         try {
             const outcome = await inTx(async (tx) => {
@@ -2312,6 +2323,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     if (
                         currentIntent.desiredVersion === input.desiredVersion
                         && currentIntent.enabled === input.enabled
+                        && (projectScope === undefined || JSON.stringify(currentIntent.projectScope ?? null) === JSON.stringify(projectScope))
                         && currentIntent.offlineUiHosting === input.offlineUiHosting
                         && collectionContractsEqual(currentIntent.writableCollections, input.writableCollections)
                     ) {
@@ -2330,6 +2342,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     next: {
                         desiredVersion: input.desiredVersion,
                         enabled: input.enabled,
+                        projectScope,
                         offlineUiHosting: input.offlineUiHosting,
                         writableCollections: input.writableCollections,
                         // A present-user release selection displaces the
