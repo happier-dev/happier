@@ -460,8 +460,9 @@ export type TriageRouteWriteQueueV1 = Readonly<{
   /** Retire pending intent on external navigation; true for an older self-publication. */
   adoptHostLocation: (subPath: string) => boolean;
   /**
-   * Another of this mount's choices is still heading to the host: queued, or in flight and not retired by an outside
-   * move. A choice equal to the settled location must then still be written, or the older one lands last (QB-82).
+   * Another of this mount's choices is still heading to the host (queued, or in flight and not retired by an outside
+   * move), or the host last answered somewhere else. A choice equal to the settled location must then still be
+   * written, or the older one lands last (QB-82).
    */
   headingElsewhere: (subPath: string) => boolean;
   /** Test/coordination seam: resolves once the in-flight write and latest queued intent settle. */
@@ -506,7 +507,7 @@ export function createTriageRouteWriteQueueV1(
   /**
    * The locations this queue asked the host for, oldest first, since the host last moved on its own. The host can
    * publish one after its write has finished, so an active-write check alone mistakes a late echo of an older
-   * choice for an outside move (QB-82). Each echo trims the list to itself.
+   * choice for an outside move (QB-82). Each echo trims the list to the oldest request it answers.
    */
   let issued: string[] = [];
   /** Where the host is, as far as this queue last heard: a write of it publishes nothing to echo. */
@@ -563,14 +564,18 @@ export function createTriageRouteWriteQueueV1(
       void drain();
     },
     adoptHostLocation(subPath) {
-      hostAt = subPath;
-      const echo = issued.lastIndexOf(subPath);
+      // The host publishes in the order it was asked, so an echo answers the OLDEST matching request: A, B, A
+      // asked and A published is the first A, and B's echo is still to come.
+      const echo = issued.indexOf(subPath);
       if (echo !== -1) {
-        // This queue's own write: stale while a newer one was issued or is still waiting to be.
+        // This queue's own write: stale while a newer one was issued or is still waiting to be. A newer issued
+        // request has already moved the host on, so a stale echo does not say where the host is (QB-82).
         const newerIssued = echo < issued.length - 1;
+        if (!newerIssued) hostAt = subPath;
         issued = issued.slice(echo);
         return newerIssued || (pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath);
       }
+      hostAt = subPath;
       issued = [];
       // Back/navigation has superseded the local successor, not queued a new
       // host write. Let the issued operation finish without draining old intent.
@@ -579,7 +584,9 @@ export function createTriageRouteWriteQueueV1(
       return false;
     },
     headingElsewhere: (subPath) => (pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath)
-      || (activeWrite !== null && activeWrite !== retiredWrite && buildTriageRouteSubPathV1(activeWrite.lens) !== subPath),
+      || (activeWrite !== null && activeWrite !== retiredWrite && buildTriageRouteSubPathV1(activeWrite.lens) !== subPath)
+      // A late echo of an older choice can name this location while the host already answered a newer one.
+      || (hostAt !== undefined && hostAt !== subPath),
     whenSettled() {
       if (!running && pending === null) return Promise.resolve();
       return new Promise<void>((resolve) => { settlers.push(resolve); });

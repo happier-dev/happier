@@ -177,6 +177,72 @@ afterEach(async () => {
 });
 
 describe('the page view under a slow host location write', () => {
+    // Live READY240: the host answers each replacement, then publishes the location later; presses land between
+    // those two events in any order. Each schedule is [press, ...events] steps; the page must settle on the last press.
+    it.each([
+        ['ack, echo between every press', 'T a e P a e T a e P a e'],
+        ['echo before ack', 'T e a P e a T e a P e a'],
+        ['next press before the echo', 'T a P e a T e a P e a e'],
+        ['older echo after the newer ack', 'T a P a T e a e P a e e'],
+        ['echoes all late', 'T a P a T a P a e e e e'],
+        ['acks and echoes all late', 'T P T P a e a e a e a e'],
+        ['older echo arrives after a newer press is acked', 'T a e P a T a e P e a e'],
+    ])('settles the last view chosen when the host answers %s (QB-82)', async (_name, schedule) => {
+        const harness = createHarness();
+        const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
+        const acks: Array<Readonly<{ subPath: string; settle: () => void }>> = [];
+        const echoes: string[] = [];
+        let hostAt = '';
+        let fixture!: PluginUiTestkit;
+        await act(async () => {
+            fixture = await createPluginUiTestkit({
+                identity: { instanceId: 'fixture-instance-182b', mountNonce: 'fixture-mount-182b' },
+                authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+                surface: renderShellSurface,
+                surfaceContext: createSurfaceContextFixture(),
+                adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
+                handlers: {
+                    publishCurrentUiContext: () => undefined,
+                    executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+                    replacePageLocation: ({ subPath }) => new Promise<string>((resolve) => {
+                        echoes.push(subPath);
+                        acks.push({ subPath, settle: () => resolve(subPath) });
+                    }),
+                },
+            });
+        });
+        mounted.push(fixture);
+        await act(async () => {
+            await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+        });
+        // The opening publication settles before the reader acts.
+        for (let step = 0; step < 4 && (acks.length > 0 || echoes.length > 0); step += 1) {
+            await act(async () => { acks.shift()?.settle(); for (let turn = 0; turn < 4; turn += 1) await Promise.resolve(); });
+            const echo = echoes.shift();
+            if (echo !== undefined) { hostAt = echo; await act(async () => { await fixture.updatePageLocation(echo); }); }
+        }
+        let last = '';
+        for (const token of schedule.split(' ')) {
+            if (token === 'T' || token === 'P') {
+                last = token === 'T' ? 'Tasks' : 'PRs & Issues';
+                await act(async () => { await fixture.press(await fixture.getByRole('radio', { name: last })); });
+            } else if (token === 'a') {
+                await act(async () => { acks.shift()?.settle(); for (let turn = 0; turn < 4; turn += 1) await Promise.resolve(); });
+            } else {
+                const echo = echoes.shift();
+                if (echo !== undefined) { hostAt = echo; await act(async () => { await fixture.updatePageLocation(echo); }); }
+            }
+        }
+        // Drain whatever the page still writes, answering each write then publishing it.
+        for (let step = 0; step < 12 && (acks.length > 0 || echoes.length > 0); step += 1) {
+            await act(async () => { acks.shift()?.settle(); for (let turn = 0; turn < 4; turn += 1) await Promise.resolve(); });
+            const echo = echoes.shift();
+            if (echo !== undefined) { hostAt = echo; await act(async () => { await fixture.updatePageLocation(echo); }); }
+        }
+        await expect(fixture.getByRole('radio', { name: last, state: { checked: true } })).resolves.toBeTruthy();
+        expect(hostAt.startsWith('tasks,')).toBe(last === 'Tasks');
+    });
+
     it('settles the last view chosen while an earlier view write is still in flight (QB-82)', async () => {
         // Live c3e5a241bcda: Tasks, PRs & Issues, Tasks, PRs & Issues 60 ms apart left the page on Tasks in 2 of 5
         // runs. A choice equal to the last settled location wrote nothing while the opposite write was still queued,
