@@ -6,6 +6,8 @@ export type AnnotationChangeCause = 'edit' | 'undo' | 'redo';
 /** Localized by the host; no copy or screen-reader side effect belongs in the document owner. */
 export type AnnotationAnnouncement = Readonly<{ kind: 'selection' | 'undo' | 'redo'; mark?: Readonly<{
   kind: ImageMarkV1['kind']; color?: ImageMarkColorV1; stepNumber?: number;
+  /** A step's note, empty when bare, so number and note are announced together. */
+  stepNote?: string;
 }> }>;
 export type AnnotatorTool = 'select' | 'arrow' | 'rectangle' | 'ellipse' | 'freehand' | 'highlighter' | 'text' | 'step' | 'blur' | 'crop' | 'element';
 export type PickedElement = Readonly<{ rect: ImageRectV1; label: string; detail?: string }>;

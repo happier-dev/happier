@@ -24,15 +24,15 @@ export type PreparedRecordingDelivery = Readonly<{
 function frameNote(frame: RecordingSelectedFrame, pinned: boolean): string {
     const milliseconds = String(Math.floor(frame.clipTimeMs % 1000)).padStart(3, '0');
     const timestamp = `${formatPlaybackTime(frame.clipTimeMs / 1000)}.${milliseconds}`;
+    // A marked frame's numbered comments follow its line, numbered as on the frame; they replace the kind list.
+    const steps = frame.document ? formatStepNotes(frame.document) : null;
     const additions = [
         ...(pinned ? ['pin'] : []),
         ...frame.notes.map(note => `note: ${JSON.stringify(note.text)}`),
-        ...(frame.document && !isEmptyEdit(frame.document)
+        ...(frame.document && !isEmptyEdit(frame.document) && !steps
             ? [`marked frame: ${frame.document.marks.map(mark => mark.kind).join(', ')}`] : []),
     ];
     const line = additions.length ? `${timestamp} — ${additions.join('; ')}` : timestamp;
-    // A marked frame's numbered comments follow its line, numbered as on the frame.
-    const steps = frame.document ? formatStepNotes(frame.document) : null;
     return steps ? `${line}\n${steps}` : line;
 }
 

@@ -11,6 +11,7 @@ import type {
 import { InlineTextField } from '@/components/ui/text/InlineTextField';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
 import type { ImageAnnotator } from './annotatorStore';
@@ -63,7 +64,8 @@ const NO_SUBSCRIPTION = () => () => {};
  * step without a note is a bare number beside an empty field. The note is part of the step mark, so it travels
  * with the marks through undo, redo, the draft and the headless `media.annotation.apply` Action; a note commits
  * once per edit (Enter or leaving the field), never per keystroke. `panel` is the side panel (title, rows on
- * hairlines, the hint); `list` is the bare rows a phone or the Capture window sets under the picture.
+ * hairlines); `list` is the bare rows a phone or the Capture window sets under the picture. With the step tool in
+ * hand and no step yet, both say what a click (a tap on a phone) does.
  */
 export function AnnotatorSteps(
   props: Readonly<{
@@ -83,6 +85,7 @@ export function AnnotatorSteps(
     (state) => state.selection,
   );
   const stepTool = useImageAnnotatorState(annotator, (state) => state.tool === 'step');
+  const phone = useDeviceType() === 'phone';
   const rows = React.useMemo(() => readAnnotatorStepRows(marks), [marks]);
   if (rows.length === 0 && !stepTool) return null;
   const panel = presentation === 'panel';
@@ -93,9 +96,11 @@ export function AnnotatorSteps(
           <Text variant="body" emphasis="semiBold" style={styles.title}>
             {t('files.annotate.steps')}
           </Text>
-          <Text variant="body" style={styles.count}>
-            {String(rows.length)}
-          </Text>
+          {rows.length > 0 ? (
+            <Text variant="body" style={styles.count}>
+              {String(rows.length)}
+            </Text>
+          ) : null}
         </View>
       ) : null}
       <View style={panel ? styles.panelRows : styles.listRows}>
@@ -110,9 +115,9 @@ export function AnnotatorSteps(
           />
         ))}
       </View>
-      {panel || rows.length === 0 ? (
-        <Text variant="meta" style={panel ? styles.hint : styles.listHint}>
-          {t('files.annotate.stepsHint')}
+      {rows.length === 0 ? (
+        <Text variant="meta" style={panel ? styles.empty : styles.listEmpty}>
+          {t(phone ? 'files.annotate.stepsEmptyTap' : 'files.annotate.stepsEmptyClick')}
         </Text>
       ) : null}
     </View>
@@ -150,7 +155,8 @@ const AnnotatorStepItem = React.memo(function AnnotatorStepItem(
       row.id,
     );
   }, [annotator, draft, row.id]);
-  const empty = draft.length === 0;
+  // The field draws its box while it is empty or being typed in, with its edge on the note column.
+  const boxed = draft.length === 0 || focused;
   return (
     <View
       style={[
@@ -173,6 +179,12 @@ const AnnotatorStepItem = React.memo(function AnnotatorStepItem(
           number: row.number,
         })}
         onPress={() => annotator.select(row.id)}
+        // Delete or Backspace on a focused badge removes its step through the canvas's own remove path.
+        onKeyDown={(key) => {
+          if (key !== 'Delete' && key !== 'Backspace') return false;
+          annotator.apply([{ kind: 'mark.remove', id: row.id }]);
+          return true;
+        }}
         style={[styles.badge, { backgroundColor: MARK_COLORS[row.color] }]}
         testID={`annotator-step-${row.number}`}
       >
@@ -183,11 +195,12 @@ const AnnotatorStepItem = React.memo(function AnnotatorStepItem(
       <View
         style={[
           styles.field,
-          empty
+          boxed
             ? {
                 // An ink tint reads as a field on light and dark glass and paper alike.
                 backgroundColor: theme.colors.surface.hover,
                 borderColor: theme.colors.border.default,
+                paddingHorizontal: theme.space.s6,
               }
             : null,
         ]}
@@ -195,7 +208,7 @@ const AnnotatorStepItem = React.memo(function AnnotatorStepItem(
         <InlineTextField
           editor={{
             value: draft,
-            placeholder: '',
+            placeholder: t('files.annotate.stepNotePlaceholder'),
             accessibilityLabel: t('files.annotate.stepNote', {
               number: row.number,
             }),
@@ -240,6 +253,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   panelRows: {
     paddingHorizontal: theme.space.s8,
+    paddingBottom: theme.space.s8,
   },
   listRows: {
     gap: theme.space.s4,
@@ -273,7 +287,6 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.sm,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'transparent',
-    paddingHorizontal: theme.space.s6,
     paddingVertical: theme.space.s2,
     justifyContent: 'center',
   },
@@ -281,15 +294,12 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('body'),
     padding: 0,
   },
-  listHint: {
+  listEmpty: {
     color: theme.colors.text.tertiary,
   },
-  hint: {
+  empty: {
     color: theme.colors.text.tertiary,
-    marginHorizontal: theme.space.s16,
-    paddingTop: theme.space.s8,
+    paddingHorizontal: theme.space.s16,
     paddingBottom: theme.space.s16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border.default,
   },
 }));

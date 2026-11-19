@@ -54,9 +54,12 @@ function unionRects(a: CaptureRect, b: CaptureRect): CaptureRect {
 /** The one owner of the Capture window's size and place (D3). */
 export function resolveCaptureWindowFrame(input: CaptureWindowFrameInput): CaptureWindowFrame {
     const { metrics, workArea, origin, remembered } = input;
+    // The picture also gives up room so the measured chrome (caption, numbered comments, note, actions) fits.
+    const roomForPicture = Math.max(0, workArea.height - metrics.screenInset * 2 - metrics.chromeTop - metrics.chromeBottom);
     const scale = Math.min(1,
         (workArea.width * PICTURE_WORK_AREA_SHARE) / input.picture.width,
-        (workArea.height * PICTURE_WORK_AREA_SHARE) / input.picture.height);
+        (workArea.height * PICTURE_WORK_AREA_SHARE) / input.picture.height,
+        roomForPicture / input.picture.height);
     const pictureWidth = Math.round(input.picture.width * scale);
     const pictureHeight = Math.round(input.picture.height * scale);
     const width = Math.max(pictureWidth + metrics.gutter * 2, metrics.floorWidth);

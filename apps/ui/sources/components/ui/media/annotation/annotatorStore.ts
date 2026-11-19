@@ -17,7 +17,7 @@ export function createImageAnnotator(options: ImageAnnotatorOptions): ImageAnnot
   const selectionAnnouncement = (document: ImageMarksDocumentV1, selection: string | null) => {
     const mark = document.marks.find(mark => mark.id === selection);
     return { kind: 'selection' as const, ...(mark ? { mark: { kind: mark.kind,
-      ...('color' in mark ? { color: mark.color } : {}), ...(mark.kind === 'step' ? { stepNumber: stepNumbers(document)[mark.id] } : {}) } } : {}) };
+      ...('color' in mark ? { color: mark.color } : {}), ...(mark.kind === 'step' ? { stepNumber: stepNumbers(document)[mark.id], stepNote: mark.note?.trim() ?? '' } : {}) } } : {}) };
   };
   const publish = (document: ImageMarksDocumentV1, cause: AnnotationChangeCause, history: AnnotatorState['history'], style?: AnnotatorState['style'], selected?: string | null, notify = true) => {
     const previous = store.getState();

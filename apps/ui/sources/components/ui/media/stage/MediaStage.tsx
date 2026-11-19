@@ -538,20 +538,29 @@ function StagePhoneAnnotateDock(props: Readonly<{
   const keyboardHeight = useKeyboardHeight();
   const bottom = Math.max(insets.bottom, keyboardHeight) + theme.space.s16;
   const { onRoom } = props;
+  // The room reported to the stage holds the steps panel at its full height from the first step on, so the
+  // picture stays still while rows arrive and taps land where they were aimed.
+  const sizes = React.useRef({ dock: 0, steps: 0 });
+  const report = () => {
+    const stepsReserve = props.steps ? props.stepsMaxHeight + theme.space.s12 * 2 : 0;
+    onRoom(sizes.current.dock + bottom + (props.steps ? Math.max(0, stepsReserve - sizes.current.steps) : 0));
+  };
   return (
     <Animated.View
       entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)}
       exiting={FadeOut.duration(motionTokens.durationMs.fast)}
       style={[stageStyles.phonePaletteLayer, { bottom }]}
       pointerEvents="box-none"
-      onLayout={(event) => onRoom(event.nativeEvent.layout.height + bottom)}
+      onLayout={(event) => { sizes.current.dock = event.nativeEvent.layout.height; report(); }}
     >
       {props.steps ? (
-        <GlassPanel radius={theme.space.s16} shadowLevel={2} innerShadow={false} style={stageStyles.phoneSteps}>
-          <ScrollView style={{ maxHeight: props.stepsMaxHeight }} keyboardShouldPersistTaps="handled">
-            <AnnotatorSteps annotator={props.annotator} presentation="list" />
-          </ScrollView>
-        </GlassPanel>
+        <View onLayout={(event) => { sizes.current.steps = event.nativeEvent.layout.height; report(); }}>
+          <GlassPanel radius={theme.space.s16} shadowLevel={2} innerShadow={false} style={stageStyles.phoneSteps}>
+            <ScrollView style={{ maxHeight: props.stepsMaxHeight }} keyboardShouldPersistTaps="handled">
+              <AnnotatorSteps annotator={props.annotator} presentation="list" />
+            </ScrollView>
+          </GlassPanel>
+        </View>
       ) : null}
       <AnnotatorPalette annotator={props.annotator} layout="phone" surface="glass" />
     </Animated.View>

@@ -25,9 +25,14 @@ export type FileViewerTranslations = Readonly<{
     doneFailed: string;
     /** The tray picture's pen badge: reopen the marks. */
     editMarks: string;
-    /** The numbered comments list (lab `comments`): its title, the hint under it and each row's names. */
+    /** The numbered comments list (lab `comments`): its title and each row's names. */
     steps: string;
-    stepsHint: string;
+    /** The empty list says what a click (or a tap on a phone) does; the field says the note is optional. */
+    stepsEmptyClick: string;
+    stepsEmptyTap: string;
+    stepNotePlaceholder: string;
+    /** A bare step in the canvas announcement. */
+    noNote: string;
     stepNote: (params: Readonly<{ number: number }>) => string;
     selectStep: (params: Readonly<{ number: number }>) => string;
   }>;
@@ -183,7 +188,10 @@ export const fileViewerTranslationsEnglish = {
         doneFailed: "The marked picture couldn't be saved. Your marks are kept; try Done again.",
         editMarks: "Edit marks",
         steps: "Steps",
-        stepsHint: "Numbers alone are fine: the agent gets them as steps, in order.",
+        stepsEmptyClick: "Click the picture to add a numbered step",
+        stepsEmptyTap: "Tap the picture to add a numbered step",
+        stepNotePlaceholder: "Add a note (optional)",
+        noNote: "no note",
         stepNote: ({ number }: { number: number }) => `Note for step ${number}`,
         selectStep: ({ number }: { number: number }) => `Select step ${number}`,
     },

@@ -35,6 +35,15 @@ describe('resolveCaptureWindowFrame', () => {
         expect(window.width).toBe(picture.width + metrics.gutter * 2);
     });
 
+    it('lets the picture give up room so a tall foot (numbered comments, note, actions) stays on screen', () => {
+        // A paused frame with four numbered comments grew the foot until Send sat below a 900 px screen.
+        const tall = { ...metrics, chromeBottom: 420 };
+        const { window, picture } = resolveCaptureWindowFrame({ ...base, metrics: tall, picture: { width: 1440, height: 900 } });
+        expect(window.height).toBeLessThanOrEqual(workArea.height - metrics.screenInset * 2);
+        expect(contains(workArea, window)).toBe(true);
+        expect(picture.height / picture.width).toBeCloseTo(900 / 1440, 2);
+    });
+
     it('clamps inside the work area near every edge, negative origins included', () => {
         const left = resolveCaptureWindowFrame({ ...base, workArea: { x: -1920, y: 0, width: 1920, height: 1080 }, origin: { x: -1990, y: -40, width: 594, height: 360 } });
         expect(left.window.x).toBe(-1920 + metrics.screenInset);
