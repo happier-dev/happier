@@ -12,8 +12,11 @@ export type DiffPresentationStyle = 'unified' | 'split';
  * screen counts even where no container declares its size (a transcript tool card, an approval card).
  */
 export function useEffectiveDiffWrapLines(preference: boolean | undefined): boolean | undefined {
+    // Both reads run on every render: a short-circuited hook changes React's hook order when the screen crosses the
+    // phone width.
     const phoneScreen = useDeviceType() === 'phone';
-    return phoneScreen || useSurfaceStateSize() === 'phone' ? true : preference;
+    const surfacePhone = useSurfaceStateSize() === 'phone';
+    return phoneScreen || surfacePhone ? true : preference;
 }
 
 /**
