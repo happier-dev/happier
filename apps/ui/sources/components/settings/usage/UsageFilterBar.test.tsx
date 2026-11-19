@@ -112,6 +112,13 @@ describe('UsageFilterBar', () => {
     }
   });
 
+  it('draws no period choice where the page fixes its own period (a Session), keeping Tokens/Cost (USAGE-ACCEPT 1118 #17)', async () => {
+    const screen = await renderBar([], { onMetricChange: () => {}, showPeriod: false });
+    expect(screen.findHostByTestId('filters.period:7days')).toBeFalsy();
+    expect(screen.findHostByTestId('filters.metric:tokens')).toBeTruthy();
+    await screen.unmount();
+  });
+
   it('keeps phone and desktop filter labels inside text hosts as controls settle', async () => {
     for (const width of [390, 1280]) {
       Object.assign(viewport, { width, height: 844 });

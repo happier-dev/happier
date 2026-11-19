@@ -64,6 +64,13 @@ describe('Usage route filter owner', () => {
         expect(next.metric).toBe('cost');
     });
 
+    it('reads a Session over its whole life unless its route narrowed the period (USAGE-ACCEPT 1118 #17)', () => {
+        const query = resolveUsageWidgetPageInitialQuery({ sessionId: 'admitted-session', nowMs: Date.parse('2026-10-09T12:00:00Z'), timeZoneOffsetMinutes: 120 });
+        expect(query.period).toEqual({ relative: 'all' });
+        const account = resolveUsageWidgetPageInitialQuery({ nowMs: Date.parse('2026-10-09T12:00:00Z'), timeZoneOffsetMinutes: 120 });
+        expect(account.period).toEqual({ relative: '7days' });
+    });
+
     it('offers every unfiltered scope as a value while presentation stays widget owned', () => {
         const query = resolveUsageWidgetPageInitialQuery({ nowMs: Date.parse('2026-10-09T12:00:00Z'), timeZoneOffsetMinutes: 120 });
         expect(query.period).toEqual({ relative: '7days' });

@@ -54,6 +54,8 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
     metric: M | null;
     onMetricChange: ((metric: M) => void) | null;
     metricPending?: boolean;
+    /** `false` when the page's scope fixes its own period (a Session's usage covers its whole life). */
+    showPeriod?: boolean;
     testID: string;
   }>,
 ) {
@@ -220,7 +222,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   const metricSlot = metricToggle ? <React.Fragment key="metric">{metricToggle}</React.Fragment> : null;
   const costSlot = costChip ? <React.Fragment key="cost">{costChip}</React.Fragment> : null;
   const trailing = phone ? [metricSlot, costSlot] : [costSlot, metricSlot];
-  const period = (
+  const period = props.showPeriod === false ? null : (
     <View style={phone ? styles.periodPhone : styles.period}>
       <SegmentedTabBar
         role="radiogroup"
@@ -246,7 +248,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   return (
     <View testID={props.testID} style={phone ? styles.phone : styles.bar}>
       {period}
-      {!phone && props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
+      {period && !phone && props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
       <View style={phone ? styles.phoneControls : styles.controls}>
         <View style={styles.chips}>{chips}</View>
         {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={phone ? styles.phoneTrailing : styles.trailing}>

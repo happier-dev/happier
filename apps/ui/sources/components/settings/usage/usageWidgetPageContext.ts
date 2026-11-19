@@ -107,8 +107,10 @@ export function resolveUsageWidgetPageInitialQuery(input: Readonly<{
 }>): UsageQuery & Readonly<{ metric: UsageFilterState['metric'] }> {
     const filters = input.initialFilters;
     const metric = filters?.metric ?? 'tokens';
+    // A Session's own page reads that Session over its whole life unless its route narrowed the period (a Work autopsy link).
+    const period = filters?.period ?? (input.sessionId === undefined ? '7days' : 'all');
     const query = usageAnalyticsRequestToQuery({
-        granularity: getUsagePeriodDefinition(filters?.period ?? '7days').granularity,
+        granularity: getUsagePeriodDefinition(period).granularity,
         timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
         costMode: filters?.costMode ?? 'auto',
         filters: buildUsageFocusFilters(filters?.focus),
@@ -120,7 +122,7 @@ export function resolveUsageWidgetPageInitialQuery(input: Readonly<{
         includeMessageStats: true,
         activityResolution: 'both',
     }, { metric });
-    return { ...UsageQuerySchema.parse({ ...query, ...resolveUsageWidgetPeriod(filters?.period ?? '7days', input.nowMs, input.timeZoneOffsetMinutes),
+    return { ...UsageQuerySchema.parse({ ...query, ...resolveUsageWidgetPeriod(period, input.nowMs, input.timeZoneOffsetMinutes),
         ...filters?.queryOverrides, ...filters?.scope,
         ...(input.sessionId === undefined ? {} : { session: input.sessionId }) }), metric };
 }

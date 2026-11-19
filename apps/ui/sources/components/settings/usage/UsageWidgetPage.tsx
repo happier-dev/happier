@@ -456,9 +456,11 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     metric={metric}
     metricPending={metricPending}
     onMetricChange={changeMetric}
+    // One Session is read over its whole life: a period choice would only cut it short.
+    showPeriod={props.sessionId === undefined}
     testID="usage-filters"
   />, [page.period, page.scope.costBasis, facts.coverageIncomplete, admittedFilters, selectPeriod, selectCostBasis, costBasisOptions,
-    costBasisPending, metricOptions, metric, metricPending, changeMetric]);
+    costBasisPending, metricOptions, metric, metricPending, changeMetric, props.sessionId]);
 
   const appsShown = readUsageAppCallsEnvironmentIds(page.scope.sources) !== null;
   // Your apps recorded nothing in the period: the scene says it once, in the cards' place.
