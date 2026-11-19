@@ -4,7 +4,7 @@ import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { probeAgentModelsBestEffort, probeModelsFromAcpBackend, resetAgentModelsProbeCacheForTests } from './agentModelsProbe';
-import { assertExecutionRunStructuredOutputModelAllowed, readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
+import { assertExecutionRunStructuredOutputModelAllowed, readNativeExecutionRunOfferedModel, readExecutionRunSelectedModelStructuredOutputSupport } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
 
 // The fixture imports the publication policy, which itself imports node:fs.
 // Load it before registering that boundary to avoid a circular mock factory.
@@ -23,6 +23,33 @@ describe('model probe structured output evidence', () => {
     vi.stubEnv('HAPPIER_CODEX_PATH', process.execPath);
   });
   afterEach(() => vi.unstubAllEnvs());
+
+  it('keeps schema hints optional for an external Agent without a model catalog', async () => {
+    const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
+    if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');
+    const catalogEntry: AgentCatalogEntry = { ...entry, getPreflightSessionControlsProbeAdapter: undefined };
+    const backendTarget = { kind: 'builtInAgent' as const, agentId: 'external-session-only' };
+    const params = { agentId: backendTarget.agentId, backendTarget, catalogEntry, cwd: '/no-model-catalog' };
+    const observation = await probeAgentModelsBestEffort(params);
+    expect(observation).toMatchObject({ source: 'unavailable', availableModels: [] });
+    expect(observation.refreshError).not.toBe(true);
+    const readNativeOfferedModel = (request: Parameters<typeof readNativeExecutionRunOfferedModel>[0]) =>
+      readNativeExecutionRunOfferedModel({ ...request, catalogEntry });
+    await expect(readNativeOfferedModel({ backendTarget, modelId: 'default', cwd: params.cwd })).resolves.toBeUndefined();
+    await expect(readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget, readNativeOfferedModel }))
+      .resolves.toBe(false);
+  });
+
+  it('preserves an adapter-load failure as a failed catalog observation', async () => {
+    const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
+    if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');
+    const catalogEntry: AgentCatalogEntry = { ...entry, getPreflightSessionControlsProbeAdapter: async () => {
+      throw new Error('Adapter process service unavailable');
+    } };
+    const observation = await probeAgentModelsBestEffort({ agentId: 'external-session-only', catalogEntry,
+      cwd: '/failed-model-adapter' });
+    expect(observation).toMatchObject({ source: 'unavailable', availableModels: [], refreshError: true });
+  });
 
   it('preserves explicit model support and stamps the native JSON contract only on offered models', async () => {
     const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
@@ -101,6 +128,9 @@ describe('model probe structured output evidence', () => {
     await expect(assertExecutionRunStructuredOutputModelAllowed({ backendTarget, modelId: 'gpt-6-luna',
       cwd: '/review-read-supported', readNativeOfferedModel })).resolves.toBeUndefined();
     await expect(assertExecutionRunStructuredOutputModelAllowed({ backendTarget, modelId: 'gpt-6-luna',
+      cwd: '/review-read-unavailable', readNativeOfferedModel }))
+      .rejects.toMatchObject({ code: 'model_catalog_unavailable', details: { modelId: 'gpt-6-luna' } });
+    await expect(readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget, modelId: 'gpt-6-luna',
       cwd: '/review-read-unavailable', readNativeOfferedModel }))
       .rejects.toMatchObject({ code: 'model_catalog_unavailable', details: { modelId: 'gpt-6-luna' } });
   });

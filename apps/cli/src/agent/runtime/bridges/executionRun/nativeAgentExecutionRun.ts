@@ -780,6 +780,13 @@ function buildInput(prompt: string, structuredInput: unknown): AgentSessionInput
     });
 }
 
+/** Consume the selected model's admission fact; unsupported models keep the prompt contract. */
+function withSupportedNativeOutputSchema(input: AgentSessionInput, supported: boolean | undefined): AgentSessionInput {
+    if (supported === true || input.outputSchema === undefined) return input;
+    const { outputSchema: _outputSchema, ...promptInput } = input;
+    return promptInput;
+}
+
 /** The Run's prepared metadata-only index follows its own Agent and selection. */
 function withRunSkillIndex(input: AgentSessionInput, skillIndex: string | undefined): AgentSessionInput {
     return skillIndex ? { ...input, text: `${skillIndex}\n\n${input.text}` } : input;
@@ -1104,9 +1111,10 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     }
 
     async function resolveInputForDispatch(input: AgentSessionInput, localId: string): Promise<AgentSessionInput> {
-        return params.resolveStructuredInputForDispatch
+        const resolved = params.resolveStructuredInputForDispatch
             ? await params.resolveStructuredInputForDispatch({ input, localId, signal })
             : input;
+        return withSupportedNativeOutputSchema(resolved, params.options.selectedModelSupportsStructuredOutput);
     }
 
     function beginInputTurn(localInputId?: string): Readonly<{ turnId: string; inputIds: readonly [string] }> {
@@ -1677,10 +1685,10 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             if (terminal) throw new Error(`Native Agent execution run '${runId}' has already terminated`);
             const localId = meta?.localId ?? params.options.start?.localInputId ?? `${runId}-input`;
             const carriedInput = admittedInput.structuredInput === undefined
-                ? buildInput(
+                ? { ...admittedInput, ...buildInput(
                     admittedInput.text,
                     structuredInput,
-                )
+                ) }
                 : admittedInput;
             let input: AgentSessionInput;
             try {
@@ -2506,10 +2514,12 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
             pendingTurnAdmissionFailure = null;
             operations!.beginTurnLifecycle();
             try {
+                resolvedInput = withSupportedNativeOutputSchema(resolvedInput, params.options.selectedModelSupportsStructuredOutput);
                 await operations!.sendTurnPrompt(withRunSkillIndex(resolvedInput, skillIndex).text, {
                     ...meta,
                     localId,
                     ...(resolvedInput.structuredInput === undefined ? {} : { structuredInput: resolvedInput.structuredInput }),
+                    ...(resolvedInput.outputSchema === undefined ? {} : { outputSchema: resolvedInput.outputSchema }),
                     userMessageSeq,
                     ...(meta?.userMessageSeqs ? { userMessageSeqs: meta.userMessageSeqs } : {}),
                     ...(meta?.causalPermissionAuthority
@@ -2538,10 +2548,12 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                 } catch (error) {
                     return rejectStructuredInputBeforeProviderEffect(error);
                 }
+                resolvedInput = withSupportedNativeOutputSchema(resolvedInput, params.options.selectedModelSupportsStructuredOutput);
                 await operations.steerInFlightTurn(resolvedInput.text, {
                     ...meta,
                     localId,
                     ...(resolvedInput.structuredInput === undefined ? {} : { structuredInput: resolvedInput.structuredInput }),
+                    ...(resolvedInput.outputSchema === undefined ? {} : { outputSchema: resolvedInput.outputSchema }),
                     ...(meta?.userMessageSeq !== undefined ? { userMessageSeq: meta.userMessageSeq } : {}),
                     ...(meta?.userMessageSeqs ? { userMessageSeqs: meta.userMessageSeqs } : {}),
                     ...(meta?.causalPermissionAuthority ? { causalPermissionAuthority: meta.causalPermissionAuthority } : {}),

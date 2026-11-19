@@ -99,7 +99,7 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
-  it('returns typed unavailability when an external Agent has no current preflight capability', async () => {
+  it('returns ordinary unavailability when an external Agent has no preflight capability', async () => {
     resolvePreflightSessionControlsProbeAdapterMock.mockResolvedValueOnce(null);
 
     await expect(probeAgentModelsBestEffort({
@@ -111,8 +111,6 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
       availableModels: [],
       supportsFreeform: false,
       source: 'unavailable',
-      cacheable: false,
-      refreshError: true,
     });
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -124,7 +122,7 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
       agentId: 'codex',
       cwd: '/repo',
       timeoutMs: 100,
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       agentId: 'codex',
       availableModels: [],
       supportsFreeform: false,

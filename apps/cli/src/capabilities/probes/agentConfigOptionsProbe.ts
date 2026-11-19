@@ -180,7 +180,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
       agentConfigOptionsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_CONFIG_OPTIONS_FAILURE_TTL_MS });
       return buildUnavailable(params.agentId, failureCause);
     }
-    const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
+    const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry).catch(() => null);
     // A declared preflight hook resolves and checks its own executable; its
     // transport may differ from the Agent's interactive CLI.
     if (!preflightAdapter?.probeConfigOptionsRaw && shouldFailClosedForMissingCli({ ...params, env })) {

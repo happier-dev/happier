@@ -232,7 +232,7 @@ export async function probeAgentModesBestEffort(params: {
     if (cached2?.kind === 'success' && agentModesProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
-    const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
+    const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry).catch(() => null);
     // A declared preflight hook resolves and checks its own executable; its
     // transport may differ from the Agent's interactive CLI.
     if (!preflightAdapter?.probeModesRaw && shouldFailClosedForMissingCli({ ...params, env })) {

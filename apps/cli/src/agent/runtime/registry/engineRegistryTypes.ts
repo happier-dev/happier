@@ -235,6 +235,8 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     configuration?: AgentSessionConfigurationSnapshot;
     runtimeDescriptorV1?: PortableRuntimeDescriptorV1;
     providerBinding?: AgentSessionProviderBinding;
+    /** Selected-model fact captured once by host runtime preparation. */
+    selectedModelSupportsStructuredOutput?: boolean;
     revalidateProviderBeforeOpen?: () => Promise<Readonly<
         { ok: true } | { ok: false; error: ProviderErrorV1 }
     >>;

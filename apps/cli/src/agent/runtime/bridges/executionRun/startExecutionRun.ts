@@ -81,7 +81,7 @@ import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPu
 import { shouldPublishExecutionRunTranscriptMarker } from './executionRunTranscriptPublisher';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
-import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel, readExecutionRunOfferedModel } from './structuredOutputAdmission';
+import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel, readExecutionRunOfferedModel, readExecutionRunSelectedModelStructuredOutputSupport } from './structuredOutputAdmission';
 import { executionRunChildSelectionNeedsAppliedParent, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
 import { projectExecutionRunError } from './errors';
 import { resolveExecutionRunInitialInputLocalId } from './initialInput';
@@ -867,6 +867,9 @@ async function startAdmittedExecutionRunInWorkspace(
           : {}),
         start: backendStartContext = {
           ...startParams,
+          ...(args.params.intent === 'review' ? {
+            readSelectedModelStructuredOutputSupport: (signal: AbortSignal) => readExecutionRunSelectedModelStructuredOutputSupport({ ...args.params, signal }),
+          } : {}),
           profileId: profileId ?? undefined,
           ...(startProfileSourceCustody
             ? { profileSourceCustody: startProfileSourceCustody }

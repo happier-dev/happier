@@ -324,6 +324,7 @@ export async function invokeCliPreflightMethod(
         { requireCredentials: requiresMaterializedAuth, catalogEntry: dependencies.agentCatalogEntry, signal: requestContext.signal,
           accountContext: dependencies.accountContext },
     );
+    const acpCatalogSnapshot = dependencies.savedSecretOperationContext?.readSnapshot()?.acpCatalog;
     // Cache evidence per Account without changing the executable occurrence
     // supplied to the invocation-services owner for native preparation.
     const runtimeCacheKey = probeContext.credentials
@@ -340,6 +341,7 @@ export async function invokeCliPreflightMethod(
             catalogEntry: dependencies.agentCatalogEntry,
             registrySnapshot,
             runtimeCacheKey,
+            acpCatalogSnapshot,
             savedSecretOperationContext: dependencies.savedSecretOperationContext,
             secretSources: dependencies.secretSources,
             machineAdmission: requestContext.machineAdmission,
@@ -558,6 +560,7 @@ export async function invokeCliPreflightMethod(
         catalogEntry: dependencies.agentCatalogEntry,
         registrySnapshot,
         runtimeCacheKey,
+        acpCatalogSnapshot,
         savedSecretOperationContext: dependencies.savedSecretOperationContext,
         secretSources: dependencies.secretSources,
         machineAdmission: requestContext.machineAdmission,

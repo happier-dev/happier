@@ -12,7 +12,7 @@ import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSession
 
 type ModelAdmissionParams = Pick<ExecutionRunManagerStartParams,
   'backendTarget' | 'modelId' | 'modelSelection' | 'teamCredentialModel' | 'cwd'
-  | 'accountSettings' | 'promptCredentials' | 'runtimeDescriptorV1' | 'readNativeOfferedModel'
+  | 'accountSettings' | 'promptCredentials' | 'runtimeDescriptorV1' | 'readNativeOfferedModel' | 'nativeOfferedModel'
   | 'connectedServices' | 'secretReferenceOverlay' | 'signal'> & Readonly<{
     /** Already prepared for this exact Provider/Team runtime; never a new acquisition. */
     prepared?: Readonly<{ providerBinding?: Readonly<{ model: AgentModelDescriptor }> }>;
@@ -23,7 +23,8 @@ export function usesExecutionRunProviderModel(params: Pick<ModelAdmissionParams,
 }
 
 export async function assertExecutionRunStructuredAnalysisModelAllowed(params: ModelAdmissionParams & Readonly<{ intent?: string }>): Promise<void> {
-  if (params.intent !== 'scm_diff_summary' && params.intent !== 'review') return;
+  // Reviews retain the prompt/parse/repair path when native JSON is unavailable.
+  if (params.intent !== 'scm_diff_summary') return;
   await assertExecutionRunStructuredOutputModelAllowed(params);
 }
 
@@ -45,7 +46,7 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
     signal?: AbortSignal;
     createAgentInvocationServices?: CreateAgentInvocationServices;
     isCurrent?: () => boolean;
-    preflightDependencies?: Pick<CliProbeDependencies, 'createApiClient' | 'activatePurposeBindings' | 'connectedAccountsOwner'>;
+    preflightDependencies?: Pick<CliProbeDependencies, 'createApiClient' | 'activatePurposeBindings' | 'connectedAccountsOwner' | 'savedSecretOperationContext'>;
   }>) {
   const agentId = resolveExecutionRunRuntimeBackendId(params.backendTarget);
   // Structured-output runs are rare; the probe owner loads on the first one.
@@ -69,7 +70,12 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
   if (!catalog.success || catalog.data.agentId !== agentId) {
     throw modelCatalogUnavailable(params.modelId, 'invalid_catalog');
   }
-  if (catalog.data.source === 'unavailable') throw modelCatalogUnavailable(params.modelId, 'catalog_unavailable');
+  if (catalog.data.source === 'unavailable') {
+    if (catalog.data.refreshError || catalog.data.failureCause || catalog.data.spawnFailure) {
+      throw modelCatalogUnavailable(params.modelId, 'catalog_unavailable');
+    }
+    return undefined;
+  }
   let model = catalog.data.availableModels.find(model => model.id === params.modelId);
   if (!model) {
     const variant = catalog.data.availableModels.find(model => model.extendedContextModelId === params.modelId);
@@ -95,6 +101,7 @@ export async function readExecutionRunOfferedModel(params: ModelAdmissionParams)
   // A Provider/Team model must supply its own evidence; a native catalog cannot
   // grant that distinct source the Agent's native JSON contract.
   if (!usesExecutionRunProviderModel(params)) {
+    if (params.nativeOfferedModel?.id === modelId) return params.nativeOfferedModel;
     try {
       const request = { backendTarget: params.backendTarget, modelId, cwd: params.cwd ?? sessionWorkingDirectory(),
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
@@ -129,4 +136,11 @@ export async function assertExecutionRunStructuredOutputModelAllowed(params: Mod
       details: { modelId, structuredOutput: support },
     });
   }
+}
+
+/** Models may receive a schema hint; only transports with a mapping apply it. */
+export async function readExecutionRunSelectedModelStructuredOutputSupport(params: ModelAdmissionParams): Promise<boolean> {
+  params.signal?.throwIfAborted();
+  const model = params.prepared?.providerBinding?.model ?? await readExecutionRunOfferedModel(params);
+  return model?.capabilities?.structuredOutput === 'supported';
 }

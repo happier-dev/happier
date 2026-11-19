@@ -573,8 +573,12 @@ async function probeAgentModels(params: {
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
           return res;
         }
-        return failedResult({ ...fallback, ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
-          ...(failureCause ? { failureCause } : {}) });
+        if (refreshError || failureCause) {
+          return failedResult({ ...fallback, ...(refreshErrorMessage === undefined ? {} : { refreshErrorMessage }),
+            ...(failureCause ? { failureCause } : {}) });
+        }
+        // A successful ACP Session need not offer a model catalog.
+        return fallback;
       }
 
       const preflightModelsAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
@@ -656,7 +660,8 @@ async function probeAgentModels(params: {
         return failedResult(res, preflightModelsAdapter.failureCacheStrategy === 'retry' ? 0 : PROBE_MODELS_FAILURE_TTL_MS);
       }
 
-      return failedResult(fallback);
+      // No contributed discovery hook is an unsupported catalog, not a failed read.
+      return fallback;
     } catch (error) {
       if (error instanceof AcpCatalogUnavailableError) throw error;
       observeFailure(error);

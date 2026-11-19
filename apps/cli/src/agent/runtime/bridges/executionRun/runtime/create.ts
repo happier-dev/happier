@@ -61,7 +61,7 @@ import {
     type PreparedExecutionRunProviderLaunch,
 } from './providerLaunch';
 import { assertExecutionRunProviderLaunchPlacement, prepareExecutionRunRuntimeProviderLaunch } from './providerPreparation';
-import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel } from '../structuredOutputAdmission';
+import { assertExecutionRunStructuredAnalysisModelAllowed, readExecutionRunSelectedModelStructuredOutputSupport, usesExecutionRunProviderModel } from '../structuredOutputAdmission';
 
 /**
  * The Run's resolved connected-services selection, reported to its Run owner
@@ -577,7 +577,16 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     );
                     throw error;
                 }
-                runtime = await trace('runtime_create', () => runtimeCore.createExecutionRunBackend!(runtimeOpts));
+                const selectedModelSupportsStructuredOutput = opts.start?.intent === 'review'
+                    ? providerLaunch?.providerBinding && effectiveBackendTarget
+                        ? await readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget: effectiveBackendTarget,
+                            prepared: providerLaunch, signal })
+                        : await opts.start.readSelectedModelStructuredOutputSupport?.(signal) ?? false
+                    : undefined;
+                runtime = await trace('runtime_create', () => runtimeCore.createExecutionRunBackend!({
+                    ...runtimeOpts,
+                    ...(selectedModelSupportsStructuredOutput !== undefined ? { selectedModelSupportsStructuredOutput } : {}),
+                }));
             } catch (error) {
                 if (pluginIsolationBundle?.shouldCleanupIsolation) {
                     await cleanupExecutionRunIsolationBundle(pluginIsolationBundle);

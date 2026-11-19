@@ -74,6 +74,8 @@ export type ExecutionRunManagerStartParams = Readonly<{
   promptCredentials?: import('@/persistence').StoredCredentials;
   /** Host-private native catalog reader bound to the admitted executable snapshot. */
   readNativeOfferedModel?: ExecutionRunNativeOfferedModelReader;
+  /** Host-prepared model fact reused by invocation shaping; never retained Run input. */
+  nativeOfferedModel?: import('@happier-dev/protocol/models/descriptor').AgentModelDescriptor;
   backendTarget: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   childSelection?: 'agentDefault';

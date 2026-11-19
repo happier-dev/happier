@@ -104,6 +104,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
     } as const;
     let effectiveInstructions = start.instructions;
     const prompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
+    const outputSchema = profile.buildNativeOutputSchema?.(start);
 
     function waitForLiveIntervention(): Promise<void> {
       if (backendCtrl.admittedLiveInterventions.length > 0) return Promise.resolve();
@@ -135,7 +136,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       backendCtrl.sidechainStreamKey = '';
       const result = await backendCtrl.backend.deliverInput(
         backendCtrl.runtimeId!,
-        { text: turnPrompt },
+        { text: turnPrompt, ...(outputSchema ? { outputSchema } : {}) },
         causalPermissionAuthority || exactInput || effectiveCallerPermissionMode !== undefined
           ? {
               ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),

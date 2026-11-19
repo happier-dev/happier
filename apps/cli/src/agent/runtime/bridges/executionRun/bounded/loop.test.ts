@@ -71,6 +71,72 @@ function createRuntime(params: Partial<ExecutionRunHostRuntime>): ExecutionRunHo
 }
 
 describe('executeBoundedBackendRun', () => {
+    it.each([true, false])('repairs prose through the native Session boundary (native schema supported=%s)', async selectedModelSupportsStructuredOutput => {
+      const boundary = createNativeSessionBoundary();
+      const state: ExecutionRunState = {
+        runId: 'review-schema-run', callId: 'review-schema-call', sidechainId: 'review-schema-side', sessionId: null,
+        depth: 0, intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+        instructions: 'Review the changed code', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+        runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 0,
+      };
+      const host = createNativeAgentSessionInteractionHostRuntime({
+        runtime: { sessions: { open: boundary.open } },
+        lease: { pluginId: 'acme.boundary', pluginVersion: '1.0.0', agentId: 'acme.boundary/default',
+          localAgentId: 'default', occurrenceId: 'review-schema-fixture', isCurrent: () => true },
+        options: { cwd: process.cwd(), runId: state.runId, scope: 'session_owned', backendId: 'acme.boundary/default',
+          permissionMode: 'read_only', selectedModelSupportsStructuredOutput,
+          start: { intent: 'review', runClass: 'bounded', retentionPolicy: 'ephemeral' } },
+        sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+        createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+      });
+      const { runtimeId } = await host.provisionRuntime();
+      const ctrl = createController(host, runtimeId);
+      const runs = new Map([[state.runId, state]]);
+      const controllers = new Map([[state.runId, ctrl]]);
+      const unsubscribe = host.subscribeMessages(createExecutionRunControllerMessageHandler({
+        ctrl, runId: state.runId, sidechainId: state.sidechainId, ioMode: state.ioMode,
+        computeSidechainStreamText: text => text, sendAcp: async () => {}, parentProvider: 'codex', runs,
+        backendSupportsResume: false, getNowMs: Date.now, writeActivityMarker: async () => {},
+      }));
+      const run = executeBoundedBackendRun({
+        ...state, params: state, runs, controllers, sendAcp: async () => {}, parentProvider: 'codex',
+        getNowMs: Date.now, boundedTimeoutMs: null,
+        finishRun: async (runId, next, toolResult, structuredMeta) => {
+          await finishExecutionRun({ runId, next, toolResult, structuredMeta, runs, controllers, budgetRegistry: null,
+            parentProvider: 'codex', sendAcp: async () => {}, terminalMarkerWritePromises: new Map(),
+            enqueueMarkerWrite: async () => {} });
+        },
+      });
+      try {
+        await boundary.waitForInputs(1);
+        const input = boundary.inputs[0].input;
+        if (selectedModelSupportsStructuredOutput) {
+          expect(input).toHaveProperty('outputSchema.properties.findings');
+          expect(input).toHaveProperty('outputSchema.properties.reviewOutcome');
+          expect(input).not.toHaveProperty('outputSchema.properties.runRef');
+          expect(input).toHaveProperty('outputSchema.properties.findings.items.additionalProperties', false);
+          expect(input).toHaveProperty('outputSchema.properties.findings.items.properties.suggestion.anyOf',
+            [expect.objectContaining({ type: 'string' }), { type: 'null' }]);
+          expect(input).not.toHaveProperty('outputSchema.properties.findings.items.properties.comment');
+          expect(input).not.toHaveProperty('outputSchema.properties.findings.items.properties.extensions');
+        } else {
+          expect(input).not.toHaveProperty('outputSchema');
+        }
+        boundary.complete('I inspected the code.');
+        await Promise.race([boundary.waitForInputs(2), run]);
+        expect(boundary.inputs).toHaveLength(2);
+        boundary.complete(JSON.stringify({
+          reviewOutcome: 'complete', summary: 'Review complete', overviewMarkdown: 'No actionable defects found',
+          findings: [], questions: [], assumptions: [],
+        }));
+        await run;
+        expect(runs.get(state.runId)).toMatchObject({ status: 'succeeded',
+          structuredMeta: { kind: 'review_findings.v2', payload: { summary: 'Review complete', findings: [] } } });
+      } finally {
+        unsubscribe();
+        await host.dispose();
+      }
+    });
     it.each([
       { completionDelayMs: 99, status: 'succeeded' },
       { completionDelayMs: 102, status: 'timeout' },

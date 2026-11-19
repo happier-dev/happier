@@ -327,6 +327,7 @@ async function prepareExecutionRunManagerStartParams(
     ...(startProfilePatch ?? {}),
     cwd,
     requesterWorkAttributionV1: params.requesterWorkAttributionV1,
+    ...(offeredModel ? { nativeOfferedModel: offeredModel } : {}),
   };
   delete prepared.replay;
 

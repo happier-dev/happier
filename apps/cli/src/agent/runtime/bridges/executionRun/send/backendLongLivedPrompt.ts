@@ -368,11 +368,13 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     if (localInputId) await profile.onBeforeRetainedInput?.({ start: run, localId: localInputId });
     const initialContext = ctrl2.turnCount === 1 ? profile.buildInitialInputContext?.({ start: run, structuredMeta: run.structuredMeta }) : '';
     const text = [initialContext, args.params.message, resultPrompt].filter(Boolean).join('\n\n');
+    const outputSchema = profile.buildNativeOutputSchema?.(run);
     providerSendInvoked = true;
     return await ctrl2.backend.deliverInput(
       ctrl2.runtimeId!,
       {
         text,
+        ...(outputSchema ? { outputSchema } : {}),
         ...(args.params.structuredInput
           ? { structuredInput: normalizeStrictJsonValue(args.params.structuredInput) }
           : {}),

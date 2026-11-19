@@ -10,5 +10,5 @@ export async function resolvePreflightSessionControlsProbeAdapter(
 ): Promise<PreflightSessionControlsProbeAdapter | null> {
   const entry = catalogEntry === undefined ? AGENTS[agentId] : catalogEntry;
   if (!entry?.getPreflightSessionControlsProbeAdapter) return null;
-  return await entry.getPreflightSessionControlsProbeAdapter().catch(() => null);
+  return await entry.getPreflightSessionControlsProbeAdapter();
 }

@@ -49,7 +49,8 @@ export async function resolveProbeBackendContext(
   // Never replace it with the daemon's stored foreground credentials/settings.
   if (options.accountContext) return { ...runtimeContext, backendTarget,
     credentials: options.accountContext.credentials,
-    accountSettings: options.accountContext.accountSettings ? { ...options.accountContext.accountSettings } : null };
+    // Keep the admitted snapshot identity used to resolve its independent catalogs.
+    accountSettings: options.accountContext.accountSettings };
   const needsAccountSettingsForProbes =
     agentId && (
       catalogEntry?.needsAccountSettingsForProbes === true

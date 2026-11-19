@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { PluginJsonSchemaV2 } from '@happier-dev/plugin-sdk/actions';
 
 import type {
     AgentExecutionRunEvent,
@@ -35,7 +36,7 @@ import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invo
 import { executeBoundedBackendRun } from './bounded/loop';
 import { createRetainedExecutionRunInputDelivery } from './pending/retainedExecutionRunInputDelivery';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
-import { createVoiceSessionContextLease, createVoiceSessionRuntimeThroughNativeFactory } from './testkit/nativeSessionContext';
+import { createNativeSessionBoundary, createVoiceSessionContextLease, createVoiceSessionRuntimeThroughNativeFactory } from './testkit/nativeSessionContext';
 import { logger } from '@/ui/logger';
 import { reloadConfiguration } from '@/configuration';
 import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -62,6 +63,37 @@ import {
 afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+});
+
+it.each([
+    { retained: false, selectedModelSupportsStructuredOutput: true },
+    { retained: false, selectedModelSupportsStructuredOutput: false },
+    { retained: false, selectedModelSupportsStructuredOutput: undefined },
+    { retained: true, selectedModelSupportsStructuredOutput: true },
+    { retained: true, selectedModelSupportsStructuredOutput: false },
+    { retained: true, selectedModelSupportsStructuredOutput: undefined },
+])('uses a native output constraint only for a supported selected model (retained=$retained, supported=$selectedModelSupportsStructuredOutput)', async ({ retained, selectedModelSupportsStructuredOutput }) => {
+    const native = createNativeSessionBoundary();
+    const outputSchema = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'], additionalProperties: false } satisfies PluginJsonSchemaV2;
+    const hostParams = {
+        runtime: { sessions: { open: native.open } },
+        lease: { pluginId: 'acme.schema', pluginVersion: '1.0.0', agentId: 'acme.schema/default',
+            localAgentId: 'default', occurrenceId: 'schema-run', isCurrent: () => true },
+        options: { cwd: '/repo', runId: 'schema-run', scope: 'session_owned' as const, backendId: 'acme.schema/default',
+            modelId: 'schema-model', permissionMode: 'read_only' as const, selectedModelSupportsStructuredOutput,
+            start: { intent: 'review', runClass: 'bounded' as const, retentionPolicy: 'ephemeral' as const, structuredInput: { v: 1 } } },
+        createSessionContext: (({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} })) satisfies NativeAgentSessionContextLeaseFactory,
+    };
+    const host = retained
+        ? createNativeAgentSessionInteractionHostRuntime({ ...hostParams, sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: true } })
+        : createNativeAgentSessionExecutionRunHostRuntime({ ...hostParams, supportsResume: false });
+    try {
+        const { runtimeId } = await host.provisionRuntime();
+        await expect(host.deliverInput(runtimeId, { text: 'Review with prompt fallback.', outputSchema })).resolves.toMatchObject({ status: 'admitted' });
+        expect(native.inputs[0]?.input).toEqual({ text: 'Review with prompt fallback.',
+            ...(!retained ? { structuredInput: { v: 1 } } : {}),
+            ...(selectedModelSupportsStructuredOutput === true ? { outputSchema } : {}) });
+    } finally { await host.dispose(); }
 });
 
 it.each(['bounded', 'long_lived'] as const)('refuses an unavailable native mode through the real %s Session-owned Run factory', async (runClass) => {

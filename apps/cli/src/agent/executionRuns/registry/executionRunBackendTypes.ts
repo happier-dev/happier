@@ -4,6 +4,8 @@ export type ExecutionRunBackendStartContext = Readonly<{
   allowedTools?: import('@happier-dev/protocol/runtime/agentSessionV1').AgentSessionConfigurationSnapshotV1['allowedTools'];
   unlistedTools?: import('@happier-dev/protocol/runtime/agentSessionV1').AgentSessionConfigurationSnapshotV1['unlistedTools'];
   intentInput?: unknown;
+  /** Host-private selected-model fact, read once during runtime preparation. */
+  readSelectedModelStructuredOutputSupport?: (signal: AbortSignal) => Promise<boolean>;
   structuredInput?: import('@happier-dev/protocol').HappierStructuredInputV1;
   localInputId?: string;
   resultContract?: import('@happier-dev/protocol').ExecutionRunResultContractV1;

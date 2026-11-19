@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
+import { assertExecutionRunStructuredAnalysisModelAllowed, readExecutionRunOfferedModel } from './structuredOutputAdmission';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/selection/v1';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('Voice selected-model context fact', () => {
+  it('admits generic reviews without requiring native JSON support or reading a model catalog', async () => {
+    let catalogReads = 0;
+    const params = { backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' },
+      modelId: 'text-model', readNativeOfferedModel: async () => {
+        catalogReads += 1;
+        return { id: 'text-model', name: 'Text model', capabilities: { structuredOutput: 'unsupported' as const } };
+      } };
+    await expect(assertExecutionRunStructuredAnalysisModelAllowed({ ...params, intent: 'review' })).resolves.toBeUndefined();
+    expect(catalogReads).toBe(0);
+    await expect(assertExecutionRunStructuredAnalysisModelAllowed({ ...params, intent: 'scm_diff_summary' }))
+      .rejects.toMatchObject({ code: 'model_structured_output_unsupported' });
+    expect(catalogReads).toBe(1);
+  });
   it('probes native models in each hosted Session directory when cwd is omitted', async () => {
     const directories: string[] = [];
     await Promise.all(['/work/session-a', '/work/session-b'].map(workingDirectory =>
