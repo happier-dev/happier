@@ -5,6 +5,19 @@ import type { ReviewCommentStateV1 } from './comments/v1.js';
 export const ReviewTriageStatusSchema = lazyZodSchema(() => z.enum(['accept', 'reject', 'defer', 'needs_refinement']));
 export type ReviewTriageStatus = z.infer<typeof ReviewTriageStatusSchema>;
 
+export type ReviewFindingDecisionV1 = Extract<ReviewTriageStatus, 'accept' | 'reject' | 'defer'>;
+
+/** Dismissal is Ignore; choosing again supplies fresh intent until its transition settles. */
+export function readReviewFindingDecisionV1(
+  status: ReviewTriageStatus | undefined,
+  state?: ReviewCommentStateV1,
+  pendingDecision?: ReviewTriageStatus,
+): ReviewFindingDecisionV1 | 'undecided' {
+  if (pendingDecision === undefined && state === 'dismissed') return 'reject';
+  const decision = pendingDecision ?? status;
+  return decision === 'accept' || decision === 'reject' || decision === 'defer' ? decision : 'undecided';
+}
+
 /** Deferred and clarification decisions still require a person's attention. */
 export const REVIEW_TRIAGE_NEEDS_DECISION_STATUSES_V1 = ['defer', 'needs_refinement'] as const satisfies readonly ReviewTriageStatus[];
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as protocol from '../index.js';
+import { buildAcceptedReviewFindingsForVerifyV1 } from './reviewFindingsApplyInputV1.js';
+import { buildReviewTriageTransitionRequestV1 } from './comments/triageTransition.js';
+import type { ReviewCommentV1 } from './comments/v1.js';
 import type { ReviewFinding } from './ReviewFinding.js';
 
 type ApplyApi = {
@@ -27,4 +30,25 @@ describe('review findings verification input', () => {
       comment: { commentId: 'comment-1', workspace: finding.comment.workspace, expectedServerRevision: 7, expectedState: 'open' },
     })]);
   });
+});
+
+it('excludes dismissed roots with retained acceptance from Apply until deliberately reopened, preserving resolved acceptance', () => {
+  const finding = { id: 'finding-1', title: 'Total subtracts prices', summary: 'The reducer subtracts instead of adding.' };
+  const comment: ReviewCommentV1 = {
+    v: 1, id: 'comment-1', accountId: 'account-1', reviewId: 'review-1',
+    findingIdentity: 'a'.repeat(64), findingId: finding.id, runId: 'run-1',
+    anchor: { kind: 'workspace', workspaceId: 'workspace-1' }, snapshot: { kind: 'none', capturedAt: 1 },
+    body: 'Evidence remains readable after dismissal', bodyVersion: 1, edits: [], author: { kind: 'user', userId: 'user-1' },
+    state: 'open', reviewTriageStatus: 'accept', flags: {}, dispositions: {}, threadId: 'comment-1',
+    transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 3,
+  };
+  const reviews = [{ runId: 'run-1', findings: [finding] }];
+  const accepted = (current: ReviewCommentV1) => buildAcceptedReviewFindingsForVerifyV1(reviews, [current]);
+  expect(accepted(comment).map(item => item.id)).toEqual([finding.id]);
+  const dismissed = { ...comment, state: 'dismissed' as const, serverRevision: 5 };
+  expect(accepted(dismissed)).toEqual([]);
+  expect(accepted({ ...comment, state: 'resolved' }).map(item => item.id)).toEqual([finding.id]);
+  const reopen = buildReviewTriageTransitionRequestV1({ comment: dismissed, decision: 'accept', clientMutationId: 'reopen' });
+  expect(reopen).toMatchObject({ expectedState: 'dismissed', expectedServerRevision: 5, toState: 'open', reviewTriageStatus: 'accept' });
+  expect(accepted({ ...dismissed, state: reopen.toState, reviewTriageStatus: reopen.reviewTriageStatus }).map(item => item.id)).toEqual([finding.id]);
 });

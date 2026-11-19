@@ -75,7 +75,7 @@ export function useSessionWalkthroughReviewPresentation(params: Readonly<{
         if (!review || !scope || !sessionId) return null;
         const snapshot = review.comments[review.reviewRunIds.indexOf(view.runId)];
         const comment = snapshot ? findCommentForFinding(snapshot.comments, view.finding, view.runId) : null;
-        const decision = comment ? readReviewFindingDecision(snapshot?.pending[comment.id] ?? comment.reviewTriageStatus) : 'undecided';
+        const decision = comment ? readReviewFindingDecision(comment.reviewTriageStatus, comment.state, snapshot?.pending[comment.id]) : 'undecided';
         return (
             <ReviewFindingDecisionControl
                 testIDPrefix={`walkthrough-finding-triage:${view.findingId}`}

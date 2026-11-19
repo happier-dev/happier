@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reviewTriageNeedsDecisionV1 } from './reviewTriageStatus.js';
+import { readReviewFindingDecisionV1, reviewTriageNeedsDecisionV1 } from './reviewTriageStatus.js';
 
 describe('Review decision demand', () => {
   it('keeps undecided, deferred and clarification findings actionable without reopening decided findings', () => {
@@ -13,5 +13,20 @@ describe('Review decision demand', () => {
     expect(reviewTriageNeedsDecisionV1('defer', 'resolved')).toBe(false);
     expect(reviewTriageNeedsDecisionV1(undefined, 'open', true)).toBe(false);
     expect(reviewTriageNeedsDecisionV1(undefined, 'proposed')).toBe(true);
+  });
+});
+
+describe('effective Review finding decision', () => {
+  it('projects dismissal as Ignore even when a prior acceptance was retained, without changing resolved decisions', () => {
+    expect(readReviewFindingDecisionV1('accept', 'open')).toBe('accept');
+    expect(readReviewFindingDecisionV1('accept', 'dismissed')).toBe('reject');
+    expect(readReviewFindingDecisionV1(undefined, 'dismissed')).toBe('reject');
+    expect(readReviewFindingDecisionV1('accept', 'dismissed', 'accept')).toBe('accept');
+    expect(readReviewFindingDecisionV1('accept', 'dismissed', 'defer')).toBe('defer');
+    expect(readReviewFindingDecisionV1('accept', 'resolved')).toBe('accept');
+    expect(readReviewFindingDecisionV1('reject', 'resolved')).toBe('reject');
+    expect(readReviewFindingDecisionV1('defer', 'open')).toBe('defer');
+    expect(readReviewFindingDecisionV1('needs_refinement', 'open')).toBe('undecided');
+    expect(readReviewFindingDecisionV1(undefined)).toBe('undecided');
   });
 });

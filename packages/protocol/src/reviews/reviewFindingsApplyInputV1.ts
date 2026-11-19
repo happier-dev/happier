@@ -1,4 +1,5 @@
 import type { ReviewFinding } from './ReviewFinding.js';
+import { readReviewFindingDecisionV1 } from './reviewTriageStatus.js';
 import type { ReviewCommentV1, ReviewCommentAnchorV1, ReviewCommentSnapshotV1 } from './comments/v1.js';
 import type { WorkspaceAnchorV1, WorkspaceAnchorSnapshotV1, WorkspaceAnchorResolutionV1 } from '../workspace/anchors/v1.js';
 
@@ -39,7 +40,7 @@ export function buildAcceptedReviewFindingsForVerifyV1(
   const included = new Set<string>();
   return groups.flatMap(group => {
     const decided = group.filter(source => source.comment !== null);
-    if (decided.length === 0 || !decided.every(source => source.comment?.reviewTriageStatus === 'accept')) return [];
+    if (decided.length === 0 || !decided.every(source => readReviewFindingDecisionV1(source.comment?.reviewTriageStatus, source.comment?.state) === 'accept')) return [];
     return group.flatMap(source => {
       const comment = source.comment;
       if (comment && included.has(comment.id)) return [];

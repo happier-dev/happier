@@ -67,7 +67,7 @@ export function projectReviewFindingRoots(reviewId: string, comments: readonly R
 
 function sourceDecision(source: ReviewFindingSource, pending: Readonly<Record<string, ReviewTriageStatus>>): ReviewFindingDecision | 'undecided' {
     if (!source.comment) return 'undecided';
-    return readReviewFindingDecision(pending[source.comment.id] ?? source.comment.reviewTriageStatus);
+    return readReviewFindingDecision(source.comment.reviewTriageStatus, source.comment.state, pending[source.comment.id]);
 }
 
 /** A merged row's decision is its sources' decision when they agree; otherwise none is shown. */
@@ -138,7 +138,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         () => rows.filter((row) => rowDecision(row, pending) === 'accept'),
         [pending, rows],
     );
-    const acceptedCount = record ? sealedRows.filter(row => readReviewFindingDecision(pending[row.rowId] ?? row.comment.reviewTriageStatus) === 'accept').length
+    const acceptedCount = record ? sealedRows.filter(row => readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]) === 'accept').length
         : acceptedRows.length;
     const hasPendingDecisions = Object.keys(pending).length > 0;
 
@@ -191,7 +191,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         if (!canActRef.current) return;
         const root = rootById.get(rowId);
         if (root) {
-            if (readReviewFindingDecision(pending[root.id] ?? root.reviewTriageStatus) === decision) return;
+            if (readReviewFindingDecision(root.reviewTriageStatus, root.state, pending[root.id]) === decision) return;
             setError(null);
             fireAndForget(onDecideComment({ comment: root }, decision).then(saved => {
                 if (!saved) setError(t('runPage.review.couldNotSaveChoice'));
@@ -344,7 +344,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             rowId: row.rowId, finding: row.finding,
             currentBodyMarkdown: typeof row.comment.body === 'string' ? row.comment.body : undefined,
             taskOrigin: taskOriginOf([row.comment]),
-            decision: readReviewFindingDecision(pending[row.rowId] ?? row.comment.reviewTriageStatus),
+            decision: readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]),
             decidable: true, reviewers,
             attribution: reviewers.length > 1 ? { label: formatReviewerSet(reviewers.map(reviewer => reviewer.label)),
                 backendIds: reviewers.map(reviewer => reviewer.backendId).filter(Boolean) } : null,

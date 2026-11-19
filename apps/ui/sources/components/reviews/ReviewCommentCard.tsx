@@ -202,7 +202,7 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
             {finding ? null : <ReviewCommentSnapshotView comment={props.comment} labels={props.labels} />}
             {finding && props.actions?.onDecide ? <ReviewFindingDecisionControl
                 testIDPrefix={`review-finding-triage:${props.comment.id}`}
-                decision={readReviewFindingDecision(props.actions.pendingDecision?.(props.comment) ?? props.comment.reviewTriageStatus)}
+                decision={readReviewFindingDecision(props.comment.reviewTriageStatus, props.comment.state, props.actions.pendingDecision?.(props.comment))}
                 disabled={disabled} onDecide={(decision) => props.actions?.onDecide?.(props.comment, decision)} /> : null}
             {hasActions ? (
                 <View style={styles.actions}>

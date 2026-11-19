@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
+import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 
 import { useReviewFindingsModel } from './useReviewFindingsModel';
 import type { ReviewFindingsMember } from './useReviewFindingsModel';
@@ -15,6 +17,43 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 afterEach(standardCleanup);
+
+it('withdraws a dismissed durable finding from Implement when a later bulk transition retains its older acceptance', async () => {
+    // Captured shape: QA-REVIEWS-1/nov19-resume15-counted-native-comments.json, root 26d/rev5.
+    const root = buildReviewCommentFixture({ id: 'bulk-dismissed-root', reviewId: 'review-bulk-dismissal', roundOrdinal: 2,
+        findingIdentity: 'a'.repeat(64), state: 'open', reviewTriageStatus: 'accept', serverRevision: 3,
+        finding: { id: 'total-subtraction', title: 'Total subtracts each price', summary: 'The reducer subtracts instead of adding.',
+            severity: 'medium', category: 'correctness', filePath: 'total.ts', startLine: 2 } });
+    const unavailable = buildReviewCommentFixture({ id: 'legacy-root', reviewId: root.reviewId, roundOrdinal: 2,
+        findingIdentity: 'b'.repeat(64), state: 'dismissed' });
+    const requests: ReturnType<typeof buildReviewTriageTransitionRequestV1>[] = [];
+    const hook = await renderHook(({ comment, pending }: { comment: ReviewCommentV1; pending: Readonly<Record<string, ReviewTriageStatus>> }) => useReviewFindingsModel({ members: [], reviewerCount: 0,
+        record: { round: { reviewId: root.reviewId!, roundOrdinal: 2, state: 'running', reviewerIds: [] }, comments: [comment, unavailable] },
+        scope: null, accountLifetime: null, serverId: null, sessionId: null, canAct: true, pending,
+        onDecideComment: async ({ comment }, decision) => {
+            requests.push(buildReviewTriageTransitionRequestV1({ comment, decision, clientMutationId: 'reopen-dismissed' }));
+            return true;
+        } }), { initialProps: { comment: root, pending: {} } });
+    try {
+        expect(hook.getCurrent().rows.map(row => row.rowId)).toEqual([root.id]);
+        expect(hook.getCurrent().unavailableFindings.map(comment => comment.id)).toEqual([unavailable.id]);
+        expect(hook.getCurrent().implement.count).toBe(1);
+        const dismissed = { ...root, state: 'dismissed' as const, serverRevision: 5 };
+        await hook.rerender({ comment: dismissed, pending: {} });
+        expect(hook.getCurrent().implement.count).toBe(0);
+        expect(hook.getCurrent().implement.destinationDisabled).toBe(true);
+        expect(hook.getCurrent().rows[0]?.decision).toBe('reject');
+        await act(async () => { hook.getCurrent().onDecide(root.id, 'accept'); });
+        expect(requests).toEqual([expect.objectContaining({ commentId: root.id, expectedState: 'dismissed',
+            expectedServerRevision: 5, toState: 'open', reviewTriageStatus: 'accept' })]);
+        await hook.rerender({ comment: dismissed, pending: { [root.id]: 'accept' } });
+        expect(hook.getCurrent().rows[0]?.decision).toBe('accept');
+        expect(hook.getCurrent().implement.destinationDisabled).toBe(true);
+        await hook.rerender({ comment: { ...root, state: 'resolved', serverRevision: 6 }, pending: {} });
+        expect(hook.getCurrent().rows[0]?.decision).toBe('accept');
+        expect(hook.getCurrent().implement.count).toBe(1);
+    } finally { await hook.unmount(); }
+});
 
 it('links Session findings by saved Review comment identity and leaves unbound development findings without a task target', async () => {
     const finding = { id: 'engine-finding', title: 'A finding', summary: 'Private body', severity: 'high' as const, category: 'correctness' as const };

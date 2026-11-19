@@ -60,7 +60,10 @@ export function buildReviewFindingsMessageDisplay(payload: ReviewFindingsV1 | Re
     const compact = options.canNavigate === true;
     const visibleFindings = compact ? findings.slice(0, REVIEW_CARD_VISIBLE_FINDINGS) : findings;
     const followUp = resolveReviewFollowUpAvailability(payload.runRef);
-    const acceptedFindingsCount = options.acceptedFindingsCount ?? findings.filter((finding) => readReviewFindingDecision(findCommentForFinding(options.reviewComments?.comments ?? [], finding, payload.runRef.runId)?.reviewTriageStatus) === 'accept').length;
+    const acceptedFindingsCount = options.acceptedFindingsCount ?? findings.filter((finding) => {
+        const comment = findCommentForFinding(options.reviewComments?.comments ?? [], finding, payload.runRef.runId);
+        return readReviewFindingDecision(comment?.reviewTriageStatus, comment?.state) === 'accept';
+    }).length;
     const finishedAt = payload.generatedAtMs > 0 ? formatAsOfTime(payload.generatedAtMs) : null;
     const severitySummary = reviewSeverityCounts(findings).map(({ severity, label }) => block(`structured-review:count:${severity}`, label));
     const findingDisplays = visibleFindings.map((finding) => {
