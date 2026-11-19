@@ -504,28 +504,10 @@ describe('workspace sync resolution Action transport', () => {
     }));
   });
 
-  it('returns an operation-scoped update requirement when the controller lacks resolve', async () => {
-    const missingMethod = createRpcCallError({
-      error: 'Controller method unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-    });
-    callMachineRpc.mockRejectedValueOnce(missingMethod);
-    const deps = createCliActionDeps({
-      token: 'token', credentials: { token: 'token', encryption: null },
-      serverId: 'server-a', serverIdentityId: 'server-a', serverHttpBaseUrl: 'https://server-a.example.test',
-      sessionId: 'session-c', mode: 'plain', ctx: null,
-      rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
-      actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
-    });
-    await expect(deps.workspaceSyncConflictResolve?.({
-      actionReceiptId: 'approval-1',
-      input: {
-        controllerMachineId: 'machine-a', hubWorkspaceRefId: 'workspace-a', path: 'src/index.ts',
-        source: { workspaceRefId: 'workspace-c', expected: { kind: 'missing' } },
-        targets: [{ workspaceRefId: 'workspace-b', expected: { kind: 'missing' } }],
-        relationshipIds: ['rel-ab', 'rel-ac'], strategy: 'use_source',
-      },
-    })).rejects.toMatchObject({ code: 'workspace_sync_update_required' });
-
+  it.each([
+    { rpcCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, expected: { errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE } },
+    { rpcCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, expected: { errorCode: 'workspace_sync_update_required', effectAttempted: false } },
+  ])('settles an approved workspace conflict resolution after $rpcCode', async ({ rpcCode, expected }) => {
     const approvals = new Map<string, Record<string, unknown>>();
     const { executor } = createCliActionExecutorHarness({
       token: 'token', credentials: { token: 'token', encryption: null },
@@ -552,16 +534,17 @@ describe('workspace sync resolution Action transport', () => {
       targets: [{ workspaceRefId: 'workspace-b', expected: { kind: 'missing' as const } }],
       relationshipIds: ['rel-ab', 'rel-ac'], strategy: 'use_source' as const,
     };
-    await expect(executor.execute('workspace.sync.conflict.resolve', input, {
+    const pending = await executor.execute('workspace.sync.conflict.resolve', input, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-a',
       defaultSessionId: 'session-c', defaultSessionMachineId: 'machine-a', actionRequestId: 'agent-old-controller',
-    })).resolves.toMatchObject({ ok: true, result: { artifactId: 'approval-old-controller' } });
-    callMachineRpc.mockRejectedValueOnce(missingMethod);
+    });
+    expect(pending, JSON.stringify(pending)).toMatchObject({ ok: true, result: { artifactId: 'approval-old-controller' } });
+    callMachineRpc.mockRejectedValueOnce(createRpcCallError({ error: 'Controller method unavailable', errorCode: rpcCode }));
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-old-controller', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'server-a' })).resolves.toMatchObject({
       ok: true,
-      result: { status: 'failed', execution: { ok: false, errorCode: 'workspace_sync_update_required' } },
+      result: { status: 'failed', execution: { ok: false, ...expected } },
     });
   });
 

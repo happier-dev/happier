@@ -8635,7 +8635,8 @@ The feature's integrated and live evidence is tracked in its existing execution 
 ### Workspace-sync handoff rollout
 
 Workspace Sync Actions return `workspace_sync_update_required` when the
-selected controller explicitly lacks the requested RPC method.
+selected controller explicitly lacks the requested RPC method. A routing miss
+keeps `RPC_METHOD_NOT_AVAILABLE` in the approved conflict resolution result.
 
 Workspace handoff is operation-scoped across UI, daemon, and Machine RPC versions. A current
 client may send the canonical `none`, `copy_once`, `create_relationship`, or existing

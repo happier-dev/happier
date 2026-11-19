@@ -5,8 +5,6 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { WorkspaceSyncRelationshipsListRpcResultV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceSyncReadControllerV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 export function createCliWorkspaceSyncActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverIdentityId'>,
@@ -174,25 +172,13 @@ export function createCliWorkspaceSyncActionDeps(
       if (!params.credentials) {
         throw Object.assign(new Error('Workspace sync resolution requires an authenticated Account'), { code: 'not_authenticated' });
       }
-      try {
-        return WorkspaceSyncConflictResolutionResultV1Schema.parse(await callMachineAction({
-          machineId: input.controllerMachineId,
-          context, effectActionId: 'workspace.sync.conflict.resolve',
-          method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
-          request: { actionReceiptId, actionInput: input },
-          ...(signal ? { signal } : {}),
-        }));
-      } catch (error) {
-        // Preserve the conflict-resolution bridge's older controller refusal.
-        if (isRpcMethodNotAvailableError(error)) {
-          throw createActionExecuteFailureError({
-            ok: false,
-            errorCode: 'workspace_sync_update_required',
-            error: 'Controller must be updated for workspace conflict resolution',
-          });
-        }
-        throw error;
-      }
+      return WorkspaceSyncConflictResolutionResultV1Schema.parse(await callMachineAction({
+        machineId: input.controllerMachineId,
+        context, effectActionId: 'workspace.sync.conflict.resolve',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
+        request: { actionReceiptId, actionInput: input },
+        ...(signal ? { signal } : {}),
+      }));
     },
     workspaceSyncRelationshipsList: async ({ input, context, signal }) => {
       const machineId = await resolveWorkspaceSyncReadController(input, signal);
