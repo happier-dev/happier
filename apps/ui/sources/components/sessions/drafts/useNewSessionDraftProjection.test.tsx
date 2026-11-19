@@ -5,6 +5,7 @@ import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import {
     deleteSessionDraft,
+    flushSessionDraft,
     getSessionDraftSnapshot,
     writeNewSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -14,7 +15,22 @@ import {
     useNewSessionDraftPromptProjection,
 } from './useNewSessionDraftProjection';
 
+const storage = vi.hoisted(() => ({
+    values: new Map<string, string>(),
+    flush: vi.fn<() => Promise<void>>(),
+}));
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage', () => ({
+    getSessionDraftPersistenceStorage: () => ({
+        getString: (key: string) => storage.values.get(key),
+        set: (key: string, value: string) => storage.values.set(key, value),
+        delete: (key: string) => storage.values.delete(key),
+        flush: storage.flush,
+    }),
+}));
+
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
+
 
 afterEach(() => {
     standardCleanup();
@@ -108,6 +124,31 @@ describe('useNewSessionDraftProjection', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
         expect(renderCount).toBeGreaterThan(rendersAfterMaterialization);
         expect(hook.getCurrent()?.document.target.kind).toBe('newSession');
+    });
+
+    it('updates the host when an unchanged draft fails to persist and recovers on flush', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000405';
+        const address = { kind: 'newSession', draftId } as const;
+        const text = 'keep this draft';
+        writeNewSessionDraft({ scope, draftId, patch: { text }, materializationIntent: 'userEdit' });
+        const host = await renderHook(() => useNewSessionDraftHostSnapshot(scope, draftId));
+        await act(async () => {
+            await flushSessionDraft({ scope, address });
+        });
+        const initialStatus = host.getCurrent()?.status;
+
+        storage.flush.mockRejectedValueOnce(new Error('disk unavailable'));
+        await act(async () => {
+            await expect(flushSessionDraft({ scope, address })).rejects.toThrow('disk unavailable');
+        });
+        expect(getSessionDraftSnapshot(scope, address)?.status).toBe('error');
+        expect(host.getCurrent()?.status).toBe('error');
+        expect(host.getCurrent()?.document.composer.text.value).toBe(text);
+
+        await act(async () => {
+            await flushSessionDraft({ scope, address });
+        });
+        expect(host.getCurrent()?.status).toBe(initialStatus);
     });
 
     it('stages a locally edited ephemeral prompt before adopting durable updates', async () => {
