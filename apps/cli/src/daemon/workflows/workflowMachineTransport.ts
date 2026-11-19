@@ -19,7 +19,9 @@ function isDetachedComparisonCapture(request: unknown, machineId: string): boole
     request = envelope.data.input;
   }
   const capture = ScmComparisonCaptureInputSchema.safeParse(request);
-  return capture.success && capture.data.sessionId === undefined;
+  if (!capture.success || capture.data.sessionId !== undefined) return false;
+  const source = capture.data.source;
+  return source?.kind !== 'session' && source?.kind !== 'turnCheckpoint';
 }
 
 /** One claimed Workflow retains requester custody through its installed Machine transport. */
@@ -136,7 +138,7 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
         // The Run's captured Home admission is the receiving Machine admission
         // native owners require, as Home's stamp is for the same direct Action.
         return await input.transport.invoke(method, request, { ...options,
-          ...(admittedComparison ? { admissionResult: { ok: true as const } } : {}),
+          ...(admittedComparison ? { admissionResult: { ok: true as const, admittedHostWorkflowRequester: true as const } } : {}),
           rpcContext: { requesterSessionBootstrap: prepared.admitted, callerAuthority: 'account_automation',
             machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
       },

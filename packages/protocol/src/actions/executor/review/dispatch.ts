@@ -315,7 +315,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           if (!response.ok) return response;
           const captured = ScmComparisonCaptureOutputSchema.safeParse(response.result);
           if (!captured.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
-          if (!captured.data.success) return { ok: false, errorCode: captured.data.errorCode, error: captured.data.error };
+          if (!captured.data.success) return readActionFailureEnvelope({ ...captured.data, ok: false })!;
           initialComparison = captured.data.comparison;
           selectedSource = initialComparison.source;
           reviewInput = { ...reviewInput, source: initialComparison.source, comparisonId: initialComparison.id };

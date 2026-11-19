@@ -1492,6 +1492,7 @@ export class RpcHandlerManager {
                 signal.throwIfAborted();
                 handlerExecutionId = this.beginHandlerExecution(method);
                 return await handler(params, Object.freeze({
+                    ...(options?.admissionResult?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: true } : {}),
                     ...(options?.admissionResult?.workspaceSyncPrivateExecution
                         ? { workspaceSyncPrivateExecution: options.admissionResult.workspaceSyncPrivateExecution } : {}),
                     ...(options?.rpcContext ? {

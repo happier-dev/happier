@@ -1,4 +1,5 @@
 import { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { runHostActionOperation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
@@ -162,6 +163,13 @@ export function registerScmHandlers(
         const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
         return typeof code === 'string' ? code : 'agent_isolation_unavailable';
     };
+    const refuseRequesterPlacement = (method: string, phase: string, cause?: unknown, effectAttempted?: false) => {
+        const legacy = refused(readErrorCode(cause));
+        if (method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return legacy;
+        return { success: false as const, errorCode: 'DIFF_UNAVAILABLE' as const, error: legacy.error,
+            failureCause: projectActionFailureCauseV1(cause ?? { code: legacy.actionErrorCode }, phase, { allowUnknownErrorCode: true }),
+            ...(effectAttempted === false ? { effectAttempted } : {}) };
+    };
     // Can use runs as the person's own member user, only in their own folder (owner rulings
     // 2026-11-02, 2026-11-14), and Manage's repository work in a member folder runs as that folder's
     // member. The whole operation (Git and every repository metadata read) runs in the member
@@ -169,7 +177,7 @@ export function registerScmHandlers(
     // (SEC-FORKC-1115F F1: a symlinked or FIFO Git state file).
     const runAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
         method: string, projectRoot: string | undefined, input: unknown, comparisons?: () => unknown, requesterAccountId?: string): Promise<unknown> => {
-        if (!deps?.nativeOperationRuntime) return refused('agent_isolation_unavailable');
+        if (!deps?.nativeOperationRuntime) return refuseRequesterPlacement(method, 'scm.requester.native_runtime', undefined, false);
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
             ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
         let native: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>;
@@ -177,9 +185,9 @@ export function registerScmHandlers(
             // This consumes the existing member binding; a person without one has no folder here.
             native = await deps.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: context,
                 signal: context.signal, readMaterial: () => material, allowMemberPreparation: false });
-        } catch (error) { return refused(readErrorCode(error)); }
+        } catch (error) { return refuseRequesterPlacement(method, 'scm.requester.native_preparation', error, false); }
         try {
-            if (!native.memberIdentity) return refused('agent_isolation_unavailable');
+            if (!native.memberIdentity) return refuseRequesterPlacement(method, 'scm.requester.member_identity', undefined, false);
             if (comparisons) return await runWithScmAccountScope(requesterAccountId,
                 () => runWithScmComparisonOperations(createMemberScmComparisonOperations({ native, signal: context.signal }), comparisons), context.callerInputAuthorization);
             const { readScmAsMember } = await import('@/scm/rpc/memberScmRead');
@@ -201,7 +209,7 @@ export function registerScmHandlers(
                 method, input, signal: context.signal,
                 ...(removeMemberWorktree ? { removeWorktree: removeMemberWorktree } : {}) });
         } catch (error) {
-            return refused(readErrorCode(error));
+            return refuseRequesterPlacement(method, 'scm.requester.execute', error);
         } finally { await native.dispose(); }
     };
     const readRequestCwd = (input: unknown, projectRoot: string | undefined): string => {
@@ -236,7 +244,7 @@ export function registerScmHandlers(
                 const hosting = isScmHostingCredentialRpcMethod(method);
                 const member = readOwner && target !== undefined && (hosting || comparisons || isScmLocalRepositoryRpcMethod(method))
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
-                if (member === 'unavailable') return refused('agent_isolation_unavailable');
+                if (member === 'unavailable') return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
                 if (member && hosting) return refused('credential_scope_denied');
                 // A member's placed Session already selected its target source: Git runs there, never
                 // on this Machine as the member (SEC1116H §4b).
@@ -245,7 +253,7 @@ export function registerScmHandlers(
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
             if (!comparisons && !isScmLocalRepositoryReadRpcMethod(method)) return await run();
-            if (identity.kind !== 'isolated') return refused('agent_isolation_unavailable');
+            if (identity.kind !== 'isolated') return refuseRequesterPlacement(method, 'scm.requester.identity', undefined, false);
             // The member's own placed Session already selected its target: their read runs there, never
             // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the
             // member's own child, whose OS account decides.

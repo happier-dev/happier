@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
@@ -450,7 +451,8 @@ export const ScmComparisonCaptureOutputSchema = lazyZodSchema(() => z.discrimina
     page: z.optional(z.strictObject({ totalFiles: z.number().check(z.int(), z.nonnegative()),
       nextCursor: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
   }),
-  z.strictObject({ success: z.literal(false), error: z.string().check(z.minLength(1)), errorCode: ScmDiffSummaryErrorCodeSchema }),
+  z.strictObject({ success: z.literal(false), error: z.string().check(z.minLength(1)), errorCode: ScmDiffSummaryErrorCodeSchema,
+    failureCause: z.optional(ActionFailureCauseV1Schema), effectAttempted: z.optional(z.boolean()) }),
 ]));
 export type ScmComparisonCaptureOutput = z.infer<typeof ScmComparisonCaptureOutputSchema>;
 

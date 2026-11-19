@@ -150,13 +150,17 @@ function readHostRequesterInvocationSource(input: Pick<HostRequesterExecutionIde
         && !localContexts.some(local => local?.externalActionExecutionAuthorization)
         && (input.actionContext?.authenticatedLocalRootCustody
             ?? localContexts.find(local => local?.authenticatedLocalRootCustody)?.authenticatedLocalRootCustody);
+    // A claimed host Workflow reuses the Account bootstrap for credentials.
+    // Ingress knows its source. A Session origin still owns its own placement.
+    const hostWorkflow = input.rpcContext?.admittedHostWorkflowRequester === true;
     return {
         sessionOrigin,
-        agentSource: !!input.sessionRequester || !!sessionOrigin || !!context?.requesterSessionBootstrap
+        agentSource: !!sessionOrigin
             || localContexts.some(local => isSessionCaller(local?.actionCaller))
             || isSessionCaller(input.actionContext?.actionCaller)
-            || !localRoot && (localContexts.some(local => !!local?.requesterWorkAttributionV1)
-                || !!input.actionContext?.requesterWorkAttributionV1)
+            || !hostWorkflow && (!!input.sessionRequester || !!context?.requesterSessionBootstrap
+                || !localRoot && (localContexts.some(local => !!local?.requesterWorkAttributionV1)
+                    || !!input.actionContext?.requesterWorkAttributionV1))
             || bindings.some(candidate => candidate?.workflowActionOrigin?.sessionAuthority?.authorization.principal.kind === 'session'),
         inheritedAutomation: localContexts.some(local => local?.authority === 'account_automation'),
     };

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import nacl from 'tweetnacl';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   AccountSettingsSchema,
+  createActionExecutor,
   FeaturesResponseSchema,
   getActionSpec,
 } from '@happier-dev/protocol';
@@ -17,6 +20,12 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { configuration } from '@/configuration';
 import { registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { createTestGitScmBackendRegistry, runGit } from '@/scm/rpc/__tests__/testRpcHarness';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
@@ -180,10 +189,31 @@ describe('Workflow Run native Machine admission', () => {
             },
           }),
       });
-      // The existing SCM owner receives the same requester that started the Run.
-      rpc.registerHandler(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, (_request, context) => ({
-        capturedFor: context?.machineAdmission?.actorAccountId,
-      }));
+      const scmRegistry = createTestGitScmBackendRegistry();
+      const requesterAdmission = createFilesystemEffectAdmission({
+        resolveHomeServerIdentityId: async () => homeId,
+        resolveHostIdentity: async () => ({ custodianAccountId, machineId, installationId }),
+      });
+      let nativePreparations = 0;
+      let memberFolderAvailable = true;
+      registerScmHandlers(rpc, root, { machineId, registry: scmRegistry,
+        resolveRequester: requesterAdmission.resolveRpcRequester,
+        actionExecutor: createActionExecutor({ scmActionExecute: args => executeScmActionOperation({
+          ...args, actionContext: args.context, workingDirectory: root, registry: scmRegistry,
+        }) }),
+        nativeOperationRuntime: {
+          readMemberFolderOwner: async () => {
+            if (!memberFolderAvailable) throw new Error('Fixture member binding unavailable');
+            return null;
+          },
+          prepareNativeOperation: request => {
+            nativePreparations++;
+            return prepareRequesterNativeOperation(request, {
+              machine: { read: () => undefined }, homeServerIdentityId: homeId, machineId, installationId,
+            });
+          },
+        },
+      });
       registerProjectFiniteRpcHandlers(rpc, {
         serverId: homeId,
         machineId,
@@ -298,11 +328,11 @@ describe('Workflow Run native Machine admission', () => {
           localActionContext(attempt),
         );
       const comparisonInput = { cwd: root, source: { kind: 'workingTree' } };
-      const comparisonRequest = (targetMachineId = machineId) => createTargetedActionRpcRequestV1(comparisonInput,
+      const comparisonRequest = (targetMachineId = machineId, input: unknown = comparisonInput) => createTargetedActionRpcRequestV1(input,
         { kind: 'machine', machineId: targetMachineId, project: { machineId: targetMachineId, directory: root } });
-      const compare = (callerRunId: string, targetMachineId = machineId) => workflowTransport.transport.invoke(
+      const compare = (callerRunId: string, targetMachineId = machineId, input?: unknown) => workflowTransport.transport.invoke(
         RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
-        comparisonRequest(targetMachineId), {
+        comparisonRequest(targetMachineId, input), {
           localActionContext: {
             ...localActionContext(4).localActionContext,
             actionCaller: { kind: 'workflowRun', runId: callerRunId,
@@ -363,11 +393,28 @@ describe('Workflow Run native Machine admission', () => {
           failureCause: { phase: 'rpc.admission.requester_execution_isolation', errorCode: 'agent_isolation_unavailable' } });
         const { callMachineAction } = createCliMachineActionTransport({ credentials, serverId, serverIdentityId: homeId,
           serverHttpBaseUrl: home, machineActionDirectTargetTransport: workflowTransport.transport });
-        expect(await callMachineAction({ machineId, method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, request: comparisonRequest(),
+        runGit(root, ['init']);
+        runGit(root, ['config', 'user.email', 'fixture@example.test']);
+        runGit(root, ['config', 'user.name', 'SCM fixture']);
+        await writeFile(join(root, 'review.txt'), 'before\n');
+        runGit(root, ['add', 'review.txt']);
+        runGit(root, ['commit', '-m', 'base']);
+        await writeFile(join(root, 'review.txt'), 'after\n');
+        const result = await callMachineAction({ machineId, method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, request: comparisonRequest(),
           effectActionId: 'scm.diffSummary.capture', exactMachine: true,
           context: buildWorkflowActionContext({ runId, authorization: { admittedPermissionCeiling: 'default',
-            principal: { kind: 'host' } } }, requesterWorkAttributionV1) })).toEqual({ capturedFor: accountId });
+            principal: { kind: 'host' } } }, requesterWorkAttributionV1) });
+        expect(result).toMatchObject({ success: true, comparison: { inventory: { files: [expect.objectContaining({ path: 'review.txt' })] } } });
+        expect(ScmComparisonCaptureOutputSchema.safeParse(result).success).toBe(true);
+        expect(nativePreparations).toBe(0);
+        memberFolderAvailable = false;
+        expect(ScmComparisonCaptureOutputSchema.parse(await compare(runId))).toMatchObject({
+          success: false, errorCode: 'DIFF_UNAVAILABLE', effectAttempted: false,
+          failureCause: { phase: 'scm.requester.member_folder', errorCode: 'agent_isolation_unavailable' },
+        });
         expect(scmAdmissionReads).toBe(1); // Only the unattached caller was checked for a fresh admission.
+        expect(await compare(runId, machineId, { cwd: root, source: { kind: 'session', sessionId: 'source-session' } }))
+          .toMatchObject({ effectAttempted: false, failureCause: { phase: 'rpc.admission.requester_execution_isolation' } });
         expect(await compare(runId, 'other-machine')).toMatchObject({ effectAttempted: false });
         expect(await rebootStep(3)).toEqual({ kind: 'accepted', bootedAt: 1 });
         expect(reboots).toEqual([expect.objectContaining({

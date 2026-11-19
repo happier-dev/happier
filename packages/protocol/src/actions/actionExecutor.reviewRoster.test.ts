@@ -91,6 +91,8 @@ describe('Review roster leaves', () => {
   it('leaves no admitted Review or reviewer when initial comparison capture is refused', async () => {
     const events: string[] = [];
     const persisted = observeReviewPersistence(events);
+    const failureCause = { phase: 'scm.requester.native_preparation', errorClass: 'Error',
+      errorCode: 'agent_isolation_unavailable', httpStatus: null };
     const executor = createActionExecutor({
       reviewRecords: () => persisted.records,
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
@@ -98,7 +100,8 @@ describe('Review roster leaves', () => {
         expect(actionId).toBe('scm.diffSummary.capture');
         expect(ScmComparisonCaptureInputSchema.parse(input)).toMatchObject({ cwd: '/repo', source: { kind: 'workingTree' } });
         events.push('capture');
-        return ScmComparisonCaptureOutputSchema.parse({ success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'Worktree capture unavailable' });
+        return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'Worktree capture unavailable',
+          failureCause, effectAttempted: false };
       },
       executionRunStart: async () => {
         events.push('run');
@@ -108,7 +111,7 @@ describe('Review roster leaves', () => {
     expect(await executor.execute('review.start', { sessionId: 'source-session', cwd: '/repo',
       reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review uncommitted changes.',
     }, { surface: 'ui', defaultSessionId: 'source-session', defaultSessionMachineId: 'source-machine' }))
-      .toMatchObject({ ok: false, errorCode: 'DIFF_UNAVAILABLE' });
+      .toMatchObject({ ok: false, errorCode: 'DIFF_UNAVAILABLE', failureCause, effectAttempted: false });
     expect(events).toEqual(['capture']);
     expect(persisted.read()).toBeNull();
   });

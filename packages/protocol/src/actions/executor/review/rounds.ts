@@ -45,7 +45,7 @@ async function captureReviewComparisonV1(inv: RoundActionInvocation, request: Sc
   const response = await inv.executeHostChild('scm.diffSummary.capture', request, context);
   if (!response.ok) throw new Error(response.error, { cause: response });
   const captured = ScmComparisonCaptureOutputSchema.parse(response.result);
-  if (!captured.success) throw new Error(captured.error, { cause: { ok: false, errorCode: captured.errorCode, error: captured.error } });
+  if (!captured.success) throw new Error(captured.error, { cause: readActionFailureEnvelope({ ...captured, ok: false }) });
   return captured.comparison;
 }
 

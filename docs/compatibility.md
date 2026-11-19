@@ -179,6 +179,14 @@ because older strict hint readers reject the optional field. The inspected
 prospective `../0.2` frontier at `f10121a13b7031230f767a3e4e1328e22aa2e7f7`
 has neither of these hint contracts; no predecessor adapter is introduced.
 
+In unreleased 0.3, `scm.diffSummary.capture` can return `DIFF_UNAVAILABLE`
+with the existing closed Action `failureCause` and an optional `effectAttempted`
+fact for requester placement refusals. Review carries these facts into its
+Action failure. Readers still accept comparison refusals without either field.
+Earlier strict development readers require a matching Protocol version for
+typed refusals. The `../0.2` frontier at `73c533b470` has no comparison capture
+contract. This diagnostic change adds no persistence or wire epoch.
+
 ## Workflow audience review (unreleased 0.3)
 
 The existing Artifact grant-list Action accepts optional `requestedAudience` and returns optional
