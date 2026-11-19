@@ -165,9 +165,8 @@ export {
  * supplies its immutable admitted snapshot; Channels selects only within it.
  */
 /**
- * The generic Settings catalog owns the route and availability decision. This
- * contribution supplies one native renderer and one page, rather than a
- * Channels-specific route, Resource store, or connection cache.
+ * The host catalogs own routing and availability. Channels supplies the
+ * shared native renderer for conversations, Session tabs, and bot settings.
  */
 export const CHANNELS_UI = {
   views: [{
@@ -212,18 +211,16 @@ export const CHANNELS_UI = {
     },
     icon: 'conversations' as const,
   }, {
-    // The Channels destination: the one owner of conversation bindings. It
-    // declares no placement, so it is contextual (owner Q2/Q3, 2026-10-30): no
-    // rail icon by default, opened from Settings → Channels, a Session's
-    // external conversations and the Home widget, and still pinnable. Its
-    // location is the open binding id, and its column lists every linked
-    // conversation beside it.
+    // The existing rail placement puts Channels in expanded More by default
+    // (owner ruling 2026-11-19). The open binding id is the page location,
+    // and the column lists the linked conversations beside it.
     id: CHANNELS_PAGE_VIEW_ID,
     container: 'appPage' as const,
     target: { kind: 'app' as const },
     renderer: CHANNELS_RENDERER_ID,
     title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
     icon: 'conversations' as const,
+    placement: { kind: 'rail' as const },
     column: { renderer: CHANNELS_GLANCE_RENDERER_ID },
   }, {
     // Channels is bundled, so a Home card shown by default would sit empty for
@@ -257,7 +254,7 @@ export const CHANNELS_UI = {
     artifact: CHANNELS_GLANCE_BUNDLE_ID,
     requiredHostMethods: ['openSurface' as const],
   }],
-  // Settings → Channels (owner Q2): one row in the host's Sessions & behavior group.
+  // Settings → Channels retains its bot setup entry (owner Q2, reaffirmed 2026-11-19).
   settingsPages: [{
     id: CHANNELS_SETTINGS_PAGE_ID,
     group: { kind: 'host' as const, id: 'sessionsBehavior' as const },

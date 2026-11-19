@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PLUGIN_MANIFEST as channelsManifest } from '@happier-dev/plugins-channels/manifest';
 import type { SessionOrganizationMoveInput } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { treeRowId } from '@/components/sessions/shell/drop-resolution/treeRowId';
 
@@ -83,6 +84,25 @@ describe('app rail model', () => {
         expect(ids(resolveNavigationPlacements(items).pinned)).not.toContain('plugin:acme.review:review');
         const pinned = resolveNavigationPlacements(items, { orderedIds: [], placements: { 'plugin:acme.review:review': 'pinned' } });
         expect(ids(pinned.pinned)).toContain('plugin:acme.review:review');
+    });
+
+    it('offers the Channels manifest destination in overflow by default and honors a saved placement', () => {
+        const view = channelsManifest.contributes?.ui?.views?.find(candidate => candidate.container === 'appPage');
+        if (!view) throw new Error('The Channels manifest must declare an app page');
+        const id = `plugin:${channelsManifest.id}:${view.id}`;
+        const channels = {
+            ...page(view.id, view.placement),
+            id,
+            pluginId: channelsManifest.id,
+            routePath: `/plugins/${channelsManifest.id}/${view.id}`,
+        };
+        const items = buildAppRailPlacementItems(buildAppRailEntries(catalog([channels]), { includeHidden: true }), false);
+        expect(resolveNavigationPlacements(items).effectivePlacements[id]).toBe('overflow');
+
+        for (const placement of ['pinned', 'hidden'] as const) {
+            const saved = resolveNavigationPlacements(items, { orderedIds: [], placements: { [id]: placement } });
+            expect(saved.effectivePlacements[id]).toBe(placement);
+        }
     });
 
     it('pins only the work essentials, Settings and Account on a fresh rail; the rest waits in More (owner 2026-11-10)', () => {

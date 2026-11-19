@@ -1935,7 +1935,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
     });
   });
 
-  it('is a contextual app destination with its own column (no rail icon, owner Q2), and a Home widget offered in Customize', async () => {
+  it('offers the Channels app destination in the rail with its own column and the Home widget in Customize', async () => {
     const ui = PLUGIN_MANIFEST.contributes?.ui;
     const views = ui?.views ?? [];
 
@@ -1948,6 +1948,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
       renderer: 'channels-renderer',
       title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
       icon: 'conversations',
+      placement: { kind: 'rail' },
       column: { renderer: 'channels-glance' },
     });
     // Channels is bundled: a card on every Home would be empty for people who
