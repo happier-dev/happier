@@ -54,8 +54,10 @@ export function buildAttachmentMessageMeta(uploaded: readonly UploadedAttachment
   return {
     happier: { kind: 'attachments.v1', payload: { attachments: uploaded.map(attachment => ({
       ...(attachment.id ? { id: attachment.id } : {}),
-      name: attachment.name, path: attachment.path, mimeType: attachment.mimeType,
-      sizeBytes: attachment.sizeBytes, sha256: attachment.sha256,
+      name: attachment.name, path: attachment.path,
+      ...(attachment.mimeType !== undefined ? { mimeType: attachment.mimeType } : {}),
+      sizeBytes: attachment.sizeBytes,
+      ...(attachment.sha256 !== undefined ? { sha256: attachment.sha256 } : {}),
       ...(attachment.attachmentHandle ? { attachmentHandle: attachment.attachmentHandle } : {}),
     })) } },
     ...(imageInputs.length ? { happierStructuredInputV1: { v: 1, imageInputs } } : {}),
