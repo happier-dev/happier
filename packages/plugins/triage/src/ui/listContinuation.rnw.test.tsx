@@ -37,6 +37,7 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+import { buildTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from './navigation/location.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
@@ -153,11 +154,10 @@ type Harness = Readonly<{
 }>;
 
 /**
- * A source that fills the Action's whole observation budget on every page and
- * always offers another, over a real Account Collection and the real scan
- * projection. Nothing between the press and either of those is stood in for.
+ * A source that fills the Action's whole observation budget on every page,
+ * over a real Account Collection and the real scan projection.
  */
-function createEntriesHarness(exhaustOnContinuation = false): Harness {
+function createEntriesHarness(lastPage?: number): Harness {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     const state = {
@@ -171,22 +171,20 @@ function createEntriesHarness(exhaustOnContinuation = false): Harness {
         const page = scanInput.page.kind === 'initial'
             ? 1
             : Number(scanInput.page.continuation?.token ?? '1');
-        if (exhaustOnContinuation && page > 1) {
-            return { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } };
-        }
+        const observations = Array.from(
+            { length: page === lastPage ? OPEN_PER_PAGE + 1 : MAX_TRIAGE_LIST_WINDOW_ROWS_V1 },
+            (unused, index) => observation({
+                entryId: `p${page}-${index}`,
+                title: `Change ${page}.${index}`,
+                // Newest-first places appended entries after the ones already listed.
+                sourceUpdatedAtMs: 1_000_000 - (page * MAX_TRIAGE_LIST_WINDOW_ROWS_V1 + index),
+                open: index < OPEN_PER_PAGE,
+            }),
+        );
+        if (page === lastPage) return { kind: 'complete', observations, evidence: { kind: 'walkFinished' } };
         return {
             kind: 'page',
-            observations: Array.from(
-                { length: MAX_TRIAGE_LIST_WINDOW_ROWS_V1 },
-                (unused, index) => observation({
-                    entryId: `p${page}-${index}`,
-                    title: `Change ${page}.${index}`,
-                    // Descending across pages, so the newest-first order puts
-                    // each appended window after the rows already on screen.
-                    sourceUpdatedAtMs: 1_000_000 - (page * MAX_TRIAGE_LIST_WINDOW_ROWS_V1 + index),
-                    open: index < OPEN_PER_PAGE,
-                }),
-            ),
+            observations,
             evidence: { kind: 'partial', reason: 'more-pages' },
             continuation: { v: 1, token: `${page + 1}` },
         } satisfies TriageScanResultV1;
@@ -322,7 +320,7 @@ afterEach(async () => {
 
 describe('the mounted window continuations', () => {
     it('offers to read more for a zero-match lens and reports no matches only after exhaustion', async () => {
-        const harness = createEntriesHarness(true);
+        const harness = createEntriesHarness(2);
         const scope = encodeURIComponent('example/repository');
         const shell = await mountShell(harness, `fp,${SOURCE.pluginId},${SOURCE.localId},${scope}/q,unmatched`);
 
@@ -336,31 +334,37 @@ describe('the mounted window continuations', () => {
         await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
     });
 
-    it('reaches the entries after the transport bound, and keeps the ones already listed', async () => {
-        const harness = createEntriesHarness();
-        const shell = await mountShell(harness);
+    it('retains matching rows across continuation and reports complete only when the lane exhausts', async () => {
+        const harness = createEntriesHarness(2);
+        const shell = await mountShell(harness, buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            filters: {
+                ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters,
+                scopes: [{ source: SOURCE, collisionScope: 'example/repository' }],
+                states: ['open'],
+            },
+        }));
 
         // The window is unfinished, so the Collection's footer says so and carries the one control that reads
         // more. It is a control beside the honesty line, never a dead row with no entry behind it.
         await expect(shell.getByRole('button', { name: 'Load more' })).resolves.toBeDefined();
         await expect(shell.queryByRole('row', { name: 'More entries may exist' })).resolves.toBeUndefined();
-        await expect(shell.getByText('Change 1.0')).resolves.toEqual({ content: 'Change 1.0' });
+        await expect(shell.getByText('2 loaded')).resolves.toBeDefined();
+        await expect(shell.queryByText('complete')).resolves.toBeUndefined();
+        await expect(shell.getByText('Change 1.0')).resolves.toBeDefined();
+        await expect(shell.queryByText('Change 1.2')).resolves.toBeUndefined();
         await expect(shell.queryByText('Change 2.0')).resolves.toBeUndefined();
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', { name: 'Load more' }));
         });
 
-        // The next bounded window is on screen, and the first one is still there.
-        await act(async () => {
-            await vi.waitFor(async () => {
-                // The appended window lands after the rows already listed (the virtualizer mounts only the
-                // first of them here), so the footer's own count is what says it arrived.
-                await expect(shell.getByText('112 loaded'))
-                    .resolves.toEqual({ content: '112 loaded' });
-            });
-        });
-        await expect(shell.getByText('Change 1.0')).resolves.toEqual({ content: 'Change 1.0' });
+        await expect(shell.getByText('Change 1.0')).resolves.toBeDefined();
+        await expect(shell.getByText('Change 2.0')).resolves.toBeDefined();
+        await expect(shell.queryByText('Change 2.2')).resolves.toBeUndefined();
+        await expect(shell.getByText('4 loaded')).resolves.toBeDefined();
+        await expect(shell.getByText('complete')).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
     });
 
     it('leaves every listed entry on screen when the append fails, and offers a retry', async () => {
@@ -403,6 +407,7 @@ describe('the mounted window continuations', () => {
         await expect(shell.queryByText('Pinned change 0')).resolves.toBeUndefined();
         await expect(shell.getByText('More pinned entries exist'))
             .resolves.toEqual({ content: 'More pinned entries exist' });
+        await expect(shell.getByText('2 loaded')).resolves.toBeDefined();
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', { name: 'Load more pins' }));
@@ -410,6 +415,7 @@ describe('the mounted window continuations', () => {
 
         await expect(shell.getByText('Pinned change 0'))
             .resolves.toEqual({ content: 'Pinned change 0' });
+        await expect(shell.getByText('4 loaded')).resolves.toBeDefined();
 
         // Reachable is only half of it. Unpin is only ever offered on a row (its one
         // row menu), so a pin that could not be listed could not be removed either.
@@ -421,6 +427,7 @@ describe('the mounted window continuations', () => {
         });
 
         await expect(shell.queryByText('Pinned change 0')).resolves.toBeUndefined();
+        await expect(shell.getByText('3 loaded')).resolves.toBeDefined();
         // The write did not fold the section back to its first page: the rest of
         // the pins the reader had loaded are still on screen.
         await expect(shell.getByText('Pinned change 1'))

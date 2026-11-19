@@ -2575,7 +2575,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   /** The window-honesty line (COLLECTION.md §2): how many rows are loaded and which connections have more. */
   const windowStatement = readTriageWindowStatementV1({
     loadedCount: rowCount,
-    window: listWindow?.window ?? null,
+    window: listWindow?.body ?? null,
     configuredSources: window.snapshot.configuredSources,
     readSourceName: (source) => readSourceDescriptor(source)?.displayName,
     entries: planTriageListContinuationV1({ section: 'entries', state: windowLoadMore, text }),

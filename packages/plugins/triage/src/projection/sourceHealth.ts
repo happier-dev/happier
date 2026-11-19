@@ -10,6 +10,7 @@ import type { TriageListInvocationErrorV1 } from '../actions/listEntriesProtocol
 export type TriageListBodyStateV1 = Readonly<{
     kind: 'healthy-empty' | 'incomplete-empty' | 'rows' | 'selected-source-failure';
     coverage: 'complete' | 'partial';
+    lanes: readonly TriageListLaneV1[];
     loadMore: TriageListLoadMoreV1 | undefined;
 }>;
 
@@ -42,7 +43,7 @@ export function projectTriageViewSourceHealthV1<TFailure extends Readonly<{ sour
     const rows = snapshot.window?.rows.some(row => row.observations.some(observation => selectedIds.has(observation.sourceInstanceId))) === true;
     return Object.freeze({
         body: Object.freeze({ kind: selectedFailures.length > 0 ? 'selected-source-failure'
-            : rows ? 'rows' : coverage === 'complete' ? 'healthy-empty' : 'incomplete-empty', coverage,
+            : rows ? 'rows' : coverage === 'complete' ? 'healthy-empty' : 'incomplete-empty', coverage, lanes: selectedLanes,
             loadMore: coverage === 'complete' ? Object.freeze({ kind: 'exhausted' as const }) : snapshot.loadMore }),
         selectedFailures: Object.freeze(selectedFailures),
         outsideSourcesAttention: outsideCount === 0 ? null : Object.freeze({ count: outsideCount, target: 'manageSources' }),
