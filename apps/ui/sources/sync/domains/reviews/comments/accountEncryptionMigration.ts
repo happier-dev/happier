@@ -1,5 +1,5 @@
 import { BoundReviewCommentEventSensitiveEnvelopeV1Schema, ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema, openReviewCommentEventSensitiveEnvelopeV1, openReviewCommentSensitiveMigrationSourceV1, bindReviewCommentEventSensitiveEnvelopeV1, reviewCommentEventSensitiveBindingMatchesV1, sealReviewCommentEventSensitiveEnvelopeV1, sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1, type BoundReviewCommentEventSensitiveEnvelopeV1, type ReviewCommentAccountEncryptionMigrationInventoryResponseV1, type ReviewCommentSensitiveMigrationSourceV1 } from '@happier-dev/protocol/reviews/comments/content';
-import { ReviewCommentEventV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentEventV1Schema, type ReviewCommentEventV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 
@@ -45,7 +45,7 @@ async function openLegacyEventDetails(params: Readonly<{
     ][number]['events'][number]['event'];
     sensitiveEnvelope: BoundReviewCommentEventSensitiveEnvelopeV1;
     openLegacyCiphertext?: (ciphertext: string) => Promise<unknown | null>;
-}>): Promise<Record<string, unknown>> {
+}>): Promise<ReviewCommentEventV1['event']> {
     if (!reviewCommentEventSensitiveBindingMatchesV1({
         event: params.event,
         bound: params.sensitiveEnvelope,
@@ -72,7 +72,7 @@ async function openLegacyEventDetails(params: Readonly<{
     })) {
         throw new Error('review_comment_migration_event_binding_mismatch');
     }
-    return details;
+    return reconstructed.event;
 }
 
 async function openEventDetails(params: Readonly<{
@@ -82,7 +82,7 @@ async function openEventDetails(params: Readonly<{
     sourceMaterial?: AccountScopedCryptoMaterial;
     openLegacyCiphertext?: (ciphertext: string) => Promise<unknown | null>;
 }>): Promise<Readonly<{
-    details: Record<string, unknown>;
+    details: ReviewCommentEventV1['event'];
     requestBinding: BoundReviewCommentEventSensitiveEnvelopeV1['binding']['requestBinding'];
 }>> {
     const bound = BoundReviewCommentEventSensitiveEnvelopeV1Schema.parse(
