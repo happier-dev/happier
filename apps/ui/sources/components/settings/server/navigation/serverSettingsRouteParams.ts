@@ -1,4 +1,4 @@
-import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
+import { admitOpaqueInternalReturnPath } from '@/utils/path/routeUtils';
 
 type ParamValue = string | string[] | undefined;
 
@@ -67,7 +67,7 @@ export function parseServerSettingsRouteParams(params: Readonly<{
     const groupEditorRaw = firstString(params.groupEditor);
     const groupServerIdsRaw = firstString(params.groupServerIds);
     const recoveryProfile = firstString(params.recoveryProfile).trim();
-    const recoveryReturnTo = normalizeInternalReturnPath(firstString(params.recoveryReturnTo))
+    const recoveryReturnTo = admitOpaqueInternalReturnPath(firstString(params.recoveryReturnTo))
         ?? HOME_RECOVERY_ROUTE;
     return {
         url: url ? url : null,
@@ -97,7 +97,7 @@ export function buildHomeRecoveryHref(input: Readonly<{
         pathname: HOME_RECOVERY_ROUTE,
         params: {
             recoveryProfile: profileRef,
-            recoveryReturnTo: normalizeInternalReturnPath(input.returnTo) ?? HOME_RECOVERY_ROUTE,
+            recoveryReturnTo: admitOpaqueInternalReturnPath(input.returnTo) ?? HOME_RECOVERY_ROUTE,
         },
     };
 }

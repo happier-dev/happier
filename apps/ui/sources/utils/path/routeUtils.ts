@@ -29,17 +29,28 @@ export function coerceRelativeRoute(raw: string): string | null {
     return normalizeInternalReturnPath(raw);
 }
 
-/** Admit a runtime internal destination without claiming generated route membership. */
-export function admitInternalRouteHref(destination: string | HrefObject): Href {
-    const href = typeof destination === 'string'
-        ? destination.trim()
-        : { ...destination, pathname: destination.pathname.trim() };
-    // Query/hash values and object params are already serialized or belong to Expo's serializer.
-    // Validate only the navigation path; never decode those opaque values a second time.
-    const pathname = (typeof href === 'string' ? href : href.pathname).split(/[?#]/, 1)[0];
-    if (normalizeInternalReturnPath(pathname) === null) throw new Error('Invalid internal route destination');
+/** Admit a navigation path without decoding its opaque query and fragment. */
+export function admitOpaqueInternalReturnPath(raw: unknown): string | null {
+    if (typeof raw !== 'string') return null;
+    const path = raw.trim();
+    if (!path.startsWith('/') || CONTROL_CHARACTER_PATTERN.test(path)) return null;
+    const pathname = path.split(/[?#]/, 1)[0];
+    return normalizeInternalReturnPath(pathname) === null ? null : path;
+}
+
+/** Check the navigation path while preserving the opaque query, fragment and params. */
+export function tryAdmitInternalRouteHref(destination: string | HrefObject): Href | null {
+    const path = admitOpaqueInternalReturnPath(typeof destination === 'string' ? destination : destination.pathname);
+    if (path === null) return null;
     // Approved SDK boundary: Expo dispatch accepts admitted runtime paths beyond generated route names.
-    return href as Href;
+    return typeof destination === 'string' ? path as Href : { ...destination, pathname: path } as Href;
+}
+
+/** Admit a runtime internal destination for callers whose route is already known to be valid. */
+export function admitInternalRouteHref(destination: string | HrefObject): Href {
+    const href = tryAdmitInternalRouteHref(destination);
+    if (href === null) throw new Error('Invalid internal route destination');
+    return href;
 }
 
 /** Preserve an admitted internal destination while qualifying its query. */

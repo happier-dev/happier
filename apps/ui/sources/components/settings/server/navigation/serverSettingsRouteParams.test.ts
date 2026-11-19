@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    buildHomeRecoveryHref,
     buildServerSettingsGroupEditorHref,
     parseServerSettingsRouteParams,
 } from './serverSettingsRouteParams';
@@ -79,6 +80,15 @@ describe('parseServerSettingsRouteParams', () => {
         }).recovery).toEqual({
             profileRef: 'home-selected',
             returnTo: '/server',
+        });
+    });
+
+    it('carries the original Project Source link through exact-Home recovery', () => {
+        const returnTo = '/projects/setup?source=source-a&target=https%3A%2F%2Fhome.example.test';
+        const recovery = buildHomeRecoveryHref({ profileRef: 'home-selected', returnTo });
+        expect(parseServerSettingsRouteParams(recovery.params).recovery).toEqual({
+            profileRef: 'home-selected',
+            returnTo,
         });
     });
 

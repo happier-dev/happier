@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { coerceRelativeRoute, normalizeInternalReturnPath } from './routeUtils';
+import { coerceRelativeRoute, normalizeInternalReturnPath, tryAdmitInternalRouteHref } from './routeUtils';
 
 describe('coerceRelativeRoute', () => {
     it('accepts a single-leading-slash route', () => {
@@ -42,5 +42,20 @@ describe('coerceRelativeRoute', () => {
         expect(normalizeInternalReturnPath('//user:pass@example.com/settings')).toBeNull();
         expect(normalizeInternalReturnPath('/settings\u0000/account')).toBeNull();
         expect(normalizeInternalReturnPath('/settings%0a/account')).toBeNull();
+    });
+});
+
+describe('tryAdmitInternalRouteHref', () => {
+    it('admits internal bearer routes without decoding query or fragment values', () => {
+        const verify = '/auth/email/verify?token=token%252Fvalue&target=https%3A%2F%2Fhome.example.test#state%2523';
+        expect(tryAdmitInternalRouteHref(verify)).toBe(verify);
+        expect(tryAdmitInternalRouteHref('/join/opaque-invitation')).toBe('/join/opaque-invitation');
+        expect(tryAdmitInternalRouteHref('/share/opaque-capability#key%2F%3D')).toBe('/share/opaque-capability#key%2F%3D');
+    });
+
+    it('declines hostile paths and malformed route input without throwing', () => {
+        for (const path of ['https://elsewhere.test', '//elsewhere.test', '%2Felsewhere.test', '/%2Felsewhere.test', '/%5celsewhere.test', '/%', '/settings?state=x\nnext']) {
+            expect(tryAdmitInternalRouteHref(path)).toBeNull();
+        }
     });
 });
