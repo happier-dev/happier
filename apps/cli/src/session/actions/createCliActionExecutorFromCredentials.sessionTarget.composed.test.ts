@@ -292,11 +292,15 @@ describe('original CLI Session Action delivery', () => {
         });
     });
 
-    it('opens Team-only E2EE detail and sends as the authenticated member', async () => {
+    it.each([
+        { login: 'account login with an explicit Machine', terminal: false },
+        { login: 'ordinary terminal login', terminal: true },
+    ])('opens Team-only E2EE detail and sends as the authenticated member with $login', async ({ terminal }) => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-team-send-' }, async () => {
             const accountId = 'team-member';
             const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
-                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+                provenance: terminal ? { v: 1, kind: 'terminal', authority: 'account_automation' }
+                    : { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
             const machineKey = new Uint8Array(32).fill(34);
             const publicKey = deriveBoxPublicKeyFromSeed(machineKey);
             const credentials = { token, credentialProvenance: 'stored_session' as const,
@@ -339,8 +343,17 @@ describe('original CLI Session Action delivery', () => {
                 requestedAction: { v: 1, kind: 'enqueue' } };
             const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
                 if (url.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
-                expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
                 expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                if (terminal) {
+                    expect(url).toBe(`https://home.test/v2/sessions/${sessionId}/pending`);
+                    expect(body).toMatchObject({ localId: input.localId, requestedAction: input.requestedAction });
+                    expect(body).not.toHaveProperty('targetMachineId');
+                    const opened = decryptSessionPayload({ ctx, ciphertextBase64: body.ciphertext });
+                    expect(opened).toMatchObject({ content: { text: input.message } });
+                    expect(opened).not.toHaveProperty('meta.happierInputRequestV1.actionRequestAttributionV1');
+                    return { status: 200, data: { didWrite: true, terminal: false } };
+                }
+                expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
                 const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
                 if (envelope.v !== 2) throw new Error('Expected encrypted Session delivery');
                 const target = { kind: 'session' as const, sessionId };
@@ -354,7 +367,8 @@ describe('original CLI Session Action delivery', () => {
                     executedMachineId: machineId, randomBytes: length => new Uint8Array(length).fill(37),
                     execution: { ok: true, result: { status: 'accepted', localId: input.localId } } }).response };
             });
-            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true, machineId,
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                ...(terminal ? {} : { machineId }),
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
                 actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
                     v: 1, approvalWaivedSurfaces: { [actionId]: ['cli'] },
@@ -364,7 +378,7 @@ describe('original CLI Session Action delivery', () => {
             const result = await executor.execute(actionId, input, { surface: 'cli' });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
                 result: { status: 'accepted', localId: input.localId } });
-            expect(delivered.mock.calls.filter(([url]) => url.endsWith(`/v1/actions/${actionId}`))).toHaveLength(1);
+            expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toHaveLength(1);
         });
     });
 });

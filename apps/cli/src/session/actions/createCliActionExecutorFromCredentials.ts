@@ -2064,7 +2064,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (!transport.ok) return { context,
           invocation: createOneShotPatInvocation(async () => actionResolutionFailure(transport)) };
         const request = buildTrustedHostSessionInputAdmissionV1(context.surface, context.actionRequestAttributionV1).request;
-        if (actionId === 'session.message.send' && ordinary && !requireDaemonIngress
+        if (actionId === 'session.message.send' && (ordinary || pairedTerminal && context.authority !== 'account_automation')
+          && !requireDaemonIngress
           && !params.machineId && context.externalActionTarget?.kind !== 'machine'
           && readSessionAccessProjectionRoleV1(transport.rawSession) === 'recipient') {
           const send = SessionSendMessageInputSchema.safeParse(admittedInput);
