@@ -630,6 +630,15 @@ export function projectUsageSessionMessageProjection(message: OpenedUsageMessage
         nativeAgentId, sidechainIds, tools, ...(event === undefined ? {} : { event }), ...(eventId === undefined ? {} : { eventId }) };
 }
 
+function indexUnambiguousWitnesses<T, Key>(witnesses: Iterable<T>, readKey: (witness: T) => Key): ReadonlyMap<Key, T | null> {
+    const index = new Map<Key, T | null>();
+    for (const witness of witnesses) {
+        const key = readKey(witness);
+        index.set(key, index.has(key) ? null : witness);
+    }
+    return index;
+}
+
 /** A bounded projection of opened canonical facts, never a Session lifecycle owner. */
 export function projectSessionUsageWorkEvidence(
     session: OpenedUsageSession,
@@ -715,15 +724,15 @@ export function projectSessionUsageWorkEvidence(
     // A complete opened user/event page is necessary to exclude changed workloads.
     // Terminal completion measures response completion, not quality or native context equivalence.
     if (coverage.messagesComplete === true) {
+        const acceptedByTurn = indexUnambiguousWitnesses(acceptedInputs, row => row.turnId);
+        const compositionByInput = indexUnambiguousWitnesses(composition.values(), row => row.inputId);
         for (const turn of turns) {
             const terminalAt = timestamp(turn.terminalAt);
-            const accepted = acceptedInputs.filter(row => row.turnId === turn.turnId);
-            if (turn.status !== 'completed' || terminalAt === null || accepted.length !== 1
-                || accepted[0]!.deliveryKind !== 'newTurn') continue;
-            const records = [...composition.values()].filter(row => row.inputId === accepted[0]!.inputId);
-            if (records.length !== 1) continue;
-            const record = records[0]!;
-            if (!record.requestIdentity || record.boundary !== 'host_pre_dispatch' || record.deliveryKind !== 'newTurn'
+            if (turn.status !== 'completed' || terminalAt === null) continue;
+            const accepted = acceptedByTurn.get(turn.turnId);
+            if (accepted?.deliveryKind !== 'newTurn') continue;
+            const record = compositionByInput.get(accepted.inputId);
+            if (!record?.requestIdentity || record.boundary !== 'host_pre_dispatch' || record.deliveryKind !== 'newTurn'
                 || record.turnId !== null && record.turnId !== turn.turnId || record.observedAtMs > terminalAt) continue;
             const projected = UsageCoachModelRequestSchema.safeParse({ evidenceId: record.evidenceId,
                 observedAtMs: terminalAt, startedAtMs: turn.startedAt, sessionId: session.id,

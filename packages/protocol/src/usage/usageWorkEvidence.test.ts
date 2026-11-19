@@ -311,6 +311,81 @@ describe('Usage shared work evidence', () => {
         expect(retained).toEqual(projected);
     });
 
+    it('joins retained model-request witnesses with work proportional to turns', () => {
+        const countJoinKeyReads = (turnCount: number) => {
+            const completedTurns = Array.from({ length: turnCount }, (_, index) => ({
+                turnId: `turn-${index}`, status: 'completed' as const, startedAt: index * 10,
+                terminalAt: index * 10 + 9, updatedAt: index * 10 + 9,
+            }));
+            const opened = { ...session, sessionTurns: SessionTurnsProjectionV1Schema.parse({
+                ...turns, turns: completedTurns,
+            }) };
+            const requestIdentity = {
+                scopeKey: 'a'.repeat(64), digest: 'b'.repeat(64),
+                selection: { agentTargetKey: 'agent:happier.agent.codex:codex', providerConnectionId: null, modelId: 'model' },
+            };
+            const messageEvidence = workEvidence.UsageSessionMessageEvidenceSchema.parse({
+                acceptedInputs: completedTurns.map(turn => ({
+                    inputId: turn.turnId, workId: JSON.stringify([session.id, turn.turnId]), turnId: turn.turnId,
+                    deliveryKind: 'newTurn', acceptedAtMs: turn.startedAt + 1,
+                })).reverse(),
+                coach: { composition: completedTurns.map(turn => ({
+                    v: 1, evidenceId: turn.turnId, sessionId: session.id, turnId: turn.turnId,
+                    inputId: turn.turnId, observedAtMs: turn.startedAt + 2, boundary: 'host_pre_dispatch',
+                    deliveryKind: 'newTurn', coverage: 'host_only', components: [], nativePrefix: null,
+                    contextWindowTokens: null, requestIdentity,
+                })).reverse() },
+            });
+            const inputs = messageEvidence.acceptedInputs!;
+            const coach = messageEvidence.coach!;
+            const compositions = coach.composition!;
+            const reads = { acceptedInputTurnIds: 0, compositionInputIds: 0 };
+            const countedEvidence = {
+                acceptedInputs: inputs.map(input => ({ ...input, get turnId() {
+                    reads.acceptedInputTurnIds++;
+                    return input.turnId;
+                } })),
+                coach: { ...coach, composition: compositions.map(composition => ({ ...composition, get inputId() {
+                    reads.compositionInputIds++;
+                    return composition.inputId;
+                } })) },
+            };
+            const expected = completedTurns.map(turn => ({
+                evidenceId: turn.turnId, sessionId: session.id, turnId: turn.turnId,
+                startedAtMs: turn.startedAt, observedAtMs: turn.terminalAt, requestIdentity,
+            }));
+            const complete = projectSessionUsageWorkEvidence(opened, undefined,
+                { messagesComplete: true, messageEvidence: countedEvidence });
+            expect(complete.coach?.detail?.modelRequests).toEqual(expected);
+
+            const replacementIdentity = { ...requestIdentity, digest: 'c'.repeat(64) };
+            const ambiguousEvidence = workEvidence.UsageSessionMessageEvidenceSchema.parse({
+                acceptedInputs: [...inputs, { ...inputs.at(-1)!, inputId: 'duplicate-accepted-input' }],
+                coach: { composition: [
+                    ...compositions,
+                    { ...compositions.at(-2)!, evidenceId: 'duplicate-composition' },
+                    { ...compositions.at(-3)!, requestIdentity: replacementIdentity },
+                ] },
+            });
+            expect(projectSessionUsageWorkEvidence(opened, undefined, { messagesComplete: true, messageEvidence: ambiguousEvidence })
+                .coach?.detail?.modelRequests).toEqual([
+                { ...expected[2], requestIdentity: replacementIdentity }, ...expected.slice(3),
+            ]);
+            expect(projectSessionUsageWorkEvidence(opened, undefined, { messagesComplete: false, messageEvidence })
+                .coach?.detail?.modelRequests).toEqual([]);
+
+            return reads;
+        };
+
+        const smallTurnCount = 8;
+        const largeTurnCount = 32;
+        const small = countJoinKeyReads(smallTurnCount);
+        const large = countJoinKeyReads(largeTurnCount);
+        const scale = largeTurnCount / smallTurnCount;
+        expect.soft(large.acceptedInputTurnIds).toBeLessThanOrEqual(small.acceptedInputTurnIds * scale);
+        expect.soft(large.compositionInputIds).toBeLessThanOrEqual(small.compositionInputIds * scale);
+    });
+
     it('adapts only valid raw native records and keeps sidechain witnesses while dropping prose', () => {
         const child = { id: 'child', createdAt: 210, content: { role: 'agent', content: { type: 'output', data: {
             type: 'assistant', parent_tool_use_id: 'task', message: { role: 'assistant', content: [{ type: 'text', text: 'private child prose' }] },
