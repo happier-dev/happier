@@ -76,7 +76,7 @@ describe('Look edits: per-picture memory keeps only what differs from the releas
     const authored: HomeAtmosphere = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture',
       picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, ref: { kind: 'builtin', id: plugin.id } },
       looks: { [plugin.id]: { look: 'fine', strength: 1, dissolve: 'ordered' } } };
-    const home = buildHomeAtmosphereControlMutation({ ...settingsDefaults, homeAtmosphere: authored }, 'appearance.atmospherePlanetPlacement', 'side')?.homeAtmosphere;
+    const home = buildHomeAtmosphereControlMutation({ ...settingsDefaults, homeAtmosphere: authored }, 'appearance.atmospherePlanetIntensity', 'calm')?.homeAtmosphere;
     expect(home?.looks).toEqual(authored.looks);
     const project = projectAtmosphereEdit(authored, undefined, current => ({ ...current, showOn: ['home', 'new-session', 'projects', 'sessions'] }));
     expect(project.looks).toEqual(authored.looks);

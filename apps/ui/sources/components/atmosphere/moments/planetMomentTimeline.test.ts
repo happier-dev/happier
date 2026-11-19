@@ -1,17 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   PLANET_MOMENT_TIMINGS,
-  type PlanetSceneOptions,
 } from '@happier-dev/brand/planet';
+import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import {
-  homePlanetGeometry,
-  homePlanetSceneOptions,
-} from '../homePlanetPlacement';
-import {
+  loadingPlanetLayer,
   loadingPlanetOrigin,
   loadingPlanetPhase,
-  loadingPlanetSource,
-  loadingPlanetTravel,
   type LoadingPlanetPhase,
 } from './planetMomentTimeline';
 
@@ -32,14 +28,6 @@ function play(
     frames.push({ t, phase: loadingPlanetPhase(t, ready, options) });
   }
   return frames;
-}
-
-function corner(): PlanetSceneOptions {
-  return homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane, {
-    theme: 'dark',
-    style: 'balanced',
-    digits: true,
-  });
 }
 
 describe('Loading planet timeline', () => {
@@ -101,21 +89,17 @@ describe('Loading planet timeline', () => {
         .every(({ phase }) => phase.kind === 'landed' || phase.kind === 'none' || phase.cover === 0),
     ).toBe(true);
 
-    const target = corner();
-    const source = loadingPlanetSource(
-      loadingPlanetOrigin(pane),
-      { rotate: target.rotate ?? 0, mirror: false },
-      { theme: 'dark', pane, dpr: 2 },
-    );
-    // The landed frame is Home's own planet, not a value a rounding step away from it.
-    expect(loadingPlanetTravel(source, target, 1)).toBe(target);
-    const last = loadingPlanetTravel(source, target, travel.at(-1)!.k);
-    expect(Math.abs(last.cx! - target.cx!)).toBeLessThan(2);
-    expect(Math.abs(last.R! - target.R!)).toBeLessThan(2);
-    // It travels from the cloud's centre, a sixth of the pane across.
-    const first = loadingPlanetTravel(source, target, 0);
-    expect([first.cx, first.cy, first.R]).toEqual([575, 405, 900 * 0.17]);
-    expect(first.style).toBe(target.style);
+    const geometry = horizonPlanetGeometry(pane);
+    const layer = planetGlyphLayer({ geometry, intensity: 'full', digits: false });
+    const target = { kind: 'planet', layer, pane } as const;
+    const origin = loadingPlanetOrigin(pane);
+    expect(loadingPlanetLayer(landed.phase, pane, origin, target)).toBe(layer);
+    const last = loadingPlanetLayer({ kind: 'travel', k: travel.at(-1)!.k, cover: 0 }, pane, origin, target)!;
+    expect(Math.abs(last.geometry.cx - geometry.cx)).toBeLessThan(2);
+    expect(Math.abs(last.geometry.R - geometry.R)).toBeLessThan(2);
+    const first = loadingPlanetLayer({ kind: 'travel', k: 0, cover: 0 }, pane, origin, target)!;
+    expect(first.geometry).toMatchObject(origin);
+    expect(first.intensity).toBe('full');
   });
 
   it('ends centred and cross-fades when Home shows no planet', () => {

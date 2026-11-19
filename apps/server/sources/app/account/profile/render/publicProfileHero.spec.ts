@@ -8,8 +8,10 @@ import { loadSharp } from '@/storage/blob/sharpRuntime';
 import { createPublicProfileHero, renderPublicProfileHeroImage, type PublicProfileHeroOptions } from './publicProfileHero';
 import { renderPublicProfileBackdrop } from './publicProfileBackdrop';
 import { renderPublicProfilePlanetSceneSvg } from './publicProfileSvg';
-import { createPlanetScene } from '@happier-dev/brand/planet';
-import { homePlanetGeometry, homePlanetSceneOptions } from '@happier-dev/brand/planet-placement';
+import { glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { resolveHappierPublicProfilePlanetBand } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { readStoredPublicProfileAppearance } from '../publicProfileStorage';
 import { renderPublicProfileHtml } from './publicProfileHtml';
 
 const paletteOf = (theme: 'light' | 'dark'): PublicProfileHeroOptions['palette']['light'] => {
@@ -128,7 +130,10 @@ describe('cold public-profile hero pixels', () => {
     it('paints the shared wide/phone band in both themes and densities, and preserves None', async () => {
         const sharp = await loadSharp();
         const view = profile();
-        view.appearance.atmosphere = { source: 'planet', planet: { placement: 'side', style: 'airy', digits: true } };
+        view.appearance = readStoredPublicProfileAppearance(JSON.stringify({ theme: 'auto',
+            atmosphere: { source: 'planet', planet: { placement: 'side', style: 'airy', digits: true } },
+        }))!;
+        expect(view.appearance.atmosphere).toEqual({ source: 'planet', planet: { intensity: 'quiet', digits: true } });
         const started = performance.now();
         const rss = process.memoryUsage().rss;
         const hero = await paintHero(view, { palette });
@@ -144,9 +149,10 @@ describe('cold public-profile hero pixels', () => {
             }
         }
         const pane = { width: expectedMetrics.rasterWidthPx.phone, height: expectedMetrics.bandHeightPx.phone };
-        const scene = createPlanetScene({ ...homePlanetSceneOptions(homePlanetGeometry('side', pane), pane,
-            { theme: 'dark', style: 'airy', digits: true }), dpr: 2 });
-        const paint = await renderPublicProfilePlanetSceneSvg(scene, pane, 2);
+        const geometry = horizonPlanetGeometry(pane, resolveHappierPublicProfilePlanetBand(pane));
+        const frame = glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 2, theme: 'dark',
+            layers: [planetGlyphLayer({ geometry, intensity: 'quiet', digits: true })] });
+        const paint = await renderPublicProfilePlanetSceneSvg(frame, pane, 2);
         const expected = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="780" height="600" viewBox="0 0 390 300">${paint}</svg>`))
             .flatten({ background: palette.dark.background }).ensureAlpha().png().toBuffer();
         expect(Buffer.from(privacyKit.decodeBase64(hero!.editions.dark.phone.two.base64))).toEqual(expected);

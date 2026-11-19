@@ -1,9 +1,10 @@
 import type { PublicProfileReadResultV1 } from '@happier-dev/protocol/account/publicProfilePublication';
-import { createPlanetScene, createPlanetStatusCell } from '@happier-dev/brand/planet';
-import { homePlanetGeometry, homePlanetSceneOptions } from '@happier-dev/brand/planet-placement';
+import { createPlanetStatusCell } from '@happier-dev/brand/planet';
+import { glyphFrame, planetGlyphLayer, type GlyphFrame } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import * as privacyKit from 'privacy-kit';
 import { loadSharp } from '@/storage/blob/sharpRuntime';
-import { readPublicProfileFont } from './publicProfileFonts';
+import { readPublicProfileFont, readPublicProfilePlanetFont } from './publicProfileFonts';
 import { renderPublicProfileBackdrop } from './publicProfileBackdrop';
 import { PUBLIC_PROFILE_FONT_COVERAGE, PUBLIC_PROFILE_FONT_FAMILIES } from './publicProfileFontCoverage.generated';
 
@@ -127,26 +128,50 @@ async function renderAtmosphere(view: Extract<PublicProfileReadResultV1, { kind:
         return image(backdrop.bytes, 0, 0, width, height);
     }
     const pane = { width, height };
-    const geometry = homePlanetGeometry(atmosphere.planet.placement, pane, { limb });
-    const scene = createPlanetScene(homePlanetSceneOptions(geometry, pane, { theme, style: atmosphere.planet.style, digits: atmosphere.planet.digits }));
-    return renderPublicProfilePlanetSceneSvg(scene, pane);
+    const geometry = horizonPlanetGeometry(pane, { limb });
+    const frame = glyphFrame({ view: { w: width, h: height }, dpr: 1, theme, layers: [planetGlyphLayer({ geometry, ...atmosphere.planet })] });
+    return renderPublicProfilePlanetSceneSvg(frame, pane);
 }
 
-/** Physical Brand scene paint shared by fixed assets and the cold hero. */
-export async function renderPublicProfilePlanetSceneSvg(scene: ReturnType<typeof createPlanetScene>,
+/** Rasterizes one sampled Brand frame for fixed assets and the cold hero. */
+export async function renderPublicProfilePlanetSceneSvg(frame: GlyphFrame,
     pane: Readonly<{ width: number; height: number }>, pixelRatio: 1 | 2 = 1): Promise<string> {
     const { width, height } = pane;
-    const dots = [...scene.body, ...scene.haze].map(dot => `<circle cx="${dot.x}" cy="${dot.y}" r="${dot.r}" fill="rgb(${dot.rgb.join(',')})" fill-opacity="${dot.opacity}"/>`).join('');
-    if (scene.cells.length === 0) return dots;
-    // Brand owns the resting digits. Register the exact shipped face before the
-    // fixed-size physical layer; the returned asset contains only local PNG pixels.
     const sharp = await loadSharp();
-    const font = await readPublicProfileFont('regular');
-    await sharp({ text: { text: '0', font: 'Inter 12', fontfile: font.path, rgba: true } }).png().toBuffer();
-    const cells = scene.cells.map(cell => `<text x="${cell.x}" y="${cell.y}" text-anchor="middle" font-family="Inter" font-size="${cell.fs}" fill="rgb(${cell.rgb.join(',')})" fill-opacity="${cell.a}">${xml(cell.ch)}</text>`).join('');
-    const raster = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${cells}</svg>`),
-        { density: 72 * pixelRatio }).png().toBuffer();
-    return dots + image(raster, 0, 0, width, height);
+    const { body, grid, sprites } = frame;
+    let disc = '';
+    if (body) {
+        const texture = await sharp(Buffer.from(body.rgba), { raw: { width: body.cols, height: body.rows, channels: 4 } }).png().toBuffer();
+        const { cx, cy, R } = body.disc;
+        // A fixed asset can include both theme editions, with a different clip for each edition.
+        const clip = `planet-${width}-${height}-${cx}-${cy}-${R}`;
+        disc = `<defs><clipPath id="${clip}"><circle cx="${cx / pixelRatio}" cy="${cy / pixelRatio}" r="${R / pixelRatio}"/></clipPath></defs><g clip-path="url(#${clip})">`
+            + image(texture, 0, 0, body.cols * grid.cell[0] / pixelRatio, body.rows * grid.cell[1] / pixelRatio) + '</g>';
+    }
+    if (!sprites.glyph.length) return disc;
+    const font = await readPublicProfilePlanetFont();
+    const fontSize = Math.round(grid.cell[1] * 0.94);
+    const atlas = await Promise.all(Array.from('0123456789', text => sharp({ text: {
+        text, font: `IBM Plex Mono ${fontSize}`, fontfile: font.path, rgba: true,
+    } }).raw().toBuffer({ resolveWithObject: true })));
+    const rgba = Buffer.alloc(frame.width * frame.height * 4);
+    for (let index = 0; index < sprites.glyph.length; index++) {
+        const { data, info } = atlas[sprites.glyph[index] % 10];
+        const left = sprites.at[index * 2] - Math.round(info.width / 2);
+        const top = sprites.at[index * 2 + 1] - Math.round(info.height / 2);
+        const ink = index * 4;
+        for (let y = Math.max(0, -top); y < Math.min(info.height, frame.height - top); y++) {
+            for (let x = Math.max(0, -left); x < Math.min(info.width, frame.width - left); x++) {
+                const at = ((top + y) * frame.width + left + x) * 4;
+                rgba[at] = sprites.rgba[ink];
+                rgba[at + 1] = sprites.rgba[ink + 1];
+                rgba[at + 2] = sprites.rgba[ink + 2];
+                rgba[at + 3] = Math.round(data[(y * info.width + x) * info.channels + 3] * sprites.rgba[ink + 3] / 255);
+            }
+        }
+    }
+    const raster = await sharp(rgba, { raw: { width: frame.width, height: frame.height, channels: 4 } }).png().toBuffer();
+    return disc + image(raster, 0, 0, width, height);
 }
 
 /** SVG and shields JSON describe the identical currently admitted metric. */

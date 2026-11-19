@@ -15,9 +15,7 @@ import { AtmosphereSurfaceFrame } from './AtmosphereSurfaceFrame';
 import { useAtmosphereBandBoundary } from './atmosphereBandBoundary';
 import { atmosphereStageStore } from './atmosphereStage';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
-import { PlanetCanvas } from './PlanetCanvas';
-import { homePlanetGeometry, homePlanetSceneOptions } from './homePlanetPlacement';
-import { getDeviceType } from '@/utils/platform/responsive';
+import { GlyphSurface } from './glyph/GlyphSurface';
 import { NewSessionComposerCard } from '@/components/sessions/new/components/NewSessionComposerCard';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
@@ -31,12 +29,27 @@ import { pictureStore } from './pictureStore.web';
 vi.mock('./pictureStore', () => import('./pictureStore.web'));
 
 const planetPaints = vi.hoisted(() => ({ count: 0, font: {} }));
-vi.mock('@shopify/react-native-skia', async () => ({
-    ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
-    // Native picture allocation is the physical drawing boundary.
-    useTypeface: () => planetPaints.font,
-    createPicture: () => { planetPaints.count++; return { dispose() {} }; },
+vi.mock('./glyph/glyphAtlas.native', () => ({
+    // The Expo asset and native worker rasterize the shipped typeface outside this process.
+    glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
+        const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+        return { cw, ch, chars, masks: new Uint8Array(cw * ch * chars.length) };
+    },
 }));
+vi.mock('@shopify/react-native-skia', async () => {
+    const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
+    const dispose = () => undefined;
+    return { ...boundary, BlendMode: { Modulate: 1, DstIn: 2 }, ClipOp: { Intersect: 1 },
+        TileMode: { Repeat: 1, Clamp: 2 },
+        Skia: { ...boundary.Skia,
+            Data: { fromBytes: () => ({ dispose }) },
+            Image: { MakeImage: () => ({ dispose, makeShaderOptions: () => ({ dispose }) }) },
+            Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
+            Path: { Make: () => ({ dispose }) },
+        },
+        createPicture: () => { planetPaints.count++; return { dispose }; },
+    };
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -203,19 +216,19 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
             const hiddenPaints = planetPaints.count;
             await act(async () => {
                 storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: {
-                    ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, style: 'rich' },
+                    ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, intensity: 'full' },
                 } } }));
                 vi.advanceTimersByTime(300_000);
             });
             expect.soft(planetPaints.count - hiddenPaints).toBe(0);
-            expect.soft(screen.findAllByType(PlanetCanvas)).toHaveLength(0);
+            expect.soft(screen.findAllByType(GlyphSurface)).toHaveLength(0);
             expect(atmosphereStageStore.get().panes).toHaveLength(0);
             expect(timerFires).toBe(0);
             expect(vi.getTimerCount()).toBe(0);
             // A visible split pane still paints without keyboard focus.
             await screen.update(scene(true, false));
             expect(planetPaints.count).toBeGreaterThan(hiddenPaints);
-            expect(screen.findAllByType(PlanetCanvas)).toHaveLength(1);
+            expect(screen.findAllByType(GlyphSurface)).toHaveLength(1);
             expect(atmosphereStageStore.get().panes).toHaveLength(1);
             expect(mounts).toBe(1);
         } finally {
@@ -262,8 +275,8 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
             expect(flattenTestStyle(screen.findByTestId('surface-planet')!.props.style)).toMatchObject({
                 left: rect.x, top: rect.y, width: rect.width, height: rect.height, overflow: 'hidden',
             });
-            const canvas = screen.findByType(PlanetCanvas);
-            expect(canvas.props.options.view).toEqual({ w: rect.width, h: rect.height });
+            const canvas = screen.findByType(GlyphSurface);
+            expect(canvas.props).toMatchObject({ width: rect.width, height: rect.height });
         };
         try {
             check();
@@ -357,8 +370,8 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
             const screen = await renderScreen(<Scene />, mock);
             try {
                 await vi.waitFor(() => expect(screen.findByTestId('surface-planet')).not.toBeNull());
-                const planet = screen.findAll((node) => typeof node.props?.placement === 'string' && node.props?.pane !== undefined)[0]!;
-                expect(planet.props.pane).toEqual({ width: 1060, height: 852 });
+                const planet = screen.findByType(GlyphSurface);
+                expect(planet.props).toMatchObject({ width: 1060, height: 852 });
                 expect(flattenTestStyle(screen.findByTestId('surface-planet')!.props.style)).toMatchObject({ width: 460, overflow: 'hidden' });
             } finally {
                 await screen.unmount();
@@ -446,11 +459,9 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
         } finally { fades.mockRestore(); await screen.unmount(); }
     });
 
-    it.each(['corner', 'rise', 'side'] as const)('uses Home Corner across the Project pane when Home placement is %s', async (placement) => {
-        // R-7 amendment (2026-10-27): the Project planet is Home's Corner object,
-        // clipped to the pane; only a picture is banded at the tabs. Overview overlap is allowed.
+    it.each(['quiet', 'calm', 'full'] as const)('renders Project Horizon with inherited %s intensity', async (intensity) => {
         storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: {
-            ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, placement },
+            ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, intensity },
         } } }));
         const screen = await renderScreen(<AtmosphereSurfaceFrame surface={{ project: { serverId: 'srv', projectKey: 'p1' } }} focused visible>
             <Composer sending={false} />
@@ -459,14 +470,13 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
                 element.props.testID === 'composer' ? done(0, 40, 900, 50) : done(0, 0, 900, 800),
         }) });
         try {
-            const canvas = screen.findByType(PlanetCanvas);
+            const canvas = screen.findByType(GlyphSurface);
             const pane = { width: 900, height: 800 };
-            expect(canvas.props.fade).toBeUndefined();
             expect(canvas.props.height).toBe(pane.height);
-            expect(canvas.props.options).toEqual(homePlanetSceneOptions(
-                homePlanetGeometry('corner', pane, { phone: getDeviceType() === 'phone' }), pane,
-                { theme: 'light', style: DEFAULT_HOME_ATMOSPHERE.planet.style, digits: false },
-            ));
+            expect(canvas.props.scene(0)).toEqual([expect.objectContaining({
+                kind: 'planet', intensity, digits: false,
+                geometry: expect.objectContaining({ cx: pane.width / 2, rotate: -1.5 }),
+            })]);
         } finally {
             await screen.unmount();
         }

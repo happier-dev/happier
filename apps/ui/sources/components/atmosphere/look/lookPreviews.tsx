@@ -6,15 +6,10 @@ import type {
   AtmosphereEffectiveLook,
   AtmospherePicture,
 } from '@happier-dev/brand/atmosphere';
-import type { PlanetSceneOptions } from '@happier-dev/brand/planet';
-import { PlanetCanvas } from '../PlanetCanvas';
+import { planetGlyphLayer, type PlanetIntensity } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { GlyphSurface } from '../glyph/GlyphSurface';
 import { BackdropCanvas } from '../BackdropCanvas';
-import {
-  homePlanetGeometry,
-  homePlanetSceneOptions,
-  type HomePlanetPlacement,
-  type HomePlanetStyle,
-} from '../homePlanetPlacement';
 import { pictureBackdropProps } from '../pictureBackdrop';
 import type { PictureRecord } from '../pictureStore.types';
 import { atmospherePageRgb } from '../atmospherePage';
@@ -67,78 +62,23 @@ function HomeSketch() {
   );
 }
 
-export const PlanetPlacementPreview = React.memo(
-  function PlanetPlacementPreview(
-    props: Readonly<{
-      placement: HomePlanetPlacement;
-      style: HomePlanetStyle;
-      digits: boolean;
-      phone?: boolean;
-    }>,
-  ) {
-    const theme = usePreviewTheme();
-    return (
-      <PageGround>
-        <Measured>
-          {(size) => {
-            const pane = { width: size.width, height: size.height };
-            const options = homePlanetSceneOptions(
-              homePlanetGeometry(props.placement, pane, { phone: props.phone }),
-              pane,
-              { theme, style: props.style, digits: props.digits },
-            );
-            return (
-              <PlanetCanvas
-                width={size.width}
-                height={size.height}
-                options={options}
-                style={StyleSheet.absoluteFill}
-              />
-            );
-          }}
-        </Measured>
-        <HomeSketch />
-      </PageGround>
-    );
-  },
-);
-
-/** The style tile: the brand planet itself, centred low (lab `geom('swatch')`), no digits. */
-export function planetSwatchSceneOptions(
-  size: Size,
-  theme: 'light' | 'dark',
-  style: HomePlanetStyle,
-): PlanetSceneOptions {
-  const R = 0.7 * size.height;
-  return {
-    theme,
-    R,
-    cx: 0.5 * size.width,
-    cy: 0.62 * size.height,
-    view: { w: size.width, h: size.height },
-    time: 0,
-    rate: 0,
-    rotate: 0,
-    mirror: false,
-    fullness: 0,
-    halo: 0.5,
-    style,
-    field: { around: 0, over: 0 },
-  };
-}
-
-export const PlanetStylePreview = React.memo(function PlanetStylePreview(
-  props: Readonly<{ style: HomePlanetStyle }>,
+export const PlanetIntensityPreview = React.memo(function PlanetIntensityPreview(
+  { intensity, swatch = true }: Readonly<{ intensity: PlanetIntensity; swatch?: boolean }>,
 ) {
   const theme = usePreviewTheme();
   return (
     <PageGround>
       <Measured>
-        {(size) => (
-          <PlanetCanvas
-            width={size.width}
-            height={size.height}
-            options={planetSwatchSceneOptions(size, theme, props.style)}
+        {(pane) => (
+          <GlyphSurface
+            width={pane.width}
+            height={pane.height}
+            theme={theme}
+            scene={[planetGlyphLayer({
+              geometry: horizonPlanetGeometry(pane, swatch ? { limb: -0.08 * pane.height, radius: 0.7 * pane.height } : undefined),
+              intensity,
+              digits: false,
+            })]}
             style={StyleSheet.absoluteFill}
           />
         )}
@@ -147,33 +87,9 @@ export const PlanetStylePreview = React.memo(function PlanetStylePreview(
   );
 });
 
-/** The planet as a source choice: the Corner placement, quiet, without the Home sketch. */
-export const PlanetSourcePreview = React.memo(function PlanetSourcePreview(
-  props: Readonly<{ style: HomePlanetStyle }>,
-) {
-  const theme = usePreviewTheme();
-  return (
-    <PageGround>
-      <Measured>
-        {(size) => {
-          const pane = { width: size.width, height: size.height };
-          return (
-            <PlanetCanvas
-              width={size.width}
-              height={size.height}
-              options={homePlanetSceneOptions(
-                homePlanetGeometry('corner', pane),
-                pane,
-                { theme, style: props.style, digits: false },
-              )}
-              style={StyleSheet.absoluteFill}
-            />
-          );
-        }}
-      </Measured>
-    </PageGround>
-  );
-});
+export function PlanetSourcePreview(props: Readonly<{ intensity: PlanetIntensity }>) {
+  return <PlanetIntensityPreview intensity={props.intensity} swatch={false} />;
+}
 
 /** The plain page: no atmosphere. */
 export function PlainPagePreview() {

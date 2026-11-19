@@ -200,6 +200,7 @@ export function useHomeHeroFrame(
     suggestionsRef,
     nextRef,
     pane,
+    scrollY,
     hero,
     keepOut,
     measure,

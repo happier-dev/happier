@@ -21,7 +21,6 @@ vi.mock('react-native-unistyles', async () =>
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
-vi.mock('@/components/atmosphere/moments/PlanetMomentCanvas', () => import('@/components/atmosphere/moments/PlanetMomentCanvas.web'));
 vi.mock('@shopify/react-native-skia', async () => {
     const font = {};
     return { ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(), useTypeface: () => font };

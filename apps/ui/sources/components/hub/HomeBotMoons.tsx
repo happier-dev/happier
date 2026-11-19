@@ -1,9 +1,8 @@
 import * as React from 'react';
 import { StyleSheet, View } from 'react-native';
-import type { PlanetSceneOptions } from '@happier-dev/brand/planet';
+import type { GlyphPlanetGeometry } from '@happier-dev/brand/planet-placement';
 
 import { createSessionFinishedRippleObserver, type SessionTurnState } from '@/components/atmosphere/sessionFinishedRippleObserver';
-import type { HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlacement';
 import {
   HomeOrbitMap,
   type HomeOrbitBotsProps,
@@ -25,15 +24,14 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyFocused, useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 export type HomeBotMoonsProps = Readonly<{
   /** Home's planet as HomePlanet draws it: the moons go round its centre. */
-  planet: PlanetSceneOptions;
+  planet: Pick<GlyphPlanetGeometry, 'R' | 'cx' | 'cy'>;
   /** The drawn area, in the pane: the same box HomePlanet draws into. */
   width: number;
   height: number;
-  placement: HomePlanetPlacement;
   phone: boolean;
   /** The hero's pressable content in the same coordinates (headline, composer, suggestions); moons rest clear of it. */
   keepOut?: readonly HomeOrbitRect[];
@@ -59,14 +57,15 @@ export const HomeBotMoons = React.memo(function HomeBotMoons(
 function HomeBotMoonsScene(
   props: HomeBotMoonsProps & Readonly<{ bots: readonly OrderedBot[] }>,
 ) {
-  const { bots, planet, width, height, placement, phone } = props;
+  const { bots, planet, width, height, phone } = props;
   const viewed = useHostActivelyViewed();
+  const motionFocused = useHostActivelyFocused();
   const reducedMotion = useReducedMotionPreference();
   const motionMode = useSetting('botMotion');
   const span = React.useMemo(() => ({ top: 0, height }), [height]);
   const onScreen = useIsNearViewport(props.viewport, span);
   const visible = props.shown && viewed && onScreen;
-  const eligible = visible && !reducedMotion && motionMode !== 'still';
+  const eligible = visible && motionFocused && !reducedMotion && motionMode !== 'still';
   const navigateToSession = useNavigateToSession();
   const openBots = useOptionalBotsRosterRuntime()?.open;
   const names = useOrderedBotNames(bots);
@@ -77,9 +76,9 @@ function HomeBotMoonsScene(
         { width, height },
         { px: planet.cx, py: planet.cy, pr: planet.R },
         bots,
-        { ...orbitOptions(placement, phone), keepOut: props.keepOut },
+        { ...orbitOptions(phone), keepOut: props.keepOut },
       ),
-    [bots, height, phone, placement, planet.R, planet.cx, planet.cy, props.keepOut, width],
+    [bots, height, phone, planet.R, planet.cx, planet.cy, props.keepOut, width],
   );
   const byKey = React.useMemo(
     () => new Map(bots.map((bot) => [bot.key, bot])),
@@ -132,15 +131,11 @@ function HomeBotMoonsScene(
   );
 }
 
-/** Lab R6 lanes suit a planet the moons can circle; Rise's planet stands far below, so its lanes ride over its limb. */
-function orbitOptions(
-  placement: HomePlanetPlacement,
-  phone: boolean,
-): HomeOrbitBotOptions {
+/** The lanes ride over the planet's Horizon limb. */
+function orbitOptions(phone: boolean): HomeOrbitBotOptions {
   const sizes = phone
     ? { moonSize: 24, parkedSize: 34 }
     : { moonSize: 30, parkedSize: 40 };
-  if (placement !== 'rise') return sizes;
   return {
     ...sizes,
     lanes: [

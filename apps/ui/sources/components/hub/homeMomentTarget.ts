@@ -13,10 +13,10 @@ export function resolveHomeMomentTarget(input: Readonly<{
     guidanceKind: SessionGettingStartedDecisionKind;
     heroActive: boolean;
     planetSource: boolean;
-    options: HomePlanetTarget['options'] | null;
-    fade: HomePlanetTarget['fade'];
+    layer: HomePlanetTarget['layer'] | null;
+    pane: HomePlanetTarget['pane'];
 }>): PlanetMomentTarget | null {
     if (input.guidanceKind === 'loading') return null;
     if (isSessionGettingStartedGuidanceHome(input.guidanceKind) || !input.heroActive || !input.planetSource) return { kind: 'none' };
-    return input.options ? { kind: 'planet', options: input.options, fade: input.fade } : null;
+    return input.layer ? { kind: 'planet', layer: input.layer, pane: input.pane } : null;
 }

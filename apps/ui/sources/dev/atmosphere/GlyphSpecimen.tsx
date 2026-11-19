@@ -5,6 +5,8 @@ import { fieldDotLayer, frontGlyphLayer, markGlyphLayer, planetGlyphLayer, trave
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 
 import { GlyphSurface } from '@/components/atmosphere/glyph/GlyphSurface';
+import { sessionRippleLayer } from '@/components/atmosphere/sessionRipple';
+import { loadingPlanetLayer, loadingPlanetOrigin, loadingPlanetPhase } from '@/components/atmosphere/moments/planetMomentTimeline';
 
 const pane = { width: 390, height: 520 };
 const centre = { x: 195, y: 108 };
@@ -19,8 +21,26 @@ const scene = [
 ] as const;
 
 export default function GlyphSpecimen() {
-    const { theme, opaque, cycles: requested } = useLocalSearchParams<{ theme?: string; opaque?: string; cycles?: string }>();
+    const { theme, opaque, cycles: requested, moment, at } = useLocalSearchParams<{
+        theme?: string; opaque?: string; cycles?: string; moment?: string; at?: string;
+    }>();
     const dark = theme === 'dark';
+    const palette = dark ? 'dark' : 'light';
+    const layers = React.useMemo(() => {
+        const geometry = horizonPlanetGeometry(pane, { phone: true });
+        const options = { geometry, intensity: 'quiet', digits: true } as const;
+        const seconds = Number(at ?? '0.5') || 0;
+        if (moment === 'ripple') return [sessionRippleLayer(options, seconds * 1000, {
+            width: pane.width, theme: palette, reducedMotion: false,
+        })];
+        if (moment === 'loading') {
+            const target = { kind: 'planet', layer: planetGlyphLayer(options), pane } as const;
+            const phase = loadingPlanetPhase(seconds, seconds < 1 ? null : 1, { reducedMotion: false, toPlanet: true });
+            const layer = loadingPlanetLayer(phase, pane, loadingPlanetOrigin(pane), target);
+            return layer ? [layer] : [];
+        }
+        return scene;
+    }, [at, moment, palette]);
     const cycles = requested === '20' ? 20 : 1;
     const [draws, setDraws] = React.useState(0);
     const [status, setStatus] = React.useState('warming');
@@ -33,6 +53,6 @@ export default function GlyphSpecimen() {
         testID={`glyph-specimen-${status}-${draws}-${PixelRatio.get()}`}
         style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: opaque === '1' ? dark ? '#141214' : '#fbf7f4' : 'transparent' }}
     >
-        <GlyphSurface key={key} width={pane.width} height={pane.height} theme={dark ? 'dark' : 'light'} scene={scene} onReady={onReady} testID="glyph-specimen-surface" />
+        <GlyphSurface key={key} width={pane.width} height={pane.height} theme={palette} scene={layers} onReady={onReady} testID="glyph-specimen-surface" />
     </View>;
 }

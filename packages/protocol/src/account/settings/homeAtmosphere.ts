@@ -20,8 +20,16 @@ function readAtmospherePlaces(value: unknown): unknown {
     return { ...value, showOn: showOn.success ? showOn.data : defaultAtmosphereShowOn(wallpaper ? 'wallpaper' : 'horizon') };
 }
 
-const PlanetSchema = lazyDefinition(() => z.strictObject({
-    placement: z.enum(['corner', 'side', 'rise']), style: z.enum(['airy', 'balanced', 'rich']), digits: z.boolean(),
+export const ATMOSPHERE_PLANET_INTENSITIES = ['quiet', 'calm', 'full'] as const;
+export const HOME_BACKGROUND_FIELD_MODES = ['animated', 'still', 'off'] as const;
+
+const PlanetWriteSchema = lazyDefinition(() => z.strictObject({
+    intensity: z.enum(ATMOSPHERE_PLANET_INTENSITIES), digits: z.boolean(),
+}));
+// The predecessor stored dot density, which has no equivalent intensity.
+const PlanetSchema = defineStoredReadProjection(PlanetWriteSchema, () => z.object({
+    ...PlanetWriteSchema.shape,
+    intensity: z._default(PlanetWriteSchema.shape.intensity, 'quiet'),
 }));
 export const AtmospherePictureRefSchema = lazyDefinition(() => z.discriminatedUnion('kind', [
         z.strictObject({ kind: z.literal('builtin'), id: z.string() }),
@@ -80,7 +88,7 @@ export function recordAtmospherePictureSelection<T extends AtmospherePresentatio
 }
 
 export const DEFAULT_HOME_ATMOSPHERE: HomeAtmosphere = {
-    source: 'planet', planet: { placement: 'corner', style: 'balanced', digits: true },
+    source: 'planet', planet: { intensity: 'quiet', digits: true },
     picture: { ref: { kind: 'builtin', id: 'white-rocks-open-sea' }, layout: 'horizon' }, looks: {}, showOn: defaultAtmosphereShowOn('horizon'),
     moments: { loading: true, send: true, qr: true, pairing: true, themeSwitch: true,
         sessionFinished: true, idleResettle: true, releaseCaption: true, yourHome: true },

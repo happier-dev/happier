@@ -481,7 +481,7 @@ describe('HomeHub', () => {
             const hiddenPaints = atmospherePaints.count;
             const hiddenFires = fires;
             await act(async () => storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: {
-                ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, style: 'rich' },
+                ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, intensity: 'full' },
             } } })));
             await act(async () => { vi.advanceTimersByTime(300_000); });
             expect(atmospherePaints.count - hiddenPaints).toBe(0);

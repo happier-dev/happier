@@ -1,7 +1,7 @@
 import type { PublicProfileViewV1 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS, resolveHappierPublicProfilePlanetBand } from '@happier-dev/plugin-ui/presentation/pageMetrics';
-import { createPlanetScene } from '@happier-dev/brand/planet';
-import { homePlanetGeometry, homePlanetSceneOptions } from '@happier-dev/brand/planet-placement';
+import { glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import { loadSharp } from '@/storage/blob/sharpRuntime';
 import { renderPublicProfilePlanetSceneSvg, type PublicProfileAssetPalette } from './publicProfileSvg';
 import { renderPublicProfileBackdrop } from './publicProfileBackdrop';
@@ -68,9 +68,9 @@ export async function renderPublicProfileHeroImage(view: PublicProfileViewV1, op
             horizonAt: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.horizonAt })).bytes;
     } else {
         // Match AtmospherePreview's band geometry and the real canvas' device-pixel scene input.
-        const scene = createPlanetScene({ ...homePlanetSceneOptions(homePlanetGeometry(atmosphere.planet.placement, pane, resolveHappierPublicProfilePlanetBand(pane)), pane,
-            { theme, style: atmosphere.planet.style, digits: atmosphere.planet.digits }), dpr: ratio });
-        const paint = await renderPublicProfilePlanetSceneSvg(scene, pane, ratio);
+        const geometry = horizonPlanetGeometry(pane, { ...resolveHappierPublicProfilePlanetBand(pane), phone: viewport === 'phone' });
+        const frame = glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: ratio, theme, layers: [planetGlyphLayer({ geometry, ...atmosphere.planet })] });
+        const paint = await renderPublicProfilePlanetSceneSvg(frame, pane, ratio);
         const sharp = await loadSharp();
         bytes = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${pane.width} ${pane.height}">${paint}</svg>`))
             .flatten({ background: options.palette[theme].background }).ensureAlpha().png().toBuffer();

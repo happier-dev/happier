@@ -2,11 +2,9 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { BackdropCanvas } from '../BackdropCanvas';
-import { PlanetCanvas } from '../PlanetCanvas';
-import {
-  homePlanetGeometry,
-  homePlanetSceneOptions,
-} from '../homePlanetPlacement';
+import { GlyphSurface } from '../glyph/GlyphSurface';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { pictureBackdropProps, releaseLook } from '../pictureBackdrop';
 import { useAtmosphere, type AtmosphereTarget } from '../useAtmosphere';
 import { useAtmospherePictureCatalog } from '../useAtmospherePictureCatalog';
@@ -16,6 +14,7 @@ import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS, resolveHappierPublicProfilePlanetB
 import type { PublicProfilePictureDescriptorV1 } from '@happier-dev/protocol/account/publicProfileAtmosphere';
 import type { PictureRecord } from '../pictureStore.types';
 import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 /** In a small window preview the Horizon band covers the top of the page, as it does on Home. */
 const PREVIEW_BAND_SHARE = 0.62;
@@ -41,6 +40,7 @@ export const AtmospherePreview = React.memo(function AtmospherePreview(
   const mode = theme.dark ? 'dark' : 'light';
   const atmosphere = useAtmosphere(props.target ?? 'home');
   const bandFrame = props.frame === 'band';
+  const phone = useDeviceType() === 'phone';
   const pictures = useAtmospherePictureCatalog();
   const [size, setSize] = React.useState<Readonly<{
     width: number;
@@ -70,19 +70,15 @@ export const AtmospherePreview = React.memo(function AtmospherePreview(
     if (atmosphere.source === 'planet') {
       const pane = { width: size.width, height: size.height };
       art = (
-        <PlanetCanvas
+        <GlyphSurface
           width={size.width}
           height={size.height}
           style={StyleSheet.absoluteFill}
-          options={homePlanetSceneOptions(
-            homePlanetGeometry(atmosphere.planet.placement, pane, bandFrame ? resolveHappierPublicProfilePlanetBand(pane) : undefined),
-            pane,
-            {
-              theme: mode,
-              style: atmosphere.planet.style,
-              digits: atmosphere.planet.digits,
-            },
-          )}
+          theme={mode}
+          scene={[planetGlyphLayer({
+            geometry: horizonPlanetGeometry(pane, { ...(bandFrame ? resolveHappierPublicProfilePlanetBand(pane) : undefined), phone }),
+            ...atmosphere.planet,
+          })]}
         />
       );
     } else if (atmosphere.source === 'picture' && source) {

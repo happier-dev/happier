@@ -95,7 +95,7 @@ export function homeRiseLimb(composerTop: number): number {
 export function homeRiseFootFade(
   input: Readonly<{ aboveBottom: number; nextTop: number; phone: boolean }>,
 ) {
-  const end = input.nextTop - 6;
+  const end = input.nextTop - 14;
   return {
     from: Math.max(input.aboveBottom + 4, end - (input.phone ? 90 : 130)),
     to: end,

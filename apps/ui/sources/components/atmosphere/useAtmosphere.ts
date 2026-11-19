@@ -4,7 +4,6 @@ import { useSetting, useProjectAtmosphere } from '@/sync/store/hooks';
 import { useGlassReduceTransparency } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { pictureStore } from './pictureStore';
 import { builtinThumbnailLocalId } from './ensureBuiltinPicture';
 import { useStoredPictureRecord } from './useStoredPictureRecord';
@@ -32,7 +31,6 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
     const environmentReduceTransparency = useGlassReduceTransparency();
     const reduceTransparency = useReduceTransparency();
     const reducedMotion = useReducedMotionPreference();
-    const isPhone = useDeviceType() === 'phone';
     const surfaceKey = typeof surface === 'object' && 'publicProfile' in surface ? 'profile' : atmosphereSurfaceKey(surface);
     const profileDraft = usePublicProfileAtmospherePreviewValue(typeof surface === 'object' && 'publicProfile' in surface ? surface.draftServerId : undefined);
     const profile = typeof surface === 'object' && 'publicProfile' in surface ? profileDraft ?? surface.publicProfile : undefined;
@@ -72,9 +70,9 @@ export function useAtmosphere(surface: AtmosphereTarget, enabled = true) {
         pictureRecord: stored.status === 'present' ? stored.record : undefined,
         shownPicture: shown.current, readingPicture: stored.status === 'loading',
         pictureAcquisitionFailed: builtin !== undefined && failedAcquisition === builtin,
-        isPhone, glassEnvironment: { reduceTransparency: environmentReduceTransparency },
+        glassEnvironment: { reduceTransparency: environmentReduceTransparency },
         reduceTransparency, reducedMotion }), [target, home, projectOverride, pictures, stored, localId, nowMs, resolvedContext, builtin, failedAcquisition,
-        isPhone, environmentReduceTransparency, reduceTransparency, reducedMotion]);
+        environmentReduceTransparency, reduceTransparency, reducedMotion]);
     // The display read already established cache availability. Acquire only a missing/mismatched
     // picture after that read settles; a cache hit needs no second IndexedDB read or preparation.
     const needsAcquisition = stored.status !== 'loading' && (resolved.fallbackReason === 'picture-unavailable'

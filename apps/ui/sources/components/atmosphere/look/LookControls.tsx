@@ -27,10 +27,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { AtmosphereLookCopyKey } from '@/text/translations/glassAppearanceTranslations.shared';
-import type {
-  HomePlanetPlacement,
-  HomePlanetStyle,
-} from '../homePlanetPlacement';
+import { ATMOSPHERE_PLANET_INTENSITIES } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { PlanetIntensity } from '@happier-dev/brand/glyph-scene';
 import type { PictureRecord } from '../pictureStore.types';
 import type { AtmosphereEditor } from './atmosphereEditor';
 import {
@@ -50,9 +48,8 @@ import {
   PictureImagePreview,
   PictureLookPreview,
   PlainPagePreview,
-  PlanetPlacementPreview,
   PlanetSourcePreview,
-  PlanetStylePreview,
+  PlanetIntensityPreview,
 } from './lookPreviews';
 import { useBuiltinThumbnail, useStoredPictureBytes } from './usePictureBytes';
 
@@ -63,36 +60,16 @@ import { useBuiltinThumbnail, useStoredPictureBytes } from './usePictureBytes';
  */
 export type LookPresentation = 'panel' | 'page';
 
-const PLACEMENTS = [
-  'corner',
-  'side',
-  'rise',
-] as const satisfies readonly HomePlanetPlacement[];
-const STYLES = [
-  'airy',
-  'balanced',
-  'rich',
-] as const satisfies readonly HomePlanetStyle[];
 /** The engine's catalogue order, Original first (lab `lookList`). */
 const LOOKS: readonly AtmosphereLook[] = [
   'original',
   ...ATMOSPHERE_LOOKS.map((look) => look.id).filter((id) => id !== 'original'),
 ];
-const PLACE_KEY = {
-  corner: 'placeCorner',
-  side: 'placeSide',
-  rise: 'placeRise',
-} as const satisfies Record<HomePlanetPlacement, AtmosphereLookCopyKey>;
-const PLACE_NOTE_KEY = {
-  corner: 'placeCornerNote',
-  side: 'placeSideNote',
-  rise: 'placeRiseNote',
-} as const satisfies Record<HomePlanetPlacement, AtmosphereLookCopyKey>;
-const STYLE_KEY = {
-  airy: 'styleAiry',
-  balanced: 'styleBalanced',
-  rich: 'styleRich',
-} as const satisfies Record<HomePlanetStyle, AtmosphereLookCopyKey>;
+const INTENSITY_KEY = {
+  quiet: 'planetQuiet',
+  calm: 'planetCalm',
+  full: 'planetFull',
+} as const satisfies Record<PlanetIntensity, AtmosphereLookCopyKey>;
 const LOOK_KEY = {
   original: 'lookOriginal',
   fine: 'lookFine',
@@ -289,7 +266,7 @@ export function SourceControl(
             id: 'planet',
             title: lookCopy('sourcePlanet'),
             subtitle: lookCopy('sourcePlanetNote'),
-            preview: <PlanetSourcePreview style={value.planet.style} />,
+            preview: <PlanetSourcePreview intensity={value.planet.intensity} />,
           },
           {
             id: 'picture',
@@ -327,68 +304,33 @@ export function PlanetControls(
 ) {
   const { value, update } = props.editor;
   const planet = value.planet;
-  const page = props.presentation === 'page';
+  const label = t('settingsAppearance.glassControls.atmospherePlanetIntensity');
+  const choices = ATMOSPHERE_PLANET_INTENSITIES.map(id => ({ id, label: lookCopy(INTENSITY_KEY[id]) }));
+  const change = (intensity: PlanetIntensity) => update((current) => withPlanet(current, { intensity }));
   return (
     <>
       <LookBlock
         presentation={props.presentation}
-        title={lookCopy('placement')}
-        description={lookCopy('placementDescription')}
-        setting={APPEARANCE_SETTINGS.settings.atmospherePlanetPlacement}
+        title={label}
+        description={lookCopy('planetIntensityDescription')}
+        setting={APPEARANCE_SETTINGS.settings.atmospherePlanetIntensity}
       >
-        <SelectionTiles
-          variant="visual"
-          tileSizing="fill"
-          labelLines={1}
-          maximumColumns={3}
-          previewAspectRatio={16 / 10}
-          accessibilityLabel={lookCopy('placement')}
-          testIdPrefix="look-placement"
-          options={PLACEMENTS.map((id) => ({
-            id,
-            title: lookCopy(PLACE_KEY[id]),
-            ...(page ? { subtitle: lookCopy(PLACE_NOTE_KEY[id]) } : {}),
-            preview: (
-              <PlanetPlacementPreview
-                placement={id}
-                style={planet.style}
-                digits={planet.digits}
-              />
-            ),
-          }))}
-          value={planet.placement}
-          onChange={(placement) => {
-            if (placement)
-              update((current) => withPlanet(current, { placement }));
-          }}
-        />
-      </LookBlock>
-      <LookBlock
-        presentation={props.presentation}
-        title={t('settingsAppearance.glassControls.atmospherePlanetStyle')}
-        description={lookCopy('planetStyleDescription')}
-        setting={APPEARANCE_SETTINGS.settings.atmospherePlanetStyle}
-      >
-        <SelectionTiles
-          variant="visual"
-          tileSizing="fill"
-          labelLines={1}
-          maximumColumns={3}
-          previewAspectRatio={16 / 10}
-          accessibilityLabel={t(
-            'settingsAppearance.glassControls.atmospherePlanetStyle',
-          )}
-          testIdPrefix="look-style"
-          options={STYLES.map((id) => ({
-            id,
-            title: lookCopy(STYLE_KEY[id]),
-            preview: <PlanetStylePreview style={id} />,
-          }))}
-          value={planet.style}
-          onChange={(style) => {
-            if (style) update((current) => withPlanet(current, { style }));
-          }}
-        />
+        {props.presentation === 'page' ? (
+          <SelectionTiles
+            variant="visual"
+            tileSizing="fill"
+            labelLines={1}
+            maximumColumns={3}
+            previewAspectRatio={16 / 10}
+            accessibilityLabel={label}
+            testIdPrefix="look-intensity"
+            options={choices.map(({ id, label: title }) => ({ id, title, preview: <PlanetIntensityPreview intensity={id} /> }))}
+            value={planet.intensity}
+            onChange={(intensity) => { if (intensity) change(intensity); }}
+          />
+        ) : (
+          <LookSegments label={label} testIDPrefix="look-intensity" options={choices} value={planet.intensity} onChange={change} />
+        )}
       </LookBlock>
       <SettingAnchor
         setting={APPEARANCE_SETTINGS.settings.atmospherePlanetDigits}

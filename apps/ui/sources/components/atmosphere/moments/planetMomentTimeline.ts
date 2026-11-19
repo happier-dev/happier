@@ -2,9 +2,10 @@ import {
   PLANET_MOMENT_TIMINGS,
   planetMomentFrame,
   type PlanetAssemblyProgress,
-  type PlanetSceneOptions,
 } from '@happier-dev/brand/planet';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { planetGlyphLayer, type PlanetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import type { HomePane } from '../homePlanetPlacement';
 
 /**
@@ -32,8 +33,36 @@ export function loadingPlanetOrigin(pane: HomePane): PlanetMomentOrigin {
 
 /** What Home shows when Loading resolves: its planet (the travel's end), or no planet (the cloud ends centred). */
 export type PlanetMomentTarget =
-  | Readonly<{ kind: 'planet'; options: PlanetSceneOptions; fade?: Readonly<{ from: number; to: number }> }>
+  | Readonly<{ kind: 'planet'; layer: PlanetGlyphLayer; pane: HomePane }>
   | Readonly<{ kind: 'none' }>;
+
+/** The cold-start front reaches Home's exact layer once its travel finishes. */
+export function loadingPlanetLayer(
+  phase: LoadingPlanetPhase,
+  pane: HomePane,
+  origin: PlanetMomentOrigin,
+  target: Extract<PlanetMomentTarget, { kind: 'planet' }> | null,
+): PlanetGlyphLayer | null {
+  if (phase.kind === 'none' || (phase.kind === 'landed' && phase.fast)) return null;
+  if (phase.kind === 'landed') return target?.layer ?? null;
+  const geometry = { ...horizonPlanetGeometry(pane), ...origin, rotate: target?.layer.geometry.rotate ?? -1.5 };
+  if (phase.kind === 'travel' && target) {
+    const mix = (from: number, to: number) => from + (to - from) * phase.k;
+    const { cx, cy, R } = target.layer.geometry;
+    return planetGlyphLayer({
+      ...target.layer,
+      geometry: { ...target.layer.geometry, cx: mix(origin.cx, cx), cy: mix(origin.cy, cy), R: mix(origin.R, R) },
+    });
+  }
+  if (phase.kind !== 'assembly') return null;
+  const entering = Math.min(0.45, Math.max(0, (phase.frame.t - L4.GRACE) / L4.RESOLVE) * 0.45);
+  return planetGlyphLayer({
+    geometry,
+    intensity: target?.layer.intensity ?? 'quiet',
+    digits: target?.layer.digits ?? true,
+    decode: entering + (1 - entering) * phase.frame.prog,
+  });
+}
 
 export type LoadingPlanetPhase =
   /** The grace: nothing is drawn yet. */
@@ -105,36 +134,4 @@ export function loadingPlanetPhase(
   }
   if (frame.rest) return { kind: 'landed', fast: false };
   return { kind: 'travel', k: frame.travel ?? 0, cover: frame.cover ?? 0 };
-}
-
-/** The Loading cloud's planet: centred on its origin, lit as Home's placement will be (lab `src`). */
-export function loadingPlanetSource(
-    origin: PlanetMomentOrigin,
-    orientation: Readonly<{ rotate: number; mirror: boolean }>,
-    look: Readonly<{ theme: 'light' | 'dark'; pane: HomePane; dpr: number }>,
-): PlanetSceneOptions {
-    return {
-        cx: origin.cx, cy: origin.cy, R: origin.R, theme: look.theme, rotate: orientation.rotate, mirror: orientation.mirror,
-        view: { w: look.pane.width, h: look.pane.height }, dpr: look.dpr,
-    };
-}
-
-/**
- * The travelling planet at spring progress `k`: it moves and scales from the cloud's centre to Home's
- * placement and is redrawn crisp at every size, so its dots never scale. At `k = 1` it is Home's
- * planet exactly, which is what lets Home's own canvas take over without a seam.
- */
-export function loadingPlanetTravel(
-  source: PlanetSceneOptions,
-  target: PlanetSceneOptions,
-  k: number,
-): PlanetSceneOptions {
-  if (k >= 1) return target;
-  const mix = (a: number, b: number) => a + (b - a) * k;
-  return {
-    ...target,
-    cx: mix(source.cx, target.cx),
-    cy: mix(source.cy, target.cy),
-    R: mix(source.R, target.R),
-  };
 }

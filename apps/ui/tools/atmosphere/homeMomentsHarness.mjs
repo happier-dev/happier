@@ -1,6 +1,4 @@
-// U9b Home moments harness: the session-finished ripple and the idle resettle through the product's
-// painters at Home's geometry, frozen at the lab's instants and placed beside the lab's own shots; it
-// also plays each moment on real frames and reports the frame intervals.
+// Compare picture resettling at Home's geometry, including its real frame intervals.
 // Usage (repo root): U9B_CHROME=<chromium path> node apps/ui/tools/atmosphere/homeMomentsHarness.mjs
 import { build } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -88,7 +86,7 @@ const { chromium } = require('playwright');
 const browser = await chromium.launch({
   executablePath: process.env.U9B_CHROME,
 });
-const report = { ripple: {}, resettle: {} };
+const report = { resettle: {} };
 const stats = (intervals) => {
   const sorted = [...intervals].sort((a, b) => a - b);
   return {
@@ -114,79 +112,6 @@ try {
   await page.goto(origin);
   await page.waitForFunction(() => Boolean(window.U9H));
   const product = page.locator('#product');
-  // Home's pane on the 1440 × 900 desktop (measured live: the window less the rail and sidebar).
-  const pane = { width: 991, height: 850 };
-  const ringDrawn = () =>
-    page.waitForFunction(
-      () => {
-        const canvases = document.querySelectorAll('#product canvas');
-        if (canvases.length < 2) return false;
-        const ring = canvases[1];
-        const data = ring
-          .getContext('2d')
-          .getImageData(0, 0, ring.width, ring.height).data;
-        for (let i = 3; i < data.length; i += 4 * 97) if (data[i]) return true;
-        return false;
-      },
-      null,
-      { timeout: 10000 },
-    );
-  for (const theme of ['light', 'dark']) {
-    for (const ms of [0, 250, 500, 1000]) {
-      await page.evaluate((input) => window.U9H.rippleStill(input), {
-        ...pane,
-        theme,
-        ms,
-      });
-      if (ms > 0) await ringDrawn();
-      await page.waitForTimeout(150);
-      await product.screenshot({
-        path: join(shots, `ripple-live-${theme}-t${ms / 1000}.png`),
-      });
-    }
-    for (const ms of [0, 70]) {
-      await page.evaluate((input) => window.U9H.rippleStill(input), {
-        ...pane,
-        theme,
-        ms,
-        reducedMotion: true,
-      });
-      await page.waitForTimeout(150);
-      await product.screenshot({
-        path: join(shots, `ripple-reduced-${theme}-t${ms / 1000}.png`),
-      });
-    }
-  }
-  // The display's own rhythm with nothing playing, for comparison on this host.
-  report.baseline = stats(await page.evaluate(() => new Promise((resolve) => {
-    const list = []; let last = null; const until = performance.now() + 1800;
-    const tick = (time) => { if (last !== null) list.push(time - last); last = time; if (time < until) requestAnimationFrame(tick); else resolve(list); };
-    requestAnimationFrame(tick);
-  })));
-  report.ripple.playback = stats(
-    await page.evaluate((input) => window.U9H.ripplePlay(input), {
-      ...pane,
-      theme: 'light',
-    }),
-  );
-  report.ripple.costs = await page.evaluate((input) => window.U9H.costs(input), { ...pane, theme: 'light' });
-  report.ripple.playbackWarm = stats(
-    await page.evaluate((input) => window.U9H.ripplePlay(input), { ...pane, theme: 'light' }),
-  );
-  report.ripple.playbackDark = stats(
-    await page.evaluate((input) => window.U9H.ripplePlay(input), {
-      ...pane,
-      theme: 'dark',
-    }),
-  );
-  report.ripple.reducedPlayback = stats(
-    await page.evaluate((input) => window.U9H.ripplePlay(input), {
-      ...pane,
-      theme: 'light',
-      reducedMotion: true,
-    }),
-  );
-
   // The lab's resettle board: White rocks settles into Calm Sea, 560 × 226 bands, raw progress 0.3/0.55/0.8.
   const from = {
     fromId: 'white-rocks-open-sea',
@@ -296,13 +221,6 @@ try {
     await compose.close();
   };
   for (const theme of ['light', 'dark']) {
-    for (const t of [0.25, 0.5])
-      await sideBySide(
-        `ripple-${theme}-t${t}.png`,
-        join(lab, `mo-ripple-D-${theme}-t${t}.png`),
-        join(shots, `ripple-live-${theme}-t${t}.png`),
-        `ripple t = ${t} s, Home pane 991 × 850`,
-      );
     for (const t of [0.3, 0.55, 0.8])
       await sideBySide(
         `resettle-${theme}-t${t}.png`,

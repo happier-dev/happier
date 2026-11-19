@@ -25,7 +25,7 @@ export const PublicProfilePreparedAppearanceV1Schema = lazyZodSchema(() => z.str
 export type PublicProfileAppearanceV1 = z.infer<typeof PublicProfileAppearanceV1Schema>;
 export type PublicProfilePreparedAppearanceV1 = z.infer<typeof PublicProfilePreparedAppearanceV1Schema>;
 export const DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1: PublicProfileAppearanceV1 = { atmosphere: { source: 'planet',
-  planet: { placement: 'rise', style: 'balanced', digits: false } }, theme: 'auto' };
+  planet: { intensity: 'quiet', digits: false } }, theme: 'auto' };
 export const DEFAULT_PUBLIC_PROFILE_LAYOUT_V1 = { v: 1, items: [] } as const;
 export const PublicProfileServiceV1Schema = lazyZodSchema(() => z.strictObject({ displayName: z.string(), publicBaseUrl: serviceUrl }));
 export const PublicProfileUrlsV1Schema = lazyZodSchema(() => z.strictObject({ page: serviceUrl,

@@ -1,24 +1,18 @@
 import * as React from 'react';
-import { StyleSheet } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, type View } from 'react-native';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
-import { AtmosphereRipple } from './AtmosphereRipple';
-import type { AtmosphereRippleHandle } from './atmosphereRipple.types';
-import { atmospherePageRgb } from './atmospherePage';
 import { useSessionFinishedRipple } from './homeAtmosphereMoments';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import { useSessionRipplePlayback } from './sessionRipple';
-import { PlanetCanvas } from './PlanetCanvas';
-import type { PlanetSceneOptions } from '@happier-dev/brand/planet';
+import { sessionRippleLayer } from './sessionRipple';
+import { GlyphSurface, type GlyphMotion } from './glyph/GlyphSurface';
+import { glyphFieldDurationS, planetGlyphLayer, type GlyphFieldMode, type GlyphLayer, type GlyphRect, type PlanetIntensity } from '@happier-dev/brand/glyph-scene';
+import { HomeFieldPreference, useHomeGlyphField } from './glyph/useHomeGlyphField';
+import { FURTHER_PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet-moments';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import {
-  homePlanetGeometry,
   homePlanetDrawnHeight,
-  homePlanetSceneOptions,
   homeRiseFootFade,
-  homeRiseLimb,
   type HomePane,
-  type HomePlanetPlacement,
-  type HomePlanetStyle,
 } from './homePlanetPlacement';
 
 export type HomePlanetHero = Readonly<{
@@ -31,39 +25,25 @@ export type HomePlanetHero = Readonly<{
 
 export type HomePlanetLook = Readonly<{
   pane: HomePane;
-  placement: HomePlanetPlacement;
-  style: HomePlanetStyle;
+  intensity: PlanetIntensity;
   digits: boolean;
   theme: 'light' | 'dark';
   phone: boolean;
   hero: HomePlanetHero | null;
 }>;
 
-/**
- * Home's planet scene for its pane and hero: the one place its options are made, shared with the
- * moments that land on it. Null while it cannot be placed yet (Rise waits for the composer).
- */
-export function useHomePlanetOptions(look: HomePlanetLook): PlanetSceneOptions | null {
-  const { pane, placement, hero, phone, theme, style, digits } = look;
-  const widgets = hero ? hero.nextTop !== null : undefined;
-  const ready = placement !== 'rise' || hero !== null;
-  const limb = placement !== 'rise' ? undefined
-    : hero && hero.composerTop !== null ? homeRiseLimb(hero.composerTop) : undefined;
-  const fadeTo = homePlanetFootFade(look)?.to;
-  return React.useMemo(() => {
-    if (!ready || pane.width <= 0 || pane.height <= 0) return null;
-    const geometry = homePlanetGeometry(placement, pane, { phone, widgets, limb });
-    // The scene's view reaches as far down as the planet is drawn (Rise's foot fade may pass the fold).
-    const drawn = { width: pane.width, height: homePlanetDrawnHeight(pane.height, fadeTo === undefined ? undefined : { to: fadeTo }) };
-    const options = homePlanetSceneOptions(geometry, drawn, { theme, style, digits });
-    return options;
-  }, [digits, fadeTo, limb, pane, phone, placement, ready, style, theme, widgets]);
+export function useHomePlanetGeometry({ pane, phone, hero }: Pick<HomePlanetLook, 'pane' | 'phone' | 'hero'>) {
+  const { width, height } = pane;
+  const composerTop = hero?.composerTop ?? undefined;
+  return React.useMemo(() => width > 0 && height > 0
+    ? horizonPlanetGeometry({ width, height }, { phone, composerTop })
+    : null, [composerTop, height, phone, width]);
 }
 
-/** Rise's ordered foot fade before the widgets, in the pane (lab `layout()`); none for the other placements. */
-export function homePlanetFootFade(look: Pick<HomePlanetLook, 'placement' | 'hero' | 'phone'>) {
-  const { placement, hero, phone } = look;
-  return placement === 'rise' && hero && hero.nextTop !== null
+/** The ordered foot fade before the first Home section. */
+export function homePlanetFootFade(look: Pick<HomePlanetLook, 'hero' | 'phone'>) {
+  const { hero, phone } = look;
+  return hero && hero.nextTop !== null
     ? homeRiseFootFade({ aboveBottom: hero.aboveBottom, nextTop: hero.nextTop, phone })
     : undefined;
 }
@@ -76,8 +56,7 @@ export function homePlanetFootFade(look: Pick<HomePlanetLook, 'placement' | 'her
 export const HomePlanet = React.memo(function HomePlanet(
   props: Readonly<{
     pane: HomePane;
-    placement: HomePlanetPlacement;
-    style: HomePlanetStyle;
+    intensity: PlanetIntensity;
     digits: boolean;
     theme: 'light' | 'dark';
     phone: boolean;
@@ -88,8 +67,6 @@ export const HomePlanet = React.memo(function HomePlanet(
     /** A moment that landed on this planet hands over in the same frame. */
     arrive?: 'fade' | 'instant';
     reducedMotion: boolean;
-    /** This visit may re-type after Welcome. Only the drawing leaf owns its clock. */
-    retype?: boolean;
     writing?: boolean;
     /** Each time the planet's canvas has drawn. */
     onDrawn?: () => void;
@@ -99,13 +76,23 @@ export const HomePlanet = React.memo(function HomePlanet(
     answerFinishes?: boolean;
     /** Home is the focused page; with the app in front, a finish it sees is answered. */
     focused?: boolean;
+    planet?: boolean;
+    fieldAllowed?: boolean;
+    fieldHost?: React.RefObject<View | null>;
+    fieldTap?: React.RefObject<((x: number, y: number) => void) | null>;
+    fieldScrollY?: React.RefObject<number>;
+    fieldQuiet?: readonly GlyphRect[];
   }>,
 ) {
-  const { pane } = props;
-  const activelyViewed = useHostActivelyViewed();
-  const paused = !activelyViewed || props.focused === false || props.writing === true || props.hidden;
-  const options = useHomePlanetOptions(props);
+  const { pane, digits, intensity, theme, writing, focused, hidden, reducedMotion, planet = true, fieldAllowed } = props;
+  const geometry = useHomePlanetGeometry(props);
   const fade = homePlanetFootFade(props);
+  const [preference, setPreference] = React.useState<GlyphFieldMode>('off');
+  const mode = !fieldAllowed || !pane.width ? 'off' : reducedMotion || hidden || focused === false ?
+    preference === 'off' ? 'off' : 'still' : preference;
+  const { epoch: fieldEpoch, layer: fieldLayer, readDurationS, settle: settleField } = useHomeGlyphField({
+    mode, quiet: props.fieldQuiet, host: props.fieldHost, nativeTap: props.fieldTap, scrollY: props.fieldScrollY,
+  });
   const height = homePlanetDrawnHeight(pane.height, fade);
   const [drawn, setDrawn] = React.useState(false);
   // Home remounts its planet on every return, so its first draw is a return, not an arrival: it shows
@@ -120,23 +107,41 @@ export const HomePlanet = React.memo(function HomePlanet(
     setDrawn(true);
     onDrawn.current?.();
   }, []);
-  const { theme } = useUnistyles();
-  const page = React.useMemo(() => atmospherePageRgb(theme.colors.surface.base), [theme.colors.surface.base]);
-  const [answers, setAnswers] = React.useState(0);
-  const onAnswer = React.useCallback(() => setAnswers((count) => count + 1), []);
-  const ring = React.useRef<AtmosphereRippleHandle>(null);
-  const playback = useSessionRipplePlayback(
-    answers,
-    { width: pane.width, theme: props.theme, cx: options?.cx ?? 0, cy: options?.cy ?? 0, R: options?.R ?? 0, reducedMotion: props.reducedMotion, paused },
-    ring,
-  );
-  // The answer brightens the same scene: PlanetCanvas re-gains it rather than sampling it again.
-  const lit = React.useMemo(
-    () => (options && playback.gain !== 1 ? { ...options, gain: playback.gain } : options),
-    [options, playback.gain],
-  );
-  if (!options || !lit) return null;
-  return (
+  const [answerEpoch, setAnswerEpoch] = React.useState<number | null>(null);
+  const onAnswer = React.useCallback(() => setAnswerEpoch(performance.now()), []);
+  const finishAnswer = React.useCallback(() => setAnswerEpoch(null), []);
+  const answer = !planet || hidden || focused === false || writing ? null : answerEpoch;
+  const epoch = fieldEpoch ?? answer;
+  const ringDuration = FURTHER_PLANET_MOMENT_TIMINGS.RIP.DUR;
+  const end = React.useCallback(() => Math.max(fieldEpoch === null ? 0 : readDurationS(),
+    answer === null || epoch === null ? 0 : (answer - epoch) / 1000 + ringDuration), [answer, epoch, fieldEpoch, readDurationS, ringDuration]);
+  const settle = React.useCallback(() => { settleField(); finishAnswer(); }, [finishAnswer, settleField]);
+  const { from: fadeFrom, to: fadeTo } = fade ?? {};
+  const scene = React.useMemo(() => {
+    if (!geometry) return [];
+    const fade = fadeFrom !== undefined && fadeTo !== undefined ? { from: fadeFrom, to: fadeTo } : undefined;
+    const options = { geometry, intensity, digits, fade };
+    return (seconds: number) => {
+      const layers: GlyphLayer[] = [];
+      const field = fieldLayer(seconds);
+      if (field) layers.push(field);
+      if (!planet) return layers;
+      if (answer === null || epoch === null || epoch + seconds * 1000 < answer) {
+        layers.push(planetGlyphLayer(options));
+        return layers;
+      }
+      layers.push(sessionRippleLayer(options, epoch + seconds * 1000 - answer, { width: pane.width, theme, reducedMotion }));
+      return layers;
+    };
+  }, [answer, digits, epoch, fadeFrom, fadeTo, fieldLayer, geometry, intensity, pane.width, planet, reducedMotion, theme]);
+  const motion = React.useMemo<GlyphMotion>(() => {
+    if (epoch !== null) return { kind: 'field-calm', epoch, durationS: glyphFieldDurationS, readDurationS: end, onSettled: settle };
+    return planet && digits && !reducedMotion && !hidden && !writing && focused === true ? { kind: 'digits' } : null;
+  }, [digits, end, epoch, focused, hidden, planet, reducedMotion, settle, writing]);
+  React.useEffect(() => { if (answerEpoch !== null && answer === null) finishAnswer(); }, [answer, answerEpoch, finishAnswer]);
+  return <>
+    {fieldAllowed ? <HomeFieldPreference onMode={setPreference} /> : null}
+    {geometry && (planet || mode !== 'off') ? (
     <AtmosphereDissolve
       visible={drawn && !props.hidden}
       leave={props.leave}
@@ -146,23 +151,20 @@ export const HomePlanet = React.memo(function HomePlanet(
       onHidden={props.onHidden}
       style={[styles.layer, { width: pane.width, height }]}
     >
-      <PlanetCanvas
+      <GlyphSurface
         width={pane.width}
         height={height}
-        options={lit}
-        retype={props.retype && props.digits ? { paused: paused || props.reducedMotion } : undefined}
-        fade={fade}
+        scene={scene}
+        theme={theme}
+        motion={motion}
         onReady={onReady}
         testID="home-planet"
       />
-      {playback.ringShown ? (
-        <AtmosphereRipple ref={ring} width={pane.width} height={pane.height} theme={props.theme} page={page} />
-      ) : null}
       {props.answerFinishes && drawn ? (
         <SessionFinishWatch visible={props.focused === true && !props.hidden} onAnswer={onAnswer} />
       ) : null}
-    </AtmosphereDissolve>
-  );
+    </AtmosphereDissolve>) : null}
+  </>;
 });
 
 /**

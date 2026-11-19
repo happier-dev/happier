@@ -10,10 +10,11 @@ const defaultProjectDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
  * so artifact builders can read it without loading the renderer build toolchain.
  */
 export async function readPublicProfileAssetFiles({ projectDir = defaultProjectDir } = {}) {
-    const interRoot = resolve(projectDir, '../ui/sources/assets/fonts');
+    const appFonts = resolve(projectDir, '../ui/sources/assets/fonts');
     const source = resolve(projectDir, 'assets/public-profile');
     return [
-        ...['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf'].map(filename => ({ filename, sourcePath: resolve(interRoot, filename) })),
+        ...['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf', 'IBMPlexMono-Regular.ttf']
+            .map(filename => ({ filename, sourcePath: resolve(appFonts, filename) })),
         ...(await readdir(source)).map(filename => ({ filename, sourcePath: resolve(source, filename) })),
     ];
 }

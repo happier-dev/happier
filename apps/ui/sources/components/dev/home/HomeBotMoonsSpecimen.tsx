@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
   HomePlanet,
-  useHomePlanetOptions,
+  useHomePlanetGeometry,
 } from '@/components/atmosphere/HomePlanet';
 import {
   HomeOrbitMap,
@@ -53,8 +53,7 @@ export function HomeBotMoonsSpecimen() {
   const look = React.useMemo(
     () => ({
       pane,
-      placement: 'corner' as const,
-      style: 'balanced' as const,
+      intensity: 'quiet' as const,
       digits: false,
       theme: theme.dark ? ('dark' as const) : ('light' as const),
       phone,
@@ -62,7 +61,7 @@ export function HomeBotMoonsSpecimen() {
     }),
     [pane, phone, theme.dark],
   );
-  const planet = useHomePlanetOptions(look);
+  const planet = useHomePlanetGeometry(look);
   const [sparks, setSparks] = React.useState<Readonly<Record<string, number>>>(
     {},
   );

@@ -463,7 +463,7 @@ describe('Home atmosphere settings declarations', () => {
             ...settings, homeAtmosphere: { ...settings.homeAtmosphere, moments: { ...settings.homeAtmosphere.moments, qr: false } },
         }), undefined, undefined, undefined, {});
         const choices = [
-            ['atmosphereSource', 'picture'], ['atmospherePlanetPlacement', 'rise'], ['atmospherePlanetStyle', 'rich'],
+            ['atmosphereSource', 'picture'], ['atmospherePlanetIntensity', 'full'], ['homeBackgroundField', 'still'],
             ['atmospherePlanetDigits', false], ['atmospherePictureRef', { kind: 'builtin', id: 'calm-sea' }],
             ['atmospherePictureLayout', 'wallpaper'], ['atmosphereShowOn', ['home', 'new-session', 'projects', 'sessions']],
             ['atmosphereMoments', { send: false, loading: true }],
@@ -475,8 +475,9 @@ describe('Home atmosphere settings declarations', () => {
         for (const [id, value] of choices) {
             expect(await owner.action({ actionId: 'settings.set', input: { anchor: `appearance.${id}`, value } }))
                 .toEqual({ anchor: `appearance.${id}`, value });
-            if (id === 'atmospherePlanetStyle') expect(owner.account().homeAtmosphere.moments.qr).toBe(false);
+            if (id === 'atmospherePlanetIntensity') expect(owner.account().homeAtmosphere.moments.qr).toBe(false);
         }
+        expect(owner.account().homeBackgroundField).toBe('still');
         expect(owner.account().homeAtmosphere).toMatchObject({ source: 'picture',
             planet: { placement: 'rise', style: 'rich', digits: false },
             picture: { ref: { kind: 'builtin', id: 'calm-sea' }, layout: 'wallpaper' }, showOn: ['home', 'new-session', 'projects', 'sessions'],
@@ -488,9 +489,9 @@ describe('Home atmosphere settings declarations', () => {
         expect(await owner.action({ actionId: 'settings.reset', input: {
             anchor: 'appearance.atmospherePlanetDigits', expected: { value: false },
         } })).toMatchObject({ errorCode: 'account_settings_mutation_conflict' });
-        expect(await owner.action({ actionId: 'settings.reset', input: { anchor: 'appearance.atmospherePlanetStyle' } }))
-            .toEqual({ anchor: 'appearance.atmospherePlanetStyle', value: 'balanced' });
-        expect(owner.account().homeAtmosphere.planet).toEqual({ placement: 'rise', style: 'balanced', digits: true });
+        expect(await owner.action({ actionId: 'settings.reset', input: { anchor: 'appearance.atmospherePlanetIntensity' } }))
+            .toEqual({ anchor: 'appearance.atmospherePlanetIntensity', value: 'quiet' });
+        expect(owner.account().homeAtmosphere.planet).toEqual({ intensity: 'quiet', digits: true });
     });
 
     it('stores only per-picture differences and resets through the same canonical mutation', async () => {

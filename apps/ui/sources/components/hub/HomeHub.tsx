@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useAtmosphereBackdrop } from '@/components/atmosphere/atmosphereBackdrop';
-import { useWindowDimensions, View, type ScrollView } from 'react-native';
+import { Platform, useWindowDimensions, View, type GestureResponderEvent, type ScrollView } from 'react-native';
+import { measureInWindow } from '@/components/ui/popover/measure';
 
 import { HomeWhereLine } from '@/components/homes/journeys/label/HomeWhereLine';
 import { useReturningGreeting } from '@/components/onboarding/preAuth/useReturningGreeting';
@@ -76,9 +77,10 @@ import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
 import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
-import { HomePlanet, homePlanetFootFade, useHomePlanetOptions } from '@/components/atmosphere/HomePlanet';
+import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry } from '@/components/atmosphere/HomePlanet';
 import { HomeBotMoons } from './HomeBotMoons';
-import { homePlanetDrawnHeight, homePlanetGeometry, type HomePane } from '@/components/atmosphere/homePlanetPlacement';
+import { homePlanetDrawnHeight, type HomePane } from '@/components/atmosphere/homePlanetPlacement';
+import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadingMoment';
 import { useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
@@ -500,6 +502,16 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const heroActive = atmosphere.source !== 'none';
     const backdrop = useAtmosphereBackdrop(atmosphere);
     const heroFrame = useHomeHeroFrame({ active: heroActive, focused, phone, backdrop });
+    const fieldTap = React.useRef<((x: number, y: number) => void) | null>(null);
+    const fieldHost = heroFrame.paneRef;
+    const onFieldTap = React.useCallback((event: GestureResponderEvent) => {
+        const tap = fieldTap.current;
+        if (!tap) return;
+        const { pageX, pageY } = event.nativeEvent;
+        void measureInWindow(fieldHost.current).then(box => {
+            if (box && fieldTap.current === tap) tap(pageX - box.x, pageY - box.y);
+        });
+    }, [fieldHost]);
     const sending = useAtmosphereSending() && atmosphere.moments.send !== false;
     const dissolving = useAtmosphereSendDissolving() && atmosphere.moments.send !== false;
     const pictureShown = useAtmospherePictureShown();
@@ -509,27 +521,30 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     if (planetSource && !planetDrawn) setPlanetDrawn(true);
     // Loading hands off to the same planet Home draws on a cold start.
     const homeTheme = theme.dark ? 'dark' as const : 'light' as const;
-    const placement = atmosphere.planet.placement;
     const [hubPane, setHubPane] = React.useState<HomePane>({ width: 0, height: 0 });
     const onHubLayout = React.useCallback((event: { nativeEvent: { layout: { width: number; height: number } } }) => {
         const { width, height } = event.nativeEvent.layout;
         setHubPane(current => current.width === width && current.height === height ? current : { width, height });
     }, []);
-    const planetLook = { pane: heroFrame.pane, placement, style: atmosphere.planet.style, digits: atmosphere.planet.digits,
+    const planetLook = { pane: heroFrame.pane, ...atmosphere.planet,
         theme: homeTheme, phone, hero: heroFrame.hero };
-    const planetOptions = useHomePlanetOptions(planetLook);
+    const planetGeometry = useHomePlanetGeometry(planetLook);
     const planetFade = homePlanetFootFade(planetLook);
+    const { from: planetFadeFrom, to: planetFadeTo } = planetFade ?? {};
+    const { intensity: planetIntensity, digits: planetDigits } = atmosphere.planet;
+    const planetPane = React.useMemo(() => ({ width: heroFrame.pane.width,
+        height: homePlanetDrawnHeight(heroFrame.pane.height, planetFadeFrom !== undefined && planetFadeTo !== undefined
+            ? { from: planetFadeFrom, to: planetFadeTo } : undefined) }), [heroFrame.pane.height, heroFrame.pane.width, planetFadeFrom, planetFadeTo]);
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
     const momentTarget = React.useMemo(() => resolveHomeMomentTarget({
-        guidanceKind: guidance.kind, heroActive, planetSource, options: planetOptions, fade: planetFade,
-    }), [guidance.kind, heroActive, planetFade, planetOptions, planetSource]);
+        guidanceKind: guidance.kind, heroActive, planetSource, pane: planetPane,
+        layer: planetGeometry ? planetGlyphLayer({ geometry: planetGeometry, intensity: planetIntensity, digits: planetDigits,
+            fade: planetFadeFrom !== undefined && planetFadeTo !== undefined ? { from: planetFadeFrom, to: planetFadeTo } : undefined }) : null,
+    }), [guidance.kind, heroActive, planetDigits, planetFadeFrom, planetFadeTo, planetGeometry, planetIntensity, planetPane, planetSource]);
     const [homePlanetDrawn, setHomePlanetDrawn] = React.useState(false);
     const onHomePlanetDrawn = React.useCallback(() => setHomePlanetDrawn(true), []);
-    const momentOrientation = React.useMemo(() => ({
-        rotate: homePlanetGeometry(planetSource ? placement : 'corner', { width: 1, height: 1 }, { phone }).rotate, mirror: false,
-    }), [phone, placement, planetSource]);
-    const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn, orientation: momentOrientation }),
-        [homeLoading, homePlanetDrawn, momentOrientation, momentTarget]);
+    const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn }),
+        [homeLoading, homePlanetDrawn, momentTarget]);
     const loadingMoment = useHomeLoadingMoment({
         waiting: homeLoading && isAtmosphereMomentOn(atmosphere.moments, 'loading'), start: 'mount', abort: homeUnavailable, paused: false,
         reducedMotion: atmosphere.reducedMotion, theme: homeTheme, pane: hubPane,
@@ -604,7 +619,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const firstRunLeadId = firstRun ? resolveHomeHubFirstRunLeadId(layout.sections) : null;
     const inboxPresented = briefOpen || layout.sections.some(section => section.id === HOME_HUB_ATTENTION_SECTION_ID && !section.hidden);
     const wallpaper = atmosphere.source === 'picture' && atmosphere.picture.layout === 'wallpaper';
-    const atmosphereSuggestions = firstRun ? 'none' as const : wallpaper || (planetSource && placement === 'rise') ? 'pills' as const : 'links' as const;
+    const atmosphereSuggestions = firstRun ? 'none' as const : wallpaper || planetSource ? 'pills' as const : 'links' as const;
     const composerSuggestions = heroActive || firstRun ? atmosphereSuggestions : 'tiles' as const;
     const slotProps = { layout, topLevelIds, onCustomize: openCustomize, placeholder: greeting.subtitle, composerSuggestions, onMachineSetupOpenChange: setMachineSetupOpen, tracker, widgetDrag,
         customizing: customizeOpen, showGrips: customizeOpen, groupOperations, movementSourceItem: movement.sourceItem, homeSurface: surface };
@@ -667,32 +682,34 @@ const HomeHubContent = React.memo(function HomeHubContent() {
 
     return framed(
         <WidgetMachineAddRecoveryContext.Provider value={firstRunLeadId !== null}>
-            <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure} collapsable={false}>
+            <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure}
+                onTouchEnd={Platform.OS === 'web' ? undefined : onFieldTap} collapsable={false}>
                 <ItemList
                     ref={homeListRef}
                     innerViewRef={contentRef as React.RefObject<View>}
                     testID="home-hub"
                     pageColumn="dashboard"
-                    onScroll={heroActive ? event => { tracker.onScroll(event); visibleWindow.onScroll(event); heroFrame.onScroll(event); } : tracker.onScroll}
+                    onScroll={event => { tracker.onScroll(event); if (heroActive) visibleWindow.onScroll(event); heroFrame.onScroll(event); }}
                     onLayout={event => { tracker.onLayout(event); visibleWindow.onLayout(event); homeDrop.onLayout(event); }}
                     onContentSizeChange={tracker.onContentSizeChange}
                     scrollEventThrottle={16}
                 >
-                    {heroActive ? <React.Fragment key="header">
-                    {planetDrawn ? (
-                        <HomePlanet pane={heroFrame.pane} placement={placement} style={atmosphere.planet.style} digits={atmosphere.planet.digits}
+                    <HomePlanet key="atmosphere" pane={heroFrame.pane.width > 0 ? heroFrame.pane : hubPane}
+                            intensity={atmosphere.planet.intensity} digits={atmosphere.planet.digits}
                             theme={homeTheme} phone={phone} hero={heroFrame.hero}
+                            planet={heroActive && planetDrawn} fieldAllowed={atmosphere.source !== 'picture'}
+                            fieldQuiet={heroFrame.keepOut} fieldHost={fieldHost} fieldTap={fieldTap} fieldScrollY={heroFrame.scrollY}
                             hidden={dissolving || (!planetSource && pictureShown) || loadingMoment.hold.held}
                             arrive={loadingMoment.hold.arrive === 'instant' ? 'instant' : 'fade'}
-                            retype writing={heroFrame.isWriting} onDrawn={onHomePlanetDrawn}
+                            writing={heroFrame.isWriting} onDrawn={onHomePlanetDrawn}
                             onHidden={dissolving ? atmosphereStageStore.finishSendDissolve : undefined}
                             leave={dissolving ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion}
                             answerFinishes={planetSource && isAtmosphereMomentOn(atmosphere.moments, 'sessionFinished')} focused={focused} />
-                    ) : null}
-                    {planetSource && planetOptions ? (
+                    {heroActive ? <React.Fragment key="header">
+                    {planetSource && planetGeometry ? (
                         // Home's Bots as moons round the planet (plan U3): above the planet, under the hero.
-                        <HomeBotMoons planet={planetOptions} width={heroFrame.pane.width}
-                            height={homePlanetDrawnHeight(heroFrame.pane.height, planetFade)} placement={placement} phone={phone}
+                        <HomeBotMoons planet={planetGeometry} width={heroFrame.pane.width}
+                            height={homePlanetDrawnHeight(heroFrame.pane.height, planetFade)} phone={phone}
                             keepOut={heroFrame.keepOut} shown={focused && !dissolving && !loadingMoment.hold.held} viewport={visibleWindow} />
                     ) : null}
                     <HomeIdleResettle picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture?.id ?? null : null}
@@ -711,7 +728,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         </>
                     )}
                     <HomeHero title={title} titleAccessory={briefEntry} phone={phone} paneHeight={heroFrame.pane.height} frame={heroFrame}
-                        rise={planetSource && placement === 'rise'} suggestions={atmosphereSuggestions}
+                        rise={planetSource} suggestions={atmosphereSuggestions}
                         showComposer={heroComposer} />
                     {/* The first thing under the hero, whichever it is: Rise's body ends above this. */}
                     <View testID="home-hub.below-hero" ref={heroFrame.nextRef} onLayout={heroFrame.measure}>

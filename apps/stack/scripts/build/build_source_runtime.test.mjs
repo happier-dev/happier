@@ -4899,7 +4899,7 @@ test('source server retains the shipped public-profile fonts after source inputs
   await cp(fileURLToPath(new URL('../../../server/assets/public-profile', import.meta.url)), join(server, 'assets/public-profile'), { recursive: true });
   const fonts = join(repoDir, 'apps/ui/sources/assets/fonts');
   await mkdir(fonts, { recursive: true });
-  for (const name of ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf']) {
+  for (const name of ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf', 'IBMPlexMono-Regular.ttf']) {
     await cp(fileURLToPath(new URL(`../../../ui/sources/assets/fonts/${name}`, import.meta.url)), join(fonts, name));
   }
   const expectedBytes = new Map();

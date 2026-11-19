@@ -82,7 +82,7 @@ describe('public profile draft', () => {
   });
 
   it('keeps the chosen private Look when Unpublish removes the server edition', () => {
-    const appearance = { atmosphere: { source: 'planet', planet: { placement: 'rise', style: 'rich', digits: true } }, theme: 'dark' } as const;
+    const appearance = { atmosphere: { source: 'planet', planet: { intensity: 'full', digits: true } }, theme: 'dark' } as const;
     const applied = record({ appearance });
     const draft = createPublicProfileDraft(applied, { layout });
     expect(draftLookPresentation(draft)).toMatchObject(appearance.atmosphere);

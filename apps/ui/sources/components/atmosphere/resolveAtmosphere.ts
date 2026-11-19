@@ -82,7 +82,6 @@ export function resolveAtmosphere<TPicture extends BuiltinPicture>(input: Readon
     shownPicture?: ResolvedAtmosphere<TPicture> | null;
     readingPicture?: boolean;
     pictureAcquisitionFailed?: boolean;
-    isPhone: boolean;
     glassEnvironment: GlassMaterialEnvironment;
     reduceTransparency: boolean;
     reducedMotion: boolean;
@@ -119,13 +118,10 @@ export function resolveAtmosphere<TPicture extends BuiltinPicture>(input: Readon
             ? { ...settings, source: 'none' }
             : { ...settings, source: 'planet', planet: DEFAULT_HOME_ATMOSPHERE.planet };
     }
-    // Home's phone hero has no room for Rise; a profile keeps its own placement, as its visitors' page paints it.
-    const planet = input.isPhone && !profile && settings.planet.placement === 'rise'
-        ? { ...settings.planet, placement: 'corner' as const } : settings.planet;
     const reduceTransparency = input.reduceTransparency || input.glassEnvironment.reduceTransparency === true;
     const shown = isAtmosphereShown(input.surface, settings);
     const atmosphereBehind = !shown ? 'none' : settings.source === 'picture' && settings.picture.layout === 'wallpaper' ? 'wallpaper' : 'band';
-    return { ...settings, source: shown ? settings.source : 'none', planet, pictureRecord: shown ? pictureRecord : null,
+    return { ...settings, source: shown ? settings.source : 'none', pictureRecord: shown ? pictureRecord : null,
         builtinPicture: shown ? builtinPicture : null, shown, atmosphereBehind,
         reducedMotion: input.reducedMotion, reduceTransparency, fallbackReason };
 }

@@ -129,12 +129,10 @@ describe('Look panel writes', () => {
     }
   });
 
-  it('sets the planet placement, style and digits from their own controls', async () => {
+  it('sets the planet intensity and digits from their own controls', async () => {
     const { screen, last } = await renderPanel(HOME);
-    await screen.pressByTestIdAsync('look-placement:rise');
-    expect(last()?.planet).toEqual({ ...HOME.planet, placement: 'rise' });
-    await screen.pressByTestIdAsync('look-style:rich');
-    expect(last()?.planet.style).toBe('rich');
+    await screen.pressByTestIdAsync('look-intensity:full');
+    expect(last()?.planet).toEqual({ ...HOME.planet, intensity: 'full' });
     await screen.pressByTestIdAsync('look-digits');
     expect(last()?.planet.digits).toBe(false);
     expect(last()?.source).toBe('planet');

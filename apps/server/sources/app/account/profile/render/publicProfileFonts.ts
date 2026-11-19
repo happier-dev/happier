@@ -12,7 +12,14 @@ export function publicProfileFontFaceForFilename(filename: string): PublicProfil
 
 /** Source servers and bundled servers use the same shipped faces, never a system-font lookup. */
 export async function readPublicProfileFont(face: PublicProfileFontFace): Promise<{ path: string; bytes: Buffer }> {
-    const filename = PUBLIC_PROFILE_FONT_FILES[face];
+    return readBundledFace(PUBLIC_PROFILE_FONT_FILES[face], face === 'cjk' || face === 'arabic' || face === 'emoji');
+}
+
+export function readPublicProfilePlanetFont(): Promise<{ path: string; bytes: Buffer }> {
+    return readBundledFace('IBMPlexMono-Regular.ttf', false);
+}
+
+async function readBundledFace(filename: string, authoredInServer: boolean): Promise<{ path: string; bytes: Buffer }> {
     const candidates = [
         // esbuild runtime: faces staged beside the chunks.
         fileURLToPath(new URL(`./assets/public-profile/${filename}`, import.meta.url)),
@@ -25,7 +32,7 @@ export async function readPublicProfileFont(face: PublicProfileFontFace): Promis
         if (staged) return { path, bytes: await readFile(path) };
     }
     // Source runtime: read from the authoring trees.
-    const path = face === 'cjk' || face === 'arabic' || face === 'emoji'
+    const path = authoredInServer
         ? fileURLToPath(new URL(`../../../../../assets/public-profile/${filename}`, import.meta.url))
         : fileURLToPath(new URL(`../../../../../../ui/sources/assets/fonts/${filename}`, import.meta.url));
     return { path, bytes: await readFile(path) };

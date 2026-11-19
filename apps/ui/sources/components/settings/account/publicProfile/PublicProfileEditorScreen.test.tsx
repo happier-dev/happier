@@ -269,7 +269,7 @@ it('publishes the same chosen Look through review and Action after another Sessi
     await screen.pressByTestIdAsync('public-profile-editor-submit');
     await vi.waitFor(() => expect(screen.findByTestId('public-profile-review-confirm')).not.toBeNull());
     const chosen = review().props.disclosure.appearance;
-    expect(chosen.atmosphere).toMatchObject({ source: 'planet', planet: { placement: 'rise' } });
+    expect(chosen.atmosphere).toMatchObject({ source: 'planet', planet: { intensity: 'quiet' } });
     await screen.pressByTestIdAsync('public-profile-review-confirm');
     await vi.waitFor(() => expect(editor().props.status).toBe('published'));
     await act(async () => { await unpublish(); });

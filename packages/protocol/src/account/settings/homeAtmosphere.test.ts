@@ -32,3 +32,21 @@ describe('stored Home moments', () => {
         expect(HomeAtmosphereSchema.safeParse(homeAtmosphere).success).toBe(false);
     });
 });
+
+describe('stored planet preferences', () => {
+    it('reads the legacy planet at Quiet and retains the authored picture, looks, places and moments', () => {
+        const legacy = {
+            source: 'picture',
+            planet: { placement: 'side', style: 'rich', digits: false },
+            picture: { ref: { kind: 'user', localId: 'favourite-picture' }, layout: 'wallpaper' },
+            looks: { 'favourite-picture': { look: 'haze' }, 'white-rocks-open-sea': { strength: 0.4 } },
+            showOn: ['home', 'sessions'],
+            moments: { sessionFinished: false },
+        };
+        expect(accountSettingsParse({ homeAtmosphere: legacy }).homeAtmosphere).toEqual({
+            ...legacy,
+            planet: { intensity: 'quiet', digits: false },
+        });
+        expect(HomeAtmosphereSchema.safeParse(legacy).success).toBe(false);
+    });
+});

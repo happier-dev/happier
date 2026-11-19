@@ -1,8 +1,6 @@
-import * as React from 'react';
+import { planetGlyphLayer, type PlanetGlyphOptions } from '@happier-dev/brand/glyph-scene';
 import { FURTHER_PLANET_MOMENT_TIMINGS, sessionFinishedRippleFrame } from '@happier-dev/brand/planet-moments';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { ATMOSPHERE_RIPPLE_RING } from './AtmosphereRipple';
-import type { AtmosphereRippleHandle } from './atmosphereRipple.types';
 
 /**
  * The session-finished ripple as Home's planet plays it (plan UD-4): the brand's frame at Home's real
@@ -19,6 +17,17 @@ export type SessionRippleFrame = Readonly<{
 const { RIP } = FURTHER_PLANET_MOMENT_TIMINGS;
 /** The brand curve holds its full +22 % between 8 % and 10 % of the ripple; the reduced path starts there. */
 const REDUCED_PEAK_SECONDS = RIP.DUR * 0.1;
+
+export function sessionRippleLayer(
+  options: PlanetGlyphOptions,
+  elapsedMs: number,
+  input: Pick<Parameters<typeof sessionRippleFrame>[1], 'width' | 'theme' | 'reducedMotion'>,
+) {
+  const { geometry } = options;
+  const frame = sessionRippleFrame(elapsedMs, { ...input, ...geometry });
+  const ring = frame.ring;
+  return planetGlyphLayer({ ...options, gain: frame.gain, ring: ring ? { progress: ring.progress } : undefined });
+}
 
 /**
  * One instant of the ripple on Home's real planet. The full moment is the brand frame (its gain and the
@@ -65,60 +74,4 @@ export function sessionRippleFrame(
         };
   const done = elapsedMs >= RIP.DUR * 1000;
   return { gain: done ? 1 : frame.planet.gain, ring: done ? null : ring, done };
-}
-
-/**
- * Plays each answer on Home's planet: one clock (the display's frames) drives the planet's gain and the
- * ring together for the brand's 1.6 s, or the 140 ms settle under reduced motion, then stops. Platforms
- * that draw no ring play the reduced answer.
- */
-export function useSessionRipplePlayback(
-    answers: number,
-    input: Parameters<typeof sessionRippleFrame>[1] & Readonly<{ paused?: boolean }>,
-    ring: React.RefObject<AtmosphereRippleHandle | null>,
-): Readonly<{ gain: number; ringShown: boolean }> {
-    const [gain, setGain] = React.useState(1);
-    const [ringShown, setRingShown] = React.useState(false);
-    const latest = React.useRef(input);
-    latest.current = input;
-    const progress = React.useRef({ answer: 0, elapsedMs: 0, done: true, reducedMotion: false, reducedMotionPreference: input.reducedMotion });
-    React.useEffect(() => {
-        if (answers === 0) return;
-        const current = progress.current;
-        const reduceSelected = latest.current.reducedMotion && !current.reducedMotionPreference;
-        current.reducedMotionPreference = latest.current.reducedMotion;
-        if (current.answer !== answers) {
-            current.answer = answers;
-            current.elapsedMs = 0;
-            current.done = false;
-            current.reducedMotion = latest.current.reducedMotion || !ATMOSPHERE_RIPPLE_RING;
-            setGain(1);
-            setRingShown(!current.reducedMotion);
-        } else if (reduceSelected && !current.done) {
-            // A newly selected preference settles the existing answer instead of replaying it.
-            current.done = true;
-            setGain(1);
-            setRingShown(false);
-            ring.current?.paint(null);
-        }
-        if (current.done || latest.current.paused) return;
-        let last = performance.now();
-        let frame = requestAnimationFrame(function step(time) {
-            current.elapsedMs += Math.max(0, time - last);
-            last = time;
-            const next = sessionRippleFrame(current.elapsedMs, { ...latest.current, reducedMotion: current.reducedMotion });
-            setGain(next.gain);
-            ring.current?.paint(next.ring);
-            if (next.done) {
-                current.done = true;
-                setRingShown(false);
-                return;
-            }
-            frame = requestAnimationFrame(step);
-        });
-        return () => {
-            cancelAnimationFrame(frame);
-        };
-    }, [answers, input.paused, input.reducedMotion, ring]);
-    return { gain, ringShown };
 }

@@ -3,10 +3,8 @@ import { act } from 'react';
 import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import {
-  homePlanetGeometry,
-  homePlanetSceneOptions,
-} from '../homePlanetPlacement';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { useHomeLoadingMoment, type HomePlanetHold } from './homeLoadingMoment';
 import type { PlanetMomentTarget } from './planetMomentTimeline';
 
@@ -16,23 +14,36 @@ vi.mock('react-native', async () => {
   return createReactNativeWebMock();
 });
 
-// These lifecycle cases need a painted native frame. The default native boundary leaves fonts unloaded.
+const pixels = vi.hoisted(() => ({ body: null as Uint8Array | null }));
+vi.mock('../glyph/glyphAtlas.native', () => ({
+  glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+    return { cw, ch, chars, masks: new Uint8Array(cw * ch * chars.length) };
+  },
+}));
 vi.mock('@shopify/react-native-skia', async () => {
-  const { createReactNativeSkiaMock } = await import('@/dev/testkit/mocks/reactNativeSkia');
-  const font = {};
-  return { ...createReactNativeSkiaMock(), useTypeface: () => font };
+  const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
+  const dispose = () => undefined;
+  return { ...boundary, BlendMode: { Modulate: 1, DstIn: 2 },
+    Skia: { ...boundary.Skia,
+      Data: { fromBytes: (bytes: Uint8Array) => ({ bytes, dispose }) },
+      Image: { MakeImage: (info: { width: number; height: number }, { bytes }: { bytes: Uint8Array }) => {
+        if (info.width === Math.ceil(pane.width / 8)) pixels.body = bytes.slice();
+        return { dispose };
+      } },
+      Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
+      Path: { Make: () => ({ dispose }) },
+    },
+    createPicture: () => ({ dispose }),
+  };
 });
 
 const pane = { width: 1150, height: 900 };
-const orientation = { rotate: -1.5, mirror: false };
-const planet: PlanetMomentTarget = {
+const planet = {
   kind: 'planet',
-  options: homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane, {
-    theme: 'dark',
-    style: 'balanced',
-    digits: true,
-  }),
-};
+  pane,
+  layer: planetGlyphLayer({ geometry: horizonPlanetGeometry(pane), intensity: 'full', digits: true }),
+} satisfies PlanetMomentTarget;
 
 type Seen = { hold: HomePlanetHold; layer: boolean };
 
@@ -52,7 +63,6 @@ function Home(
       waiting: props.waiting,
       target: props.target,
       drawn: props.drawn,
-      orientation,
     }),
     [props.drawn, props.target, props.waiting],
   );
@@ -139,6 +149,8 @@ describe('Home loading moment', () => {
     // Landed, but Home's canvas has not drawn yet: the moment keeps the landed planet up.
     expect(screen.findByTestId('loading-planet')).not.toBeNull();
     expect(seen.at(-1)?.hold.held).toBe(true);
+    const homeFrame = glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 1, theme: 'dark', layers: [planet.layer] });
+    expect(pixels.body).toEqual(homeFrame.body?.rgba);
 
     const before = seen.length;
     await screen.update(

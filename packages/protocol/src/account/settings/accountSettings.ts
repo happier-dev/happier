@@ -11,10 +11,10 @@ import { z as classicZ } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { GlassSurfaceMaterialsSchema, GlassSurfaceMaterialsStoredSchema } from './glassSurfaceMaterials.js';
 import { DEFAULT_GLASS_TINT_INTENSITY, GlassTintIntensitySchema } from './glassTint.js';
-import { HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE } from './homeAtmosphere.js';
+import { HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE, HOME_BACKGROUND_FIELD_MODES } from './homeAtmosphere.js';
 import { FilesEditorAiSuggestionsV1Schema, DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1 } from './filesEditorAiSuggestionsV1.js';
 export { FilesEditorAiSuggestionsV1Schema, DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1, resolveFilesEditorAiSuggestionDelayMs, resolveFilesEditorAiSuggestionPolicy, resolveFilesEditorAiSuggestionModelId, type FilesEditorAiSuggestionsV1, type FilesEditorAiSuggestionOperation } from './filesEditorAiSuggestionsV1.js';
-export { ATMOSPHERE_PLACES, AtmosphereShowOnSchema, defaultAtmosphereShowOn, applyAtmosphereLayoutDefault, type AtmospherePlace, HomeAtmosphereSchema, ProjectAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, recordAtmospherePictureSelection, DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation, type AtmosphereLookOverride } from './homeAtmosphere.js';
+export { ATMOSPHERE_PLACES, ATMOSPHERE_PLANET_INTENSITIES, HOME_BACKGROUND_FIELD_MODES, AtmosphereShowOnSchema, defaultAtmosphereShowOn, applyAtmosphereLayoutDefault, type AtmospherePlace, HomeAtmosphereSchema, ProjectAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, recordAtmospherePictureSelection, DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation, type AtmosphereLookOverride } from './homeAtmosphere.js';
 import { DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, MachineRetentionDefaultsV1Schema } from './machineRetentionDefaultsV1.js';
 import { DeploymentCreationDefaultsV1Schema } from '../../projects/deploymentCreationDefaultsV1.js';
 import { DEFAULT_MACHINE_OFFLINE_ALERTS_V1, MachineOfflineAlertsV1Schema } from './machineOfflineAlertsV1.js';
@@ -1036,6 +1036,7 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
         semanticDomain: 'Home atmosphere', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
     }),
+    homeBackgroundField: accountPreference(z.enum(HOME_BACKGROUND_FIELD_MODES), 'animated', 'Home atmosphere'),
     composerSurfaceStyle: accountPreference(z.enum(['standard', 'glass']), 'glass', 'composer presentation'),
 } as const;
 const BoundedLegacyArraySchema = defineStoredReadProjection(lazyDefinition(() => z.array(BoundedLegacyJsonValueSchema).check(z.maxLength(256))), () => z.array(createStoredReadSchema(BoundedLegacyJsonValueSchema)));

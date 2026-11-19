@@ -1,53 +1,16 @@
-import * as React from 'react';
-import { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import type { AtmosphereRippleHandle } from './atmosphereRipple.types';
-import { useSessionRipplePlayback } from './sessionRipple';
+import { expect, it } from 'vitest';
+import { glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { sessionRippleLayer } from './sessionRipple';
 
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
-
-async function frames(ms: number) {
-  for (let elapsed = 0; elapsed < ms; elapsed += 16) {
-    await act(async () => { vi.advanceTimersByTime(16); });
-  }
-}
-
-describe('session ripple live motion inputs', () => {
-  beforeEach(() => { vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] }); });
-  afterEach(() => { vi.useRealTimers(); });
-
-  async function mount() {
-    let output: ReturnType<typeof useSessionRipplePlayback> = { gain: 1, ringShown: false };
-    // The imperative ring painter is a platform drawing boundary.
-    const ring: React.RefObject<AtmosphereRippleHandle | null> = { current: { paint: vi.fn() } };
-    function Probe(props: Readonly<{ paused?: boolean; reducedMotion?: boolean }>) {
-      output = useSessionRipplePlayback(1, { width: 280, theme: 'dark', cx: 200, cy: 80, R: 90,
-        reducedMotion: props.reducedMotion ?? false, paused: props.paused ?? false }, ring);
-      return null;
-    }
-    const screen = await renderScreen(<Probe />);
-    return { output: () => output, set: (props: React.ComponentProps<typeof Probe>) => screen.update(<Probe {...props} />) };
-  }
-
-  it('holds a finite answer while focus or writing pauses it, then resumes', async () => {
-    const home = await mount();
-    await frames(64);
-    await home.set({ paused: true });
-    const held = home.output();
-    await frames(2000);
-    expect(home.output()).toEqual(held);
-    await home.set({ paused: false });
-    await frames(1800);
-    expect(home.output()).toEqual({ gain: 1, ringShown: false });
-  });
-
-  it('settles an answer when reduced motion changes during playback', async () => {
-    const home = await mount();
-    await frames(64);
-    await home.set({ reducedMotion: true });
-    expect(home.output()).toEqual({ gain: 1, ringShown: false });
-    await frames(160);
-    expect(home.output()).toEqual({ gain: 1, ringShown: false });
-  });
+it('types the ring over a planet with Digits off, then returns to the exact resting frame', () => {
+  const view = { w: 390, h: 844 };
+  const geometry = horizonPlanetGeometry({ width: view.w, height: view.h }, { phone: true, composerTop: 270 });
+  const options = { geometry, intensity: 'quiet', digits: false } as const;
+  const input = { width: view.w, theme: 'dark', reducedMotion: false } as const;
+  const paint = (layer: ReturnType<typeof planetGlyphLayer>) => glyphFrame({ view, dpr: 1, theme: input.theme, layers: [layer] });
+  const rest = paint(planetGlyphLayer(options));
+  expect(paint(sessionRippleLayer(options, 560, input)).sprites.glyph.length).toBeGreaterThan(0);
+  expect(paint(sessionRippleLayer(options, 1600, input))).toEqual(rest);
+  expect(paint(sessionRippleLayer(options, 75, { ...input, reducedMotion: true })).sprites).toEqual(rest.sprites);
 });

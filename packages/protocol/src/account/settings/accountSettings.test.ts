@@ -293,8 +293,8 @@ describe('accountSettings', () => {
   it('owns the Home atmosphere default and tolerantly opens authored preferences', () => {
     const defaults = accountSettingsParse({});
     expect(defaults).toHaveProperty('homeAtmosphere.source', 'planet');
-    expect(defaults).toHaveProperty('homeAtmosphere.planet', { placement: 'corner', style: 'balanced', digits: true });
-    const value = { source: 'picture', planet: { placement: 'rise', style: 'rich', digits: false },
+    expect(defaults).toHaveProperty('homeAtmosphere.planet', { intensity: 'quiet', digits: true });
+    const value = { source: 'picture', planet: { intensity: 'full', digits: false },
       picture: { ref: { kind: 'user', localId: 'device-picture' }, layout: 'wallpaper' },
       looks: { 'device-picture': { strength: 1.8, look: 'original', dissolve: 'ordered' } },
       showOn: ['home', 'new-session', 'projects', 'sessions'], moments: { send: false } };

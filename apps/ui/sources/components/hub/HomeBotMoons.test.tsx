@@ -6,7 +6,7 @@ import { createSessionListRenderableSessionFixture, createSessionViewerFixture }
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot, removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { homePlanetGeometry, homePlanetSceneOptions } from '@/components/atmosphere/homePlanetPlacement';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import { HomeOrbitBotMoon } from '@/components/atmosphere/orbit/HomeOrbitBotMoon';
 import { HomeBotMoons } from './HomeBotMoons';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
@@ -92,9 +92,8 @@ it('sparks once for each followed recipient Turn without private owner metadata,
   storage.getState().applyServerScopedSessionListRows(serverId, [bot], { source: 'ordinary', mode: 'replace' });
   expect(storage.getState().sessionListBotRowsByServerId[serverId]?.[bot.id]?.metadata?.bot).toEqual({ kind: 'bot' });
   const scene = (shown = true) => <InjectedAuthProvider credentials={null}>
-    <HomeBotMoons planet={homePlanetSceneOptions(homePlanetGeometry('corner', { width: 900, height: 600 }, { phone: false }),
-      { width: 900, height: 600 }, { theme: 'dark', style: 'balanced', digits: false })} width={900} height={600}
-      placement="corner" phone={false} shown={shown} viewport={null} />
+    <HomeBotMoons planet={horizonPlanetGeometry({ width: 900, height: 600 })} width={900} height={600}
+      phone={false} shown={shown} viewport={null} />
   </InjectedAuthProvider>;
   let screen = await renderScreen(scene());
   const spark = () => screen.findByType(HomeOrbitBotMoon).props.spark;

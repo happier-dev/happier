@@ -151,9 +151,9 @@ function SurfacePlanet(props: Readonly<{ surface: AtmosphereSurface; atmosphere:
         style={{ position: 'absolute', left: props.origin.x, top: props.origin.y, width: geometry.rect.width, height: geometry.rect.height, borderRadius: props.radius, overflow: 'hidden' }}>
         <View style={{ position: 'absolute', ...offset, width: composed.width, height: composed.height }}>
         <HomePlanet
-            pane={composed} placement={project ? 'corner' : atmosphere.planet.placement}
-            style={atmosphere.planet.style} digits={atmosphere.planet.digits} theme={theme.dark ? 'dark' : 'light'} phone={phone}
-            hero={!project && geometry.band > 0 ? { composerTop: 2 * geometry.focus.y - geometry.band, aboveBottom: geometry.band, nextTop: null } : null}
+            pane={composed} intensity={atmosphere.planet.intensity}
+            digits={atmosphere.planet.digits} theme={theme.dark ? 'dark' : 'light'} phone={phone}
+            hero={geometry.band > 0 ? { composerTop: 2 * geometry.focus.y - geometry.band, aboveBottom: geometry.band, nextTop: null } : null}
             hidden={sending} onHidden={sending ? atmosphereStageStore.finishSendDissolve : undefined} leave={sending ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion} />
         </View>
         {coat > 0 ? <View testID="surface-planet-coat" pointerEvents="none" style={{ position: 'absolute', top: geometry.band, left: 0, right: 0, bottom: 0,

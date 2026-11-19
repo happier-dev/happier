@@ -1,12 +1,9 @@
 import * as React from 'react';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPlanetScene, planetAssembly } from '@happier-dev/brand/planet';
 import { renderScreen } from '@/dev/testkit';
 import { homePlanetGeometry, homePlanetSceneOptions } from './homePlanetPlacement';
-import { loadingAssembledFrame, loadingPlanetSource } from './moments/planetMomentTimeline';
 import { PlanetCanvas } from './PlanetCanvas.native';
-import { PlanetMomentCanvas } from './moments/PlanetMomentCanvas.native';
 
 // Skia's native host is the system boundary. In @shopify/react-native-skia 2.4.18,
 // `SkFont.getTypeface()` wraps the font's borrowed SkTypeface in an owning sk_sp without
@@ -63,17 +60,6 @@ describe('native planet typefaces', () => {
 
     it('draws Home planet digits without adopting the font’s borrowed typeface', async () => {
         await act(async () => { renderScreen(<PlanetCanvas width={pane.width} height={pane.height} options={options} />); });
-        expect(native.state.glyphs).toBeGreaterThan(0);
-        expect(native.state.borrowedAdoptions).toBe(0);
-    });
-
-    it('draws the loading assembly digits without adopting the font’s borrowed typeface', async () => {
-        const source = loadingPlanetSource({ cx: 200, cy: 300, R: 120 }, { rotate: -1.5, mirror: false }, { theme: 'dark', pane, dpr: 2 });
-        const assembly = planetAssembly(source);
-        const haze = createPlanetScene({ ...source, rise: 1 }).haze;
-        await act(async () => {
-            renderScreen(<PlanetMomentCanvas width={pane.width} height={pane.height} dpr={2} assembly={assembly} haze={haze} frame={loadingAssembledFrame()} opacity={1} />);
-        });
         expect(native.state.glyphs).toBeGreaterThan(0);
         expect(native.state.borrowedAdoptions).toBe(0);
     });

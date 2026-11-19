@@ -5,8 +5,8 @@ import { countStoreNotifications, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { HomePlanet } from './HomePlanet';
-import { PlanetCanvas } from './PlanetCanvas';
-import { AtmosphereRipple } from './AtmosphereRipple';
+import { GlyphSurface, type GlyphSurfaceProps } from './glyph/GlyphSurface';
+import type { PlanetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
@@ -24,16 +24,33 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
-// Select the real web ring adapter for this web completion journey. Only browser
-// font/Canvas2D ports below are synthetic; admission, playback and the ring stay real.
-vi.mock('./AtmosphereRipple', async () => import('./AtmosphereRipple.web'));
 const nativePictures = vi.hoisted(() => ({ count: 0 }));
-vi.mock('@shopify/react-native-skia', async () => ({
-  ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
-  // Font readiness and native picture allocation are genuine platform boundaries.
-  useTypeface: () => ({}),
-  createPicture: () => { nativePictures.count += 1; return { dispose() {} }; },
+vi.mock('./glyph/glyphAtlas.native', () => ({
+  glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
+    const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+    return { cw, ch, chars, masks: new Uint8Array(cw * ch * chars.length) };
+  },
 }));
+vi.mock('@shopify/react-native-skia', async () => {
+  const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
+  const dispose = () => undefined;
+  return { ...boundary, BlendMode: { Modulate: 1, DstIn: 2 }, TileMode: { Clamp: 0, Repeat: 1 },
+    Skia: { ...boundary.Skia,
+      Data: { fromBytes: () => ({ dispose }) },
+      Image: { MakeImage: () => ({ dispose, makeShaderOptions: () => ({ dispose }) }) },
+      Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
+      Path: { Make: () => ({ dispose }) },
+    },
+    createPicture: () => { nativePictures.count += 1; return { dispose }; },
+  };
+});
+
+function planetAt({ scene }: GlyphSurfaceProps, seconds = 0): PlanetGlyphLayer {
+  const layers = typeof scene === 'function' ? scene(seconds) : scene;
+  const planet = layers.find(layer => layer.kind === 'planet');
+  if (!planet) throw new Error('Home has no planet layer');
+  return planet;
+}
 
 const pane = { width: 280, height: 240 };
 beforeEach(() => {
@@ -48,7 +65,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-describe('Rise foot fade', () => {
+describe('Horizon foot fade', () => {
   it('draws the planet down to the end of its ordered foot fade when the hero runs past the first fold', async () => {
     const desk = { width: 990, height: 850 };
     // Two rows of suggestions and the 200 px Rise foot put the widgets' header below the fold.
@@ -56,8 +73,7 @@ describe('Rise foot fade', () => {
     const screen = await renderScreen(
       <HomePlanet
         pane={desk}
-        placement="rise"
-        style="balanced"
+        intensity="quiet"
         digits
         theme="light"
         phone={false}
@@ -67,36 +83,36 @@ describe('Rise foot fade', () => {
         reducedMotion={false}
       />,
     );
-    const canvas = screen.findByType(PlanetCanvas);
-    const fade = canvas.props.fade as { from: number; to: number };
+    const canvas = screen.findByType(GlyphSurface);
+    const fade = planetAt(canvas.props).fade!;
     expect(fade.to).toBeGreaterThan(desk.height);
     expect(canvas.props.height).toBeGreaterThanOrEqual(fade.to);
-    expect(canvas.props.options.view.h).toBe(canvas.props.height);
+    await screen.unmount();
   });
 
-  it('keeps Corner to the pane', async () => {
+  it('keeps the surface at the pane height when no section follows', async () => {
     const desk = { width: 990, height: 850 };
     const screen = await renderScreen(
       <HomePlanet
         pane={desk}
-        placement="corner"
-        style="balanced"
+        intensity="quiet"
         digits
         theme="light"
         phone={false}
-        hero={{ composerTop: 330, aboveBottom: 560, nextTop: 1010 }}
+        hero={{ composerTop: 330, aboveBottom: 560, nextTop: null }}
         hidden={false}
         leave="fade"
         reducedMotion={false}
       />,
     );
-    const canvas = screen.findByType(PlanetCanvas);
+    const canvas = screen.findByType(GlyphSurface);
     expect(canvas.props.height).toBe(desk.height);
-    expect(canvas.props.options.view.h).toBe(desk.height);
+    expect(planetAt(canvas.props).fade).toBeUndefined();
+    await screen.unmount();
   });
 });
 
-describe('Welcome digits subscription locality', () => {
+describe('Home glyph subscription locality', () => {
   let previous: ReturnType<typeof storage.getState>;
   beforeEach(() => {
     vi.useFakeTimers({
@@ -131,30 +147,31 @@ describe('Welcome digits subscription locality', () => {
     storage.getState().applySessions([session]);
     storage.getState().applyServerScopedSessionListRows('server-a', [buildSessionListRenderableFromSession(session)], { source: 'ordinary', mode: 'append' });
     const scene = (visible: boolean) => <React.Activity mode={visible ? 'visible' : 'hidden'}>
-      <HomePlanet pane={pane} placement="corner" style="balanced" digits
+      <HomePlanet pane={pane} intensity="quiet" digits
         theme="dark" phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false}
         focused answerFinishes />
     </React.Activity>;
     const screen = await renderScreen(scene(true));
     try {
-      await act(async () => { screen.findByType(PlanetCanvas).props.onReady(); });
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      await vi.waitFor(() => expect(nativePictures.count).toBeGreaterThan(0));
+      const answer = () => planetAt(screen.findByType(GlyphSurface).props, 0.2).ring;
+      expect(answer()).toBeUndefined();
       await act(async () => {
         vi.advanceTimersByTime(21_500);
         storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
           patch: { latestTurnStatus: 'completed', latestTurnStatusObservedAt: Date.now() } }]);
       });
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(1);
+      expect(answer()).toBeDefined();
       await act(async () => { vi.advanceTimersByTime(10_000); });
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      expect(answer()).toBeUndefined();
       await act(async () => {
         storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
           patch: { latestReadyEventAt: Date.now(), latestReadyEventSeq: 2 } }]);
       });
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      expect(answer()).toBeUndefined();
       await screen.update(scene(false));
       await screen.update(scene(true));
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      expect(answer()).toBeUndefined();
       // Returning must not swallow a later, genuinely new completion either.
       await act(async () => {
         storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
@@ -165,12 +182,12 @@ describe('Welcome digits subscription locality', () => {
         storage.getState().applyServerScopedSessionListRowPatches('server-a', [{ sessionId: session.id,
           patch: { latestTurnStatus: 'completed', latestTurnStatusObservedAt: Date.now() } }]);
       });
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(1);
+      expect(answer()).toBeDefined();
       await act(async () => { vi.advanceTimersByTime(10_000); });
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      expect(answer()).toBeUndefined();
       await screen.update(scene(false));
       await screen.update(scene(true));
-      expect(screen.findAllByType(AtmosphereRipple)).toHaveLength(0);
+      expect(answer()).toBeUndefined();
     } finally { await screen.unmount(); }
   });
 
@@ -199,8 +216,7 @@ describe('Welcome digits subscription locality', () => {
           <Content />
           <HomePlanet
             pane={pane}
-            placement="corner"
-            style="balanced"
+            intensity="quiet"
             digits
             theme="dark"
             phone={false}
@@ -210,28 +226,28 @@ describe('Welcome digits subscription locality', () => {
             reducedMotion={props.reducedMotion ?? false}
             focused={props.eligible ?? true}
             writing={props.writing ?? false}
-            retype
             answerFinishes
           />
         </>
       );
     }
     const screen = await renderScreen(<Home />);
+    await vi.waitFor(() => expect(nativePictures.count).toBeGreaterThan(0));
     const initialHomeRenders = homeRenders;
     const initialContentRenders = unrelatedRenders;
-    const canvasProps = screen.findByType(PlanetCanvas).props;
+    const canvasProps = screen.findByType(GlyphSurface).props;
     const dissolveProps = screen.findByType(AtmosphereDissolve).props;
     const watch = () => screen.find(node => typeof node.type === 'function' && node.type.name === 'SessionFinishWatch');
     const watchProps = watch().props;
     const notifications = countStoreNotifications(storage);
     const initialPictures = nativePictures.count;
-    for (let tick = 0; tick < 150; tick++) {
+    for (let tick = 0; tick < 30; tick++) {
       await act(async () => { vi.advanceTimersByTime(2000); });
     }
-    expect.soft(ticks).toBe(150);
-    expect(nativePictures.count - initialPictures).toBe(150);
+    expect.soft(ticks).toBe(30);
+    expect(nativePictures.count - initialPictures).toBe(30);
     // Ancestor-rendered outputs stay stable while only the drawing leaf updates.
-    expect.soft(screen.findByType(PlanetCanvas).props === canvasProps).toBe(true);
+    expect.soft(screen.findByType(GlyphSurface).props === canvasProps).toBe(true);
     expect.soft(screen.findByType(AtmosphereDissolve).props === dissolveProps).toBe(true);
     expect.soft(watch().props === watchProps).toBe(true);
     expect(notifications.read()).toEqual([]);

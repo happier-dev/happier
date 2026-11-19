@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { HomePlanet, homePlanetFootFade, useHomePlanetOptions, type HomePlanetLook } from '@/components/atmosphere/HomePlanet';
-import type { HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlacement';
+import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry, type HomePlanetLook } from '@/components/atmosphere/HomePlanet';
+import { homePlanetDrawnHeight, type HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlacement';
+import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadingMoment';
 
 /**
@@ -47,17 +48,20 @@ function LoadingHome(props: Case) {
         const id = setTimeout(() => setReady(true), props.readyAt * 1000);
         return () => clearTimeout(id);
     }, [props.readyAt]);
-    const look: HomePlanetLook = { pane, placement: props.placement, style: 'balanced', digits: true, theme: props.theme, phone: false, hero: hero(props.placement, props.height) };
-    const options = useHomePlanetOptions(look);
-    const fade = homePlanetFootFade(look);
+    const look: HomePlanetLook = { pane, intensity: 'quiet', digits: true, theme: props.theme, phone: false, hero: hero(props.placement, props.height) };
+    const geometry = useHomePlanetGeometry(look);
+    const { from, to } = homePlanetFootFade(look) ?? {};
     const [drawn, setDrawn] = React.useState(false);
     // `holdHandOff` keeps the landed moment up (Home's planet never reports drawn) for the identity still.
     const hold = props.holdHandOff === true;
     const onDrawn = React.useCallback(() => { if (!hold) setDrawn(true); }, [hold]);
-    const home = React.useMemo(() => ({
-        waiting: !ready, drawn, orientation: { rotate: options?.rotate ?? -1.5, mirror: false },
-        target: ready && options ? { kind: 'planet' as const, options, fade } : null,
-    }), [drawn, fade, options, ready]);
+    const home = React.useMemo(() => {
+        const fade = from !== undefined && to !== undefined ? { from, to } : undefined;
+        return { waiting: !ready, drawn, target: ready && geometry ? { kind: 'planet' as const,
+            layer: planetGlyphLayer({ geometry, intensity: 'quiet', digits: true, fade }),
+            pane: { width: pane.width, height: homePlanetDrawnHeight(pane.height, fade) },
+        } : null };
+    }, [drawn, from, geometry, pane, ready, to]);
     const moment = useHomeLoadingMoment({
         waiting: !ready, start: 'mount', paused: false, reducedMotion: props.reducedMotion ?? false, theme: props.theme, pane, home,
         cover: <div style={{ position: 'absolute', inset: 0, background: PAGE[props.theme] }} />,
