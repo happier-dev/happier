@@ -227,8 +227,9 @@ const styles = StyleSheet.create((theme) => ({
     alignSelf: 'stretch',
   },
   // Right under the title (owner 11-11), on the sheets' edge: the header's own bottom padding is the gap above; the
-  // band, the open field and the count line sit one small step apart and end with that step before the page's first
-  // section, so the chips sit on the title and the count line on what it counts.
+  // band, the open field and the count line sit one small step apart. The band adds nothing under itself: the pause
+  // above the page's first group is the group pause, as between groups (DESIGN.md "Shell grid"; UI refinements
+  // 21:29Z), so the chips sit on the title and the count line on what it counts.
   underBand: {
     alignSelf: 'stretch',
     alignItems: 'center',
@@ -257,7 +258,6 @@ const styles = StyleSheet.create((theme) => ({
     // The controls under the purpose (tabs, chips, the open field, the count) are their own group: one step
     // from the purpose, wider than the title-to-purpose air (OWNER-UI-1115B A1).
     paddingTop: theme.space.s12,
-    paddingBottom: theme.space.s8,
     gap: theme.space.s8,
   },
 }));

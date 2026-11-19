@@ -195,6 +195,35 @@ it('keeps a long authored row name and the collection title whole at 195 px', as
     }
 });
 
+// One title control shows several names in turn (a phone's Workflows · Runs switch keeps the same Space title in
+// place): each name decides its own step, so a short name after a longer one keeps the phone's hero size.
+it('keeps the hero title step when a phone title changes to a name that fits', async () => {
+    const { HappierCollectionTitleButton } = await import('@happier-dev/plugin-ui/presentation');
+    const { collectionTitleStyles } = await import('./CollectionTitleButton');
+    const { Text } = await import('@/components/ui/text/Text');
+    const title = (label: string) => <View style={{ width: 390 }}>
+        <View style={{ flexDirection: 'row', paddingHorizontal: 16 }}>
+            <HappierCollectionTitleButton testID="space-title" label={label} accessibilityLabel={label} expanded={false}
+                hasPopup="menu" onPress={() => {}} scale="page" phone styles={collectionTitleStyles} Text={Text} chevron={null} />
+        </View>
+    </View>;
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(title('All workflows')));
+        const first = await measureWebLayout(host, { viewport: { width: 390, height: 400 }, texts: ['All workflows'], settle: (replay) => act(replay) });
+        const heroSize = first.textRects('All workflows')[0]?.fontSize;
+        await act(async () => root.render(title('All runs')));
+        const second = await measureWebLayout(host, { viewport: { width: 390, height: 400 }, texts: ['All runs'], settle: (replay) => act(replay) });
+        expect(heroSize).toBeGreaterThan(20);
+        expect(second.textRects('All runs')[0]?.fontSize).toBe(heroSize);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
 // A lens wider than its share of the folded toolbar's line (here: all but 40 px of it) (Triage Tasks: Mine · Agents · Everyone and Views,
 // DESIGN-ACCEPT-209 at 308 px) gives the arrangement switch the next line instead of having it drawn over it.
 function WideLensList({ lensWidth }: { lensWidth: number }) {

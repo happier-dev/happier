@@ -19,6 +19,7 @@ import { HappierCardActionsCornerContext, HappierCardFillsCellContext, HappierCa
 import { resolveHappierCollectionGridGeometry } from '../presentation/collection/collectionTable.js';
 import { useHappierCollectionViewport, type HappierCollectionModel, type HappierCollectionViewport } from '../presentation/collection/useCollection.js';
 import { HappierSkeletonBlock, HappierSkeletonTitle } from '../presentation/feedback/Skeleton.js';
+import { HappierListSection } from '../presentation/collection/List.js';
 import { HappierSegmentedChoice } from '../presentation/form/SegmentedChoice.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { Button } from './Button.js';
@@ -227,7 +228,7 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
   const boardReason = (board || previewCard) && present(reason) ? <Passive key="reason"><Slot value={reason} tone={previewCard ? 'muted' : undefined} /></Passive> : null;
   const place = anatomy.byline ? anatomy.byline(item) : anatomy.where?.(item);
   const placeUnderTitle = previewCard && !anatomy.card?.description && !hasDescription(description);
-  const facts = anatomy.card?.facts ? [...(boardReason ? [boardReason] : []), <Passive key="facts">{anatomy.card.facts(item)}</Passive>] : [
+  const facts = anatomy.card?.facts ? [...(boardReason ? [boardReason] : []), <Passive key="facts" grow>{anatomy.card.facts(item)}</Passive>] : [
     ...(placeUnderTitle ? [] : [place]).filter(present).map((value) => <Passive key="place"><Slot value={value} tone="muted" /></Passive>),
     ...(boardReason ? [boardReason] : []),
     ...[anatomy.signal?.(item), anatomy.agent?.(item), anatomy.age?.(item)]
@@ -264,11 +265,13 @@ function BoardCard<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatom
  * are `box-none`, which hands pointer hits back to their children; this is what keeps those children passive.
  * Controls stay in `headerRight` and the card's actions corner, outside these slots (CollectionAnatomy.card).
  */
-function Passive(props: Readonly<{ children: ReactNode; alignEnd?: boolean }>): ReactElement {
-  return <View pointerEvents="none" style={props.alignEnd ? passiveEndSlotStyle : passiveSlotStyle}>{props.children}</View>;
+function Passive(props: Readonly<{ children: ReactNode; alignEnd?: boolean; grow?: boolean }>): ReactElement {
+  return <View pointerEvents="none" style={props.alignEnd ? passiveEndSlotStyle : props.grow ? passiveGrowSlotStyle : passiveSlotStyle}>{props.children}</View>;
 }
 const passiveSlotStyle: HappierPortableStyle = { minWidth: 0, flexShrink: 1 };
 const passiveEndSlotStyle: HappierPortableStyle = { ...passiveSlotStyle, marginLeft: 'auto' };
+/** An anatomy's own facts node takes the foot's width, so it can set its own start and end (a workflow card's marks and strip). */
+const passiveGrowSlotStyle: HappierPortableStyle = { ...passiveSlotStyle, flexGrow: 1 };
 const boardMarkStyle: HappierPortableStyle = { justifyContent: 'center', flexShrink: 0 };
 const passiveBodyStyle: HappierPortableStyle = { flexGrow: 1, minWidth: 0 };
 
@@ -960,11 +963,11 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
           >
             {!shelf ? null : (
               <View style={card.shelfHeaderStyle}>
+                {/* The same group label a list draws (its name, its count, what its cards share), not a heading of
+                    its own: Cards and Table read one grouping (Workflows acceptance fix 7). */}
                 <View style={shrinkStyle}>
-                  <HappierText variant="label" tone="neutral" numberOfLines={1} style={titleStyle}>{group.title}</HappierText>
-                  {group.description === undefined ? null : (
-                    <HappierText variant="meta" tone="muted" numberOfLines={1}>{group.description}</HappierText>
-                  )}
+                  <HappierListSection title={group.title} count={section.items.length} titleRole="micro"
+                    {...(group.description === undefined ? {} : { description: group.description })} />
                 </View>
                 <CollectionGroupActionButton
                   action={props.groupAction?.(group.key) ?? null}

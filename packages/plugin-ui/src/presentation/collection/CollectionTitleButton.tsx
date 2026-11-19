@@ -79,8 +79,16 @@ export const HappierCollectionTitleButton = React.memo(function HappierCollectio
   const [heroWrappedAtWidth, setHeroWrappedAtWidth] = React.useState<number | null>(null);
   const triggerWidthRef = React.useRef(0);
   const heroStep = props.phone && props.scale !== 'section';
-  const hero = heroStep && heroWrappedAtWidth === null;
   const labelWidths = React.useRef({ box: 0, natural: 0 });
+  // Each name decides its own step: one control shows several names in turn (a phone's Workflows · Runs switch keeps
+  // its Space title in place), and the old name's widths compared with the new one's stepped a short name down for good.
+  const [measuredLabel, setMeasuredLabel] = React.useState(props.label);
+  if (measuredLabel !== props.label) {
+    setMeasuredLabel(props.label);
+    setHeroWrappedAtWidth(null);
+    labelWidths.current = { box: 0, natural: 0 };
+  }
+  const hero = heroStep && heroWrappedAtWidth === null;
   const labelStyle = [styles.triggerLabel, hero ? styles.phoneTriggerLabel : null];
   // The hero label's one-line width against the width its box gets: wider means it would wrap. It is decided
   // against the trigger's measured width, so it waits for that measure (layout events arrive in any order): a

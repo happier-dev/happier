@@ -31,9 +31,9 @@ import { WorkflowRunsViewMenu } from './WorkflowsViewMenu';
 import {
   useWorkflowRunCollection,
   useWorkflowRunCollectionHeader,
+  type WorkflowRunCollection,
   type WorkflowRunCollectionRow,
 } from './useWorkflowRunCollection';
-
 /** How a run's result speaks (scene 8 Runs): amber when it needs you, danger when it failed, quiet otherwise. */
 export function readWorkflowRunResultTone(
   row: WorkflowRunCollectionRow,
@@ -48,6 +48,7 @@ export function readWorkflowRunResultTone(
   if (status.bucket === 'needs_you') return 'attention';
   return status.bucket === 'working' ? 'working' : 'quiet';
 }
+
 
 /** How long a finished run took; a run still going has no "took" yet. */
 export function readWorkflowRunTook(
@@ -83,13 +84,51 @@ const readKey = (row: WorkflowRunCollectionRow) => row.key;
  */
 export function WorkflowRunsHome(): React.ReactElement {
   const focused = useIsFocused();
-  const router = useRouter();
   const model = useWorkflowRunCollection(focused);
   const header = useWorkflowRunCollectionHeader(
     model,
     'workflow-runs-space',
     'section',
   );
+  return (
+    <WorkflowRunsPage model={model} head={<>
+      <PageHeader
+        testID="workflow-runs:header"
+        title={t('workflows.tabs.runs')}
+        description={t('workflows.destination.history.description')}
+      />
+      {/* Scene 8's one toolbar: the run space and its search lead, the filters end the line. */}
+      <View testID="workflow-runs:scope-line" style={styles.controlLine}>
+        {header.titleControl}
+        <CompactSearchField
+          testID="workflow-runs:search"
+          accessibilityLabel={t('workflows.destination.display.searchRuns')}
+          placeholder={t('workflows.destination.display.searchRuns')}
+          value={model.binding.searchQuery}
+          onChangeText={model.setSearchQuery}
+          style={styles.search}
+        />
+        <View style={styles.grow} />
+        {header.filterButton}
+        <WorkflowRunsViewMenu groupBy={model.display.groupBy} onGroupBy={model.display.setGroupBy} trigger="labelled" testID="workflow-runs:view" />
+      </View>
+      <View style={styles.spaceStrip}>{header.strip}</View>
+      {header.conditionRow ? (
+        <View style={styles.spaceStrip}>{header.conditionRow}</View>
+      ) : null}
+      {header.overlays}
+    </>} />
+  );
+}
+
+/**
+ * The Runs page list: the one Run collection as a page list, under the page's own head (the wide page's header and
+ * toolbar) or a phone's main-screen head, which owns the title, search and View. A phone's Runs are a page, so they
+ * take the page list's rows and group labels, as the Workflows index does (UI refinements 21:44Z, item 4).
+ */
+export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection; head?: React.ReactNode }>): React.ReactElement {
+  const { model } = props;
+  const router = useRouter();
   const language = usePreferredLanguage();
   const open = React.useCallback(
     (key: string | null) => {
@@ -200,31 +239,7 @@ export function WorkflowRunsHome(): React.ReactElement {
     <ItemList pageColumn="wide">
       <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
         <PageContentColumn>
-          <PageHeader
-            testID="workflow-runs:header"
-            title={t('workflows.tabs.runs')}
-            description={t('workflows.destination.history.description')}
-          />
-          {/* Scene 8's one toolbar: the run space and its search lead, the filters end the line. */}
-          <View testID="workflow-runs:scope-line" style={styles.controlLine}>
-            {header.titleControl}
-            <CompactSearchField
-              testID="workflow-runs:search"
-              accessibilityLabel={t('workflows.destination.display.searchRuns')}
-              placeholder={t('workflows.destination.display.searchRuns')}
-              value={model.binding.searchQuery}
-              onChangeText={model.setSearchQuery}
-              style={styles.search}
-            />
-            <View style={styles.grow} />
-            {header.filterButton}
-            <WorkflowRunsViewMenu groupBy={model.display.groupBy} onGroupBy={model.display.setGroupBy} trigger="labelled" testID="workflow-runs:view" />
-          </View>
-          <View style={styles.spaceStrip}>{header.strip}</View>
-          {header.conditionRow ? (
-            <View style={styles.spaceStrip}>{header.conditionRow}</View>
-          ) : null}
-          {header.overlays}
+          {props.head}
           <Collection<WorkflowRunCollectionRow>
             testID="workflow-runs:collection"
             model={collection}

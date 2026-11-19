@@ -527,17 +527,22 @@ function useLibraryAnatomy(
                 </>;
             },
         }),
-        // A plugin row's read-only fact is its group's description, not a per-row note (F9). The table says the state in its
-        // State cell, so it draws no Reason column of its own.
-        ...(table ? {} : { reason: (row: LibraryRow) => isAccountRow(row) ? isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null
-            : row.group === 'fromPlugins' ? null
-            : row.definition.contentStatus === 'unavailable'
-                ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null }),
+        // A plugin row's read-only fact is its group's description, not a per-row note (F9). The table draws no Reason
+        // column: its rows keep one height, so the reason follows the name on its line, quiet (UI refinements 21:44Z, 6b).
+        ...(table ? { titleSuffix: readLibraryRowReason } : { reason: readLibraryRowReason }),
         accessibilityLabel: rowTitle,
         testID: (row) => `workflows-home:row:${row.key}`,
         columnTitles: { title: t('workflows.destination.columns.workflow') },
     }), [card, details, extensions.details, fields, lines, presentation, readFacts, rowDetails, table]);
     return { anatomy, pluginDetails: extensions.details };
+}
+
+/** Why a row can't run as it is: a legacy Account trigger to review, or a saved definition that can't be read. */
+function readLibraryRowReason(row: LibraryRow): string | null {
+    if (isAccountRow(row)) return isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null;
+    if (row.group === 'fromPlugins') return null;
+    return row.definition.contentStatus === 'unavailable'
+        ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null;
 }
 
 function useLibraryRowActions(row: LibraryRow): CollectionRowActions {

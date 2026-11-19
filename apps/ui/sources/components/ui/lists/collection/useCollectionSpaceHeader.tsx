@@ -258,7 +258,8 @@ export function useCollectionSpaceHeader<
       })),
     [view.spaces],
   );
-  const strip = view.spacesEnabled ? (
+  // No saved space draws no strip at all: an empty strip still took a band's gap under the title (Workflows phone).
+  const strip = view.spacesEnabled && stripItems.length > 0 ? (
         <CollectionSpaceSwipeZone testID={`${testIDPrefix}-strip-swipe`} {...swipeProps}>
         <CollectionSpacesStrip
           testIDPrefix={`${testIDPrefix}-strip`}

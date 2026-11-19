@@ -16,7 +16,7 @@ import { t } from '@/text';
 import { useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumnEventsListening, WorkflowsColumnEventsRows } from '../events/WorkflowsColumnEvents';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
-import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
+import { WorkflowRunsPage } from '../library/WorkflowRunsHome';
 import { CollectionColumnsMenuTrigger } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { useWorkflowGroupTabs, WorkflowRunsViewMenu, WorkflowsViewSheetBody } from '../library/WorkflowsViewMenu';
@@ -174,10 +174,9 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
           {props.definitionsContent}
         </WorkflowsColumnLibraryContext.Provider>
       </RetainedPanelSurface>
+      {/* Runs are a page: the page list's rows and group labels, as the index (UI refinements 21:44Z, item 4). */}
       <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
-        <ItemList presentation="grouped" style={styles.events}>
-          <WorkflowRunsColumnRows model={runs} selectedRunId={null} testIDPrefix="workflows-phone:runs" />
-        </ItemList>
+        <WorkflowRunsPage model={runs} />
       </RetainedPanelSurface>
       <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
         <ItemList presentation="grouped" style={styles.events}>
