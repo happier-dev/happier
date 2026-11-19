@@ -674,6 +674,10 @@ records without the field remain valid. Protocol and CLI reload together; older
 strict development readers may reject the added field. These unreleased 0.3
 contracts receive no compatibility adapter or migration.
 
+The clear metadata projector only includes numeric provider error codes and
+code-shaped identifiers up to 128 ASCII characters. Full provider diagnostics
+remain available in the content channel.
+
 ## Stored App Preset Domain selections (unreleased 0.3)
 
 Catalog App preset intent accepts optional root `domainBindings`, using the

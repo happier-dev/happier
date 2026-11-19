@@ -12,8 +12,20 @@ import {
   readSessionPreparationFailureCode,
   readSessionStartupFailurePreview,
 } from './runtimeIssueV1.js';
+import { projectSessionRuntimeIssueMetadataV1 } from './runtimeIssueMetadataV1.js';
 
 describe('runtime authentication recovery', () => {
+  it.each([['/tmp/claude-fixture/payload.json', undefined], ['invalid_api_key', 'invalid_api_key'], [-32603, -32603]] as const)(
+    'keeps only code-shaped native identifiers in public runtime issue metadata (%s)', (providerErrorCode, expected) => {
+      const issue = SessionRuntimeIssueV1Schema.parse({
+        v: 1, scope: 'primary_session', status: 'failed', source: 'dependency_failure',
+        code: 'plugin_mcp_preparation_unavailable', occurredAt: 1,
+        failureCause: { phase: 'client_start', failureReason: 'unknown', providerErrorCode },
+      });
+      const projected = projectSessionRuntimeIssueMetadataV1(issue);
+      expect(projected.failureCause?.providerErrorCode).toBe(expected);
+    },
+  );
   it('retains decoded native vendor facts without inventing an absent cause or overriding a known refusal', () => {
     expect(projectProviderSessionFailureCause({}, 'turn', { code: 'overloaded_error', httpStatus: 503 }))
       .toMatchObject({ phase: 'turn', failureReason: 'unknown', providerErrorCode: 'overloaded_error', httpStatus: 503 });
