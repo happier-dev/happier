@@ -140,6 +140,29 @@ describe('Agent transition service effect transports', () => {
       executionAuthority: 'account_automation', externalAction: proof });
   };
 
+  it('uses the admitted transition purpose when the Action host stops its source', async () => {
+    const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId,
+      mode: 'plain', ctx: null, serverIdentityId: authorization.binding.serverIdentityId,
+      externalActionMachineInstallationId: externalAction.installationId,
+      externalActionMachineRequestPrivateKey: keys.secretKey });
+    await expect(deps.sessionStop!({ sessionId, stopIntent: 'lifecycle_control',
+      context: externalAction.context })).resolves.toMatchObject({ stopped: true });
+    expect(packets).toHaveLength(1);
+    expect(packets[0].externalActionExecution).toMatchObject({ authorization, target,
+      effectActionId: authorization.binding.actionId });
+    const sourceReads = vi.mocked(axios.get).mock.calls
+      .filter(([url]) => new URL(String(url)).pathname === `/v2/sessions/${sessionId}`);
+    expect(sourceReads.length).toBeGreaterThan(0);
+    for (const [url, config] of sourceReads) {
+      const parsed = new URL(String(url));
+      expect(config?.headers?.Authorization).toBeUndefined();
+      expect(verifyExternalActionMachineRequestV1({ ...externalAction,
+        authorizationToken: authorization.token, target, requestId: authorization.binding.requestId,
+        method: 'GET', path: parsed.pathname + parsed.search,
+        signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]), publicKey: keys.publicKey })).toBe(true);
+    }
+  });
+
   it.each(['fence', 'stop', 'activate'] as const)('retains the original root proof and exact signed %s request', async phase => {
     const result = await invoke(phase);
     expect(result).toMatchObject(phase === 'fence' ? { status: 'enforced' } : phase === 'stop' ? { stopped: true } : { ok: true });

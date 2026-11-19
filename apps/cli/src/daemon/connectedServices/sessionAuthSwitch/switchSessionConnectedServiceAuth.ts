@@ -8,8 +8,10 @@ import { ConnectedServiceCredentialRevisionV1Schema, isConnectedServiceCredentia
 import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import type { ConnectedServiceUxDiagnosticV1, ConnectedServiceBindingsV2, ConnectedAccountServiceKey, ConnectedServiceMaterializationIdentityV1, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveAgentRoutingId } from '@happier-dev/agents';
 
 import type { CatalogAgentId, ConnectedServiceResumeContinuityDiagnostics } from '@/agent/catalog/types';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
 import type { TrackedSession } from '@/daemon/types';
 import type { PlannedRunnerRestartNotSignaledReason } from '@/daemon/plannedRunnerRestart/types';
@@ -900,8 +902,12 @@ function findTrackedSession(children: ReadonlyArray<TrackedSession>, sessionId: 
   return children.find((child) => normalizeSessionId(child.happySessionId) === normalized) ?? null;
 }
 
-function resolveTrackedAgentId(tracked: TrackedSession): CatalogAgentId | null {
-  return resolveTrackedSessionCatalogAgentId(tracked);
+function matchesSessionAgentId(requestedId: string, sessionAgentId: CatalogAgentId | null): sessionAgentId is CatalogAgentId {
+  if (!sessionAgentId) return false;
+  const requested = requestedId.trim();
+  if (requested === sessionAgentId) return true;
+  const agent = readAgentCatalogSnapshot().agentDefinitionsById.get(sessionAgentId);
+  return agent !== undefined && resolveAgentRoutingId(requested, [agent]) === sessionAgentId;
 }
 
 function readExpectedGeneration(
@@ -1713,7 +1719,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     // A Session whose Agent identity is unreadable cannot match the requested
     // Agent, so this fails closed exactly like a genuine mismatch.
     const inactiveAgentId = inactive.agentId;
-    if (!inactiveAgentId || input.request.agentId.trim() !== inactiveAgentId) {
+    if (!matchesSessionAgentId(input.request.agentId, inactiveAgentId)) {
       return failureResult('agent_mismatch', { failurePhase: 'agent_validation' });
     }
 
@@ -1853,8 +1859,8 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     };
   }
 
-  const trackedAgentId = resolveTrackedAgentId(tracked);
-  if (!trackedAgentId || input.request.agentId.trim() !== trackedAgentId) {
+  const trackedAgentId = resolveTrackedSessionCatalogAgentId(tracked);
+  if (!matchesSessionAgentId(input.request.agentId, trackedAgentId)) {
     return failureResult('agent_mismatch', { failurePhase: 'agent_validation' });
   }
 

@@ -10,7 +10,7 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { requestSessionStop } from '@/session/services/requestSessionStop';
+import { requestSessionStop, resolveSessionStopEffectActionId } from '@/session/services/requestSessionStop';
 import { resolveSessionOwningMachineId } from '@/session/services/resolveSessionOwningMachine';
 import { tryReadSessionMetadataRecord } from '@/daemon/connectedServices/sessionAuthSwitch/persistedState';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -30,6 +30,7 @@ export function createRequesterSessionStopEffect(params: Readonly<{
 }>): NonNullable<ActionExecutorDeps['sessionStop']> {
   const { requester, purpose, installation } = params;
   const rootActionId = requester.authorization.binding.actionId;
+  const effectActionId = resolveSessionStopEffectActionId(rootActionId);
   const stopContext = (context: ActionExecutorContext | undefined, sessionId: string): ActionExecutorContext | undefined => {
     if (!context || !isSessionStopChildRootV1(rootActionId)) return context;
     const target = readSessionStopChildTargetV1({ sessionId });
@@ -96,8 +97,8 @@ export function createRequesterSessionStopEffect(params: Readonly<{
     // owner; redispatching to the requester registrar recursively restarts it.
     return await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => requestSessionStop({
       credentials: requester.credentials, idOrPrefix: sessionId, stopIntent,
-      actionContext: stopContext(context, sessionId), ...(signal ? { signal } : {}), resolveAuthorizationHeaders: headersFor(stopContext(context, sessionId), 'session.stop'),
-      ...(context ? { externalAction: { context, effectActionId: 'session.stop',
+      actionContext: stopContext(context, sessionId), ...(signal ? { signal } : {}), resolveAuthorizationHeaders: headersFor(stopContext(context, sessionId), effectActionId),
+      ...(context ? { externalAction: { context, effectActionId,
         privateKey: installation.privateKey, installationId: installation.installationId } } : {}),
       invokeMachineRpc: request => {
         // requestSessionStop produced this exact normalized Stop operand.

@@ -1039,7 +1039,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         persistSessionBindings, emitSessionEvent: async () => {},
         restartSession: async () => { throw new Error('inactive preflight cannot restart'); },
         hotApply: async () => { throw new Error('inactive preflight cannot hot-apply'); },
-        request: { sessionId: 'inactive', agentId: 'codex', bindings: nextBindings },
+        request: { sessionId: 'inactive', agentId: 'happier.agent.codex/codex', bindings: nextBindings },
       });
       expect(result).toMatchObject({ ok: true, action: 'metadata_updated' });
       expect(persistSessionBindings).not.toHaveBeenCalled();
@@ -2792,7 +2792,11 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('old-profile'));
   });
 
-  it('offers fresh-session recovery when switching Muse from a connected account to its own sign-in', async () => {
+  it.each([
+    ['muse', 'continuity_unsupported'],
+    ['happier.agent.muse/muse', 'continuity_unsupported'],
+    ['other.plugin/muse', 'agent_mismatch'],
+  ] as const)('checks continuity for the matching Muse Agent %s before switching to its own sign-in', async (agentId, errorCode) => {
     // READY143 returned this real continuity refusal without an executable UX diagnostic.
     const serviceId = 'happier.agent.muse/muse-account';
     const previousBindings = { v: 2 as const, bindingsByServiceId: {
@@ -2813,13 +2817,16 @@ describe('switchSessionConnectedServiceAuth', () => {
       restartSession: async () => { throw new Error('refused switch must not restart'); },
       hotApply: async () => { throw new Error('refused switch must not hot apply'); },
       registerHotApplyTargets: () => {}, emitSessionEvent: () => {},
-      request: { sessionId: 'sess_1', agentId: 'muse',
+      request: { sessionId: 'sess_1', agentId,
         bindings: { v: 2, bindingsByServiceId: { [serviceId]: { source: 'native' } } } },
     });
-    expect(result).toMatchObject({ ok: false, errorCode: 'continuity_unsupported', serviceId,
-      diagnostics: { failurePhase: 'continuity', uxDiagnostic: { code: 'continuity_unsupported', retryable: false,
-        suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } },
-    });
+    expect(result).toMatchObject(errorCode === 'agent_mismatch'
+      ? { ok: false, errorCode, diagnostics: { failurePhase: 'agent_validation' } }
+      : {
+        ok: false, errorCode, serviceId,
+        diagnostics: { failurePhase: 'continuity', uxDiagnostic: { code: 'continuity_unsupported', retryable: false,
+          suggestedActions: ['start_fresh_under_selected_account', 'resume_current_account', 'open_connected_accounts'] } },
+      });
     expect(tracked.spawnOptions?.connectedServices).toEqual(previousBindings);
   });
 

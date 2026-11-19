@@ -339,8 +339,9 @@ fix is at the stop owner, not a machine guess in the coordinator.
    stored default through the one spawn-defaulting owner (a durable Team default that no longer
    resolves on the Home is `target_unavailable`, never a silent native launch), idle wait
    (`source_not_idle`).
-2. **Quiesce and stop.** The input fence is taken *before* the request, so every pre-stop exit
-   reopens it. Then `requestSessionStop`.
+2. **Quiesce and stop.** A live source takes an input fence before `requestSessionStop` and
+   reopens that fence on a pre-stop exit. An inactive source goes directly to the same stop
+   owner after the pre-stop read confirms it is still inactive.
 3. **Context.** Native eligibility is resolved before the brief; the bounded activation brief is
    built; `unavailable` is `partially_applied / source_stopped / context_unavailable`. An empty
    source is `available` with a `null` seed — collapsing it into `unavailable` stopped a fresh
@@ -348,8 +349,8 @@ fix is at the stop owner, not a machine guess in the coordinator.
 4. **Cutover.** Seal the target current view, call the server owner with the target's Team slot
    bindings the defaults owner resolved in preflight, retry a `version-mismatch` exactly once by
    refetch-and-rebuild; a second loss is `cutover_conflict`.
-5. **Custody, then activation when input is present.** Settings-only cutover finishes after
-   clearing its admission fence and does not enqueue input or activate a runtime.
+5. **Custody, then activation when input is present.** Settings-only cutover settles after
+   clearing any admission fence. A transition request with input proceeds to custody and activation.
 
 ### "Confirmed stop" has an exact meaning
 

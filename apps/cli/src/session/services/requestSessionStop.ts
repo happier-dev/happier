@@ -7,6 +7,7 @@ import { createStopSession } from '@/daemon/sessions/stopSession';
 import { SessionStopCleanupIncompleteReasonSchema, SessionStopOutcomeSchema, SessionStopResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
 import type { SessionStopOutcome, SessionStopResult as SessionStopCommandResult } from '@happier-dev/protocol';
+import { SESSION_AGENT_TRANSITION_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionAgentTransitionActionIdsV1';
 import type {
   StopSessionResult,
 } from '@/daemon/sessions/stopSessionContract';
@@ -357,6 +358,11 @@ async function cleanupStoppedSessionMarkersBestEffort(sessionId: string): Promis
         });
       })),
   );
+}
+
+/** Agent transition admits Stop under its own purpose for the exact source Session. */
+export function resolveSessionStopEffectActionId(rootActionId: string | undefined) {
+  return rootActionId === SESSION_AGENT_TRANSITION_ACTION_ID_V1 ? SESSION_AGENT_TRANSITION_ACTION_ID_V1 : 'session.stop';
 }
 
 export async function requestSessionStop(params: Readonly<{

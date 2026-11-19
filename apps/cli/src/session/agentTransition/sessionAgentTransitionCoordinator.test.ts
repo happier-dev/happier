@@ -349,7 +349,7 @@ describe('runSessionAgentTransition — pre-stop failures leave the source untou
       return {
         ok: true as const,
         sessionId: 'session-1',
-        rawSession: { id: 'session-1', machineId: 'machine-1', seq: 42, active: false, archivedAt: null },
+        rawSession: { id: 'session-1', machineId: 'machine-1', seq: 42, active: true, archivedAt: null },
         accountEncryptionCurrentness: { mode: 'plain' },
         ctx: null,
         mode: 'plain' as const,

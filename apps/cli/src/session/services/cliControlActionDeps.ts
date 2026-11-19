@@ -230,7 +230,8 @@ export function createCliControlActionDeps(
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      const { requestSessionStop } = await import("@/session/services/requestSessionStop");
+      const { requestSessionStop, resolveSessionStopEffectActionId } = await import("@/session/services/requestSessionStop");
+      const effectActionId = resolveSessionStopEffectActionId(context?.externalActionExecutionAuthorization?.binding.actionId);
       return await requestSessionStop({ credentials: params.credentials, idOrPrefix: sessionId, stopIntent,
         serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
         invokeMachineRpc: request => callMachineAction({ machineId: request.machineId, method: request.method,
@@ -238,13 +239,13 @@ export function createCliControlActionDeps(
           ...(request.authorization ? { authorization: request.authorization } : {}),
           ...(request.signal ? { signal: request.signal } : {}),
           ...(context ? { context, authority: context.authority, serverId: context.serverId ?? undefined } : {}),
-          effectActionId: 'session.stop',
+          effectActionId,
         }),
         ...(signal ? { signal } : {}),
         ...(context ? { actionContext: context } : {}),
-        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.stop', request),
+        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, effectActionId, request),
         ...(context?.externalActionExecutionAuthorization && params.externalActionMachineRequestPrivateKey
-          && params.externalActionMachineInstallationId ? { externalAction: { context, effectActionId: 'session.stop',
+          && params.externalActionMachineInstallationId ? { externalAction: { context, effectActionId,
             privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId } } : {}),
       });
     },

@@ -144,6 +144,7 @@ export type TransitionDepsHarness = Readonly<{
 
 export function createTransitionDepsHarness(
   overrides?: Partial<SessionAgentTransitionDeps>,
+  options?: Readonly<{ sourceActive?: boolean }>,
 ): TransitionDepsHarness {
   const calls: string[] = [];
   let metadata: Record<string, unknown> = { ...CLAUDE_SOURCE_METADATA };
@@ -154,7 +155,7 @@ export function createTransitionDepsHarness(
       return {
         ok: true as const,
         sessionId: TEST_SESSION_ID,
-        rawSession: buildRawSession(),
+        rawSession: buildRawSession({ active: options?.sourceActive !== false && !calls.includes('stop') }),
         accountEncryptionCurrentness: { mode: 'plain' },
         ctx: null,
         mode: 'plain' as const,

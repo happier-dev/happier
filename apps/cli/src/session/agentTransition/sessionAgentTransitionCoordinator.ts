@@ -588,7 +588,7 @@ async function completeCommittedTransition(params: Readonly<{
   externalAction: SessionAgentTransitionParams['externalAction'];
   executionAuthority?: SessionAgentTransitionParams['executionAuthority'];
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
-  admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }>;
+  admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }> | null;
   inputAdmissionTimeoutMs: number;
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
@@ -596,21 +596,23 @@ async function completeCommittedTransition(params: Readonly<{
   const { committed, deps, credentials, request } = params;
   const sessionId = request.sessionId;
 
-  // Reopening is scoped to the transition's exact epoch. The fence lived in the
-  // retired source runner, so `not_matched` against a fresh target consumer is
-  // the expected no-op rather than a failure. It happens before admission so the
-  // target's ordinary consumer is never started against a closed seam.
-  await deps.callSessionProviderInputAdmission({
-    credentials,
-    sessionId,
-    action: 'clear',
-    serviceId: params.admissionFence.serviceId,
-    groupId: params.admissionFence.groupId,
-    epochId: params.admissionFence.epochId,
-    applicationSettled: true,
-    ...(params.externalAction ? { externalAction: params.externalAction } : {}),
-    ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-  }).catch(() => undefined);
+  if (params.admissionFence) {
+    // Reopening is scoped to the transition's exact epoch. The fence lived in the
+    // retired source runner, so `not_matched` against a fresh target consumer is
+    // the expected no-op rather than a failure. It happens before admission so the
+    // target's ordinary consumer is never started against a closed seam.
+    await deps.callSessionProviderInputAdmission({
+      credentials,
+      sessionId,
+      action: 'clear',
+      serviceId: params.admissionFence.serviceId,
+      groupId: params.admissionFence.groupId,
+      epochId: params.admissionFence.epochId,
+      applicationSettled: true,
+      ...(params.externalAction ? { externalAction: params.externalAction } : {}),
+      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+    }).catch(() => undefined);
+  }
 
   // Settings-only cutover has no input custody to acquire and no work to wake.
   // The committed selection and divider are the complete admitted effect.
@@ -980,48 +982,54 @@ export async function runSessionAgentTransition(
    * 7.2 Quiesce and stop.
    * --------------------------------------------------------------------- */
 
-  // The depth advances BEFORE the fence is requested, not after its answer is
-  // inspected. A request that throws or times out proves only that no ANSWER
-  // arrived — the session RPC may have delivered and applied it — so from here
-  // on every pre-stop exit reopens this exact epoch, and the stage owns that
-  // reopen so no exit site can forget it.
-  const fenced = effects.withInputFence(async () => {
-    await deps.callSessionProviderInputAdmission({
+  // A stopped Session has no runner to fence. The stop owner still confirms its state.
+  const sourceFence = transport.rawSession.active === false ? null : admissionFence;
+  let sourceEffects: typeof effects | ReturnType<typeof effects.withInputFence> = effects;
+  if (sourceFence) {
+    // The depth advances BEFORE the fence is requested, not after its answer is
+    // inspected. A request that throws or times out proves only that no ANSWER
+    // arrived — the session RPC may have delivered and applied it — so from here
+    // on every pre-stop exit reopens this exact epoch, and the stage owns that
+    // reopen so no exit site can forget it.
+    const fenced = effects.withInputFence(async () => {
+      await deps.callSessionProviderInputAdmission({
+        credentials,
+        sessionId,
+        action: 'clear',
+        serviceId: sourceFence.serviceId,
+        groupId: sourceFence.groupId,
+        epochId: sourceFence.epochId,
+        ...(externalAction ? { externalAction } : {}),
+        ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
+      }).catch(() => undefined);
+    });
+
+    const enforced = await deps.callSessionProviderInputAdmission({
       credentials,
       sessionId,
-      action: 'clear',
-      serviceId: admissionFence.serviceId,
-      groupId: admissionFence.groupId,
-      epochId: admissionFence.epochId,
+      action: 'enforce',
+      reason: 'generation_pending',
+      serviceId: sourceFence.serviceId,
+      groupId: sourceFence.groupId,
+      epochId: sourceFence.epochId,
       ...(externalAction ? { externalAction } : {}),
       ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
-    }).catch(() => undefined);
-  });
-
-  const enforced = await deps.callSessionProviderInputAdmission({
-    credentials,
-    sessionId,
-    action: 'enforce',
-    reason: 'generation_pending',
-    serviceId: admissionFence.serviceId,
-    groupId: admissionFence.groupId,
-    epochId: admissionFence.epochId,
-    ...(externalAction ? { externalAction } : {}),
-    ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
-  }).catch(() => null);
-  // `enforce` returns only once in-flight provider dispatches and pending
-  // materialization turns have quiesced. Anything else is a missing ANSWER, not
-  // proof of a missing fence: the call reaches the session runtime over a
-  // session RPC, and `requestSessionProviderInputAdmission` throws for every
-  // non-`enforced` outcome — including a transport failure raised after the
-  // request was delivered and applied. Returning `rejected` on that evidence
-  // would promise `sourceEffect: 'none'`, which the UI turns into Keep editing,
-  // while the source may be silently refusing local provider input. So this
-  // exit reopens the exact epoch first, exactly like every other post-fence
-  // pre-stop exit; `not_matched` against a source that was never fenced is the
-  // expected no-op.
-  if (enforced?.status !== 'enforced') {
-    return await fenced.rejected('source_not_idle');
+    }).catch(() => null);
+    // `enforce` returns only once in-flight provider dispatches and pending
+    // materialization turns have quiesced. Anything else is a missing ANSWER, not
+    // proof of a missing fence: the call reaches the session runtime over a
+    // session RPC, and `requestSessionProviderInputAdmission` throws for every
+    // non-`enforced` outcome — including a transport failure raised after the
+    // request was delivered and applied. Returning `rejected` on that evidence
+    // would promise `sourceEffect: 'none'`, which the UI turns into Keep editing,
+    // while the source may be silently refusing local provider input. So this
+    // exit reopens the exact epoch first, exactly like every other post-fence
+    // pre-stop exit; `not_matched` against a source that was never fenced is the
+    // expected no-op.
+    if (enforced?.status !== 'enforced') {
+      return await fenced.rejected('source_not_idle');
+    }
+    sourceEffects = fenced;
   }
 
   // Recheck currentness immediately before stop: the drain above may have taken
@@ -1030,7 +1038,7 @@ export async function runSessionAgentTransition(
   const preStop = await resolveTransport()
     .catch(() => null);
   if (!preStop?.ok) {
-    return await fenced.rejected('stale_selection');
+    return await sourceEffects.rejected('stale_selection');
   }
   const preStopMetadata = deps.decryptOwnerMetadataView({
     credentials,
@@ -1042,7 +1050,10 @@ export async function runSessionAgentTransition(
     || resolveCurrentAgentId(preStopMetadata) !== sourceAgentId
     || ((preStop.rawSession as { archivedAt?: unknown }).archivedAt ?? null) !== null
   ) {
-    return await fenced.rejected('stale_selection');
+    return await sourceEffects.rejected('stale_selection');
+  }
+  if (!sourceFence && preStop.rawSession.active !== false) {
+    return effects.rejected('source_not_idle');
   }
 
   // 7.2 step 4. The departing Agent's matched native pair is only both current
@@ -1077,15 +1088,13 @@ export async function runSessionAgentTransition(
   if (stop === null) {
     // The stop call itself failed in a way that proves nothing. The source may
     // already be gone, so `sourceEffect: 'none'` would be a lie.
-    return await fenced.outcomeUnknown();
+    return await sourceEffects.outcomeUnknown();
   }
   if (stop.ok === false) {
     // The stop owner's `ok: false` arm is returned only by its identity
     // resolver, before it can address a runner. That leaves the source both
-    // untouched and still running, so this is the one pre-attempt stop refusal
-    // that truthfully rides the rejected arm. `fenced.rejected` reopens this
-    // exact epoch before it returns that fact.
-    return await fenced.rejected('source_stop_failed');
+    // untouched. The rejected arm clears the fence if quiescence requested one.
+    return await sourceEffects.rejected('source_stop_failed');
   }
   if (!isSessionStopConfirmed(stop)) {
     // physical_stop_unconfirmed / stopped_projection_unconfirmed /
@@ -1095,7 +1104,7 @@ export async function runSessionAgentTransition(
     // predicate instead of reading `stop.stopped`: the owner found no runtime to
     // signal and read the canonical Session row back inactive, which is a
     // confirmed stop. Liveness stays one fact owned by one component.
-    return await fenced.outcomeUnknown();
+    return await sourceEffects.outcomeUnknown();
   }
 
   /* --------------------------------------------------------------------- *
@@ -1103,7 +1112,7 @@ export async function runSessionAgentTransition(
    * advances: `rejected` no longer exists on the handle in scope.
    * --------------------------------------------------------------------- */
 
-  const stopped = fenced.stopConfirmed();
+  const stopped = sourceEffects.stopConfirmed();
 
   const stoppedSession = await resolveTransport()
     .catch(() => null);
@@ -1285,7 +1294,7 @@ export async function runSessionAgentTransition(
     externalAction: params.externalAction,
     ...(params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
-    admissionFence,
+    admissionFence: sourceFence,
     inputAdmissionTimeoutMs,
     committed: stopped.cutoverCommitted(),
   });

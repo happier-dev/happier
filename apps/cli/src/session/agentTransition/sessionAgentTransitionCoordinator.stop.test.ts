@@ -121,7 +121,10 @@ describe('runSessionAgentTransition — confirmed stop gates every target effect
    * signalling a live runtime — same order, same effects.
    */
   it('completes the transition for a cold Session the stop owner confirms is already stopped', async () => {
-    const harness = createTransitionDepsHarness();
+    const harness = createTransitionDepsHarness(undefined, { sourceActive: false });
+    harness.deps.callSessionProviderInputAdmission = vi.fn(async () => {
+      throw new Error('session RPC is unavailable after the Session host exits');
+    });
     harness.deps.requestSessionStop = vi.fn(async () => {
       harness.calls.push('stop');
       return {
@@ -145,16 +148,40 @@ describe('runSessionAgentTransition — confirmed stop gates every target effect
     expect(harness.calls).toEqual([
       'resolveTransport',
       'waitForIdle',
-      'admission:enforce',
       'resolveTransport',
       'stop',
       'resolveTransport',
       'cutover',
-      'admission:clear',
       'send',
       'resolveTransport',
       'resume',
     ]);
+    expect(harness.deps.callSessionProviderInputAdmission).not.toHaveBeenCalled();
+  });
+
+  it('refuses to stop an unfenced source that became active before stop', async () => {
+    const harness = createTransitionDepsHarness(undefined, { sourceActive: false });
+    const resolveTransport = harness.deps.resolveSessionTransportContext;
+    const waitForIdle = harness.deps.waitForSessionIdle;
+    let sourceActive = false;
+    harness.deps.resolveSessionTransportContext = async (request) => {
+      const transport = await resolveTransport(request);
+      return transport.ok
+        ? { ...transport, rawSession: { ...transport.rawSession, active: sourceActive } }
+        : transport;
+    };
+    harness.deps.waitForSessionIdle = async (input) => {
+      const idle = await waitForIdle(input);
+      sourceActive = true;
+      return idle;
+    };
+
+    await expect(runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: buildTransitionRequest(),
+      deps: harness.deps,
+    })).resolves.toEqual({ type: 'rejected', code: 'source_not_idle', sourceEffect: 'none' });
+    expect(harness.calls).toEqual(['resolveTransport', 'waitForIdle', 'resolveTransport']);
   });
 
   it('maps a resolution failure before any stop attempt to source_stop_failed and reopens its fence', async () => {

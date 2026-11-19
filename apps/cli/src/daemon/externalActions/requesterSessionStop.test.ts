@@ -24,6 +24,36 @@ import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/ses
 describe('createRequesterSessionStopEffect', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('uses the admitted transition purpose for source resolution and the native Stop', async () => {
+    const sessionId = 'cmwlgfetg00vo5jmcd04fj6zb';
+    const target = { kind: 'session' as const, sessionId };
+    const keys = tweetnacl.sign.keyPair();
+    const authorization = {
+      token: 'signed-root',
+      binding: { actionId: 'session.agent.transition', requestId: 'transition-request',
+        serverIdentityId: 'home-1', accountId: 'member', machineId: 'machine-1',
+        installationId: 'installation-1', target },
+    } as unknown as ExternalActionExecutionAuthorizationV1;
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user',
+      actionRequestId: 'transition-request', externalActionExecutionAuthorization: authorization, externalActionTarget: target };
+    const requester = { authorization, credentials: { token: 'requester-token', encryption: null },
+      serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true } as unknown as RequesterAccountActionContext;
+    const rawSession = createSessionRecordFixture({ id: sessionId, machineId: 'machine-1', encryptionMode: 'plain',
+      metadata: JSON.stringify({ machineId: 'machine-1', path: '/repo' }) });
+    const reads = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: rawSession } });
+    const physicalStop = vi.fn(async () => ({ status: 'stopped' as const }));
+    const stop = createRequesterSessionStopEffect({ requester, purpose: { kind: 'external_action' },
+      machineId: 'machine-1', installation: { installationId: 'installation-1', privateKey: keys.secretKey },
+      stopSession: physicalStop });
+
+    await expect(stop({ sessionId, stopIntent: 'lifecycle_control', context })).resolves.toMatchObject({ stopped: true });
+    expect(physicalStop).toHaveBeenCalledOnce();
+    expect(reads.mock.calls.length).toBeGreaterThan(0);
+    for (const [, config] of reads.mock.calls) {
+      expect(config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(authorization.binding.actionId);
+    }
+  });
+
   it.each([
     ['session.delete', 'plain', 'session'], ['session.delete', 'e2ee', 'session'],
     ['session.sections.archive', 'plain', 'session'], ['session.sections.archive', 'e2ee', 'session'],
