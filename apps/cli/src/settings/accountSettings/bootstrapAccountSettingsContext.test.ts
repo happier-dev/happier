@@ -24,6 +24,7 @@ import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/
 import {
   bootstrapAccountSettingsContext,
   resetAccountSettingsRefreshBackoff,
+  AccountSettingsV2RequestError,
   resetInMemoryAccountSettingsContextForTests,
   type AccountSettingsContext,
 } from './bootstrapAccountSettingsContext';
@@ -1478,6 +1479,20 @@ describe('bootstrapAccountSettingsContext', () => {
       await server.read(recoveredAtMs + ttlMs + 1);
       await server.read(recoveredAtMs + ttlMs + 1 + 2_000);
       expect(server.attemptsAtMs.length - before).toBe(2);
+    });
+
+    it('waits at least the server\'s Retry-After before reading again', async () => {
+      const server = createFailingServer();
+      await server.read(t0);
+      server.fetchFromServer.mockImplementationOnce(async () => {
+        throw new AccountSettingsV2RequestError(503, { retryAfterMs: 300_000 });
+      });
+      const staleMs = t0 + ttlMs + 1;
+      for (let second = 0; second < 120; second++) await server.read(staleMs + second * 1_000);
+      // The cache is fresh at t0, so the one read is the failing one; nothing more inside Retry-After.
+      expect(server.fetchFromServer).toHaveBeenCalledTimes(1);
+      await server.read(staleMs + 300_000);
+      expect(server.fetchFromServer).toHaveBeenCalledTimes(2);
     });
 
     it('does not re-read a healthy server on every call after an equal-version refresh', async () => {

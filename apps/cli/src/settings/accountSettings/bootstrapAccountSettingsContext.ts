@@ -7,7 +7,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { waitForAccountEncryptionObservation } from '@happier-dev/sync-client';
 
 import type { AgentId } from '@happier-dev/agents';
-import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
+import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY, readRetryLaterHints, type RetryLaterHints } from '@happier-dev/connection-supervisor';
+import { AxiosHeaders } from 'axios';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { AccountSettings, AccountSettingsV2GetResponse, BackendTargetRefV1 } from '@happier-dev/protocol';
@@ -154,12 +155,15 @@ function readRawAccountSettingsObject(value: unknown): Readonly<Record<string, u
     : {};
 }
 
-class AccountSettingsV2RequestError extends HttpStatusError {
+export class AccountSettingsV2RequestError extends HttpStatusError {
   readonly status: number;
+  /** The server's `Retry-After`, honoured as the earliest next refresh. */
+  readonly retryAfterMs: number | undefined;
 
-  constructor(status: number) {
+  constructor(status: number, hints: RetryLaterHints = {}) {
     super(status, `Failed to fetch /v2/account/settings (${status})`);
     this.status = status;
+    this.retryAfterMs = hints.retryAfterMs;
   }
 }
 
@@ -186,7 +190,8 @@ async function requestAccountSettingsV2(
     validateStatus: () => true,
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new AccountSettingsV2RequestError(response.status);
+    throw new AccountSettingsV2RequestError(response.status,
+      readRetryLaterHints(AxiosHeaders.from(response.headers as Parameters<typeof AxiosHeaders.from>[0])));
   }
   try {
     return AccountSettingsV2GetResponseSchema.parse(response.data);
@@ -523,7 +528,7 @@ function rememberInMemoryAccountSettingsContext(
 type RefreshBackoff = Readonly<{ consecutiveFailures: number; nextAttemptAtMs: number }>;
 const refreshBackoffByScopeKey = new Map<string, RefreshBackoff>();
 
-function recordRefreshFailure(scopeKey: string, nowMs: number): RefreshBackoff {
+function recordRefreshFailure(scopeKey: string, nowMs: number, retryAfterMs?: number): RefreshBackoff {
   const consecutiveFailures = (refreshBackoffByScopeKey.get(scopeKey)?.consecutiveFailures ?? 0) + 1;
   const retryInMs = computeManagedConnectionBackoffMs({
     attempt: consecutiveFailures,
@@ -531,7 +536,8 @@ function recordRefreshFailure(scopeKey: string, nowMs: number): RefreshBackoff {
     maxMs: DEFAULT_MANAGED_CONNECTION_POLICY.backoffMaxMs,
     jitterRatio: DEFAULT_MANAGED_CONNECTION_POLICY.jitterRatio,
   });
-  const backoff = { consecutiveFailures, nextAttemptAtMs: nowMs + retryInMs };
+  // The server's Retry-After is the earliest next read, as the server-features client honours it.
+  const backoff = { consecutiveFailures, nextAttemptAtMs: nowMs + Math.max(retryInMs, retryAfterMs ?? 0) };
   refreshBackoffByScopeKey.set(scopeKey, backoff);
   return backoff;
 }
@@ -1029,7 +1035,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const refreshBackedOff = !shouldForceFetch && minSettingsVersion === null
     && backoff !== undefined && nowMs < backoff.nextAttemptAtMs;
   const logRefreshFailure = (message: string, err: unknown) => {
-    const { consecutiveFailures, nextAttemptAtMs } = recordRefreshFailure(scopeKey, nowMs);
+    const { consecutiveFailures, nextAttemptAtMs } = recordRefreshFailure(scopeKey, nowMs,
+      err instanceof AccountSettingsV2RequestError ? err.retryAfterMs : undefined);
     logger.debug(message, { ...serializeAxiosErrorForLog(err), consecutiveFailures, retryInMs: nextAttemptAtMs - nowMs });
   };
   const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
