@@ -1,9 +1,14 @@
 import { createMachineProvisionerApiKeyAccount } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { ACCOUNT_PURPOSE, ORIGINS, RAILWAY_API } from './railwayApi.js';
+import { railwayOAuthMode, railwayOAuthStatus, refreshRailwayOAuth, revokeRailwayOAuth } from './oauth.js';
+
+export { ACCOUNT_PURPOSE, ORIGINS, nativeFetch } from './railwayApi.js';
+export const RAILWAY_ENVIRONMENT_KEY = 'RAILWAY_ENVIRONMENT_ID';
 
 export const ACCOUNT_ID = 'railway-account';
-export const ACCOUNT_PURPOSE = 'cloud-api';
-export const ORIGINS = ['https://backboard.railway.com'] as const;
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -12,7 +17,7 @@ const account = createMachineProvisionerApiKeyAccount({
   purpose: ACCOUNT_PURPOSE,
   headers: ORIGINS.map(origin => ({ origin, headerName: 'authorization', scheme: 'bearer' as const })),
   probe: {
-    request: { url: 'https://backboard.railway.com/graphql/v2', method: 'POST', headers: { 'content-type': 'application/json' },
+    request: { url: RAILWAY_API, method: 'POST', headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify({ query: 'query { me { id name email } }' })) },
     read(value) {
       if (!object(value)) return undefined;
@@ -32,7 +37,25 @@ const account = createMachineProvisionerApiKeyAccount({
     },
   },
 });
-export const connectedAccountRuntime = account.runtime;
-export const connectedAccountPortableRuntime = account.portableRuntime;
-export function activate(api: PluginAccountApi): void { api.connectedAccounts.register(ACCOUNT_ID, account.portableRuntime); }
-export const nativeFetch = account.nativeFetch;
+export const connectedAccountRuntime: ConnectedAccountRuntime = {
+  authentication: { modes: { ...account.runtime.authentication.modes, oauth: railwayOAuthMode } },
+  status: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? railwayOAuthStatus(context, options) : account.runtime.status(context, options),
+  refresh: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? refreshRailwayOAuth(context, options) : account.runtime.refresh(context, options),
+  revoke: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? revokeRailwayOAuth(context, options) : account.runtime.revoke(context, options),
+  async materialize(request, context, options) {
+    if (request.kind !== 'environment') return account.runtime.materialize(request, context, options);
+    context.signal.throwIfAborted();
+    options?.signal?.throwIfAborted();
+    const { environmentId } = context.configuration.values;
+    if (context.configuration.target.modeId !== 'oauth' || typeof environmentId !== 'string' || !environmentId
+      || request.keys.some(key => key !== RAILWAY_ENVIRONMENT_KEY)) throw new PluginError({ code: 'credential_unavailable' });
+    return { kind: 'environment', env: Object.fromEntries(request.keys.map(key => [key, environmentId])) };
+  },
+};
+export const connectedAccountPortableRuntime: ConnectedAccountPortableRuntime = {
+  authentication: connectedAccountRuntime.authentication, materialize: connectedAccountRuntime.materialize,
+};
+export function activate(api: PluginAccountApi): void { api.connectedAccounts.register(ACCOUNT_ID, connectedAccountPortableRuntime); }

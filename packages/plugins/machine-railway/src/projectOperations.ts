@@ -8,8 +8,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import { createRailwayGraphqlClient, NativeError } from './railwayApi.js';
 
-export { nativeFetch } from './account.js';
-export { createRailwayGraphqlClient, NativeError as RailwayNativeError, RAILWAY_API } from './railwayApi.js';
+export { nativeFetch, createRailwayGraphqlClient, NativeError as RailwayNativeError, RAILWAY_API } from './railwayApi.js';
 
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
@@ -22,7 +21,9 @@ const connection = defineProtocolObject({
     hasNextPage: boolean,
   }, open),
 }, open);
-const grantedWorkspaces = defineProtocolArray(defineProtocolObject({ projects: defineProtocolArray(choice) }, open));
+const grantedProjectWorkspaces = defineProtocolArray(defineProtocolObject({
+  id: text, name: text, projects: defineProtocolArray(choice),
+}, open));
 const connectionFields = 'edges { node { id name } } pageInfo { hasNextPage endCursor }';
 
 type Choice = ProtocolSchemaOutput<typeof choice>;
@@ -65,11 +66,18 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     )).projects);
   }
 
-  async function listGrantedProjects(): Promise<Choice[]> {
-    const data = await graphql('query { externalWorkspaces { projects { id name } } }', {});
-    const parsed = grantedWorkspaces.safeParse(data.externalWorkspaces);
+  async function listGrantedWorkspaces(): Promise<Choice[]> {
+    const data = await graphql('query { me { workspaces { id name } } }', {});
+    const parsed = defineProtocolArray(choice).safeParse(child(data.me, 'workspaces'));
     if (!parsed.success) throw new NativeError('railway_invalid_response');
-    return parsed.data.flatMap(workspace => workspace.projects);
+    return parsed.data;
+  }
+
+  async function listGrantedProjectWorkspaces() {
+    const data = await graphql('query { externalWorkspaces { id name projects { id name } } }', {});
+    const parsed = grantedProjectWorkspaces.safeParse(data.externalWorkspaces);
+    if (!parsed.success) throw new NativeError('railway_invalid_response');
+    return parsed.data;
   }
 
   function listProjectChoices(projectId: string, field: 'environments' | 'services') {
@@ -93,7 +101,9 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
 
   return {
     listProjects,
-    listGrantedProjects,
+    listGrantedWorkspaces,
+    listGrantedProjectWorkspaces,
+    listGrantedProjects: async () => (await listGrantedProjectWorkspaces()).flatMap(workspace => workspace.projects),
     listEnvironments: (projectId: string) => listProjectChoices(projectId, 'environments'),
     listServices: (projectId: string) => listProjectChoices(projectId, 'services'),
     upsertServiceVariables,

@@ -5,7 +5,7 @@ import { connectedAccountRuntime, nativeFetch } from './account.js';
 function boundary(status = 200, response: unknown = { data: { me: { id: 'account-one', name: 'Owner', email: 'owner@example.test' } } }) {
   const staged: string[] = [];
   const calls: { url: string; headers?: Readonly<Record<string, string>> }[] = [];
-  const context = { signal: new AbortController().signal, configuration: { values: {} },
+  const context = { signal: new AbortController().signal, configuration: { target: { modeId: 'token' }, values: {} },
     credentials: { get: async () => 'private-token' }, attemptCredentials: { set: async (_key: string, value: string) => { staged.push(value); } },
     services: { http: { request: async (request: { url: string; headers?: Readonly<Record<string, string>> }) => {
       calls.push(request);

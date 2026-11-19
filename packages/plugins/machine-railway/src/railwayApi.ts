@@ -1,7 +1,20 @@
-import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { createMachineProvisionerFetch, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 // Railway Public API: https://docs.railway.com/integrations/api
-export const RAILWAY_API = 'https://backboard.railway.com/graphql/v2';
+export const RAILWAY_ORIGIN = 'https://backboard.railway.com';
+export const RAILWAY_API = RAILWAY_ORIGIN + '/graphql/v2';
+export const ACCOUNT_PURPOSE = 'cloud-api';
+export const ORIGINS = [RAILWAY_ORIGIN] as const;
+
+export function nativeFetch(
+  context: Parameters<typeof createMachineProvisionerFetch>[0],
+  credential?: string | Readonly<Record<string, string>>,
+): typeof fetch {
+  return createMachineProvisionerFetch(context, {
+    purpose: ACCOUNT_PURPOSE, origins: ORIGINS, headerName: 'authorization',
+    credential: typeof credential === 'string' ? { authorization: 'Bearer ' + credential } : credential,
+  });
+}
 
 export class NativeError extends Error {
   constructor(readonly code: string, readonly status?: number) {

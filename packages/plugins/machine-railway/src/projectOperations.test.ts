@@ -40,7 +40,8 @@ describe('Railway shared project operations through Connected Account HTTP', () 
       { data: { projects: page([other]) } },
       { data: { project: { environments: page([environment]) } } },
       { data: { project: { services: page([service]) } } },
-      { data: { externalWorkspaces: [{ projects: [project] }, { projects: [other] }] } },
+      { data: { externalWorkspaces: [{ id: 'workspace-one', name: 'First workspace', projects: [project] },
+        { id: 'workspace-two', name: 'Second workspace', projects: [other] }] } },
     );
     const client = projectOperations.createRailwayProjectOperations(vendor.request, vendor.signal);
     expect(await client.listProjects('workspace-one')).toEqual([project, other]);

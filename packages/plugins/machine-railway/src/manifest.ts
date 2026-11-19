@@ -8,7 +8,8 @@ import {
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema,
   MachineProvisionerPutFileResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { ACCOUNT_ID, ACCOUNT_PURPOSE, ORIGINS, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
+import { ACCOUNT_ID, ACCOUNT_PURPOSE, ORIGINS, RAILWAY_ENVIRONMENT_KEY, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
+import { railwayOAuthFields } from './oauth.js';
 import { createRailwayNativeClient } from './machine/nativeClient.js';
 import { createRailwayPreparationClient, RAILWAY_PREPARATION_HOME, RailwayPreparationInputSchema, RailwayPreparedArtifactSchema, RailwayPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOptionsSchema, RailwayResourceSchema, RailwayOperationSchema, ROLE_SCHEMAS, RECONCILIATION } from './machine/schemas.js';
@@ -46,12 +47,16 @@ export const PLUGIN = definePlugin({
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage the selected Railway sandbox.',
       scope: { targets: ORIGINS.map(origin => ({ kind: 'fixedOrigin' as const, origin })), methods: ['POST'] } },
-    { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use the selected Railway API token.',
-      scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders'] } },
+    { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use the selected Railway account.',
+      scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders', 'environment'] } },
   ], optional: [] },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
     declaration: { title: 'Railway account', ui: { category: 'cloud-machines' }, authentication: {
-      account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
+      account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'oauth', modes: [{
+        id: 'oauth', title: 'Sign in with Railway', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
+        postAuthenticationFieldIds: railwayOAuthFields.map(field => field.id),
+        configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [...railwayOAuthFields] },
+      }, {
         id: 'token', title: 'Account API token', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://railway.com/account/tokens', createKeyTitle: 'Open Railway account tokens',
@@ -71,8 +76,16 @@ export const PLUGIN = definePlugin({
         const check = await runtime(context).check();
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
         if (!check.available) return { dimensions, code: 'provider_unavailable' };
-        if (input.environmentId === undefined) return { dimensions };
-        return { base: { launch: { environmentId: input.environmentId }, guestPlatform: 'linux', retention }, dimensions: { ...dimensions,
+        let environmentId = input.environmentId;
+        if (environmentId === undefined) {
+          try {
+            const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
+              { kind: 'environment', keys: [RAILWAY_ENVIRONMENT_KEY] }, { signal: context.signal });
+            if (material.kind === 'environment') environmentId = material.env[RAILWAY_ENVIRONMENT_KEY];
+          } catch { context.signal.throwIfAborted(); }
+        }
+        if (environmentId === undefined) return { dimensions };
+        return { base: { launch: { environmentId }, guestPlatform: 'linux', retention }, dimensions: { ...dimensions,
           image: [{ id: 'railway-default', title: 'Railway Ubuntu sandbox', guestPlatform: 'linux', assignments: [], nativeFacts: {
             preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: RAILWAY_PREPARATION_HOME },
             image: { id: 'railway-default', title: 'Railway Ubuntu sandbox' },
