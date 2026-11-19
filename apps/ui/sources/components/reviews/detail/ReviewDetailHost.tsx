@@ -32,6 +32,7 @@ import { presentSessionAddressSelection } from '@/components/sessions/transcript
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ReviewSubmitPanel } from './ReviewSubmitPanel';
+import { useReviewNewRound } from './useReviewNewRound';
 import { projectReviewGlance } from './reviewGlance';
 import { reviewSubjectLabel } from '../list/useReviewsCollectionView';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
@@ -221,6 +222,13 @@ export function ReviewDetailHost(props: Readonly<{
     enabled: presented && (activeTab === 'findings' || activeTab === 'changes') });
   const { binding } = useServerCredentialAccountScopeBinding(scope?.serverId);
   const canEdit = readArtifactAccessCapabilities(artifact.access).canEdit;
+  const newRoundPeople = React.useMemo(() => {
+    if (!human) return [];
+    const people = projectPeople({ human, round: lastOrdinal, names, viewerAccountId: scope?.accountId ?? null });
+    return people?.participants.map(person => ({ id: person.id, label: person.label, mark: person.mark,
+      continuity: 'asked_again' as const, required: human.requests.find(request => request.id === person.id)!.required })) ?? [];
+  }, [human, lastOrdinal, names, scope?.accountId]);
+  const newRound = useReviewNewRound({ scope, record, canEdit, people: newRoundPeople });
   const decide = React.useCallback((target: ReviewFindingDecisionTarget, decision: 'accept' | 'reject' | 'defer') =>
     comments.decide(target.comment.id, decision), [comments.decide]);
   const findingRound = React.useMemo(() => round && record ? { round: { reviewId: record.reviewId,
@@ -276,7 +284,11 @@ export function ReviewDetailHost(props: Readonly<{
     <ReviewDetailView
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
-      primaryAction={canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) } : null}
+      primaryAction={canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
+        : newRound.available ? { title: t('reviewWalkthrough.detail.newRound'), onPress: newRound.open } : null}
+      notice={newRound.approval.approvalPending && newRound.approval.approvalId && scope ? <ActionApprovalPendingNotice
+        testID="review-detail:new-round-approval" message={t('approvals.title')}
+        onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
       menu={menu}
       glance={projectReviewGlance(round, review)}
       rounds={rounds}

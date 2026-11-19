@@ -7,6 +7,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { useModalCardChrome } from '@/modal/components/card';
@@ -21,7 +23,7 @@ export type ReviewNewRoundReviewer = Readonly<{
   id: string;
   label: string;
   mark: React.ReactNode | null;
-  continuity: 'continues' | 'fresh' | 'asked_again';
+  continuity: 'continues' | 'fresh' | 'asked_again' | 'unavailable';
   required?: boolean;
 }>;
 
@@ -34,9 +36,15 @@ type ReviewNewRoundDialogProps = CustomModalInjectedProps &
     previousRound: number;
     reviewers: readonly ReviewNewRoundReviewer[];
     onStart: ReviewNewRoundStart;
+    ready?: boolean;
+    loading?: boolean;
+    reason?: string | null;
+    onFresh?: () => void;
+    onRetry?: () => void;
   }>;
 
 function continuityLabel(reviewer: ReviewNewRoundReviewer): string {
+  if (reviewer.continuity === 'unavailable') return t('common.unavailable');
   if (reviewer.continuity === 'continues')
     return t('reviewWalkthrough.detail.continuesSession');
   if (reviewer.continuity === 'fresh')
@@ -86,14 +94,14 @@ export function ReviewNewRoundDialog(
             testID: 'review-new-round:cancel',
             disabled: busy,
           }}
-          note={failure}
+          note={failure ?? props.reason}
           noteTestID="review-new-round:failure"
         >
           <RoundButton
             testID="review-new-round:start"
             title={t('reviewWalkthrough.detail.startRound')}
             loading={busy}
-            disabled={busy}
+            disabled={busy || props.ready === false}
             onPress={() => {
               void start();
             }}
@@ -101,11 +109,12 @@ export function ReviewNewRoundDialog(
         </ModalCardFooterActions>
       ),
     }),
-    [busy, failure, onClose, start],
+    [busy, failure, onClose, props.ready, props.reason, start],
   );
   useModalCardChrome(props.setChrome, chrome);
   return (
     <View style={styles.body}>
+      {props.loading ? <SurfaceStateCard kind="loading" title={t('common.loading')} /> : null}
       <ItemGroup header="none" testID="review-new-round:reviewers">
         {props.reviewers.map((reviewer) => (
           <Item
@@ -121,6 +130,10 @@ export function ReviewNewRoundDialog(
           />
         ))}
       </ItemGroup>
+      {props.onFresh ? <TextLinkButton testID="review-new-round:fresh" label={t('reviewWalkthrough.detail.startsFresh')}
+        onPress={() => { setFailure(null); props.onFresh?.(); }} /> : null}
+      {props.onRetry ? <TextLinkButton testID="review-new-round:retry" label={t('common.retry')}
+        onPress={props.onRetry} /> : null}
       <Text variant="body" style={styles.note}>
         {t('reviewWalkthrough.detail.newRoundNote', {
           round: props.previousRound,

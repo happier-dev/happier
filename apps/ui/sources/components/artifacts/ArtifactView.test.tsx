@@ -20,6 +20,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { decryptArtifactWithBody } from '@/sync/engine/artifacts/syncArtifacts';
 import { sync } from '@/sync/sync';
+import { AgentInput } from '@/components/sessions/agentInput';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import type { CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, flattenWidgetLayoutWidgetsV1, projectOverviewPresetV1, WidgetLayoutItemsV1Schema } from '@happier-dev/protocol/widgets';
@@ -40,10 +41,21 @@ import { Modal } from '@/modal';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useArtifactNetworkEditor } from './useArtifactNetworkEditor';
-import { AgentInput } from '@/components/sessions/agentInput';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { createScmRunActionHttpBoundary } from '@/dev/testkit/harness/scmActionTransport';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import type { CustomModalInjectedProps } from '@/modal/types';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { buildReviewStepsWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/reviewAndConverge';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
@@ -74,7 +86,6 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
 import { ArtifactView } from './ArtifactView';
 import { useArtifactOperations } from './useArtifactOperations';
 import { useArtifactTitleProjections } from './useArtifactTitleProjections';
-import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ArtifactDetailContent } from '@/app/(app)/artifacts/[id]';
 import { EditArtifactContent } from '@/app/(app)/artifacts/edit/[id]';
 
@@ -103,7 +114,7 @@ function OpenView({ id, edit = false }: Readonly<{ id: string; edit?: boolean }>
 let setupSequence = 0;
 
 async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: Promise<Response>, warm = false,
-    override?: (request: ServedHomeRequest) => Response | Promise<Response> | undefined, cold = false) {
+    override?: (request: ServedHomeRequest) => Response | Promise<Response> | undefined, cold = false, currentAccount = false) {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
     const bytes = new TextEncoder().encode(kind === 'html' ? '<!doctype html><h1>Saved HTML</h1>' : `Private bytes ${++setupSequence}`);
     const reference = { blobId: 'e704b26f-9c31-4728-9590-858378e34ed9', mime: kind === 'html' ? 'text/html' : kind === 'image' ? 'image/png' : 'application/zip',
@@ -117,7 +128,7 @@ async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: P
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
     artifacts.replaceStoredRow(head);
-    const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: `https://view-${setupSequence}.test`, accountId: 'owner' }], route: request => {
+    const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: `https://view-${setupSequence}.test`, accountId: 'owner', currentAccount }], route: request => {
         const overridden = override?.(request);
         if (overridden !== undefined) return overridden;
         if (request.path === '/v1/artifacts/document') return Response.json(head);
@@ -227,6 +238,268 @@ describe('Artifact composed view reads', () => {
         }
     });
 
+    it('previews the accepted mixed Review New round roster and replays its Workflow once', async () => {
+        const reviewId = 'review-workflow-new-round';
+        const nativeReads = installSessionActionRpcBoundary(request => {
+            if (request.method.endsWith(RPC_METHODS.CAPABILITIES_DESCRIBE)) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+            if (request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_GET)
+                && request.params && typeof request.params === 'object' && 'includeStructured' in request.params
+                && request.params.includeStructured === true) {
+                return { ok: false, errorCode: 'run_not_found', error: 'This prior executable leaf is no longer available' };
+            }
+            throw new Error(`A Workflow repeat must not replay its leaf RPC: ${request.method}`);
+        });
+        const runId = '11111111-1111-4111-8111-111111111111';
+        const selected = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review this repository.', reviewers: [
+            { kind: 'engine', engineId: 'codex' },
+            { kind: 'session', session: { serverId: 'review-home', sessionId: 'existing-reviewer' } },
+            { kind: 'person', principal: { kind: 'account', accountId: 'owner' }, required: false },
+        ] });
+        const built = buildReviewStepsWorkflowV1(selected, { reviewId, roundOrdinal: 1 });
+        const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: built.definition,
+            context: { source: { kind: 'inline' }, inputs: built.inputs, machineId: 'review-machine', executionTarget: { kind: 'session' },
+                workspaceTarget: { project: { machineId: 'review-machine', directory: '/repo', checkoutRootPath: '/repo' } },
+                origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } }, admission: { kind: 'user' },
+            effects: { resolveTargetAvailability: async () => true,
+                resolveSessionTarget: async () => ({ address: { serverId: 'review-home', sessionId: 'existing-reviewer' }, machineId: 'review-machine' }),
+                admitSessionAuthority: async () => true,
+                readActionContract: async id => {
+                    const action = actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)));
+                    return { inputSchema: StrictJsonValueSchema.parse(action.inputSchema), outputSchema: StrictJsonValueSchema.parse(action.outputSchema ?? {}) };
+                } } });
+        if (!accepted.ok) throw new Error(`Review fixture admission failed: ${accepted.error.code}`);
+        const run = createWorkflowRunSummaryFixture({ id: runId, ownerAccountId: 'owner', origin: { kind: 'direct' },
+            machineId: 'review-machine', state: 'succeeded' });
+        const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId }, acceptedSnapshot: accepted.snapshot }));
+        const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId, ownerAccountId: 'owner', access: 'owner',
+            encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
+            ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+        const record: DecryptedArtifact = { id: reviewId, title: 'Composed Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Composed Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'], runs: [{ kind: 'workflow', runId },
+                    { kind: 'execution', runId: 'leaf-that-must-not-repeat', machineId: 'review-machine' }] }] }),
+            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        let http: Awaited<ReturnType<typeof createScmRunActionHttpBoundary>> | undefined;
+        const starts: unknown[] = [];
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(FeaturesResponseSchema.parse({ features: {
+                workflows: { enabled: true }, automations: { enabled: true }, execution: { runs: { enabled: true } },
+                encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                capabilities: { serverIdentity: { serverIdentityId: 'srv_review_new_round_workflow' } } }));
+            if (request.path === '/v3/automations/runs/workflow-storage') {
+                const operation = (request.body as { operation: string }).operation;
+                if (operation === 'get') return Response.json({ run, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null, keyCensus });
+                if (operation === 'invocations.list') return Response.json({ invocations: [], parentRevision: run.revision, keyCensus, progressEnvelopesByInvocationId: {} });
+                if (operation === 'run-key.census') return Response.json(keyCensus);
+            }
+            if (http && (request.path.startsWith('/v1/actions/') || request.path.startsWith('/v1/machines')))
+                return http.handle(request.url, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }).then(response => {
+                    if (!response) throw new Error(`Unserved Workflow boundary: ${request.path}`);
+                    return response;
+                });
+        }, false, true);
+        if (!await setServerProfileIdentityForUrl(served.homes.owner!.serverUrl, 'srv_review_new_round_workflow')) {
+            throw new Error('The Workflow Home fixture must have its published identity');
+        }
+        http = await createScmRunActionHttpBoundary({ serverUrl: served.homes.owner!.serverUrl, serverIdentityId: 'srv_review_new_round_workflow',
+            accountId: 'owner', machineId: 'review-machine', actionIds: ['workflow.run.start'], execute(_id, input) {
+                starts.push(input);
+                return { run: createWorkflowRunSummaryFixture({ id: (input as { runId: string }).runId,
+                    ownerAccountId: 'owner', origin: { kind: 'direct' }, machineId: 'review-machine' }), admission: 'created' };
+            } });
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        vi.mocked(Modal.show).mockClear();
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        const row = { ...record, sourceServerId: scope.serverId };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        let confirmation: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            expect(served.requests.filter(request => (request.body as { operation?: string })?.operation === 'get')).toHaveLength(0);
+            await waitForHomeGovernance(() => expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
+                .toBe('reviewWalkthrough.detail.newRound'));
+            await act(async () => screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction.onPress());
+            const dialog = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            if (!dialog) throw new Error('Expected New round confirmation');
+            const chrome = { current: null as import('@/modal/types').CustomModalChromeCardConfig | null };
+            const Component = dialog.component as React.ComponentType<CustomModalInjectedProps>;
+            const closed = vi.fn();
+            confirmation = await renderScreen(<Component {...dialog.props} onClose={closed}
+                setChrome={value => { chrome.current = value as typeof chrome.current; }} />);
+            await waitForHomeGovernance(() => expect(confirmation!.findByTestId('review-new-round:reviewer:step-1-reviewer-3')).not.toBeNull());
+            const text = JSON.stringify(confirmation.tree.toJSON());
+            expect(text).toContain('reviewWalkthrough.detail.startsFresh');
+            expect(text).toContain('reviewWalkthrough.detail.continuesSession');
+            expect(text).toContain('reviewWalkthrough.detail.askedAgain');
+            expect(text).toContain('reviewWalkthrough.detail.optional');
+            if (!chrome.current) throw new Error('Expected confirmation footer');
+            const footer = await renderScreen(<>{chrome.current.footer}</>);
+            try { await footer.pressByTestIdAsync('review-new-round:start');
+                await waitForHomeGovernance(() => expect(closed).toHaveBeenCalledOnce());
+            } finally { await footer.unmount(); }
+            expect(starts).toHaveLength(1);
+            expect(starts[0]).toMatchObject({ source: { replay: { runId, intent: 'another_round' } } });
+            expect(served.requests.filter(request => request.path === '/v1/actions/execution.run.get'
+                || request.path === '/v1/actions/execution.run.action')).toHaveLength(0);
+            expect(nativeReads.filter(request => request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION)
+                || request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_GET) && !(request.params && typeof request.params === 'object'
+                    && 'includeStructured' in request.params && request.params.includeStructured === true))).toHaveLength(0);
+        } finally { await confirmation?.unmount(); await screen.unmount(); }
+    });
+    it.each(['session', 'detached', 'unavailable', 'late-unavailable'] as const)('previews native Review New round continuity before one explicit start (%s)', async mode => {
+        const serverIdentityId = `srv_review_new_round_${mode}`;
+        const reviewId = `review-new-round-${mode}`;
+        const run = ExecutionRunPublicStateSchema.parse({ runId: 'retained-reviewer', callId: 'call', sidechainId: 'sidechain',
+            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, display: { title: 'Retained reviewer' },
+            permissionMode: 'default', retentionPolicy: mode === 'detached' ? 'ephemeral' : 'resumable',
+            runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2,
+            lifecycle: { v: 1, state: mode === 'unavailable' ? 'unavailable' : 'current' } });
+        const reference = { kind: 'execution', runId: run.runId, machineId: 'review-machine',
+            ...(mode === 'session' ? { sessionId: 'review-session' } : {}) };
+        const record: DecryptedArtifact = { id: reviewId, title: 'Native Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Native Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['step-1-reviewer-1'], runs: [reference] }] }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const starts: unknown[] = [];
+        let reads = 0;
+        const nativeStart = (input: unknown) => {
+            starts.push(input);
+            if (mode === 'late-unavailable' && starts.length === 1) return { ok: false,
+                errorCode: 'review_follow_up_resume_unavailable', error: 'The retained reviewer session is unavailable' };
+            return { ok: true, result: { runId: 'next-reviewer', callId: 'next-call', sidechainId: 'next-sidechain',
+                reviewRound: { reviewId, roundOrdinal: 2 } } };
+        };
+        installSessionActionRpcBoundary(request => {
+            if (request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_GET)) {
+                if (!(request.params && typeof request.params === 'object' && 'includeStructured' in request.params
+                    && request.params.includeStructured === true)) reads++;
+                return { run };
+            }
+            if (request.method.endsWith(RPC_METHODS.CAPABILITIES_DESCRIBE)) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+            if (request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION)) {
+                return nativeStart(request.params);
+            }
+            throw new Error(`Unexpected native Review RPC: ${request.method}`);
+        });
+        const reviewerSession = createSessionFixture({ id: 'review-session', active: true,
+            metadata: { path: '/repo', host: 'test', machineId: 'review-machine' } });
+        const sessions = createSessionMetadataHttpBoundary(() => ({ 'review-session': reviewerSession }));
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {
+                execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                capabilities: { serverIdentity: { serverIdentityId } } }));
+            const machine = createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'owner');
+            if (machine) return machine;
+            const response = sessions.handle(request.url, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+            if (response) return response;
+        });
+        if (!await setServerProfileIdentityForUrl(served.homes.owner!.serverUrl, serverIdentityId)) {
+            throw new Error('The native Home fixture must have its published identity');
+        }
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        if (mode === 'session') getStorage().getState().applySessions([{ ...reviewerSession, serverId: scope.serverId }]);
+        vi.mocked(Modal.show).mockClear();
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        const row = { ...record, sourceServerId: scope.serverId };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        let confirmation: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            expect(reads).toBe(0);
+            await waitForHomeGovernance(() => expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
+                .toBe('reviewWalkthrough.detail.newRound'));
+            await act(async () => screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction.onPress());
+            const dialog = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            if (!dialog) throw new Error('Expected New round confirmation');
+            const chrome = { current: null as import('@/modal/types').CustomModalChromeCardConfig | null };
+            // Modal hosting is a platform boundary; the confirmation, header demand and Action stay real.
+            const Component = dialog.component as React.ComponentType<CustomModalInjectedProps>;
+            const closed = vi.fn();
+            confirmation = await renderScreen(<Component {...dialog.props} onClose={closed}
+                setChrome={value => { chrome.current = value as typeof chrome.current; }} />);
+            await waitForHomeGovernance(() => expect(confirmation!.findByTestId(`review-new-round:reviewer:${run.runId}`)).not.toBeNull());
+            expect(reads).toBe(1);
+            expect(starts).toHaveLength(0);
+            expect(JSON.stringify(confirmation.tree.toJSON())).toContain(mode === 'session' || mode === 'late-unavailable'
+                ? 'reviewWalkthrough.detail.continuesSession' : mode === 'detached' ? 'reviewWalkthrough.detail.startsFresh' : 'common.unavailable');
+            if (mode === 'unavailable') await confirmation.pressByTestIdAsync('review-new-round:fresh');
+            if (!chrome.current) throw new Error('Expected confirmation footer');
+            const footer = await renderScreen(<>{chrome.current.footer}</>);
+            try { await footer.pressByTestIdAsync('review-new-round:start');
+                await waitForHomeGovernance(() => expect(starts).toHaveLength(1));
+            } finally { await footer.unmount(); }
+            if (mode === 'late-unavailable') {
+                await waitForHomeGovernance(() => expect(confirmation!.findByTestId('review-new-round:fresh')).not.toBeNull());
+                expect(closed).not.toHaveBeenCalled();
+                expect(starts).toHaveLength(1);
+                await confirmation.pressByTestIdAsync('review-new-round:fresh');
+                const retryFooter = await renderScreen(<>{chrome.current!.footer}</>);
+                try { await retryFooter.pressByTestIdAsync('review-new-round:start');
+                    await waitForHomeGovernance(() => expect(starts).toHaveLength(2));
+                } finally { await retryFooter.unmount(); }
+                expect(starts[1]).toMatchObject({ input: { fresh: true } });
+            }
+            await waitForHomeGovernance(() => expect(closed).toHaveBeenCalledOnce());
+            expect(starts[0]).toMatchObject({ runId: run.runId, actionId: 'review.new_round',
+                input: mode === 'unavailable' ? { fresh: true } : {} });
+        } finally { await confirmation?.unmount(); await screen.unmount(); }
+    });
+    it('starts a person-only Review New round on its Account without fabricating a Run', async () => {
+        const reviewId = 'review-people-new-round';
+        const runRequests = installSessionActionRpcBoundary(request => {
+            throw new Error(`A person-only Review has no executable Run: ${request.method}`);
+        });
+        const record: DecryptedArtifact = { id: reviewId, title: 'People Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'People Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: [], runs: [] }] }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        artifacts.replaceStoredRow(createPlainArtifactHttpFixture(record, 'owner'));
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/reviews/get') return Response.json({ review: {
+                reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+                state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+                counts: { total: 0, needsDecision: 0 } }, human: { reviewId, roundOrdinal: 1,
+                requests: [{ id: 'required-person', roundOrdinal: 1, principal: { kind: 'account', accountId: 'owner' }, required: true, needsAccess: false },
+                    { id: 'optional-person', roundOrdinal: 1, principal: { kind: 'account', accountId: 'other' }, required: false, needsAccess: false }],
+                verdicts: [], needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } } });
+            if (request.path.startsWith('/v1/artifacts') && !request.path.includes('/document'))
+                return artifacts.handle(request.path, { method: request.method,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined;
+        });
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        vi.mocked(Modal.show).mockClear();
+        const row = { ...record, sourceServerId: scope.serverId };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
+                .toBe('reviewWalkthrough.detail.newRound'));
+            await act(async () => { await screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction.onPress(); });
+            await waitForHomeGovernance(() => expect(Modal.show).toHaveBeenCalled());
+            const dialog = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            const props = dialog?.props as { previousRound: number; reviewers: readonly { id: string; continuity: string; required: boolean }[];
+                onStart(): Promise<{ ok: boolean }> };
+            expect(props.previousRound).toBe(1);
+            expect(props.reviewers).toEqual([expect.objectContaining({ id: 'required-person', continuity: 'asked_again', required: true }),
+                expect.objectContaining({ id: 'optional-person', continuity: 'asked_again', required: false })]);
+            await act(async () => { expect(await props.onStart()).toEqual({ ok: true }); });
+            const saved = JSON.parse(artifacts.readPlainBody(reviewId) ?? 'null');
+            expect(saved.rounds).toHaveLength(2);
+            expect(saved.rounds[1]).toMatchObject({ ordinal: 2, state: 'completed', reviewerIds: [], runs: [] });
+            expect(runRequests).toHaveLength(0);
+            expect(served.requests.filter(request => request.path === '/v3/automations/runs/workflow-storage'
+                || request.path.startsWith('/v1/actions/execution.run.') || request.path.startsWith('/v1/actions/workflow.run.'))).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     it.each([
         { access: 'owner', canEdit: true, canManage: true, canShare: true },
         { access: 'admin', canEdit: true, canManage: true, canShare: true },
