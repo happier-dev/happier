@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, type ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Chart, DataTable, Metric } from '../../components/Data.js';
@@ -12,6 +12,10 @@ import { HappierDataRows } from './DataRows.js';
 import { HappierDataMetric } from './Metric.js';
 import { ChartInteractionProvider } from './ChartDatum.js';
 import { RankedRows } from './RankedRows.js';
+import { HappierDataTable } from './DataRows.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
+import { HappierPageSheet } from '../layout/PageSection.js';
 
 const query = (root: HTMLElement, testID: string) => root.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
 
@@ -19,6 +23,39 @@ function layout(element: Element | null, width: number) {
   const handler = (element as unknown as { __reactLayoutHandler: (event: HappierLayoutChangeEvent) => void }).__reactLayoutHandler;
   act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width, height: 120 } } }));
 }
+
+// Owner 2026-11-19 (COMPETITOR-1118, BOARD 14:17Z): every table sits in a rounded sheet with its outer edge, and keeps
+// exactly one perimeter: a widget body or a page section's sheet that already encloses it draws the only one.
+describe('a data table in its sheet', () => {
+  const edged = (node: HTMLElement | null) => node !== null
+    && getComputedStyle(node).borderTopLeftRadius === `${HAPPIER_PAGE_METRICS.sheetRadiusPx}px`
+    && Number.parseFloat(getComputedStyle(node).borderTopWidth || '0') > 0;
+  const table = (theme: ReturnType<typeof createSurfaceContext>['theme']) => (
+    <HappierDataTable theme={theme} testID="table" label="Orders by channel"
+      columns={[{ label: 'Channel' }, { label: 'Orders' }]} rows={[['Web', 12], ['Mobile', 4]]} />
+  );
+  const sheetColors = { sheet: '#ffffff', sheetBorder: '#dddddd', rowDivider: '#eeeeee', groupDivider: '#f4f4f4' };
+
+  it.each([
+    { where: 'on its own', wrap: (node: ReactElement) => node, sheet: true, edgesAround: 1 },
+    { where: 'in a widget body', wrap: (node: ReactElement) => <HappierBodyEdgeContext.Provider value>{node}</HappierBodyEdgeContext.Provider>, sheet: false, edgesAround: 0 },
+    { where: "on a page section's sheet", wrap: (node: ReactElement) => <HappierPageSheet colors={sheetColors}>{node}</HappierPageSheet>, sheet: false, edgesAround: 1 },
+  ])('draws its own rounded sheet only $where with nothing around it', ({ wrap, sheet, edgesAround }) => {
+    const mount = mountThroughReactNativeWeb(wrap(table(createSurfaceContext().theme)));
+    try {
+      const root = query(mount.container, 'table');
+      expect(root).not.toBeNull();
+      let edges = 0;
+      for (let node: HTMLElement | null = root; node !== null && node !== mount.container; node = node.parentElement) {
+        if (edged(node)) edges += 1;
+      }
+      // Never two perimeters around the rows: the table's own, or the one enclosing it (the widget frame is the host's,
+      // not drawn here).
+      expect(edges).toBe(edgesAround);
+      expect(edged(root)).toBe(sheet);
+    } finally { mount.unmount(); }
+  });
+});
 
 describe('public data nodes through React Native Web', () => {
   it.each([

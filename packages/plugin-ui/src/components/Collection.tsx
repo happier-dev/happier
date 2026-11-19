@@ -31,7 +31,7 @@ import { HappierBodyEdgeContext, HappierColumnEdgeContext, useHappierColumnEdgeP
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow, readHappierVisibleLayoutWidth } from '../presentation/layout/pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
-import { useHappierPageSection } from '../presentation/layout/PageSection.js';
+import { happierPageSheetFrameStyle, type HappierPageSheetColors, useHappierPageSection } from '../presentation/layout/PageSection.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
 import {
@@ -703,15 +703,6 @@ function groupBandFrame(heightPx: number, textInsetPx: number) {
     borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
     paddingHorizontal: textInsetPx,
   } as const;
-}
-
-/**
- * A full-bleed table's group band (a page table on its own sheet edge, whose rows run edge to edge): square and flush,
- * straight under the column headings and onto its rows, in the same planned height (owner 2026-11-15, A3). Only a
- * table inset in a card (its rows' fills rounded inside it) takes the rounded band above.
- */
-function flushGroupBandFrame(heightPx: number, textInsetPx: number) {
-  return { height: heightPx, paddingHorizontal: textInsetPx } as const;
 }
 
 const SLOT_COLUMNS = Object.freeze({
@@ -2496,6 +2487,13 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const ruledInsetPx = wrapTitles && restingRows !== 'air' ? ruledRowInset(theme, restingRows) : null;
   const restingRuled = wrapTitles && restingRows === 'ruled';
   const narrowRows = wrapTitles && isHappierPageRowNarrow(size?.width ?? null);
+  // Every table sits in one rounded sheet with its outer edge, index pages included; its groups are bands inside it
+  // (owner 2026-11-19, relayed by COMPETITOR-1118 BOARD 14:17Z; it reverses WAVE-ACCEPT-1117C's bare, ruled tables).
+  // A page list is that table wherever its rows are not a phone's (a totals table keeps its sheet there too); a
+  // collection already on another sheet (a configuration section's, a widget body) keeps that one. A data grid that
+  // scrolls sideways frames its viewport, not its wider rows (`CollectionGridScroll`).
+  const sheetTable = palette !== null && enclosingPageSheet === null && !onBodyEdge
+    && (rowGeometry === 'table' || (pageSections && !catalogDirectory && (!narrowRows || pageTable)));
   // A page-section list's `listColumn` fields stand as end columns where the row has room (never on a phone, where the
   // byline carries them); a page table keeps its own bar.
   const columnsShown = pageSections && !pageTable && !catalogDirectory && rowGeometry === 'list'
@@ -2576,13 +2574,15 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       const data: CollectionCell<Item>[] = [];
       const nextGroup = drawnSections[index + 1]?.group;
       const followedByBand = grouped && nextGroup != null && nextGroup.title !== '';
+      // The table's last row ends its sheet, whose edge closes it: like a row a band follows, it draws no foot.
+      const endsSheet = sheetTable && index === drawnSections.length - 1;
       const last = section.items[section.items.length - 1];
       for (const item of section.items) {
         const key = model.keyOf(item);
         const hasPeek = (expandable || ghostPeeks) && (expanded.has(key) || closingPeeks.has(key));
         // The band follows the row only after its closing Peek has left the cells.
         // Carry this fact on that row instead of broadcasting membership through the stage.
-        data.push(retainCell({ kind: 'item', key, item, beforeBand: followedByBand && item === last && !hasPeek }));
+        data.push(retainCell({ kind: 'item', key, item, beforeBand: (followedByBand || endsSheet) && item === last && !hasPeek }));
         if (hasPeek) {
           data.push(retainCell({ kind: 'peek', key: peekCellKey(key), itemKey: key, item }));
         }
@@ -2603,7 +2603,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
           : (model.sections[index]?.items ?? []).filter((member) => tree.get(model.keyOf(member))?.context !== true).length }),
         ...(group?.description === undefined ? {} : { description: group.description }),
         // Groups that are parts of one page section share its heading and sheet (page sections only).
-        ...(group?.section === undefined || !pageSections || pageTable ? {} : { section: group.section }),
+        ...(group?.section === undefined || !pageSections || sheetTable ? {} : { section: group.section }),
         ...(group !== null && collapsedGroups?.has(group.key) === true ? { collapsed: true } : {}),
         data,
       };
@@ -2614,8 +2614,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       nextSections[nextSections.length - 1] = { ...last, data: [...last.data, { kind: 'after', key: AFTER_ROWS_CELL_KEY, content: props.afterRows }] };
     }
     return nextSections;
-  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, model.keyOf, model.sections, pageSections, pageTable, tree]);
-  // A page section's last row ends its sheet; on one table's sheet only the very last row does (a band follows the rest).
+  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, model.keyOf, model.sections, pageSections, sheetTable, tree]);
+  // A page section's last row ends its sheet; on a table's sheet only the very last row does (a band follows the rest).
   const previousDividedKeys = useRef<ReadonlySet<string> | null>(null);
   // A browse list on a phone lies flat on the page (owner 2026-11-15): its sheet divides its rows in the one list-row
   // rule's ink, and only rows of two or more lines (owner ~20:40Z); one-line rows part by spacing alone.
@@ -2628,7 +2628,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       previousDividedKeys.current = null;
       return null;
     }
-    const keys = pageTable
+    const keys = sheetTable
       ? drawnSections.flatMap((section) => section.items.map(model.keyOf)).slice(0, -1)
       : drawnSections.flatMap((section) => section.items.slice(0, -1).map(model.keyOf));
     const previous = previousDividedKeys.current;
@@ -2638,7 +2638,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     const next = new Set(keys);
     previousDividedKeys.current = next;
     return next;
-  }, [catalogDirectory, drawnSections, flatBrowseSheet, model.keyOf, oneLineRows, pageSections, pageTable]);
+  }, [catalogDirectory, drawnSections, flatBrowseSheet, model.keyOf, oneLineRows, pageSections, sheetTable]);
   // An ungrouped page list (a phone, a narrow page) keeps the table's header recomposed on its sheet: what the rows
   // are on the left, the order they are in on the right (lab `rp` Hp "Started by Happier · Memory ↓").
   const sort = props.sort;
@@ -2652,7 +2652,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       style={[pageSheetHeaderStyle, listColumnsHeaderStyle, { borderBottomColor: palette?.rowDivider ?? theme.colors.divider,
         paddingRight: rowAccessoryWidth },
         // A flat page list's rows stand on the page edge (`rowInsetPx` below); its bar names their columns from there.
-        enclosingPageSheet === null ? flatListColumnsHeaderStyle : null]}
+        enclosingPageSheet === null && !sheetTable ? flatListColumnsHeaderStyle : null]}
     >
       <View style={pageRowGlyphStyle} />
       <HappierText variant="meta" tone="muted" numberOfLines={1} style={flexTextStyle}>{anatomy.columnTitles.title}</HappierText>
@@ -2662,7 +2662,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         </View>
       ))}
     </View>
-  ), [accessibility.textScale, anatomy.columnTitles.title, enclosingPageSheet, listColumns, palette?.rowDivider, props.testID, rowAccessoryWidth, theme.colors.divider]);
+  ), [accessibility.textScale, anatomy.columnTitles.title, enclosingPageSheet, listColumns, palette?.rowDivider, props.testID, rowAccessoryWidth, sheetTable, theme.colors.divider]);
   const pageSheetHeader = useMemo(() => listColumnsHeader ?? (!pageSections || (grouped && !pageTable) || sort === undefined || sortedField === undefined ? null : (
     <View
       testID={props.testID === undefined ? undefined : `${props.testID}:sheet-header`}
@@ -2831,9 +2831,13 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       ...(props.testID === undefined ? {} : { lineTestID: `${props.testID}:directory-line` }),
     } } : {}),
   }), [pageCellHeights, rowGeometry, metrics, size?.width, catalogDirectory, directoryColumns, props.testID]);
+  // The sheet stands while there are rows or their skeleton; an empty table's statement stands on the page.
+  const sheetShown = sheetTable && (model.keys.length > 0 || props.loading === true);
+  const gridSheet = sheetShown && gridScroll && palette !== null ? palette : null;
   const control = useMemo<ListCollectionControl>(() => ({
     ownsSelectionRows: true,
     hideChrome: true,
+    ...(sheetShown && !gridScroll && palette !== null ? { sheet: palette } : {}),
     focus: { key: model.focusKey, tabStopKey, request: model.focusRequest,
       onRequestHandled: model.actions.consumeFocusRequest,
       ...(singleChoice === undefined ? { onKey: (key: string, from: string, event: unknown) => {
@@ -2848,15 +2852,17 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
           store: multipleStore, eligibleKeys: navigationKeys });
       } } : {}) },
     scroll: { offsetRef: scrollOffsetRef, request: view.scrollRequest ?? viewportScrollRequest },
-    ...(pageTable && palette !== null ? {
-      // One table's groups band its sheet the way the wide table bands them, on the page rows' inset.
+    ...(pageSections && sheetTable && palette !== null ? {
+      // A page list in the table's sheet: its groups band the sheet the way the wide table bands them, on the page
+      // rows' inset. The sheet is the List's own (`sheet`), so the rows lie in it with no sheet of their own, and its
+      // bar heads the List above the first band.
       sectionHeaderTitleRole: 'micro' as const,
       sectionHeaderStyle: {
         justifyContent: 'center' as const,
         ...groupBandFrame(metrics.groupHeader, HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx),
-        backgroundColor: palette.inset,
+        backgroundColor: paintColor(palette.inset ?? theme.colors.elevatedSurface),
       },
-      pageSheet: { colors: palette, header: pageSheetHeader, flatSheet: enclosingPageSheet === null, oneSheet: true },
+      pageSheet: { colors: palette, flatSheet: false },
     } : pageSections && palette !== null ? {
       sectionHeaderTitleRole: 'section' as const,
       // The page section header's rhythm: one section gap above, the header gap down to its sheet.
@@ -2875,11 +2881,11 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       } } : { pageSheet: {
         colors: flatBrowseSheet && flatBrowseColors !== null ? flatBrowseColors : palette,
         header: pageSheetHeader,
-        // A page list lies flat on the page at every width, its rows parted by their text-inset hairlines: the Services
-        // shape (owner 2026-11-15 "browse flat"; UI refinements ruling WAVE-ACCEPT-1117C: no card on an index list).
+        // A phone's page list (or one on another section's sheet) lies flat, its rows parted by their text-inset
+        // hairlines (owner 2026-11-15 "browse flat"); wider, the list is a table in its sheet (`sheetTable`).
         flatSheet: false,
-        // With no card around them, the rows' marks stand on the page's text edge at every width, as the header's title
-        // and the section headings do (monitoring-1115 B1, pfc-redesign flat lists), not a card's content inset in.
+        // With no card around them, the rows' marks stand on the page's text edge, as the header's title and the
+        // section headings do (monitoring-1115 B1, pfc-redesign flat lists), not a card's content inset in.
         ...(enclosingPageSheet === null ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
         stackedHeadings: narrowRows,
       } }),
@@ -2898,16 +2904,6 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         // Pinned over scrolling rows, so on an opaque ground it paints that ground (the page role); a translucent
         // material's plane is its own, and the heading is not pinned there.
         ...(containingMaterial === undefined ? { backgroundColor: palette?.page ?? theme.colors.surface } : {}),
-      },
-    } : pageScroll && rowGeometry === 'table' ? {
-      // A page table's group is a section title over its rows, as a Services list's is, in the band's planned height:
-      // never a filled band (UI refinements ruling WAVE-ACCEPT-1117C; owner rule 11-15 "no card chrome on lists").
-      sectionHeaderTitleRole: 'group' as const,
-      sectionHeaderStyle: {
-        justifyContent: 'flex-end' as const,
-        ...flushGroupBandFrame(metrics.groupHeader, TABLE.insetStart),
-        paddingRight: TABLE.insetTrailing,
-        paddingBottom: HAPPIER_PAGE_METRICS.groupHeadingGapPx,
       },
     } : {
       sectionHeaderTitleRole: 'micro' as const,
@@ -2947,7 +2943,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         {header}
       </driver.AnimatedView>
     ),
-  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageWindows, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
+  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageWindows, pageGeometry, pageSections, sheetShown, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
@@ -3326,9 +3322,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // is a column of its own, which draws its whole edge (`DetailsPaneBody`).
   const pageColumnEdgePx = useHappierColumnEdgePx();
   const detailColumnEdgePx = pushedPage ? pageColumnEdgePx : 0;
-  // A standalone page table has the page sheet edge even when it recomposes as a list.
-  // A nested sheet already owns that edge (for example the configurator's size table).
-  const stageOnSheetEdge = pageSections || (pageScroll && presentation === 'table' && palette !== null && enclosingPageSheet === null);
+  // A standalone page table has the page sheet edge even when it recomposes as a list, and so does every table in its
+  // sheet. A nested sheet already owns that edge (for example the configurator's size table).
+  const stageOnSheetEdge = pageSections || sheetTable || (pageScroll && presentation === 'table' && palette !== null && enclosingPageSheet === null);
 
   // The open item stays marked in the list or on its card while its detail is open anywhere: in the split, pushed,
   // in the host details pane, or wherever the caller shows it (`detail: 'none'`).
@@ -3418,9 +3414,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         <PageColumn maxWidthPx={pageColumnMaxWidthPx}>
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
-            stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null,
-            // A page table lies flat on its page, as a Services list does: no card edge (WAVE-ACCEPT-1117C).
-            ]}>
+            stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null]}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
             <View
               testID={props.listTestID}
@@ -3479,7 +3473,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                   {footerLine}
                 </>
               ) : (
-              <CollectionGridScroll enabled={gridScroll} width={gridRowsWidth} onViewportWidth={setGridViewportWidth}
+              <CollectionGridScroll enabled={gridScroll} width={gridRowsWidth} onViewportWidth={setGridViewportWidth} sheet={gridSheet}
                 footer={gridScroll && (props.footer !== undefined || footerLine !== null) ? <>{props.footer}{footerLine}</> : null}>
               <CollectionStageContext.Provider value={stage as CollectionStage<unknown>}>
                 <ListCollectionControlContext.Provider value={control}>
@@ -3493,7 +3487,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                     renderItem={renderCollectionCell as (cell: CollectionCell<Item>) => ReactElement}
                     selection={listSelection}
                     revealRequest={openRowReveal}
-                    header={rowsReleased ? columnHeader : null}
+                    // A page list's bar heads its table's sheet, above the first band.
+                    header={!rowsReleased ? null : columnHeader ?? (pageSections && sheetTable ? pageSheetHeader : null)}
                     empty={!rowsReleased ? null : loadingFirstWindow ? (
                       <CollectionSkeletonRows
                         theme={theme}
@@ -3675,20 +3670,26 @@ function CollectionGridScroll(props: Readonly<{
   /** The rows' width; wider than the viewport, they scroll. 0 before the first measurement fills the viewport. */
   width: number;
   onViewportWidth: (width: number) => void;
+  /** The table's sheet, drawn on the viewport so the rows scroll inside it; the footer stays under it. */
+  sheet: HappierPageSheetColors | null;
   footer: ReactNode;
   children: ReactNode;
 }>): ReactElement {
-  const { onViewportWidth } = props;
+  const { onViewportWidth, sheet } = props;
+  // On a box around the scroller, never the scroller itself: the sheet's clip would stop it scrolling sideways.
+  const sheetStyle = useMemo(() => (sheet === null ? null : { ...happierPageSheetFrameStyle(sheet), overflow: 'hidden' as const }), [sheet]);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     onViewportWidth(Math.round(event.nativeEvent.layout.width));
   }, [onViewportWidth]);
   if (!props.enabled) return <>{props.children}</>;
   return (
     <>
-      <ScrollView horizontal style={gridScrollStyle} contentContainerStyle={gridScrollContentStyle} onLayout={onLayout}
-        showsHorizontalScrollIndicator>
-        <View style={props.width > 0 ? [gridRowsStyle, { width: props.width }] : gridRowsFillStyle}>{props.children}</View>
-      </ScrollView>
+      <View style={[gridScrollStyle, sheetStyle]}>
+        <ScrollView horizontal style={gridScrollStyle} contentContainerStyle={gridScrollContentStyle} onLayout={onLayout}
+          showsHorizontalScrollIndicator>
+          <View style={props.width > 0 ? [gridRowsStyle, { width: props.width }] : gridRowsFillStyle}>{props.children}</View>
+        </ScrollView>
+      </View>
       {props.footer}
     </>
   );

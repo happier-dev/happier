@@ -36,6 +36,7 @@ import {
   HappierPageSheet,
   HappierPageSheetGroup,
   HappierPageSheetGroupSeparator,
+  happierPageSheetFrameStyle,
   useHappierPageSection,
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
@@ -1855,7 +1856,10 @@ function VirtualizedList<Item>(
     : { ...authorPageGeometry.directory, rowGapPx: authorPageGeometry.rowGapPx };
   // Rows exist to sit on it: an empty or still-reading list keeps its own empty state on the page.
   const flatPageSheet = pageSheet !== undefined && visibleSections === undefined && (visibleItems?.length ?? 0) > 0;
-  const oneSheetSections = pageSheet?.oneSheet === true && visibleSections !== undefined && visibleSections.some((section) => section.data.length > 0);
+  // A table's sheet: one rounded edge around its bar, bands, rows and footer, clipping their fills to its corners.
+  const tableSheet = collectionControl?.sheet;
+  const tableSheetStyle = useMemo(() => (tableSheet === undefined ? null
+    : { ...happierPageSheetFrameStyle(tableSheet), overflow: 'hidden' as const }), [tableSheet]);
   const previousPageGeometryRef = useRef(pageGeometry);
   useLayoutEffect(() => {
     const previous = previousPageGeometryRef.current;
@@ -2143,25 +2147,7 @@ function VirtualizedList<Item>(
         testID={props.testID}
         style={[props.style, densityStyle, props.contentContainerStyle]}
       >
-        {oneSheetSections && pageSheet !== undefined && virtualizedSections !== undefined ? (
-          // One table's groups: its bar, each group's band and rows, then its totals, on one sheet.
-          <HappierPageSheet colors={pageSheet.colors} rowDividers={false} {...pageSheetSurface(pageSheet, flatPageSheetStyle)}>
-            <View>
-              {pageSheet.header}
-              {virtualizedSections.map((section) => (
-                <Fragment key={section.key}>
-                  {renderSectionHeader({ section })}
-                  {section.data.map((item, index) => (
-                    <Fragment key={encodeHappierSectionRowCellKey(keyForItem(item, index))}>
-                      {renderSectionRow({ item, index, section })}
-                    </Fragment>
-                  ))}
-                </Fragment>
-              ))}
-              {props.footer}
-            </View>
-          </HappierPageSheet>
-        ) : virtualizedSections !== undefined && visibleSections !== undefined
+        {virtualizedSections !== undefined && visibleSections !== undefined
           ? pageSheetParts(virtualizedSections, pageSheet !== undefined && catalogDirectory === undefined).map((part, partIndex) => {
               // The sheet bar (a Collection's column titles) heads the first sheet only; later sheets keep its columns.
               const sheetHeader = partIndex === 0 ? pageSheet?.header ?? null : null;
@@ -2265,7 +2251,7 @@ function VirtualizedList<Item>(
         ref={listRootRef}
         testID={props.pageLayout !== undefined && props.testID !== undefined ? `${props.testID}:stage` : undefined}
         onLayout={props.pageLayout === undefined ? undefined : onPageLayout}
-        style={pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle}
+        style={[pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle, tableSheetStyle]}
       >
         {headerContent}
         {collection}
@@ -2275,7 +2261,7 @@ function VirtualizedList<Item>(
           emptyContent
         )}
         {scrollsEndContent ? null : authorEndContent}
-        {flatPageSheet || oneSheetSections ? null : props.footer}
+        {flatPageSheet ? null : props.footer}
       </View>
     </ListMultiSelectionProvider>
   );

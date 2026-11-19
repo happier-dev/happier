@@ -9,6 +9,7 @@ import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { ItemGroupPageSheetBody } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -97,7 +98,13 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
     },
     list: {
-        // Rows run edge to edge so their hairlines and tints read as one table.
+        // Rows run edge to edge in the section sheet so their hairlines and tints read as one table; the last row's
+        // rule tucks under the sheet's clipped edge, which closes the table (owner 2026-11-19: every table in a sheet).
+        marginBottom: -1,
+    },
+    tableSheet: {
+        // On the panel's text inset, with its state line and toolbar.
+        marginHorizontal: theme.space.s12,
     },
     row: {
         flexDirection: 'row',
@@ -882,12 +889,16 @@ export function BrowserDiagnosticsFamilyPanelFrame<T>(props: BrowserDiagnosticsF
                 </View>
             ) : null}
             {!unavailable && summaryEvents.length > 0 ? (
-                <View style={styles.list}>
-                    {summaryEvents.map((event) => renderBrowserDiagnosticEvent(event, props.testID, `${props.testID}-${props.familyKey}-row-${sanitizeTestIdPart(event.eventId)}`))}
-                </View>
+                <ItemGroupPageSheetBody clipContent containerStyle={styles.tableSheet}>
+                    <View style={styles.list}>
+                        {summaryEvents.map((event) => renderBrowserDiagnosticEvent(event, props.testID, `${props.testID}-${props.familyKey}-row-${sanitizeTestIdPart(event.eventId)}`))}
+                    </View>
+                </ItemGroupPageSheetBody>
             ) : null}
             {unavailable || props.items.length === 0 ? null : visible.length > 0 ? (
-                <View style={styles.list}>{props.renderItems(visible)}</View>
+                <ItemGroupPageSheetBody clipContent containerStyle={styles.tableSheet}>
+                    <View style={styles.list}>{props.renderItems(visible)}</View>
+                </ItemGroupPageSheetBody>
             ) : (
                 <Text testID={`${props.testID}-${props.familyKey}-no-matches`} style={styles.note}>
                     {t('browserDiagnostics.host.devtools.noMatches')}

@@ -36,6 +36,19 @@ export function happierPageSheetShape(): Readonly<{ borderRadius: number; border
   return { borderRadius: HAPPIER_PAGE_METRICS.sheetRadiusPx, borderWidth: StyleSheet.hairlineWidth };
 }
 
+/**
+ * A page section's sheet as drawn: its shape, its ground and edge in the given colours, and the host's lip. One
+ * drawing for a section's sheet and a Collection table's (owner 2026-11-19: every table sits in a rounded sheet).
+ */
+export function happierPageSheetFrameStyle(colors: HappierPageSheetColors): HappierPortableStyle {
+  return {
+    ...happierPageSheetShape(),
+    borderColor: colors.sheetBorder,
+    backgroundColor: colors.sheet,
+    ...happierRaisedEdgeStyle(colors.sheetEdge),
+  };
+}
+
 /** The hairline between the rows of a page section's sheet. */
 export function happierPageRowDividerWidth(): number {
   return StyleSheet.hairlineWidth;
@@ -359,14 +372,7 @@ export type HappierPageSheetProps = Readonly<{
  * then sits between groups.
  */
 export function HappierPageSheet(props: HappierPageSheetProps) {
-  const sheetStyle: HappierPortableStyle | null = props.surface === 'none'
-    ? null
-    : {
-        ...happierPageSheetShape(),
-        borderColor: props.colors.sheetBorder,
-        backgroundColor: props.colors.sheet,
-        ...happierRaisedEdgeStyle(props.colors.sheetEdge),
-      };
+  const sheetStyle: HappierPortableStyle | null = props.surface === 'none' ? null : happierPageSheetFrameStyle(props.colors);
   const rowDividerColor = props.colors.rowDivider;
   const rowInsetPx = props.rowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   const framed = props.surface !== 'none';

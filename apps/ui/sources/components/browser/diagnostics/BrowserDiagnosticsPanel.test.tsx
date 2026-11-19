@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { HappierPageSheet } from '@happier-dev/plugin-ui/presentation';
 import { BrowserDiagnosticEventV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { applyBrowserDiagnosticEvents, applyBrowserDiagnosticsSnapshotState, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics/store';
 
@@ -444,6 +445,11 @@ describe('BrowserDiagnosticsPanel', () => {
     expect(screen.getTextContent()).toContain('https://example.test/app');
     expect(screen.getTextContent()).not.toContain('sid=secret');
     expect(screen.getTextContent()).not.toContain('token=secret');
+    // Owner 2026-11-19 (TABLE-SWEEP-1119): a family's table rows sit in the configuration section's rounded sheet.
+    const sheets = screen.findAllByType(HappierPageSheet);
+    for (const rowTestID of ['browser-diagnostics-network-row-evt_network_1', 'browser-diagnostics-resources-row-evt_resources_1']) {
+      expect(sheets.some((sheet) => sheet.findAll((node) => node.props.testID === rowTestID).length > 0)).toBe(true);
+    }
   });
 
   it('surfaces the local-owner console text in the console panel (DEV-2)', async () => {

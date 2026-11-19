@@ -51,6 +51,11 @@ export type ListCollectionControl = Readonly<{
   retainedRowKeys?: readonly string[];
   pageVirtualization?: PageCollectionGeometry;
   /**
+   * The collection is a table and sits in one sheet, in these colours: its bar, every group's band and row, and its
+   * footer (totals), inside one rounded edge (owner 2026-11-19: every table, index pages included). Absent, no sheet.
+   */
+  sheet?: HappierPageSheetColors;
+  /**
    * A page-scrolling list's groups are page sections: each group's rows sit on one page sheet under its header
    * (the page anatomy every other section of the page uses), in these colours.
    */
@@ -68,8 +73,6 @@ export type ListCollectionControl = Readonly<{
     flatSheet?: boolean;
     /** With no sheet of its own, from the page column to the rows' content (a phone's browse list: the page text edge). */
     rowInsetPx?: number;
-    /** A grouped list that is one table (it has totals): the bar, every group's band and rows, then the footer on one sheet. */
-    oneSheet?: boolean;
     /**
      * The rows are narrow (a phone): a band sharing a sheet keeps its name on line 1 and puts what its rows share
      * and its action on line 2, rather than truncating both beside each other (DESIGN "Phones recompose").

@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
-import { readHappierVisibleLayoutWidth } from '../layout/pageMetrics.js';
+import { HAPPIER_PAGE_METRICS, readHappierVisibleLayoutWidth } from '../layout/pageMetrics.js';
+import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
+import { happierPageSheetFrameStyle, useHappierPageSection } from '../layout/PageSection.js';
+import { resolveHappierUiPalette, useOptionalHappierUiPalette } from '../../environment/context.js';
 import { HappierText } from '../text/Text.js';
 import { HappierProgress } from '../content/Foundation.js';
 import {
@@ -203,6 +206,13 @@ export function HappierDataRows(props: HappierDataRowsProps) {
 export function HappierDataTable(props: HappierDataRowsProps) {
   const text = useHappierDataTextStyles(props.theme);
   const [width, setWidth] = useState<number | null>(null);
+  // A table sits in a rounded sheet with its outer edge (owner 2026-11-19), and keeps one perimeter: a widget body or a
+  // page section's sheet around it already draws that edge, so there it lies in theirs.
+  const onBodyEdge = useContext(HappierBodyEdgeContext);
+  const enclosingSheet = useHappierPageSection();
+  const enclosed = onBodyEdge || enclosingSheet !== null;
+  const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(props.theme);
+  const sheetInsetPx = enclosed ? 0 : HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
   const sizing = {
     columns: props.columns,
     rows: props.rows,
@@ -234,8 +244,13 @@ export function HappierDataTable(props: HappierDataRowsProps) {
       testID={props.testID}
       role="table"
       accessibilityLabel={props.label}
+      style={enclosed ? undefined : {
+        ...happierPageSheetFrameStyle(palette), overflow: 'hidden',
+        paddingHorizontal: sheetInsetPx, paddingTop: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
+      }}
       onLayout={(event: HappierLayoutChangeEvent) => {
-        const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        // The columns share what is inside the sheet's insets.
+        const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width - 2 * sheetInsetPx);
         if (visibleWidth !== null) setWidth(visibleWidth);
       }}
     >

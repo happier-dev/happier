@@ -2591,8 +2591,8 @@ describe('Collection table', () => {
     view.unmount();
   });
 
-  // UI refinements ruling (WAVE-ACCEPT-1117C): an index table on its page takes the Services shape, its rows on the
-  // page and each group a section title, never a bordered card with filled group bands (Machines, Workflows Library).
+  // Owner 2026-11-19 (COMPETITOR-1118, BOARD 14:17Z; it reverses WAVE-ACCEPT-1117C's bare, ruled index table): a table on
+  // its page, page-scrolled or not, sits in one bordered sheet, and its groups are filled bands inside it.
   const chromeBetween = (from: HTMLElement, stage: HTMLElement) => {
     const found: string[] = [];
     for (let node: HTMLElement | null = from; node !== null && node !== stage.parentElement; node = node.parentElement) {
@@ -2605,25 +2605,32 @@ describe('Collection table', () => {
     return found;
   };
 
-  it('lays a page table flat on its page: no card edge around it, no filled band under a group title', () => {
+  it('sits a page table in one bordered sheet, a group title on a filled band inside it', () => {
     const view = mount({ scroll: 'page' });
     try {
       view.measure(1440);
       const stage = view.query('collection:stage')!;
-      expect(chromeBetween(stage, stage)).toEqual([]);
-      expect(chromeBetween(view.container.querySelector<HTMLElement>('[aria-label="Needs you"]')!, stage)).toEqual([]);
+      const band = view.container.querySelector<HTMLElement>('[aria-label="Needs you"]')!;
+      const around = chromeBetween(band, stage);
+      expect(around.some((entry) => entry.startsWith('border'))).toBe(true);
+      expect(around.filter((entry) => entry.startsWith('fill')).length).toBeGreaterThanOrEqual(2);
     } finally {
       view.unmount();
     }
   });
 
-  it('lays a wide page list flat on its page, as a phone already does', () => {
+  it('sits a wide ungrouped page list in its sheet, where a phone lays it flat', () => {
     const view = mount({ presentation: 'list', scroll: 'page', grouped: false });
     try {
+      const borders = () => {
+        const stage = view.query('collection:stage')!;
+        const firstRow = view.container.querySelector<HTMLElement>('[data-testid^="row:"]')!;
+        return chromeBetween(firstRow.parentElement!, stage).filter((entry) => entry.startsWith('border'));
+      };
       view.measure(1440);
-      const stage = view.query('collection:stage')!;
-      const firstRow = view.container.querySelector<HTMLElement>('[data-testid^="row:"]')!;
-      expect(chromeBetween(firstRow.parentElement!, stage).filter((entry) => entry.startsWith('border'))).toEqual([]);
+      expect(borders()).not.toEqual([]);
+      view.measure(390);
+      expect(borders()).toEqual([]);
     } finally {
       view.unmount();
     }
@@ -3542,7 +3549,12 @@ describe('render scope', () => {
       expect(retry).toBeDefined();
       // A phone row puts what the band shares and its action on line 2 (DESIGN "Phones recompose"); wide, one line.
       expect(title.parentElement!.contains(retry)).toBe(sameLine);
-      expect(retry.closest('[role="group"]')?.textContent).toContain("Couldn't read services");
+      // The band (a phone's sub-heading, a wide table sheet's filled band) holds its name, its fact and its action,
+      // and none of its rows.
+      let band: HTMLElement | null = title.parentElement;
+      while (band !== null && !band.contains(retry)) band = band.parentElement;
+      expect(band?.textContent).toContain("Couldn't read services");
+      expect(band?.textContent).not.toContain('Retry idempotent payment intents');
     } finally { view.unmount(); }
   });
   it('draws an empty list column cell as the table does: a quiet dash, never a blank', () => {
@@ -3577,7 +3589,8 @@ describe('render scope', () => {
         .map((group) => ({ ...group, section: { key: 'all', title: '' } })) },
     });
     try {
-      view.measure(1200);
+      // A phone's shared sheet (wider, the list is a table in one sheet whose groups are bands: owner 2026-11-19).
+      view.measure(390);
       // The sheet both groups share: the nearest ancestor of a row of each.
       let sheet = view.query('row:a')!.parentElement!;
       while (!sheet.contains(view.query('row:c'))) sheet = sheet.parentElement!;
@@ -3871,10 +3884,10 @@ describe('row hairlines', () => {
 
   it('draws no hairline where a band already parts the groups, around a selected row, or under the open one', async () => {
     // Owner 03: the selected row kept a separator under it, and every band seemed to have a top border (the hairline
-    // of the row above it). Rows a, b · band · c. The last row ends the list and keeps its foot.
+    // of the row above it). Rows a, b · band · c. The last row ends the table's sheet, whose edge closes it (owner 11-19).
     const view = mount({ presentation: 'table' });
     view.measure(1440);
-    expect(ruled(view)).toEqual({ a: true, b: false, c: true });
+    expect(ruled(view)).toEqual({ a: true, b: false, c: false });
     await view.setOpen('b');
     view.measure(1440);
     // b is open: its own foot and the row above it both stop drawing the line between them. Beside the detail the rows
@@ -3932,6 +3945,106 @@ describe('row hairlines', () => {
     } finally {
       view.unmount();
       (globalThis as { matchMedia?: unknown }).matchMedia = matchMedia;
+    }
+  });
+});
+
+// Owner 2026-11-19 (COMPETITOR-1118, BOARD 14:17Z): every table, index pages included, sits in one rounded sheet with
+// its outer edge, and its groups are bands inside it; a phone's rows stay flat. It reverses the bare, ruled index table.
+describe('the table sheet', () => {
+  const radius = `${HAPPIER_PAGE_METRICS.sheetRadiusPx}px`;
+  /** The rounded, edged box around the collection's rows, or null when the rows lie on the page. */
+  const sheetAround = (view: ReturnType<typeof mount>, key: string): HTMLElement | null => {
+    for (let node = view.query(`row:${key}`)?.parentElement ?? null; node !== null && node !== view.container; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.borderTopLeftRadius === radius && Number.parseFloat(style.borderTopWidth || '0') > 0) return node;
+    }
+    return null;
+  };
+
+  it.each([
+    { shape: 'page list (Services, Presets, Workflows)', options: { presentation: 'list', scroll: 'page' } as const },
+    { shape: 'table (Triage)', options: { presentation: 'table' } as const },
+  ])('draws a desktop $shape in one rounded sheet, its groups as bands inside it', ({ options }) => {
+    const view = mount({ ...options, detail: 'none' });
+    try {
+      view.measure(1440);
+      const sheet = sheetAround(view, 'a');
+      expect(sheet).not.toBeNull();
+      // One sheet holds every group's rows and both group names.
+      expect(sheet!.contains(view.query('row:c'))).toBe(true);
+      expect(sheet!.textContent).toContain('Needs you');
+      expect(sheet!.textContent).toContain('Everything else');
+      // The group's name stands on a filled band, not on the page ground.
+      const band = [...sheet!.querySelectorAll<HTMLElement>('*')].find((node) => node.children.length === 0
+        && node.textContent === 'Everything else')!;
+      let filled = false;
+      for (let node: HTMLElement | null = band; node !== null && node !== sheet; node = node.parentElement) {
+        const fill = getComputedStyle(node).backgroundColor;
+        if (fill !== '' && fill !== 'transparent' && fill !== 'rgba(0, 0, 0, 0)') filled = true;
+      }
+      expect(filled).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("leaves a phone's page list flat on the page, and an empty table's statement off any sheet", () => {
+    const phone = mount({ presentation: 'list', scroll: 'page', detail: 'none' });
+    try {
+      phone.measure(390);
+      expect(phone.query('row:a')).not.toBeNull();
+      expect(sheetAround(phone, 'a')).toBeNull();
+    } finally {
+      phone.unmount();
+    }
+    const empty = mount({ presentation: 'list', scroll: 'page', detail: 'none', items: [] });
+    try {
+      empty.measure(1440);
+      const edged = [...empty.container.querySelectorAll<HTMLElement>('*')].some((node) =>
+        getComputedStyle(node).borderTopLeftRadius === radius && Number.parseFloat(getComputedStyle(node).borderTopWidth || '0') > 0);
+      expect(edged).toBe(false);
+    } finally {
+      empty.unmount();
+    }
+  });
+
+  // TABLE-SWEEP-1119: a data grid that scrolls sideways (database rows, query results) frames its viewport, never its
+  // wider rows: the sheet stays put while the rows scroll under it.
+  it('frames a sideways-scrolling data grid on its viewport, the rows scrolling inside the sheet', () => {
+    const wide = (key: 'repo' | 'age', title: string) => ({ key, title, minWidth: 700, priority: 1, render: (entry: Entry) => entry[key] });
+    const view = mount({
+      presentation: 'table', detail: 'none', grouped: false,
+      anatomy: { ...anatomy, peek: undefined, columnsOverflow: 'scroll', fields: [wide('repo', 'Repo'), wide('age', 'Age')] },
+    });
+    try {
+      view.measure(1440);
+      const sheet = sheetAround(view, 'a');
+      expect(sheet).not.toBeNull();
+      // Nothing between the sheet and the page scrolls sideways: the scrolling region is inside it.
+      const scrolls = (node: HTMLElement) => ['auto', 'scroll'].includes(getComputedStyle(node).overflowX);
+      let outerScroller = false;
+      for (let node = sheet!.parentElement; node !== null && node !== view.container; node = node.parentElement) {
+        if (scrolls(node)) outerScroller = true;
+      }
+      expect(outerScroller).toBe(false);
+      expect([sheet!, ...sheet!.querySelectorAll<HTMLElement>('*')].some(scrolls)).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("closes the table's last row on the sheet's edge: no hairline of its own there", () => {
+    const view = mount({ presentation: 'table', detail: 'none', grouped: false });
+    try {
+      view.measure(1440);
+      const footOf = (key: string) => [...view.query(`row:${key}`)!.closest('[role="row"]')!.querySelectorAll<HTMLElement>('*')]
+        .some((node) => node.style.position === 'absolute' && node.style.bottom === '0px' && node.style.left === '0px'
+          && node.style.right === '0px' && Number.parseFloat(node.style.height || '9') <= 1 && node.children.length === 0);
+      expect(footOf('a')).toBe(true);
+      expect(footOf('c')).toBe(false);
+    } finally {
+      view.unmount();
     }
   });
 });
@@ -5321,7 +5434,8 @@ describe('page list windowing', () => {
   it('draws a windowed shared sheet as one sheet: the bands near the window under their own sub-headings', async () => {
     const view = mount({ ...options('one sheet of bands', 500), scrollTracker: pageTracker() });
     try {
-      view.measure(1440);
+      // A phone's shared sheet; wider, the same groups are bands in the table's one sheet (owner 2026-11-19).
+      view.measure(390);
       await act(async () => {});
       // The sheet both bands share: the nearest ancestor of a row of each, holding the second band's sub-heading.
       let sheet = view.query('row:r0')!.parentElement!;
@@ -7792,7 +7906,8 @@ describe('an ungrouped page list (a phone)', () => {
 
   it('draws groups that are parts of one page section under its one heading, on one sheet with their sub-headings', () => {
     const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true });
-    view.measure(1200);
+    // A phone's page sections (wider, the list is a table in one sheet, its groups bands: owner 2026-11-19).
+    view.measure(390);
     const text = view.container.textContent ?? '';
     // One heading names the section and its quiet fact, once.
     expect(text.split('Kept here')).toHaveLength(2);
@@ -7809,8 +7924,10 @@ describe('an ungrouped page list (a phone)', () => {
     view.unmount();
   });
 
-  it('titles each group sharing a page section with its count on its rows\' edge, never a filled band (owner rule 11-15, MONITOR-ACCEPT F3)', () => {
-    for (const width of [1200, 390]) {
+  // A phone's page sections (owner rule 11-15, MONITOR-ACCEPT F3); wider, the list is a table in one sheet whose groups are
+  // filled bands (owner 2026-11-19), asserted below.
+  it('titles each group sharing a page section with its count on its rows\' edge, never a filled band on a phone; a band in the wide table\'s sheet', () => {
+    for (const width of [390, 1200]) {
       const view = mountTree({ presentation: 'list', scroll: 'page', sectioned: true });
       view.measure(width);
       const rows = view.rows();
@@ -7822,9 +7939,12 @@ describe('an ungrouped page list (a phone)', () => {
       // The deepest element that holds the whole title (a web middle ellipsis splits it into runs).
       const title = [...sheet.querySelectorAll('*')].filter((node) => node.textContent?.replace(/\s/gu, ' ') === 'Left behind').at(-1)!;
       expect(title).toBeDefined();
+      const fills: string[] = [];
       for (let node: Element | null = title; node !== null && node !== sheet; node = node.parentElement) {
-        expect(getComputedStyle(node).backgroundColor).toMatch(/^(|transparent|rgba\(0, 0, 0, 0\))$/);
+        const fill = getComputedStyle(node).backgroundColor;
+        if (!/^(|transparent|rgba\(0, 0, 0, 0\))$/.test(fill)) fills.push(fill);
       }
+      expect(fills.length > 0).toBe(width > 390);
       view.unmount();
     }
   });

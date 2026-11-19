@@ -409,7 +409,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
  * anatomy (row inset, divider colour) and lays out `HappierPageSheetGroup`s; this adds the group's
  * accessible container, each row's position, and the joins of a virtualized section's chunks.
  */
-const ItemGroupPageSheetBody = React.memo(function ItemGroupPageSheetBody(props: Readonly<{
+export const ItemGroupPageSheetBody = React.memo(function ItemGroupPageSheetBody(props: Readonly<{
     children: React.ReactNode;
     accessibilityRole?: 'radiogroup';
     accessibilityLabel?: string;
