@@ -4,9 +4,10 @@ import { actionInputValidationFailure } from '@happier-dev/protocol/actions/exec
 
 /** Voice validates its authoring ingress; the Action owner settles every default once. */
 export function bindVoiceSessionSpawnInput(input: unknown): Readonly<{
-  ok: true; input: SessionSpawnNewActionAuthoringInputV2;
+  ok: true; input: SessionSpawnNewActionAuthoringInputV2; newSession?: true;
 }> | ActionExecuteFailure {
   const parsed = SessionSpawnNewActionVoiceInputV2Schema.safeParse(input);
   if (!parsed.success) return actionInputValidationFailure(parsed.error);
-  return { ok: true, input: parsed.data };
+  const { newSession, ...selection } = parsed.data;
+  return { ok: true, input: selection, ...(newSession ? { newSession } : {}) };
 }

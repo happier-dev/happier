@@ -547,7 +547,8 @@ function createSessionStateActionSpecs() {
     originalExecution: { daemonIngressSurfaces: [] },
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Get session status',
-    description: 'Get summary status and the content-free Connected selection for a session. Use sessionId:"self" to read your own selection for reuse in child starts. Set includeAcceptedWorkspace:true to obtain result.acceptedWorkspace.checkout, the exact accepted checkout address for Project Actions such as projects.inspect. If absent, the accepted checkout identity is unavailable; do not infer it from the Session path. Optionally refresh live agent state or inspect current execution prerequisites.',
+    description: 'Get Session status and its content-free Connected selection. In Voice, omit sessionId to inspect the bound coding Session. For a child you just created, read session.latestTurnStatus and lastRuntimeIssue for its observed work outcome. Use sessionId:"self" to read your own selection for reuse in child starts. Set includeAcceptedWorkspace:true to obtain result.acceptedWorkspace.checkout, the exact accepted checkout address for Project Actions such as projects.inspect. If absent, the accepted checkout identity is unavailable. Optionally refresh live agent state or inspect current execution prerequisites.',
+    prompting: { voiceHotPath: true },
     safety: 'safe',
     placements: [],
     bindings: { voiceClientToolName: 'session_status_get', mcpToolName: 'session_status_get' },
@@ -574,6 +575,9 @@ function createSessionStateActionSpecs() {
     },
     outputSchema: lazyZodSchema(() => withSessionTargetFanoutResultV1(SessionStatusActionResultV1Schema)),
     inputSchema: SessionStatusGetInputSchema,
+    surfaceBindings: { voice: {
+      inputSchema: lazyZodSchema(() => z.partial(SessionStatusGetInputSchema, { sessionId: true })),
+    } },
     cli: SESSION_STATUS_GET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {

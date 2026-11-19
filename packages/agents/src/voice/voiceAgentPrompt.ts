@@ -16,7 +16,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 10;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 11;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -34,6 +34,8 @@ const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Create a requested Happier Session through the canonical Session creation Action. A native Agent/Task subagent or execution run is not a Happier Session and does not create a Session list row.',
   'When the person asks to start a new coding Session and do work, pass the work to that Session creation Action in initialInput.text. Do not perform the requested coding task in the Voice carrier, including through native shell or file tools. If the Action is unavailable or fails, report that result instead of doing the work locally.',
   'Only report a Session as created or started after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
+  'With a coding Session selected, set newSession to true only if the person asks to start a separate Session. Omit sessionId on a coding follow-up to use the current target.',
+  'Creation and input acceptance alone establish only that the Session exists or received the request. To report the work outcome, read the observed child turn or use Session status. For a message with reply wait, use its exact reply outcome. If the turn failed, report the typed cause, such as a usage limit. If work is still pending, say it was sent.',
   'Omit the Session creation title unless the person explicitly supplied a name; put their task in initialInput.text. Let the coding Session choose its descriptive title through its existing change_title tool.',
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',
 ] as const;
@@ -296,7 +298,7 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),
             'Tools:',
             '- Tool results are JSON strings. If ok=false, explain the error briefly and ask the user what to do next.',
-            '- Always include sessionId internally in tool args when the tool accepts it.',
+            '- Omit sessionId for the bound coding Session. Include the exact id when the person names another Session.',
             availableToolNames.has('searchActionSpecs')
               ? '- The catalog below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.'
               : '- The catalog below is the complete set of tools available for this conversation.',
@@ -384,7 +386,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             `- Trigger Actions with the native ${VOICE_ACTION_FUNCTION_NAME} function using {t, args}. Do not emit Action JSON in assistant text.`,
             '- Native Actions execute during this turn and return their canonical result directly.',
             '- Report the settled result in this turn after the function returns. approval_request_created is pending approval, not execution or success. Do not wait for a separate Voice tool-results message or repeat a successful Action to obtain its result.',
-            '- Always include sessionId internally when the action accepts it.',
+            '- Omit sessionId when following up with the bound coding Session. Include the exact id when the person names another Session.',
             '- These Actions run through the Happier Voice host. Use this function for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
             `- Names in Available actions and the Discovery checklist are t values for ${VOICE_ACTION_FUNCTION_NAME}, not separate native tool names. Do not look them up with native ToolSearch.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
@@ -392,8 +394,8 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             ] : [
               '- Use this Session\'s existing Happier Action tools. Discover Actions with action_spec_search, read their schemas with action_spec_get, then use action_execute with {actionId, input}. Follow the runtime\'s injected tool instructions when it delivers these tools through a native extension or shell bridge.',
               '- schemaPath is only a returned schemaSections path (/inputSchema/definitions/<name> or /outputSchema/definitions/<name>); omit it for the root schema and never invent JSON Pointer paths or metadata/property leaves.',
-              '- These tools return the canonical Action result directly. Report success only after a successful result; approval_request_created is pending approval, not an executed effect. Do not queue Action JSON in assistant text or wait for a separate Voice tool-results message.',
-              '- Always include sessionId internally when the Action accepts it. Preserve the exact identifiers returned by discovery and results.',
+              '- Report the domain outcome in the returned Action result. approval_request_created means approval is pending. Do not queue Action JSON in assistant text or wait for a separate Voice tool-results message.',
+              '- For coding follow-ups use session_message_send and omit sessionId for the bound Session. For app preferences use settings_list with a short label as query, then use settings_get or settings_set with the returned anchor. Preserve exact identifiers for other targets.',
             ]),
             '',
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),

@@ -134,6 +134,7 @@ const SettingReversalInputSchema = lazyZodSchema(() => z.union([
 
 export const SettingsDeclarationActionInputSchemasV1 = {
   'settings.list': z.strictObject({ pageId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    query: z.optional(z.string().check(z.trim(), z.minLength(1))),
     maxBytes: z.optional(z.number().check(z.int(), z.positive())),
     cursor: z.optional(z.number().check(z.int(), z.nonnegative())) }),
   'settings.get': z.strictObject({ anchor: AnchorSchema, key: z.optional(SettingKeySchema), target: z.optional(SettingsDeclarationTargetV1Schema), includeVersion: z.optional(z.literal(true)) }),

@@ -10,7 +10,7 @@ import {
   resolveVoiceToolEffectClass,
   type VoiceToolHandler,
 } from '@/voice/tools/handlers';
-import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
+import { resolveToolSessionAddress, resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { readAdmittedVoiceSessionExecutionTarget } from '@/voice/session/voiceSessionStore';
 import {
@@ -183,6 +183,10 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     } : {}),
     voiceSessionBinding: binding,
     currentSessionAddress: params.currentToolSessionAddress ?? null,
+    resolveCurrentSessionAddress: () => resolveToolSessionAddress({
+      currentSessionId: params.currentToolSessionAddress?.sessionId ?? params.currentToolSessionId ?? null,
+      currentServerId: params.currentToolSessionAddress?.serverId ?? null,
+    }),
     currentServerId: serverId,
     currentExecutionTarget: binding ? readAdmittedVoiceSessionExecutionTarget({ adapterId: binding.adapterId,
       controlSessionId: binding.controlSessionId, serverId }) : null,

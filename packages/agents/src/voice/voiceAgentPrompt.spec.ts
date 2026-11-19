@@ -200,14 +200,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 10,
+      revision: 11,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: '6a0784073f6d6aa7efb0c4bcc4704a316cab15a26607cb2be5245799180bfb40',
+      digest: 'b8f0e3fafec6cf22d8c10072469c11c8ee43a38578abbf8875be4391b9b9e797',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
@@ -418,7 +418,7 @@ describe('voiceAgentPrompt', () => {
     expect(localPrompt).toContain('Do not ask the user for opaque internal ids when discovery tools can provide them');
     expect(localPrompt).toContain('When an action accepts a human-readable session title, prefer that session title directly instead of forcing yourself to speak or remember a raw session id');
     expect(localPrompt).toContain('If the user already gave you an exact session title for openSession or setPrimaryActionSession, call that action with sessionTitle first before paging through listSessions');
-    expect(localPrompt).toContain('Always include sessionId internally when the action accepts it');
+    expect(localPrompt).toContain('Omit sessionId when following up with the bound coding Session');
     expect(localPrompt).toContain('Only include arguments you know from the active session');
     expect(localPrompt).toContain('Speak about session titles, machine labels, workspace names, backend names, model labels, and other human-readable labels instead of raw ids');
     expect(localPrompt).toContain('for the already selected Session, say "the session" without repeating its full title');

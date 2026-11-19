@@ -255,13 +255,13 @@ function createSessionMessageActionSpecs(): readonly [
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Send a message to a session',
     sideEffectClass: 'external',
-    description: 'Send information or ask an agent Session for one answer. reply none creates no answer obligation; wait observes the exact answer inline; return retains a later answer to the admitted source Session. A timeout stops observation without cancelling accepted work. Session selectors grant no access.',
+    description: 'Send information or ask an Agent Session for one answer. In Voice, omit sessionId for a follow-up to the bound coding Session. For a Voice preference use the settings Actions directly. reply none creates no answer obligation; wait observes the exact answer or failure inline; return retains a later answer to the admitted source Session. Read status and outcome to report the result. Acceptance alone means input was queued or sent. A timeout stops observation without cancelling accepted work. Session selectors grant no access.',
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'sendSessionMessage', mcpToolName: 'session_message_send' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","message":"Please inspect the latest changes.","reply":"wait"}' },
+      voice: { argsExample: '{"message":"Please inspect the latest changes.","reply":"wait"}' },
     },
     surfaces: {
       ui: true,

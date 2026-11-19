@@ -5,7 +5,7 @@ import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/ap
 import type { ApprovalProfileArtifactChangeV1, executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, SettingsDeclarationValueV1Schema, SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationCapturedMutationV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
-import { projectSettingsDeclarationDiscoveryV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationDiscovery';
+import { createSettingsDeclarationQueryMatcherV1, projectSettingsDeclarationDiscoveryV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationDiscovery';
 import { AccountSettingMutationV1Schema, applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import { captureSettingMutationV1, restoreSettingMutationV1 } from '@happier-dev/protocol/actions/settings/settingMutationReversal';
 import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -245,43 +245,47 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             && readBuiltInSettingDeclarationV1(input.anchor)?.storage?.scope === 'local';
         const declarations = getSettingsPageDeclarations(undefined, localDeclaration ? undefined : await owner.readAccountSettings());
         if (actionId === 'settings.list') {
-            const parsed = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
+            const { query, ...parsed } = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
+            const matchesQuery = createSettingsDeclarationQueryMatcherV1(query);
+            const matchesRef = (ref: SettingRef) => !query || matchesQuery({
+                anchor: ref.anchor, title: ref.title ?? String(t(ref.titleKey)),
+            });
             const pageAnchors = new Set(declarations.flatMap(page => Object.values(page.settings).map(ref => ref.anchor)));
             const portablePreferences = BUILT_IN_SETTINGS_DECLARATIONS_V1.flatMap(declaration => {
                 if (pageAnchors.has(declaration.anchor) || parsed.pageId && declaration.pageId !== parsed.pageId) return [];
                 const ref = readBuiltInSettingUiRef(declaration.anchor);
-                return ref ? [{ pageId: declaration.pageId, ref }] : [];
+                return ref && matchesRef(ref) ? [{ pageId: declaration.pageId, ref }] : [];
             });
             const items = await Promise.all(declarations
                 .filter((page) => !parsed.pageId || page.pageId === parsed.pageId)
-                .flatMap((page) => Object.values(page.settings).map((ref) => descriptor(page.pageId, ref, context, readHome)))
+                .flatMap((page) => Object.values(page.settings).filter(matchesRef).map((ref) => descriptor(page.pageId, ref, context, readHome)))
                 .concat(portablePreferences.map(({ pageId, ref }) => descriptor(pageId, ref, context, readHome))));
             const connection = readBuiltInSettingDeclarationV1('machines.connection.direct');
-            if (connection && (!parsed.pageId || parsed.pageId === 'machines')) {
+            if (connection && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(connection)) {
                 items.push({ anchor: connection.anchor, pageId: connection.pageId, title: connection.title,
                     description: connection.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'account', allowedValues: [...machineDirectConnectionStorage.allowedValues] });
             }
             const machineHost = readBuiltInSettingDeclarationV1('machines.terminal.host');
-            if (machineHost && (!parsed.pageId || parsed.pageId === 'machines')) {
+            if (machineHost && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(machineHost)) {
                 items.push({ anchor: machineHost.anchor, pageId: machineHost.pageId, title: machineHost.title,
                     description: machineHost.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'account' });
             }
             const installablePolicy = readBuiltInSettingDeclarationV1('machines.installables.policy');
-            if (installablePolicy && (!parsed.pageId || parsed.pageId === 'machines')) {
+            if (installablePolicy && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(installablePolicy)) {
                 items.push({ anchor: installablePolicy.anchor, pageId: installablePolicy.pageId, title: installablePolicy.title,
                     description: installablePolicy.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'account' });
             }
             const storageView = readBuiltInSettingDeclarationV1('machines.storage.view');
-            if (storageView && (!parsed.pageId || parsed.pageId === 'machines')) {
+            if (storageView && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(storageView)) {
                 items.push({ anchor: storageView.anchor, pageId: storageView.pageId, title: storageView.title,
                     description: storageView.description, readable: true, writable: true, sensitive: false,
                     storageScope: 'local' });
             }
             const administrationTarget = readBuiltInSettingDeclarationV1('machines.administrationTarget');
-            if (administrationTarget && (!parsed.pageId || parsed.pageId === 'machines')) {
+            if (administrationTarget && (!parsed.pageId || parsed.pageId === 'machines') && matchesQuery(administrationTarget)) {
                 items.push({ anchor: administrationTarget.anchor, pageId: administrationTarget.pageId, title: administrationTarget.title,
                     description: administrationTarget.description, readable: Boolean(owner.accountScope), writable: Boolean(owner.accountScope),
                     sensitive: false, storageScope: 'local', ...(!owner.accountScope ? { unavailableReason: 'not_bound' as const } : {}) });

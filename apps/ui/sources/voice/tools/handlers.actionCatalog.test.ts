@@ -40,7 +40,7 @@ import { buildToolResultsFollowUpPrompt } from '@/voice/context/buildVoiceToolRe
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isActionDiscoverableOnToolSurface } from '@happier-dev/protocol/actions/actionToolExposure';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { createPlainV2SessionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createPlainV2SessionRecordFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { NotificationChannelCatalogRecordV1Schema, NotificationChannelCatalogMutationV1Schema,
   NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
@@ -55,6 +55,56 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it.each(['named', 'generic'] as const)('requires a separate-session intent while Voice is bound (%s)', async route => {
+    const serverId = await home.addHome({ name: 'Bound Voice', serverUrl: 'https://bound-voice.test',
+      accountId: 'alice', currentAccount: true });
+    const currentSessionAddress = { serverId, sessionId: 'coding-child' };
+    const tools = createVoiceToolHandlers({ currentSessionAddress, resolveSessionId: () => 'old-session' });
+    const input = { executionTarget: { serverId, machineId: 'machine-1' },
+      directory: { kind: 'managed' }, initialInput: { text: 'Continue the work' } };
+    const result = JSON.parse(await (route === 'named' ? tools.spawnSession!(input)
+      : tools.action_execute!({ actionId: 'session.spawn_new', input })));
+    expect(result).toMatchObject({ ok: false, errorCode: 'voice_new_session_intent_required', details: currentSessionAddress });
+  });
+
+  it('reads the bound child’s real failed turn through the canonical Voice status tool', async () => {
+    const serverId = await home.addHome({ name: 'Child status', serverUrl: 'https://child-status.test',
+      accountId: 'alice', currentAccount: true });
+    const occurredAt = Date.now();
+    const child = createSessionFixture({ id: 'coding-child', encryptionMode: 'plain',
+      access: createSessionAccessFixture('owner'), latestTurnStatus: 'failed',
+      latestTurnStatusObservedAt: occurredAt,
+      lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit',
+        source: 'usage_limit', occurredAt } });
+    const response = createPlainSessionByIdResponseFixture(child);
+    home.answer(serverId, 'POST /v2/sessions/read-batch', { body: { results: [{ sessionId: child.id,
+      detail: { status: 200, body: response },
+      turns: { status: 200, body: { v: 1, sessionId: child.id, updatedAt: occurredAt, turns: [] } },
+    }] } });
+    home.answer(serverId, `/v2/sessions/${child.id}`, { body: response });
+    const tools = createVoiceToolHandlers({ currentSessionAddress: { serverId, sessionId: child.id },
+      resolveSessionId: () => 'old-session' });
+    const result = JSON.parse(await tools.action_execute!({ actionId: 'session.status.get', input: {} }));
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { session: {
+      id: child.id, latestTurnStatus: 'failed', lastRuntimeIssue: { code: 'usage_limit' },
+    } } });
+  });
+
+  it.each([false, true])('carries observed work failure beside the Voice creation receipt (generic=%s)', async canonicalResult => {
+    const { serializeVoiceActionExecuteResult } = await import('./voiceActionResult');
+    const receipt = { type: 'success', disposition: 'created', sessionId: 'coding-child',
+      executionTarget: { serverId: 'home', machineId: 'machine' },
+      organizationPlacement: { sectionId: null, tagIds: [] },
+      initialInput: { status: 'accepted', localId: 'input-1' } };
+    const spawnObservedSession = { id: receipt.sessionId, latestTurnStatus: 'failed' as const,
+      lastRuntimeIssue: { code: 'usage_limit' as const } };
+    const options = { canonicalResult, spawnObservedSession };
+    const result = JSON.parse(serializeVoiceActionExecuteResult('session.spawn_new', { ok: true, result: receipt }, options));
+    expect(canonicalResult ? result.result : result).toMatchObject({
+      sessionId: receipt.sessionId, initialInput: { status: 'accepted' }, session: spawnObservedSession,
+    });
+  });
+
   it.each(['direct', 'generic', 'page-filtered'] as const)('delivers the complete settings catalog through transport-sized Voice discovery pages (%s)', async transport => {
     const serverId = await home.addHome({ name: 'Settings discovery', serverUrl: 'https://settings-discovery.test',
       accountId: 'alice', currentAccount: true });

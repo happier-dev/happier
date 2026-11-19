@@ -12,6 +12,7 @@ import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/
 import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1, SessionRunPromptReadActionIdV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { ActionId, ActionsSettingsV1, FeatureId, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
 import type { HappierBuiltInToolDefinition } from './types';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 export type BuiltInHappierToolsSurface = import('./actionToolCatalog').HappierBuiltInToolSurface;
 
@@ -71,7 +72,13 @@ type HappierToolAdmissionParams = Readonly<{
 }>;
 
 export function listBuiltInHappierTools(params?: HappierToolAdmissionParams) {
-  return admitHappierTools(params);
+  const admitted = admitHappierTools(params);
+  if (params?.surface !== 'voice') return admitted;
+  return admitted.map(tool => {
+    if (!tool.actionId || tool.toolId) return tool;
+    const inputSchema = getActionSpec(tool.actionId as ActionId).surfaceBindings?.voice?.inputSchema;
+    return inputSchema ? { ...tool, inputSchema } : tool;
+  });
 }
 
 /** Same decision as membership in the full list, for a caller that needs one name. */

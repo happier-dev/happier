@@ -190,8 +190,11 @@ export type SessionSpawnNewActionInputV2 = Omit<SessionSpawnNewInputV2, 'organiz
 };
 
 /** Voice preserves authoring omissions for the canonical creation preparation owner. */
-export const SessionSpawnNewActionVoiceInputV2Schema = lazyZodSchema(() => z.partial(SessionSpawnNewActionInputV2BaseSchema, {
+export const SessionSpawnNewActionVoiceInputV2Schema = lazyZodSchema(() => z.extend(z.partial(SessionSpawnNewActionInputV2BaseSchema, {
   agentTarget: true,
+}), {
+  /** Voice authoring intent; consumed before preparing the ordinary creation Action. */
+  newSession: z.optional(z.literal(true)),
 }).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
 
 function projectSessionSpawnNewActionSelectionV2(input: SessionSpawnNewActionAuthoringInputV2) {

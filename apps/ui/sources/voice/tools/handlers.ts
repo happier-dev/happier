@@ -38,6 +38,7 @@ import { areSessionAddressesEqual, normalizeSessionAddress, type SessionAddress 
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import { isVoiceConversationSystemSessionMetadata } from '@happier-dev/protocol/voice/sessionBinding';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { resolveVoiceActionSessionReference } from './actionImpl/resolveVoiceActionSessionReference';
 import { acquireAdmittedSessionReferenceCorpusOptions } from './actionImpl/admittedSessionReferenceCorpus';
 import type { VoiceCurrentUiToolPort } from './currentUiContextToolPort';
@@ -46,7 +47,7 @@ import {
   isCurrentUiContextVoiceAction,
   isVoiceActionAvailableInState,
 } from './resolveDisabledVoiceActionIds';
-import { jsonError, jsonOk, serializeVoiceActionExecuteResult, voiceToolDiscoveryResultByteBudget } from './voiceActionResult';
+import { jsonError, jsonOk, serializeVoiceActionExecuteResult, voiceToolDiscoveryResultByteBudget, type VoiceSpawnObservedSession } from './voiceActionResult';
 import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
 import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
 import { readVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
@@ -201,6 +202,8 @@ export function createVoiceToolHandlers(
      */
     resolveSessionId: (explicitSessionId?: string | null) => string | null | Promise<string | null>;
     currentSessionAddress?: SessionAddress | null;
+    /** Read the working binding at call time when the handler outlives a target selection. */
+    resolveCurrentSessionAddress?: () => Promise<SessionAddress | null>;
     /** Host-owned conversation identity; Session metadata owns its carrier role. */
     voiceSessionBinding?: VoiceSessionBinding | null;
     /** Admitted conversation Home when global Voice has no coding Session. */
@@ -380,10 +383,10 @@ export function createVoiceToolHandlers(
     const actionId = VOICE_TOOL_ACTION_ID_BY_TOOL_NAME[toolName];
     if (!actionId) return jsonError('unsupported_action', `unsupported_action:${toolName}`);
     const input = asPlainObject(parameters ?? {});
+    const currentAddress = deps.resolveCurrentSessionAddress ? await deps.resolveCurrentSessionAddress()
+      : deps.currentSessionAddress ?? null;
     const humanReturn = actionId === 'session.message.send' && input?.reply === 'return';
-    const boundAddress = humanReturn
-      ? normalizeSessionAddress(deps.currentSessionAddress?.serverId, deps.currentSessionAddress?.sessionId)
-      : null;
+    const boundAddress = humanReturn ? currentAddress : null;
     if (humanReturn) {
       if (ctx?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
       // Tool arguments cannot select their own human source or supply authority.
@@ -404,14 +407,18 @@ export function createVoiceToolHandlers(
       normalizeId(input?.sessionId) || normalizeId(input?.sessionTitle),
     );
     const capturedTargetServerId = normalizeId(input?.sessionId)
-      && normalizeId(input?.sessionId) === normalizeId(deps.currentSessionAddress?.sessionId)
-      ? deps.currentSessionAddress?.serverId
+      && normalizeId(input?.sessionId) === normalizeId(currentAddress?.sessionId)
+      ? currentAddress?.serverId
       : null;
-    const serverId = boundAddress?.serverId ?? ctx?.serverId ?? capturedTargetServerId ?? (
+    const defaultTarget = input && input.sessionId === undefined && !hasNaturalSessionReference
+      && getActionSpec(actionId).sessionTarget?.field === 'sessionId' ? currentAddress : null;
+    const serverId = boundAddress?.serverId ?? defaultTarget?.serverId
+      ?? ctx?.serverId ?? capturedTargetServerId ?? (
       !hasNaturalSessionReference ? deps.currentSessionAddress?.serverId ?? deps.currentServerId : null
     ) ?? (actionId === 'session.list' ? getActiveServerSnapshot().serverId : null);
     let actionInput = boundAddress ? { ...input, returnToSessionId: boundAddress.sessionId }
-      : useAwareness ? { ...input, view: 'awareness' } : parameters;
+      : useAwareness ? { ...input, view: 'awareness' }
+        : defaultTarget ? { ...input, sessionId: defaultTarget.sessionId } : parameters;
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
     }
@@ -432,6 +439,12 @@ export function createVoiceToolHandlers(
       if (!bound.ok) {
         return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
       }
+      if (currentAddress && !bound.newSession) {
+        const error = 'Continue in the bound coding Session with session.message.send. Set newSession to true only if the person explicitly asked to start a separate Session.';
+        return serializeVoiceActionExecuteResult(actionId, {
+          ok: false, errorCode: 'voice_new_session_intent_required', error, details: currentAddress,
+        }, { canonicalResult, failurePayload: { errorMessage: error } });
+      }
       actionInput = bound.input;
       spawnAgentTarget = bound.input.agentTarget;
       spawnSelection = bound.input;
@@ -446,7 +459,7 @@ export function createVoiceToolHandlers(
         } } : {}),
         ...(deps.readVoiceAgentHandle?.()?.accountLifetime.scope.accountId
           ? { expectedAccountId: deps.readVoiceAgentHandle()?.accountLifetime.scope.accountId } : {}),
-        defaultSessionId: boundAddress?.sessionId ?? await deps.resolveSessionId(null),
+        defaultSessionId: currentAddress?.sessionId ?? (deps.resolveCurrentSessionAddress ? null : await deps.resolveSessionId(null)),
         ...(serverId ? { serverId } : {}),
         ...(resolveVoiceActionRequestId(ctx)
           ? { actionRequestId: resolveVoiceActionRequestId(ctx)! }
@@ -474,12 +487,23 @@ export function createVoiceToolHandlers(
     )) {
       return jsonError('tool_cancelled', 'tool_cancelled');
     }
+    let spawnObservedSession: VoiceSpawnObservedSession | undefined;
     if (actionId === 'session.spawn_new' && res.ok) {
       // The Action owner already validated its settlement. Only its success
       // supplies a child address; pending/approval never opens the source Session.
       const spawned = res.result as SessionSpawnNewActionResultV1;
       if (spawned.type === 'success') {
         const address = { sessionId: spawned.sessionId, serverId: spawned.executionTarget.serverId };
+        // The input receipt describes admission. Attach the latest turn's state
+        // when Sync has already published it for this newly created Session.
+        if (spawned.disposition === 'created' && spawned.initialInput.status === 'accepted') {
+          const session = resolveVoiceContextSessionFromState(address, storage.getState());
+          if (session?.latestTurnStatus) {
+            const issue = session.latestTurnStatus === 'failed' ? session.lastRuntimeIssue : null;
+            spawnObservedSession = { id: address.sessionId, latestTurnStatus: session.latestTurnStatus,
+              ...(issue ? { lastRuntimeIssue: { code: issue.code } } : {}) };
+          }
+        }
         // Presentation is best effort after creation: a navigation failure must
         // not turn a committed create into a retryable failure.
         fireAndForget(actionExecute('session.open', address, {
@@ -490,7 +514,7 @@ export function createVoiceToolHandlers(
     const spawnFailure = actionId === 'session.spawn_new' ? readSessionSpawnNewFailure(res) : null;
     const alternativeAgent = spawnFailure?.code === 'spawn_failed' && spawnSelection
       ? await readVoiceSpawnAlternative(spawnSelection, actionExecute, ctx?.signal) : undefined;
-    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget, alternativeAgent, spawnFailure };
+    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget, alternativeAgent, spawnFailure, spawnObservedSession };
     if (canonicalResult) return serializeVoiceActionExecuteResult(actionId, res, resultOptions);
     if (res.ok && actionId === 'session.list') {
       const awareness = parseSessionAwarenessListResultV1(res.result);

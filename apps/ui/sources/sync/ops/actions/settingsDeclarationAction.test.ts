@@ -169,6 +169,26 @@ describe('personal list Settings approval defaults', () => {
             ...identity, enabled: true,
         } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
     });
+    it.each([true, false])('discovers and changes Waiting sound through Voice Settings Actions (canApprove=%s)', async canApproveRequests => {
+        const owner = createOwner(undefined, true, true, settingsParse({
+            voiceSettingsV1: { ...settingsDefaults.voice, canApproveRequests, audibleWaitingCue: true },
+        }));
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'voice', authority: 'account_automation' } as const;
+        const discovery = await executor.execute('settings.list', { query: 'Waiting sound' }, context);
+        expect(discovery).toMatchObject({ ok: true, result: { items: [
+            { anchor: 'voiceConversations.audibleWaitingCue', writable: true },
+        ] } });
+        if (!discovery.ok) throw new Error('Expected the Waiting sound declaration');
+        const page = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(discovery.result);
+        const write = await executor.execute('settings.set', { anchor: page.items[0]!.anchor, value: false }, {
+            ...context, authority: 'present_user', actionCaller: { kind: 'host' },
+            presentUserConfirmation: { actionId: 'settings.set' },
+        });
+        expect(write, JSON.stringify(write)).toMatchObject({ ok: true, result: { value: false } });
+        expect(owner.account().voice.audibleWaitingCue).toBe(false);
+    });
+
     it('lets an agent discover, add and remove reminder presets through safe Settings Actions', async () => {
         const owner = createOwner();
         const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);

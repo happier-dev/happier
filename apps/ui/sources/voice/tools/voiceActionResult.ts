@@ -6,8 +6,15 @@ import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSes
 import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { VoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
+
+export type VoiceSpawnObservedSession = Readonly<{
+  id: string;
+  latestTurnStatus: PrimaryTurnStatusV1;
+  lastRuntimeIssue?: Pick<SessionRuntimeIssueV1, 'code'>;
+}>;
 
 /**
  * LiveKit reliable data packets admit 64 KiB. The SDK JSON-encodes the serialized
@@ -84,6 +91,7 @@ export function serializeVoiceActionExecuteResult(
     agentTarget?: AgentExecutionTargetV1;
     alternativeAgent?: VoiceSpawnAlternative;
     spawnFailure?: Extract<SessionSpawnNewActionResultV1, { type: 'error' }> | null;
+    spawnObservedSession?: VoiceSpawnObservedSession;
   }>,
 ): string {
   const spawnFailure = isSessionSpawnNewActionIdV1(actionId)
@@ -137,6 +145,10 @@ export function serializeVoiceActionExecuteResult(
     });
   }
 
+  if (options?.spawnObservedSession) {
+    const observed = { ...domainResult, session: options.spawnObservedSession };
+    return options.canonicalResult ? JSON.stringify({ ...result, result: observed }) : jsonOk(observed);
+  }
   if (options?.canonicalResult) return JSON.stringify(result);
   if (ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
     return jsonOkFromUnknown(result.result);

@@ -367,6 +367,10 @@ export function createActionToolExecutorBridge(params: Readonly<{
 
   return {
     executeActionByToolName: async (toolName, toolArgs, defaultSessionId, options) => {
+      // Voice's tool host lives in its carrier Session. The answering App
+      // owns the working coding target and resolves omission there.
+      const toolContext = { ...(surface === 'voice' ? {} : { defaultSessionId }),
+        defaultSessionMachineId: params.defaultSessionMachineId, defaultSessionRootPath: params.defaultSessionRootPath };
       if (toolName === 'action_execute') {
         const argsRecord = isInputRecord(toolArgs) ? toolArgs : null;
         const actionId = argsRecord ? readTrimmedStringField(argsRecord, 'actionId') : '';
@@ -413,7 +417,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
           input: argsRecord && Object.prototype.hasOwnProperty.call(argsRecord, 'input')
             ? normalizeActionExecuteInput(argsRecord.input)
             : {},
-          context: { defaultSessionId, defaultSessionMachineId: params.defaultSessionMachineId, defaultSessionRootPath: params.defaultSessionRootPath },
+          context: toolContext,
           registry: params.registry,
           pluginToolCatalog: params.pluginToolCatalog,
         });
@@ -436,7 +440,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       const actionInput = bindContextualActionToolInput({
         actionId,
         input: toolArgs,
-        context: { defaultSessionId, defaultSessionMachineId: params.defaultSessionMachineId, defaultSessionRootPath: params.defaultSessionRootPath },
+        context: toolContext,
         registry: params.registry,
         pluginToolCatalog: params.pluginToolCatalog,
       });

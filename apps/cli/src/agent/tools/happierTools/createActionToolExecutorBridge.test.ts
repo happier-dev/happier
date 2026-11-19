@@ -42,6 +42,9 @@ import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCata
 
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
+import { createHappierToolInventory } from './listBuiltInHappierTools';
+import { prepareHappierMcpToolInventory } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { projectAgentRuntimeDaemonServiceTurnWitnessV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
@@ -49,6 +52,32 @@ import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 
 describe('createActionToolExecutorBridge', () => {
+  it('leaves the Voice coding target for the App on both MCP Action routes', async () => {
+    // Boundary stand-in for the separate App process receiving the reverse Action.
+    const execute = vi.fn(async (_actionId: string, _input: unknown) => ({ ok: true as const, result: { status: 'accepted' } }));
+    const bridge = createActionToolExecutorBridge({ surface: 'voice', executor: { execute } });
+    const input = { message: 'Continue here' };
+    for (const [tool, args] of [
+      ['session_message_send', input],
+      ['action_execute', { actionId: 'session.message.send', input }],
+      ['session_message_send', { ...input, sessionId: 'other-child' }],
+    ] as const) {
+      expect((await bridge.executeActionByToolName(tool, args, 'voice-carrier')).ok).toBe(true);
+    }
+    expect(execute.mock.calls.map(call => call[1])).toEqual([input, input, { ...input, sessionId: 'other-child' }]);
+  });
+
+  it('advertises the Voice authoring schema through the shared MCP spawn tool', () => {
+    const inventory = prepareHappierMcpToolInventory({ inventory: createHappierToolInventory({
+      surface: 'voice', isActionEnabled: () => true,
+    }), sessionId: 'voice-carrier' });
+    const spawn = inventory.registrations.find(registration => registration.actionId === 'session.spawn_new');
+    if (!spawn) throw new Error('Missing Voice Session creation tool');
+    const schema = zodSchemaToJsonSchemaObject(spawn.meta.inputSchema, { target: 'draft-7' });
+    expect(schema).toMatchObject({ properties: { newSession: expect.any(Object) } });
+    expect(schema.required).not.toContain('agentTarget');
+  });
+
   it('keeps the visible unavailable-check notice beside the native Action result', async () => {
     const port = createActionAutomationPortV1({ accountId: 'actor',
       // Home index HTTP and Session RPC are system boundaries; admission and execution stay real.

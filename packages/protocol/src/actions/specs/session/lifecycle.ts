@@ -757,7 +757,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
       return snapshot.state === 'cancelled' ? 'replay' : 'refuse';
     },
     title: 'Create session',
-    description: 'Create a new session on the requested machine using the selected Agent. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for no folder: Happier creates a private folder for this session.',
+    description: 'Create a new Session on the requested Machine using the selected Agent. For Voice, newSession:true confirms the person explicitly asked to start a separate Session. Continue work in the bound coding Session with session.message.send. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
     prompting: { voiceHotPath: true },
     sideEffectClass: 'write',
     safety: 'safe',
@@ -770,9 +770,10 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
     surfaceBindings: {
       voice: {
         inputSchema: SessionSpawnNewActionVoiceInputV2Schema,
-        inputHints: { ...SessionSpawnNewInputHints, fields: SessionSpawnNewInputHints.fields.map(field => field.path === 'agentTarget'
+        inputHints: { ...SessionSpawnNewInputHints, fields: [...SessionSpawnNewInputHints.fields.map(field => field.path === 'agentTarget'
           ? { ...field, required: false, description: `${field.description} Omit agentTarget to use the configured default Agent; the host resolves its exact catalog target.` }
-          : field) },
+          : field), { path: 'newSession', title: 'Explicit new Session request', widget: 'boolean',
+          description: 'Set true only when the person explicitly asks for a separate Session. Required while a coding Session is selected.' }] },
       },
       mcp: { inputSchema: SessionSpawnNewTerminalInputSchema },
       api: {
@@ -788,7 +789,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
       },
     },
     examples: {
-      voice: { argsExample: '{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/workspace/project"},"initialInput":{"text":"Help me inspect this workspace."}}' },
+      voice: { argsExample: '{"newSession":true,"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/workspace/project"},"initialInput":{"text":"Help me inspect this workspace."}}' },
     },
     surfaces: {
       ui: true,
