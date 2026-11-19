@@ -12,6 +12,7 @@ import { readKnownPendingQueueState, readPendingExecutionRunIds, type KnownPendi
 import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
 import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import {
     publishPluginAccountSettingsWatchInvalidation,
@@ -341,6 +342,7 @@ export async function runSessionChangesSyncOnConnect(params: {
     }
     if (params.reason === 'reconnect' || highestAccountSettingsVersion !== null || pageFull
         || changes.some(change => change.kind === 'account' && (change.entityId === MCP_SERVER_CATALOG_ACCOUNT_KEY_V1
+            || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
             || parsePromptLibraryPhysicalKeyV1(change.entityId) !== null))) {
         await refreshDemandedAccountCatalogs();
     }

@@ -237,6 +237,7 @@ import { accountSettingsKeysChanged, getActiveAccountSettingsSnapshot, getActive
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { refreshActivePromptLibraryCatalogAfterChange } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { refreshDemandedActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
+import { refreshDemandedActiveNotificationChannelCatalog } from '@/settings/notifications/hydrateNotificationChannelCatalog';
 import {
     supportsRuntimeActivityV2,
     supportsSessionPublisherAuthorityCheckV1,
@@ -2392,6 +2393,7 @@ export class ApiSessionClient extends EventEmitter {
                         refreshActivePromptLibraryCatalogAfterChange({ credentials,
                             scopeKey: account.scopeKey, lifetimeToken }),
                         refreshDemandedActiveMcpServerCatalog({ token: this.token }),
+                        refreshDemandedActiveNotificationChannelCatalog({ token: this.token }),
                     ]);
                 })(),
             ]);
