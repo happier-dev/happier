@@ -87,6 +87,7 @@ export type ConnectedServiceAuthGroupCandidateSelection = Readonly<{
   selected: ConnectedServiceAuthGroupCandidate | null;
   reason: 'selected' | 'manual_strategy' | 'no_eligible_members';
   excluded: ReadonlyArray<ConnectedServiceAuthGroupCandidateExclusion>;
+  nextQuotaRetry?: Readonly<NonNullable<ConnectedServicePoolSelectionV1['nextQuotaRetry']>>;
   decisionTrace: ConnectedServiceAuthGroupCandidateDecisionTrace & Readonly<{
     strategy: ConnectedServiceAuthGroupPolicyV2['strategy'];
     selectionBasis: 'manual_strategy' | 'no_eligible_members' | 'preference' | 'primary_restore' | 'active_stickiness' | 'soft_switch';
@@ -670,6 +671,20 @@ function resolvePreferenceDeadline(
   return deadlines.length > 0 ? Math.min(...deadlines) : null;
 }
 
+function resolveNextQuotaRetry(
+  excluded: ReadonlyArray<ConnectedServiceAuthGroupCandidateExclusion>,
+  nowMs: number,
+): ConnectedServiceAuthGroupCandidateSelection['nextQuotaRetry'] {
+  let nextRetry: ConnectedServiceAuthGroupCandidateSelection['nextQuotaRetry'];
+  for (const { profileId, reason, retryAtMs } of excluded) {
+    if (reason !== 'quota_exhausted') return undefined;
+    if (retryAtMs != null && retryAtMs > nowMs && (!nextRetry || retryAtMs < nextRetry.retryAtMs)) {
+      nextRetry = { profileId, retryAtMs };
+    }
+  }
+  return nextRetry;
+}
+
 export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   reason?: string;
   requiredModelIds?: ReadonlyArray<string>;
@@ -896,13 +911,16 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
         ? { ...candidate, decision: 'selected' as const }
         : candidate
   ));
+  const excluded = candidateDecisions.flatMap(candidate => candidate.decision === 'excluded' && candidate.exclusionReason
+    ? [{ profileId: candidate.profileId, reason: candidate.exclusionReason,
+      ...(candidate.retryAtMs === undefined ? {} : { retryAtMs: candidate.retryAtMs }) }]
+    : []);
+  const nextQuotaRetry = selected ? undefined : resolveNextQuotaRetry(excluded, params.nowMs);
   return {
     selected,
     reason,
-    excluded: candidateDecisions.flatMap(candidate => candidate.decision === 'excluded' && candidate.exclusionReason
-      ? [{ profileId: candidate.profileId, reason: candidate.exclusionReason,
-        ...(candidate.retryAtMs === undefined ? {} : { retryAtMs: candidate.retryAtMs }) }]
-      : []),
+    excluded,
+    ...(nextQuotaRetry ? { nextQuotaRetry } : {}),
     decisionTrace: {
       activeProfileId: params.activeProfileId,
       reason,

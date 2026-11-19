@@ -46,6 +46,11 @@ export const ConnectedServicePoolSelectionV1Schema = lazyZodSchema(() => z.stric
     profileId: ProfileIdSchema, reason: ExclusionReasonSchema,
     retryAtMs: z.optional(z.nullable(FiniteNumberSchema)),
   })),
+  /** Earliest known future retry for a pool whose members are all quota-exhausted. */
+  nextQuotaRetry: z.optional(z.strictObject({
+    profileId: ProfileIdSchema,
+    retryAtMs: FiniteNumberSchema,
+  })),
   decisionTrace: z.strictObject({
     activeProfileId: zMini.nullable(ProfileIdSchema),
     reason: SelectionReasonSchema,

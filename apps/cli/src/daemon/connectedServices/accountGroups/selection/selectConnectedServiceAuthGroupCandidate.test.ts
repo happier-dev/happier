@@ -43,6 +43,30 @@ describe('expiry-first selection', () => {
     expect(resolve(120_000).excluded).toEqual([]);
   });
 
+  it('reports which exhausted account has the first known quota retry', () => {
+    const resolve = (nowMs: number, primaryRetryAtMs: number | null = 150_000) => ConnectedServicePoolSelectionV1Schema.parse(selectConnectedServiceAuthGroupCandidate({
+      nowMs, activeProfileId: 'primary', allowCurrentProfileRetry: true, policy: basePolicy,
+      members: [member('primary', 1, 1), member('backup', 2, 2)],
+      memberStatesByProfileId: new Map([['primary', state(0, primaryRetryAtMs)], ['backup', state(0, 120_000)]]),
+    }));
+
+    const beforeRetry = resolve(61_001);
+    expect(beforeRetry.selected).toBeNull();
+    expect(beforeRetry.excluded).toEqual(expect.arrayContaining([
+      { profileId: 'primary', reason: 'quota_exhausted', retryAtMs: 150_000 },
+      { profileId: 'backup', reason: 'quota_exhausted', retryAtMs: 120_000 },
+    ]));
+    expect(beforeRetry).toMatchObject({ nextQuotaRetry: { profileId: 'backup', retryAtMs: 120_000 } });
+
+    const withUnknownRetry = resolve(2_000, null);
+    expect(withUnknownRetry.excluded).toContainEqual({ profileId: 'primary', reason: 'quota_exhausted', retryAtMs: null });
+    expect(withUnknownRetry).toMatchObject({ selected: null, nextQuotaRetry: { profileId: 'backup', retryAtMs: 120_000 } });
+
+    const atRetry = resolve(120_000);
+    expect(atRetry.selected?.profileId).toBe('backup');
+    expect(atRetry).not.toHaveProperty('nextQuotaRetry');
+  });
+
   it.each(['quota_probe_deferred', 'quota_evidence_unavailable', 'not_meaningfully_better'] as const)(
     'preserves the selector reason %s through public pool and launch diagnostics', (reason) => {
       const result = selectConnectedServiceAuthGroupCandidate({

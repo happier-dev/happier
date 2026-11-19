@@ -7438,6 +7438,13 @@ decision and comparator order. It does not switch a credential, acquire a lease
 or create a cross-pool value ranking. Existing UI summaries and explicit manual
 switch intent remain presentation/authoring seams, not automatic selectors.
 
+When quota exhaustion excludes every pool member, the selector can report
+`selection.nextQuotaRetry` with the member's `profileId` and `retryAtMs`. The
+pair identifies the earliest known future retry at the time of evaluation. The
+next selection decides eligibility from the evidence it has then. The optional
+field keeps earlier responses readable. Strict readers built before this field
+reject a response that contains it.
+
 The unreleased 0.3 pool diagnostics preserve the selector's existing
 `quota_probe_deferred`, `quota_evidence_unavailable`, and
 `not_meaningfully_better` reasons through pool reads and launch errors. The

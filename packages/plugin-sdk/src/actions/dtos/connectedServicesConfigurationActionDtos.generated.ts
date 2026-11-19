@@ -6140,6 +6140,10 @@ export type ConnectedServicesConfigurationActionResultById = {
                     retryAtMs?: null | number | undefined;
                 }[];
             };
+            nextQuotaRetry?: undefined | {
+                profileId: string;
+                retryAtMs: number;
+            };
         };
         hypothetical?: undefined | {
             strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
