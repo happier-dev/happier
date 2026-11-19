@@ -1,13 +1,47 @@
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { expect, it } from 'vitest';
 import { repriceUsageAnalyticsResponse, projectUsagePageCost, resolveUsageCostForSelection } from './usageCost.js';
-import { buildUsageBreakdownList, buildUsageLeaderList, compareUsageRankedLeaders, groupUsageLeaderSources, selectUsageLeaderTokenFrontier, selectUsageRankedLeaders } from './usageLeaderProjection.js';
-import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
+import { buildUsageBreakdownList, buildUsageLeaderList, compareUsageRankedLeaders, groupUsageLeaderSources, reprojectUsageLeaders, selectUsageLeaderTokenFrontier, selectUsageRankedLeaders } from './usageLeaderProjection.js';
+import { UsageAnalyticsBreakdownDimensionSchema, UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 
 const contribution = { id: 'row', observedAtMs: 1, sessionId: 'session', turnId: null, agentId: 'agent', modelId: 'model',
     machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
     tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
     cost: { reportedUsd: 0, estimatedUsd: 0, costSource: 'none', currency: 'USD' } };
+
+it.each(UsageAnalyticsBreakdownDimensionSchema.options)('omits a context-only zero Unknown %s bucket without truncating the ranking', dimension => {
+    const known = { ...UsageAnalyticsContributionSchema.parse({ ...contribution, machineId: 'machine', projectKey: 'project',
+        workspaceId: 'workspace', backendMode: 'provider' }), eventCount: 1 };
+    const contextOnly = { ...UsageAnalyticsContributionSchema.parse({ ...contribution, id: 'context-only', sessionId: null,
+        agentId: null, modelId: null, source: null, tokens: { ...contribution.tokens, input: 0, total: 0 },
+        cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none',
+            apiEquivalentUsd: 0, pricingSource: 'no_tokens' }, context: { usedTokens: 257794, windowTokens: 258400 } }), eventCount: 1 };
+    const rows = [known, contextOnly];
+    const entries = buildUsageBreakdownList(rows, dimension, 20, 'auto');
+    expect(entries.map(entry => entry.key)).not.toContain('unknown');
+    expect(entries.reduce((sum, entry) => sum + (entry.tokens.total ?? 0), 0)).toBe(1);
+    const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, contributions: rows,
+        totals: { eventCount: 2, tokens: known.tokens, cost: known.cost }, breakdowns: { [dimension]: entries },
+        coverage: { status: 'complete', reasons: [], missingDimensions: [], sources: [], range: { complete: true },
+            ranked: [{ dimension, totalEntries: 2, returnedEntries: 2, complete: true }] } });
+    const projected = reprojectUsageLeaders(value, rows, 'auto', cost => cost, { breakdowns: [dimension], topLimit: 20 });
+    expect(projected.breakdowns?.[dimension]?.map(entry => entry.key)).toEqual(entries.map(entry => entry.key));
+    expect(projected.coverage?.ranked).toEqual([{ dimension, totalEntries: 1, returnedEntries: 1, complete: true }]);
+    expect(value.contributions).toHaveLength(2);
+});
+
+it('retains Unknown measurements, money and report witnesses, and identified zero groups', () => {
+    const zero = { ...contribution.tokens, input: 0, total: 0 };
+    const row = { ...UsageAnalyticsContributionSchema.parse({ ...contribution, modelId: null, tokens: zero }), eventCount: 1 };
+    for (const meaningful of [
+        { ...row, tokens: contribution.tokens },
+        { ...row, tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null } },
+        { ...row, cost: { ...row.cost, reportedUsd: 0.25, costSource: 'provider_reported' as const } },
+        { ...row, cost: { ...row.cost, reportedUsd: 0, reportedTotalContributionIds: ['covered'] } },
+        { ...row, cost: { ...row.cost, reportedTotalId: 'report' } },
+    ]) expect(buildUsageBreakdownList([meaningful], 'model', 20, 'auto')).toHaveLength(1);
+    expect(buildUsageBreakdownList([{ ...row, modelId: 'identified' }], 'model', 20, 'auto')[0]?.key).toBe('identified');
+});
 
 it('retains unknown token totals after measured zero in ranked and frontier projections', () => {
     const rows = [null, 0, 7].map((total, index) => ({ ...contribution, id: String(index), sessionId: String(index),

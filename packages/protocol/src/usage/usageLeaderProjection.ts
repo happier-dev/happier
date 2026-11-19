@@ -1,7 +1,9 @@
 export { getUsageAnalyticsRankedDimensions, projectUsageAnalyticsCoverage, projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import type { UsageAnalyticsBreakdownDimension, UsageAnalyticsBreakdownEntry, UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse, UsageAnalyticsTimelineSource, UsageObservationCost, UsagePricingPopulation } from './usageAnalyticsContracts.js';
 import { aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, resolveUsageContributionCosts, addUsageMeasuredTokens, resolveUsageMeasuredTokens, compareUsageMeasurementsDescending, createEmptyUsageTokens, withEffectiveUsageCost } from './usageAggregation.js';
-import { resolveEffectiveUsageCostUsd, resolveUsageContributionDimensionKey, type UsageCostMode } from './usageCostFacts.js';
+import { resolveEffectiveUsageCostUsd, resolveUsageContributionDimensionKey, resolveUsageCostFacts, type UsageCostMode } from './usageCostFacts.js';
+import { hasZeroUsageTokens } from './usageTokenCategories.js';
+import { readUsageMoney } from './usageMoney.js';
 
 export type UsageLeaderDimension = Parameters<typeof resolveUsageContributionDimensionKey>[1];
 export type UsageLeaderContribution = Pick<UsageAnalyticsContribution,
@@ -80,6 +82,14 @@ function prepareUsageLeaderTokenFrontier<T extends UsageLeaderContribution>(rows
         group.value.eventCount += row.eventCount;
         group.value.tokens = addUsageMeasuredTokens(group.value.tokens, row.tokens);
     }
+    // Context-only observations remain accounting facts, but do not imply
+    // unattributed usage. Preserve unknown measurements and monetary witnesses.
+    const unknown = groups.get('unknown');
+    if (unknown?.rows.every(row => hasZeroUsageTokens(row.tokens)
+        && row.cost.reportedTotalId === undefined && row.cost.reportedTotalContributionIds === undefined
+        && resolveUsageCostFacts(row.cost).every(fact => readUsageMoney(fact, 'amountUsd', fact.amountUsd).units === 0n))) {
+        groups.delete('unknown');
+    }
     const compare = (left: Group, right: Group) => compareUsageMeasurementsDescending(resolveUsageMeasuredTokens(left.value.tokens).total, resolveUsageMeasuredTokens(right.value.tokens).total);
     const top = selectTop(groups.values(), topLimit, compare);
     const frontier = top.length ? resolveUsageMeasuredTokens(top[top.length - 1]!.value.tokens).total : undefined;
@@ -133,8 +143,10 @@ export function buildUsageLeaderList<T extends UsageLeaderContribution>(rows: re
 
 export function* buildUsageLeaderListSteps<T extends UsageLeaderContribution>(rows: readonly T[], dimension: UsageLeaderDimension, topLimit: number,
     mode: UsageCostMode, labels: ReadonlyMap<string, string | undefined> = new Map(), includeSources = false,
-    pricing?: { price: (rows: readonly T[]) => Generator<void, UsagePricedRows, void>; admit: (rank: UsagePricingRank) => void }): Generator<void, UsageRankedLeader[] | undefined, void> {
+    pricing?: { price: (rows: readonly T[]) => Generator<void, UsagePricedRows, void>; admit: (rank: UsagePricingRank) => void },
+    onPopulation?: (totalEntries: number) => void): Generator<void, UsageRankedLeader[] | undefined, void> {
     const { candidates, totalEntries } = prepareUsageLeaderTokenFrontier(rows, dimension, topLimit, labels);
+    onPopulation?.(totalEntries);
     const sourceRows = includeSources ? new Map(candidates.map(group => [group.value.key, group.rows])) : undefined;
     if (!candidates.length) {
         pricing?.admit({ totalEntries, candidates: [] });
@@ -285,13 +297,14 @@ export function* reprojectUsageLeadersSteps(value: UsageAnalyticsQueryResponse, 
         price: (rows: readonly UsageAnalyticsContribution[]) => Generator<void, UsagePricedRows, void> }):
     Generator<void, Pick<UsageAnalyticsQueryResponse, 'series' | 'breakdowns' | 'leaders' | 'modelTimeline' | 'engineTimeline' | 'coverage'>, void> {
     let incomplete = false;
+    const rankedPopulationCounts = new Map<UsageLeaderDimension, number>();
     const rank = function* (rows: readonly (UsageAnalyticsContribution & { eventCount: number })[], dimension: UsageLeaderDimension,
         limit: number, labels: ReadonlyMap<string, string | undefined> = new Map(), includeSources = false, range?: UsageTimelineRange) {
         return yield* buildUsageLeaderListSteps(rows, dimension, limit, mode, labels, includeSources, pricing && {
             price: selected => pricing.price(selected),
             admit: admitted => { if (range) pricing.partitions.timelines.set(usageTimelinePartitionKey(dimension, range), admitted);
                 else pricing.partitions.ranked.set(dimension, admitted); },
-        });
+        }, totalEntries => { if (!range) rankedPopulationCounts.set(dimension, totalEntries); });
     };
     const project = function* (entries: UsageLeader[] | undefined, rows: readonly UsageAnalyticsContribution[], dimension: UsageLeaderDimension, includeSources = false, range?: UsageTimelineRange) {
         if (!entries) return undefined;
@@ -392,7 +405,8 @@ export function* reprojectUsageLeadersSteps(value: UsageAnalyticsQueryResponse, 
     const ranked = value.coverage?.ranked.map(entry => {
         const returned = breakdowns?.[entry.dimension];
         if (!fullPopulation || !returned) return entry;
-        const totalEntries = new Set(contributions.map(row => resolveUsageContributionDimensionKey(row, entry.dimension) ?? 'unknown')).size;
+        const totalEntries = rankedPopulationCounts.get(entry.dimension);
+        if (totalEntries === undefined) return entry;
         return { ...entry, totalEntries, returnedEntries: returned.length, complete: totalEntries === returned.length };
     });
     const coverage = incomplete && value.coverage ? { ...value.coverage,
