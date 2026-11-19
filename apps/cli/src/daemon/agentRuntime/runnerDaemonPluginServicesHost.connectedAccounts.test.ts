@@ -1,5 +1,10 @@
 import axios from 'axios';
+import { writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentExecutionRunEvent, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginExecSpawnRequest } from '@happier-dev/plugin-sdk/exec';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
 import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
@@ -15,6 +20,8 @@ import { refreshActiveConnectedAccountCatalog } from '@/settings/connectedAccoun
 import { logger } from '@/ui/logger';
 import { createActiveAccountSettingsConnectedAccountPurposeBindingStore, createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createRunnerDaemonPluginServicesHost } from './runnerDaemonPluginServicesHost';
+import { activate, PLUGIN_MANIFEST } from '../../../../../packages/plugins/review-deepsec/src/index';
+import { DEEPSEC_CLAUDE_ACCOUNT_PURPOSE } from '../../../../../packages/plugins/review-deepsec/src/agent/connectedAccount';
 
 const purposes = ['model-one', 'model-two', 'model-three', 'model-four'];
 const consumer = { pluginId: 'acme.external-agent', localId: 'agent' };
@@ -26,7 +33,10 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function fixture(authorizedPurposes: readonly string[] = purposes, selection?: 'unselected' | 'selected' | 'unavailable') {
+async function fixture(authorizedPurposes: readonly string[] = purposes, selection?: 'unselected' | 'selected' | 'unavailable',
+    identity = { consumer, service }) {
+    const boundConsumer = identity.consumer;
+    const boundService = identity.service;
     const credentials = { token: 'binding-fixture', encryption: null };
     setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
         settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [] });
@@ -37,33 +47,33 @@ async function fixture(authorizedPurposes: readonly string[] = purposes, selecti
         store: createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials }),
         selectTarget: unreachable, resolveTarget: selection === undefined ? unreachable : createPurposeTargetResolver({
             available: true,
-            resolveService: async () => ({ service, authentication: PluginConnectedAccountAuthenticationV2Schema.parse({
+            resolveService: async () => ({ service: boundService, authentication: PluginConnectedAccountAuthenticationV2Schema.parse({
                 defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual', outcomeReconciliation: 'none',
                     fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }] }],
             }) }),
             listAccounts: async () => selection === 'unavailable' ? [] : [QualifiedConnectedAccountProfileV4Schema.parse({
-                ref: { service, accountId: 'selected' }, authenticationModeId: 'token', status: 'connected',
+                ref: { service: boundService, accountId: 'selected' }, authenticationModeId: 'token', status: 'connected',
                 revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
                 configurationReady: true, configurationRevision: null, scopes: [], displayName: 'Selected account',
             })],
         }), materializeAccount: unreachable,
         projectTargetAccounts: unreachable, assertTargetAccountMaterializable: unreachable,
     });
-    const purpose = { consumer, purpose: purposes[0] };
+    const purpose = { consumer: boundConsumer, purpose: authorizedPurposes[0] };
     const lease = selection === undefined ? undefined : owner.activatePurposeBindings({
-        subject: { kind: 'execution_run', runId: 'runner-selection', runnerPid: 123, agentId: consumer.localId, isCurrent: () => true },
+        subject: { kind: 'execution_run', runId: 'runner-selection', runnerPid: 123, agentId: boundConsumer.localId, isCurrent: () => true },
         purposes: [purpose], bindings: selection === 'unselected' ? [] : [
-            { purpose, target: { kind: 'account', account: { service, accountId: 'selected' } } },
+            { purpose, target: { kind: 'account', account: { service: boundService, accountId: 'selected' } } },
         ],
     });
     const controller = new AbortController();
     const connectedHost = createStablePluginConnectedAccountsHost(owner);
     const connectedAccounts = connectedHost.bind({
-        plugin: { id: consumer.pluginId, version: '1.0.0' },
-        contribution: { id: consumer.localId, qualifiedId: `${consumer.pluginId}/agents/${consumer.localId}` },
+        plugin: { id: boundConsumer.pluginId, version: '1.0.0' },
+        contribution: { id: boundConsumer.localId, qualifiedId: `${boundConsumer.pluginId}/agents/${boundConsumer.localId}` },
         occurrenceId: 'binding-occurrence', correlationId: 'binding-callback', surface: 'cli',
         session: { id: 'binding-session' }, signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
-    }, authorizedPurposes.map(purpose => ({ purpose, serviceRefs: [service], operations: ['use'], materializationKinds: [] })),
+    }, authorizedPurposes.map(purpose => ({ purpose, serviceRefs: [boundService], operations: ['use'], materializationKinds: [] })),
     lease ? { exactPurposeBindingSubjectId: lease.subjectId } : undefined);
     const unavailable = createUnavailablePluginServices();
     const services = { ...unavailable, connectedAccounts, availability: (id: Parameters<typeof unavailable.availability>[0]) =>
@@ -75,7 +85,7 @@ async function fixture(authorizedPurposes: readonly string[] = purposes, selecti
         executeCurrentGlobalAction: services.actions.execute, currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external,
     }) });
     const binding = createAgentSessionRunnerFactoryBinding({
-        v: 1, pluginId: consumer.pluginId, pluginVersion: '1.0.0', agentId: 'acme.external-agent/agent', localAgentId: consumer.localId,
+        v: 1, pluginId: boundConsumer.pluginId, pluginVersion: '1.0.0', agentId: `${boundConsumer.pluginId}/${boundConsumer.localId}`, localAgentId: boundConsumer.localId,
         sourceCustody: { kind: 'managed', immutableGenerationId: 'binding-generation', installSource: 'localPath' },
         locator: { module: './agent.js', export: 'createRuntime', runtimeApiVersion: 1 },
         normalizedModulePath: '/plugins/acme/agent.js', loadMode: 'immutable-js',
@@ -96,7 +106,7 @@ async function fixture(authorizedPurposes: readonly string[] = purposes, selecti
             exec: unavailable.exec, interactions: unavailable.interactions, targetedContributions: unavailable.targetedContributions,
             composerContent: unavailable.composerContent, backgroundServices: unavailable.backgroundServices, deploymentSource: unavailable.deploymentSource },
     });
-    return { accounts: runnerServices.connectedAccounts, directAccounts: connectedAccounts, requests,
+    return { accounts: runnerServices.connectedAccounts, directAccounts: connectedAccounts, requests, signal: controller.signal,
         refreshPurposeCatalog: () => refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', readMode: 'admitted' }, true),
         async dispose() { controller.abort(); lease?.dispose(); await host.dispose(); } };
 }
@@ -121,6 +131,68 @@ function home(readCurrentness: () => Promise<void> = async () => {}) {
 
 describe('runner qualified-purpose cold preparation through the real binding owner', () => {
     afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+    it.each(['unselected', 'unavailable'] as const)('uses the real runner selection in DeepSec execution (%s)', async selection => {
+        const f = await fixture([DEEPSEC_CLAUDE_ACCOUNT_PURPOSE], selection, {
+            consumer: { pluginId: PLUGIN_MANIFEST.id, localId: 'deepsec' },
+            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+        });
+        const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+        const factory = plugin.registration('agents', 'deepsec')?.factory;
+        if (!factory) throw new Error('DeepSec Agent registration missing');
+        const unavailable = createUnavailablePluginServices();
+        const launched: PluginExecSpawnRequest[] = [];
+        const services: PluginServices = { ...unavailable, connectedAccounts: f.accounts,
+            availability: id => id === 'exec' ? { status: 'available' } : unavailable.availability(id),
+            exec: { ...unavailable.exec,
+                agentCli: { checkReadiness: async () => ({ launchable: [{ agentId: 'claude' }] }) },
+                systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'deepsec-cli' }, executablePath: '/native/deepsec' }) },
+                async run(request) {
+                    launched.push(request);
+                    if (request.args?.[0] === 'export') {
+                        const output = request.args[request.args.indexOf('--out') + 1];
+                        if (!output) throw new Error('Native export output path missing');
+                        await writeFile(output, '[]', 'utf8');
+                    }
+                    return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                        stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+                },
+            },
+        };
+        const unused = async (): Promise<never> => { throw new Error('Unexpected UI or protocol access'); };
+        const context: AgentRuntimeContext = {
+            plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+            contribution: { id: 'deepsec', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/deepsec` },
+            surface: 'agent', signal: f.signal, services, agent: { id: 'deepsec' },
+            protocols: { acp: { open: unused } },
+            ui: { askQuestions: unused, confirm: unused, notify: unused, status: { set: unused }, widget: { set: unused },
+                title: { set: unused }, composer: { replace: unused } },
+        };
+        const runtime = await factory({ plugin: context.plugin, agent: context.agent, signal: f.signal });
+        const opened = await runtime.executionRuns?.open({ kind: 'create', runId: 'runner-deepsec', cwd: '/repo',
+            profile: { pluginId: PLUGIN_MANIFEST.id, localId: 'repository-security-audit' },
+            input: { text: 'Review repository security.', structuredInput: { instructions: 'Review repository security.',
+                reviewers: [{ kind: 'engine', engineId: 'deepsec' }], engines: { deepsec: {
+                    mode: 'repository_security_audit', confirmedCostWarning: true,
+                } } } },
+        }, context);
+        if (!opened) throw new Error('DeepSec execution runtime missing');
+        try {
+            const events: AgentExecutionRunEvent[] = [];
+            opened.watch(event => events.push(event));
+            await vi.waitFor(() => expect(['run-complete', 'run-failed']).toContain(events.at(-1)?.kind));
+            if (selection === 'unavailable') {
+                expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'plugin_connected_account_binding_unavailable' } });
+                expect(launched).toEqual([]);
+            } else {
+                expect(events.at(-1)).toMatchObject({ kind: 'run-complete' });
+                expect(launched.find(request => request.args?.[0] === 'process')).toMatchObject({
+                    args: expect.arrayContaining(['--agent', 'claude', '--ai-provider', 'anthropic', '--ai-api-key-env', 'ANTHROPIC_API_KEY']),
+                    env: expect.objectContaining({ ANTHROPIC_API_KEY: '', AI_GATEWAY_API_KEY: '' }),
+                });
+            }
+        } finally { await opened.dispose(); await plugin.dispose(); await f.dispose(); }
+    });
 
     it.each(['unselected', 'selected', 'unavailable'] as const)('round-trips admitted native selection (%s) through the runner', async selection => {
         const f = await fixture(purposes, selection);
