@@ -199,8 +199,13 @@ const ProjectDeploymentsPage = React.memo(
       scopeKind: 'spawn', serverId: props.serverId,
     })?.state === 'enabled';
     const { theme } = useUnistyles();
-    // The shared Source reader owns readability, including retained reads during refresh.
-    const sourceRead = useProjectSource(props.lifetime, props.sourceId);
+    // The shared Source reader owns readability, including retained reads during refresh. It reads only while the
+    // page is presented; a hidden page keeps the last answer it showed and asks again when it is shown.
+    const readsSource = props.demand.visible;
+    const liveSourceRead = useProjectSource(readsSource ? props.lifetime : null, props.sourceId);
+    const heldSourceRead = React.useRef(liveSourceRead);
+    if (readsSource) heldSourceRead.current = liveSourceRead;
+    const sourceRead = readsSource ? liveSourceRead : heldSourceRead.current;
     const sourceAvailable = sourceRead.source !== null;
     const canCreate = newWorkEnabled && sourceAvailable && Boolean(props.actions?.prepareCreate);
     const openNewApp = useOpenNewApp();
@@ -409,9 +414,11 @@ const ProjectDeploymentsPage = React.memo(
       const failureCode = readFailure?.code ?? null;
       // Retrying cannot change a refused read; only a transient failure offers Retry.
       if ((!sourceAvailable && sourceRefused) || failureCode === 'deployment_unavailable') {
-        return <ItemList testID="project-deployments.error">{sourceUnavailable(pageStateSize, sourceRead.issue ?? failureCode)}</ItemList>;
+        return <>{props.header}<ItemList testID="project-deployments.error">{sourceUnavailable(pageStateSize, sourceRead.issue ?? failureCode)}</ItemList></>;
       }
-      return (
+      // Without a list there is no Services column beside the page: these states keep the hosting Project header,
+      // which only a populated list beside the column leaves out (e466ffdf678).
+      return (<>{props.header}
         <ItemList testID="project-deployments.error">
           <SurfaceStateCard
             kind="error"
@@ -426,12 +433,12 @@ const ProjectDeploymentsPage = React.memo(
               },
             }}
           />
-        </ItemList>
+        </ItemList></>
       );
     }
     if (!selection.defaults && !environmentId && !retained) {
-      return (
-        <PageLoadingRows testID="project-deployments.loading" header />
+      return (<>{props.header}
+        <PageLoadingRows testID="project-deployments.loading" header /></>
       );
     }
     const draft = selection.drafting ? (
@@ -460,7 +467,7 @@ const ProjectDeploymentsPage = React.memo(
         onPress: openDefaults,
         testID: 'project-deployments.empty.settings',
       };
-      return (
+      return (<>{props.header}
         <ItemList testID="project-deployments.empty">
           <EmptyState
             layout="page"
@@ -481,7 +488,7 @@ const ProjectDeploymentsPage = React.memo(
               {preparation}
             </View>
           ) : null}
-        </ItemList>
+        </ItemList></>
       );
     }
 
