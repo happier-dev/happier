@@ -19,7 +19,7 @@ const { resetLocalServiceInventoryStoreForTests } =
 const { resetLocalServiceLauncherStoreForTests } =
   await import('@/sync/domains/local/services/launch/sharedStore');
 const { storage } = await import('@/sync/domains/state/storage');
-const { createMachineFixture, createSessionFixture } = await import('@/dev/testkit');
+const { buildLocalServiceInventoryState, createMachineFixture, createSessionFixture } = await import('@/dev/testkit');
 function seedReachableSession(serverId: string) {
   const machine = createMachineFixture({ id: 'machine-a', activeAt: Date.now() });
   storage.setState({ machines: { 'machine-a': machine }, machineListByServerId: { [serverId]: [machine] },
@@ -27,6 +27,8 @@ function seedReachableSession(serverId: string) {
       metadata: { machineId: 'machine-a', path: '/repo', host: 'devbox', homeDir: '/home/person' } }) } });
 }
 const { LocalServicesSurfaceHost } = await import('./LocalServicesSurfaceHost');
+const { DetectedLocalServicesPane } = await import('./DetectedLocalServicesPane');
+const { Text } = await import('@/components/ui/text/Text');
 
 const operationMachineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
 function createDaemonReads() {
@@ -120,6 +122,45 @@ describe('LocalServicesSurfaceHost Home availability', () => {
       expect(daemon.reads).toEqual({ inventory: 0, launcher: 0, watch: 0 });
     } finally {
       await screen.unmount();
+    }
+  });
+
+  it('keeps the Services panel surfaces out of a pane whose Home has Local services off or whose Machine is out of reach', async () => {
+    const serverId = await home.addHome({
+      name: 'Services off',
+      serverUrl: 'https://services-off.test',
+      accountId: 'account',
+      currentAccount: true,
+      localServicesEnabled: false,
+    });
+    const footer = <Text testID="services-footer-probe">Databases</Text>;
+    const off = await renderScreen(
+      <DetectedLocalServicesPane inventoryState={buildLocalServiceInventoryState({ rows: [] })} availability="server_disabled" serverId={serverId} footer={footer} testID="services" />,
+    );
+    try {
+      expect(off.findByTestId('services-off')).not.toBeNull();
+      expect(off.findByTestId('services-footer-probe')).toBeNull();
+    } finally {
+      await off.unmount();
+    }
+    const on = await renderScreen(
+      <DetectedLocalServicesPane inventoryState={buildLocalServiceInventoryState({ rows: [] })} availability="available" serverId={serverId} footer={footer} testID="services" />,
+    );
+    try {
+      expect(on.findByTestId('services-footer-probe')).not.toBeNull();
+    } finally {
+      await on.unmount();
+    }
+    // A Machine out of reach says so once: nothing below the card can run or load until Try again succeeds.
+    const unreachable = await renderScreen(
+      <DetectedLocalServicesPane inventoryState={buildLocalServiceInventoryState({ rows: [] })} availability="available"
+        machine={{ name: 'MacBook Pro', homeDir: null, reachability: 'unreachable' }} footer={footer} testID="services" />,
+    );
+    try {
+      expect(unreachable.findAllByProps({}).some((node) => /^services-(offline|waiting)$/.test(String(node.props.testID ?? '')))).toBe(true);
+      expect(unreachable.findByTestId('services-footer-probe')).toBeNull();
+    } finally {
+      await unreachable.unmount();
     }
   });
 
