@@ -147,9 +147,11 @@ export const ConnectedAccountNeedsYouCardView = React.memo(function ConnectedAcc
             bodyHeight="content"
             rows={0}
             mark={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceMarkId} pluginId={props.pluginId} size="column" />}
-            title={<ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={2} />}
-            source={<Text style={[styles.subtitle, styles.attention]} numberOfLines={2}>{props.signedOut.reason}</Text>}
-            sourcePlacement="below"
+            // The account and why it needs you are one text column beside the mark (lab `cwide`), not a second row.
+            title={<View style={styles.needsYouText}>
+                <ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={2} />
+                <Text style={[styles.subtitle, styles.attention]} numberOfLines={2}>{props.signedOut.reason}</Text>
+            </View>}
             menu={<ConnectedAccountSignInAction testID={props.testID} signedOut={props.signedOut}
                 onOpen={props.onOpen} prominence={props.fixProminence} />}
         />
@@ -164,6 +166,10 @@ const styles = StyleSheet.create((theme) => ({
     subtitle: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
+    },
+    needsYouText: {
+        flexShrink: 1,
+        minWidth: 0,
     },
     // "Needs you" words take the warning text role, as the sign-in line on the account's other surfaces.
     attention: {
