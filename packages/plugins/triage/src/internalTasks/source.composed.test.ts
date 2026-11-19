@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
-import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, TriageConfiguredSourceInstanceV1Schema, TriageGetResultV1Schema, TriageScanResultV1Schema, TriageTaskWriteResultV1Schema, TriageReadConfiguredSourceInstancesResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, REVIEW_TRIAGE_SOURCE_V1, TriageConfiguredSourceInstanceV1Schema, TriageGetResultV1Schema, TriageScanResultV1Schema, TriageTaskWriteResultV1Schema, TriageReadConfiguredSourceInstancesResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
@@ -603,8 +603,14 @@ describe('registered internal Happier task source', () => {
       const catalog = TriageReadConfiguredSourceInstancesResultV1Schema.parse(await kit.invokeAction('sources/read-configured-v1', { v: 1 }, invocation()));
       expect(catalog.kind).toBe('read');
       if (catalog.kind !== 'read') throw new Error('Expected the built-in task catalog');
-      expect(catalog.instances).toHaveLength(1);
-      const instance = catalog.instances[0]!.configured;
+      expect(catalog.instances).toHaveLength(2);
+      expect(catalog.instances).toContainEqual(expect.objectContaining({
+        configured: expect.objectContaining({ instance: expect.objectContaining({ source: REVIEW_TRIAGE_SOURCE_V1 }) }),
+      }));
+      const task = catalog.instances.find(({ configured }) => configured.instance.source.pluginId === source.pluginId
+        && configured.instance.source.localId === source.localId);
+      if (task === undefined) throw new Error('Expected the built-in task source');
+      const instance = task.configured;
       expect(instance).toMatchObject({ instance: { source }, binding: { source: 'accountData' },
         locator: { displayLabel: 'Happier tasks' } });
       expect(await kit.invokeAction('sources/read-configured-v1', { v: 1, exact: instance }, invocation()))

@@ -6,6 +6,7 @@ import type { StorageService } from '@happier-dev/plugin-sdk/storage';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import {
+  REVIEW_TRIAGE_SOURCE_V1,
   TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
   TriageEntryRefV1Schema,
   TriageSourceDescriptorV1Schema,
@@ -486,7 +487,8 @@ describe('Triage activation', () => {
       const result = TriageListEntriesResultV1Schema.parse(await plugin.invokeAction(TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
         { v: 1, sources: { kind: 'allConfigured' }, limit: 10, order: 'newest' },
         { surface: 'agent', sessionId: 'triage-audit-session' }));
-      expect(result.configuredSources).toHaveLength(2);
+      expect(result.configuredSources).toHaveLength(3);
+      expect(result.configuredSources).toContainEqual(expect.objectContaining({ source: REVIEW_TRIAGE_SOURCE_V1 }));
       expect(result.configuredSources).toContainEqual(expect.objectContaining({
         source: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.source,
         sourceInstanceId: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId,
