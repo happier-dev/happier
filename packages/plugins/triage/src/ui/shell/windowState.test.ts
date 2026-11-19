@@ -5,6 +5,7 @@ import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { REVIEW_DESCRIPTOR_V1 } from '../../reviews/contribution.js';
 import { planTriageConfigureSourceOffersV1 } from './configureSources.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
@@ -210,6 +211,23 @@ describe('resolveTriageListShellState', () => {
     expect(resolveTriageListShellState({ ...personalOnly, configuredSources: [
       ...personalOnly.configuredSources, { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, available: true },
     ] }).kind).toBe('window');
+  });
+  it('keeps the Desk first run while only setup-free sources are configured and none has a row (QB-63)', () => {
+    const reviews = { pluginId: 'happier.triage', localId: 'reviews' } as const;
+    const readSourceDescriptor = (source: { pluginId: string; localId: string }) =>
+      source.pluginId === reviews.pluginId && source.localId === reviews.localId ? REVIEW_DESCRIPTOR_V1 : null;
+    const automatic = { sourceInstanceId: OTHER_INSTANCE, configurationRowId: OTHER_INSTANCE, source: reviews, available: true as const };
+    const automaticOnly = snapshot({ window: window(), configuredSources: [automatic] });
+    expect(resolveTriageListShellState(automaticOnly, { readSourceDescriptor }).kind).toBe('configureSources');
+    const row = { entryRef: testkitEntryRef({ source: reviews }), content: null,
+      lane: '1-open' as const, sortAtMs: 1, presence: { kind: 'present' as const, observedAtMs: 1 },
+      attention: null, selected: { kind: 'selected' as const, sourceInstanceId: OTHER_INSTANCE, reason: 'onlyPresent' as const },
+      observations: [testkitObservation({ sourceInstanceId: OTHER_INSTANCE })] };
+    expect(resolveTriageListShellState({ ...automaticOnly, window: window({ rows: [row] }) }, { readSourceDescriptor }).kind)
+      .toBe('window');
+    expect(resolveTriageListShellState({ ...automaticOnly, configuredSources: [automatic,
+      { sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, available: true }] }, { readSourceDescriptor }).kind)
+      .toBe('window');
   });
   it('keeps source invocation codes in details rather than the translated explanation', () => {
     const failure = { kind: 'sources' as const, sources: [{ sourceInstanceId: INSTANCE, displayName: 'Personal tasks',

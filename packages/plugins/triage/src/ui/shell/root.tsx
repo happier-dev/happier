@@ -482,8 +482,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   [readSourceDescriptor, surface.filters.tasks]);
   const state = React.useMemo(
     () => resolveTriageListShellState(window.snapshot, { durableStateReachable, tasks: surface.filters.tasks !== undefined,
-      filters: surface.filters, inventory: viewInventory }),
-    [durableStateReachable, window.snapshot, surface.filters, viewInventory],
+      filters: surface.filters, inventory: viewInventory, readSourceDescriptor }),
+    [durableStateReachable, window.snapshot, surface.filters, viewInventory, readSourceDescriptor],
   );
   // The row-bearing facts of the state, by identity. The state wrapper is rebuilt whenever any snapshot member
   // moves (pending, freshness, pacing); the rows only when the window does, so row work keys on these.

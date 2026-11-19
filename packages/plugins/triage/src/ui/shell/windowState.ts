@@ -8,6 +8,7 @@ import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowSnapshotV1 } from '../
 import { TRIAGE_PR_VIEW_INVENTORY_V1, type TriageListViewInventoryV1 } from '../list/viewInventory.js';
 import { planTriageViewSourceSelectionV1 } from '../filters/plan.js';
 import { createTriageNameListFormatter } from './nameList.js';
+import type { TriageSourceDescriptorReaderV1 } from '../detail/sourceSurface.js';
 import {
   projectTriageFailedSourceHealth,
   projectTriageUnreadableSourceHealth,
@@ -554,12 +555,22 @@ export function resolveTriageListShellState(
     tasks?: boolean;
     filters?: SurfaceFilterSelectionV1;
     inventory?: TriageListViewInventoryV1;
+    /**
+     * The admitted source vocabulary. A source whose descriptor declares an Account-data instance is set up for
+     * everyone (Reviews, Happier exceptions), so on the PRs & Issues page it keeps the first run while it lists
+     * nothing (QB-63). Without it every configured source counts as one the person chose.
+     */
+    readSourceDescriptor?: TriageSourceDescriptorReaderV1;
   }> = {},
 ): TriageListShellStateV1 {
   const window = snapshot.window;
   if (window !== undefined) {
+    const personConfigured = (source: TriageListWindowSnapshotV1['configuredSources'][number]) =>
+      options.readSourceDescriptor?.(source.source)?.accountDataInstance === undefined;
     if (!snapshot.configuredSources.some(source => options.tasks === true
-      || TRIAGE_PR_VIEW_INVENTORY_V1.includesSource(source.source))) return Object.freeze({ kind: 'configureSources' });
+      || TRIAGE_PR_VIEW_INVENTORY_V1.includesSource(source.source) && (window.rows.length > 0 || personConfigured(source)))) {
+      return Object.freeze({ kind: 'configureSources' });
+    }
     const stale = snapshot.freshness !== 'fresh';
     const wholeScanFailure = readShellFailure(snapshot);
     const viewHealth = projectTriageViewSourceHealthV1(snapshot,
