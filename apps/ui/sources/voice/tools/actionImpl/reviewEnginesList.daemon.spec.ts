@@ -9,7 +9,8 @@ import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepa
 installSessionFilesViewBoundaries();
 await prepareSessionFilesViewTestkit();
 const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
-const { listReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { listReviewEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
@@ -20,12 +21,16 @@ describe('daemon-owned Review engine inventory', () => {
             capabilities: { structuredNarration: true }, launchModelId: 'account-review-model' },
         { engineId: 'codex', value: 'codex', label: 'Codex', backendId: 'codex', enabled: true,
             capabilities: { structuredNarration: true } }];
+        const profileSelections = [{ engineId: 'claude', profileId: 'review:focused' }];
+        const selectionItems = [{ ...items[0], profileId: 'review:focused', enabled: false, available: false,
+            readiness: 'needsSignIn', unavailableCode: 'needsSignIn' }];
         const inventoryBoundary = await createExternalActionAccountHttpBoundary({
             serverUrl: 'https://session-file-views.test', serverIdentityId: 'srv_review_inventory', accountId: 'alice',
             machineId: 'm1', tokenEpoch: 0, actionId: 'review.engines.list', requesterInvocation: 'none',
-            execute: (input, { target }) => {
+            execute: (input: unknown, { target }) => {
                 requests.push({ input, target });
-                return { sessionId: detached ? null : 's1', items };
+                return { sessionId: detached ? null : 's1', items,
+                    ...(input && typeof input === 'object' && 'profileSelections' in input ? { selectionItems } : {}) };
             },
         });
         const machineInventory = createReadyMachineAgentInventoryFixture(items.map(item => ({ agentId: item.engineId, title: item.label })));
@@ -53,15 +58,23 @@ describe('daemon-owned Review engine inventory', () => {
             .toEqual({ sessionId: detached ? null : 's1', items });
         expect(requests).toEqual([expect.objectContaining({ target: { kind: 'machine', machineId: 'm1' },
             input: { sessionId: null, machineId: 'm1', scope: 'paths' } })]);
+        const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => fixture.home.id });
+        const selected = await executor.execute('review.engines.list', { ...inventoryInput, profileSelections }, {
+            serverId: fixture.home.id,
+            ...(detached ? { executionRunTargetMachineId: 'm1', externalActionTarget: { kind: 'machine', machineId: 'm1' } }
+                : { defaultSessionId: 's1' }),
+        });
+        expect(requests.at(-1)).toMatchObject({ input: { sessionId: null, machineId: 'm1', scope: 'paths', profileSelections } });
+        expect(selected).toMatchObject({ ok: true, result: { items, selectionItems } });
         expect(await listReviewEnginesForVoiceTool({ sessionId: null, serverId: fixture.home.id }))
             .toMatchObject({ ok: false, errorCode: 'machine_not_selected' });
         expect(await listReviewEnginesForVoiceTool({ sessionId: null, machineId: 'm1' }))
             .toMatchObject({ ok: false, errorCode: 'server_not_selected' });
         expect(await listReviewEnginesForVoiceTool({ sessionId: 's1', serverId: 'another-home' }))
             .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
-        const listed = await listReviewWalkthroughEngines({ sessionId: detached ? null : 's1', machineId: 'm1', serverId: fixture.home.id });
+        const listed = await listReviewEngines({ sessionId: detached ? null : 's1', machineId: 'm1', serverId: fixture.home.id });
         if (!listed.ok) throw new Error(`Review Action inventory refused: ${JSON.stringify(listed)}`);
-        expect(listed.engines).toEqual([
+        expect(listed.inventory.items).toEqual([
             expect.objectContaining({ engineId: 'claude', launchModelId: 'account-review-model' }),
             expect.objectContaining({ engineId: 'codex' }),
         ]);

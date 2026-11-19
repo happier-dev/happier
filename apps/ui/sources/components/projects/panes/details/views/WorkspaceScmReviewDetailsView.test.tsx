@@ -1,3 +1,4 @@
+import { reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import * as React from 'react';
 import tweetnacl from 'tweetnacl';
 import { act } from 'react-test-renderer';
@@ -401,19 +402,19 @@ describe('WorkspaceScmReviewDetailsView', () => {
         },
         });
         fixture.storage.setState({ sessions: {} });
-        const { startReviewOfComparison, listReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
+        const { startReviewOfComparison, listReviewEngines, projectReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { resolveReviewWalkthroughPlan } = await import('@/sync/domains/reviews/reviewWalkthroughPlan');
         const executor = createDefaultActionExecutor();
-        const inventory = await listReviewWalkthroughEngines({ sessionId: null, machineId: 'm1', serverId: fixture.home.id });
+        const inventory = await listReviewEngines({ sessionId: null, machineId: 'm1', serverId: fixture.home.id });
         expect(inventory, JSON.stringify({ inventory, methods: fixture.requests.map(request => request.method) }))
-            .toMatchObject({ ok: true, engines: expect.arrayContaining([expect.objectContaining({ engineId: 'claude', enabled: true, launchModelId: 'account-review-model' })]) });
+            .toMatchObject({ ok: true, inventory: { items: expect.arrayContaining([expect.objectContaining({ engineId: 'claude', enabled: true, launchModelId: 'account-review-model' })]) } });
         expect(inventoryRequests).toEqual([expect.objectContaining({ target: { kind: 'machine', machineId: 'm1' },
             input: expect.objectContaining({ sessionId: null, machineId: 'm1' }) })]);
         const outcome = await startReviewOfComparison({ sessionId: null, machineId: 'm1', serverId: fixture.home.id, cwd: '/repo',
             comparison: { kind: 'workingTree' }, instructions: 'Review the pending changes',
-            plan: resolveReviewWalkthroughPlan({ engines: inventory.ok ? inventory.engines : [],
-                selectedEngineIds: ['claude'], walkthrough: false, narratorEngineId: null }),
+            plan: resolveReviewWalkthroughPlan({ engines: inventory.ok ? projectReviewWalkthroughEngines(inventory.inventory) : [],
+                reviewers: reviewReviewersForEngineIdsV1(['claude']), walkthrough: false, narratorEngineId: null }),
             start: input => executor.execute('review.start', input, { serverId: fixture.home.id,
                 externalActionTarget: { kind: 'machine', machineId: 'm1' }, executionRunTargetMachineId: 'm1' }),
         });

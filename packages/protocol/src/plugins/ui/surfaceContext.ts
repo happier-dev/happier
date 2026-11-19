@@ -14,6 +14,8 @@ import {
   type PluginUiDestinationContainerV1,
 } from '../contributions/ui/surfaceRegistry.js';
 import { PluginUiTargetedContributionsV1Schema } from './targetedContributions.js';
+import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
+import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiInstanceKeyV1Schema, PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema, type PluginUiInstanceKeyV1 } from './semanticCommands.js';
 import { ProjectSourceV1Schema } from '../../projects/sources/projectSourceV1.js';
 import { WorkspaceRefV1WriteSchema } from '../../workspaces/workspaceRefV1.js';
@@ -31,6 +33,28 @@ import {
 export { PluginUiSurfacePlacementV1Schema } from './surfaceContextPlacement.js';
 export type { PluginUiSurfacePlacementV1 } from './surfaceContextPlacement.js';
 
+/** Read-only demanded Review content; never an access, decision or execution grant. */
+export const PluginUiReviewContextV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('page'),
+    reviewId: z.string().check(z.trim(), z.minLength(1)),
+  }),
+  z.strictObject({
+    kind: z.literal('finding'),
+    reviewId: z.string().check(z.trim(), z.minLength(1)),
+    commentId: z.string().check(z.trim(), z.minLength(1)),
+    namespace: asProtocolZod(PluginIdSchema),
+    extension: PluginUiJsonValueV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal('engineOptions'),
+    engineId: z.string().check(z.trim(), z.minLength(1)),
+    profileId: z.string().check(z.trim(), z.minLength(1)),
+    options: z.record(z.string(), PluginUiJsonValueV1Schema),
+  }),
+]));
+export type PluginUiReviewContextV1 = Readonly<z.infer<typeof PluginUiReviewContextV1Schema>>;
+
 /**
  * The author-visible mounting fact for a plugin UI surface.
  *
@@ -46,11 +70,13 @@ export const PluginUiMountContextV1Schema = lazyZodSchema(() => z.discriminatedU
     destination: asProtocolZod(PluginContributionIdentityV1Schema),
     container: PluginUiDestinationContainerV1Schema,
     instanceKey: z.optional(PluginUiInstanceKeyV1Schema),
+    review: z.optional(PluginUiReviewContextV1Schema),
   }),
   z.strictObject({
     kind: z.literal('embedded'),
     role: z.string().check(z.trim(), z.minLength(1)),
     presentation: z.enum(['content', 'fill']),
+    review: z.optional(PluginUiReviewContextV1Schema),
   }),
 ]));
 export type PluginUiMountContextV1 =
@@ -59,11 +85,13 @@ export type PluginUiMountContextV1 =
     destination: PluginContributionIdentityV1;
     container: PluginUiDestinationContainerV1;
     instanceKey?: PluginUiInstanceKeyV1;
+    review?: PluginUiReviewContextV1;
   }>
   | Readonly<{
     kind: 'embedded';
     role: string;
     presentation: 'content' | 'fill';
+    review?: PluginUiReviewContextV1;
   }>;
 
 /**
@@ -295,6 +323,7 @@ export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.stric
     pageKind: asProtocolZod(PluginContributionIdentityV1Schema),
     launchInput: z.optional(PluginUiLaunchInputV1Schema),
     subPath: z.nullable(PluginUiSubPathV1Schema),
+    review: z.optional(PluginUiReviewContextV1Schema),
   })),
   /** The mount's existing approval presenter fact, not an approval or effect authority. */
   pendingApproval: z.optional(z.nullable(z.strictObject({
@@ -369,6 +398,7 @@ export const PluginResourceContextV1Schema = lazyZodSchema(() => z.discriminated
     kind: z.literal('surface'),
     mountInstanceKey: PluginUiInstanceKeyV1Schema,
     launchInput: PluginUiLaunchInputV1Schema,
+    review: z.optional(PluginUiReviewContextV1Schema),
     target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
   }),
 ]));

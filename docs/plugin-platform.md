@@ -13992,6 +13992,27 @@ new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.
 
 
+### Review contextual plugin presentation (0.3 development)
+
+The opened Review owner supplies read-only `mount.review` context to existing
+plugin renderers and the same `context.review` to surface-scoped Resources.
+Its discriminant is `finding` (Review/comment IDs, plugin namespace and opaque
+extension), `engineOptions` (engine/profile IDs and selected JSON options), or
+`page` (Review ID). These are content inputs, not access or execution grants.
+The existing inline registry owns `reviewFinding` and `reviewEngineOptions`;
+the normal renderer chain and `PluginSurfaceHost` remain the mount path.
+An `appPage` with `target: { kind: 'app', context: 'review' }` is selected only
+inside the opened Review. It retains the Artifact route and uses `PluginPageContent`
+for its page-header Actions, location, Back, dirty state and companions. The existing
+companion opener also carries `openedFrom.review`; its mount and Resource consume
+that same Review context independently of launch input. Selected options are read-only
+presentation inputs, not an options writer. Closed findings
+do not mount a renderer. Withdrawing a finding contribution leaves the core
+finding and decision controls in place. Resource context equality already
+includes the complete Review context, so changed evidence uses a fresh demanded
+Resource view without a new cache or refresh timer. The Slice review engine
+demonstrates all three contexts with one ordinary declarative-document Resource.
+
 ### Review cost acknowledgement (0.3 development)
 
 A Review profile can name an existing boolean option in

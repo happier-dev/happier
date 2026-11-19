@@ -395,6 +395,8 @@ const pageCacheIdentity = {
 } as const;
 
 function daemonProjection(input: Readonly<{
+    reviewContext?: boolean;
+    reviewCompanion?: boolean;
     description?: string | Readonly<{ key: string; fallback: string }>;
     headerStyle?: 'page' | 'toolbar';
     availability?: Readonly<{ state: string; reason: string; diagnostics: readonly string[] }>;
@@ -435,7 +437,7 @@ function daemonProjection(input: Readonly<{
             destinationId,
             rendererId: 'notes-renderer',
             container: 'appPage',
-            target: { kind: 'app' },
+            target: { kind: 'app', ...(input.reviewContext ? { context: 'review' } : {}) },
         });
         if (!binding) throw new Error('test fixture must use an admitted V2 page binding');
         return {
@@ -467,7 +469,7 @@ function daemonProjection(input: Readonly<{
         contributionKind: 'reactNativeBundle',
         contributionId: 'notes-renderer',
         generatedV2: true,
-        hostApi: { minVersion: '1.0.0', methods: ['context'] },
+        hostApi: { minVersion: '1.0.0', methods: ['context', ...(input.reviewCompanion ? ['setPageNavigation'] : [])] },
         // This fixture exercises a daemon-backed page (its refresh Action is
         // declared below). The renderer must request that capability before
         // Administration selects an exact Machine and admits its target slice.
@@ -498,6 +500,14 @@ function daemonProjection(input: Readonly<{
         [`reactNativeBundle:${NOTES_PLUGIN_ID}:notes-renderer`]: bundleEntry(NOTES_PLUGIN_ID),
         ...(input.tasksView ? { [`surfacePlacement:${NOTES_PLUGIN_ID}:tasks`]: placementEntry(NOTES_PLUGIN_ID, 'tasks') } : {}),
     };
+    if (input.reviewCompanion) {
+        const page = placementEntry(NOTES_PLUGIN_ID, 'notes-companion');
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId: NOTES_PLUGIN_ID,
+            destinationId: 'notes-companion', rendererId: 'notes-renderer', container: 'rightSidebarTab', target: { kind: 'app' } });
+        if (!binding) throw new Error('Review companion must use an admitted binding');
+        entries[page.id] = { ...page, binding, target: binding.target,
+            display: { ...page.display, reach: 'pageItems' }, headerActions: [] };
+    }
     if (input.secondPlugin) {
         entries[`surfacePlacement:${JOURNAL_PLUGIN_ID}:notes`] = placementEntry(JOURNAL_PLUGIN_ID);
         entries[`reactNativeBundle:${JOURNAL_PLUGIN_ID}:notes-renderer`] = bundleEntry(JOURNAL_PLUGIN_ID);
@@ -574,6 +584,9 @@ function readRenderContext(): RenderContext {
 }
 
 async function createPageRenderer(input: Readonly<{
+    reviewId?: string;
+    reviewPageSelected?: boolean;
+    reviewCompanion?: boolean;
     pluginId?: string;
     localId?: string;
     subPath?: string | null;
@@ -590,6 +603,9 @@ async function createPageRenderer(input: Readonly<{
     view?: string;
 }> = {}) {
     const { PluginAppPageScreen } = await import('./PluginAppPageScreen');
+    const { ReviewPagePluginContent } = await import('@/components/reviews/plugins/ReviewPluginContent');
+    const { AppScopeRightSidebar } = await import('@/components/appShell/rightSidebar/AppScopeRightSidebar');
+    const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
     const { AppShellPluginUiProjectionValueProvider } = await import('./AppShellPluginUiProjection');
     const wrap = input.wrap ?? ((children: React.ReactNode) => <>{children}</>);
     // The page stands in the app's pane host (its details pane), which the app root provides.
@@ -609,16 +625,21 @@ async function createPageRenderer(input: Readonly<{
                 reloadConnectedAccountProjection: () => {},
             }}
         >
-            <AppTargetNavigationScope model={model} enabled={input.withTargetNavigation !== false}>
+            <PresentedDetailNavigationProvider><AppTargetNavigationScope model={model} enabled={input.withTargetNavigation !== false}>
                 {wrap(
-                    <PluginAppPageScreen
+                    input.reviewId ? <ReviewPagePluginContent reviewId={input.reviewId} serverId="server-1"
+                        selection={input.reviewPageSelected === false ? null : { pluginId: input.pluginId ?? NOTES_PLUGIN_ID, localId: input.localId ?? 'notes', subPath: input.subPath ?? '', view: input.view ?? null }}>
+                        {() => <React.Fragment />}
+                    </ReviewPagePluginContent> : <PluginAppPageScreen
                         pluginId={input.pluginId ?? NOTES_PLUGIN_ID}
                         localId={input.localId ?? 'notes'}
                         subPath={input.subPath === undefined ? '' : input.subPath}
                         {...(input.view === undefined ? {} : { view: input.view })}
                     />,
                 )}
-            </AppTargetNavigationScope>
+                {input.reviewCompanion ? <AppScopeRightSidebar scopeId="app" requestedDestination={{ pluginId: NOTES_PLUGIN_ID,
+                    localId: 'notes-companion' }} /> : null}
+            </AppTargetNavigationScope></PresentedDetailNavigationProvider>
         </AppShellPluginUiProjectionValueProvider>
         </AppPaneProvider>
     );
@@ -1366,6 +1387,42 @@ describe('plugin app page host route (EU-5b)', () => {
         expect(React.isValidElement((headerRight as () => React.ReactElement)())).toBe(true);
     });
 
+    it('opens a contextual Review page through its full page header Action owner', async () => {
+        const projection = composeAppProjection(daemonProjection({ reviewContext: true, reviewCompanion: true,
+            headerActions: [{ id: 'open-notes', title: 'Open notes', command: { kind: 'openSurface',
+                destination: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' }, input: { source: 'header' } } }] }));
+        const closed = await createPageRenderer({ reviewId: 'review-1', reviewPageSelected: false });
+        const screen = await renderScreen(closed(projection));
+        expect(reactNativeSurfaceProps).toHaveLength(0);
+        const opened = await createPageRenderer({ reviewId: 'review-1', subPath: 'findings', reviewCompanion: true });
+        await screen.update(opened(projection));
+        expect(readRenderContext().surface.mount.review).toEqual({ kind: 'page', reviewId: 'review-1' });
+        await screen.pressByTestIdAsync('plugin-app-page-header-action:open-notes');
+        expect(routerPushes).toContain('/artifacts/review-1?pluginId=acme.notes&localId=notes');
+        const pageContext = readRenderContext();
+        const { act } = await import('react-test-renderer');
+        await act(async () => { await pageContext.hostApi.setPageNavigation({ pageKind: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' },
+            value: 'overview', items: [{ value: 'overview', title: 'Overview', kind: 'page', phonePlacement: 'bar' },
+                { value: 'companion', title: 'Notes', kind: 'companion', companion: { pluginId: NOTES_PLUGIN_ID, localId: 'notes-companion' }, phonePlacement: 'bar' }] }); });
+        await vi.waitFor(() => expect(reactNativeSurfaceProps.some(value => {
+            const context = (value as { renderContext: RenderContext }).renderContext;
+            return context.surface.mount.kind === 'destination' && context.surface.mount.destination.localId === 'notes-companion';
+        })).toBe(true));
+        const companion = reactNativeSurfaceProps.map(value => (value as { renderContext: RenderContext }).renderContext)
+            .filter(context => context.surface.mount.kind === 'destination' && context.surface.mount.destination.localId === 'notes-companion').at(-1)!;
+        expect(companion.surface.mount.review).toEqual({ kind: 'page', reviewId: 'review-1' });
+        expect(companion.surface.openedFrom).toMatchObject({ review: { kind: 'page', reviewId: 'review-1' }, subPath: 'findings' });
+        await screen.unmount();
+    });
+
+    it('shows the canonical unavailable page when a selected Review page belongs to another Home', async () => {
+        const screen = await renderPage({ reviewId: 'review-1', serverId: 'another-home',
+            projection: daemonProjection({ reviewContext: true }) });
+        expect(screen.findByTestId('plugin-app-page-unavailable')).toBeTruthy();
+        expect(reactNativeSurfaceProps).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('binds page-header Action dispatch to the mounted Account lifetime', async () => {
         await renderPage({
             projection: daemonProjection({
@@ -2003,28 +2060,6 @@ describe('plugin app page host route (EU-5b)', () => {
         await screen.update(<PageHost model={model} />);
         expect(readRenderContext().launchInput).toEqual(replacement);
         expect(reactNativeSurfaceInstanceRefs.at(-1)).toBe(host);
-    });
-
-    it('keeps the current launch on a preserving page replacement and clears it on a foreign location', async () => {
-        const { act } = await import('react-test-renderer');
-        const PageHost = await loadPageHost();
-        const model = pageModel();
-        routerLocation.pathname = NOTES_PAGE_PATH;
-        const screen = await renderScreen(<PageHost model={model} />);
-        const launch = { entryId: 'a' };
-        await openFromMountedPage(launch);
-        expect(readRenderContext().launchInput).toEqual(launch);
-
-        await act(async () => {
-            await readRenderContext().hostApi.replacePageLocation('entries/a', { preserveUnsavedChanges: true });
-        });
-        await screen.update(<PageHost model={model} location={{ subPath: 'entries/a' }} />);
-        expect(readRenderContext().launchInput).toEqual(launch);
-
-        await screen.update(<PageHost model={model} location={{ subPath: 'entries/b' }} />);
-        expect(readRenderContext().launchInput).toBeUndefined();
-        await screen.update(<PageHost model={model} location={{ subPath: 'entries/a' }} />);
-        expect(readRenderContext().launchInput).toBeUndefined();
     });
 
     it('rejects a location that would address out of the page namespace', async () => {

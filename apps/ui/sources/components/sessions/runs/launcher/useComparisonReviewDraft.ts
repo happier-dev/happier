@@ -1,14 +1,15 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import { findMachineAgentForBackendTarget } from '@/agents/machineAgents/machineAgentCatalog';
-import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import { resolveReviewEngineTarget } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 import type { ScmReviewComparisonSelector } from '@/sync/domains/scm/diffSummary/selection';
-import { listReviewWalkthroughEngines, startReviewOfComparison } from '@/sync/ops/reviews/reviewWalkthrough';
+import { projectReviewWalkthroughEngines, startReviewOfComparison } from '@/sync/ops/reviews/reviewWalkthrough';
 import { t } from '@/text';
+import type { useReviewEngineInventory } from './useReviewEngineInventory';
+import { readReviewLauncherReviewers } from './reviewLauncherSelection';
+
+const EMPTY_ENGINES: readonly ReviewWalkthroughEngine[] = [];
 
 /** Declarative comparison context; instructions and reviewer choices stay in the Run draft. */
 export type ComparisonReviewDraftInput = Readonly<{
@@ -29,14 +30,12 @@ export function useComparisonReviewDraft(params: Readonly<{
     machineId?: string;
     serverId: string | null;
     comparisonReview: ComparisonReviewDraftInput | null;
-    engineIds: readonly string[];
     actionInput: Record<string, unknown>;
     setActionInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
-    machineInventory: Pick<MachineAgentsSnapshot, 'agents' | 'status'>;
-    onRetryInventory?: () => void;
+    reviewInventory: ReturnType<typeof useReviewEngineInventory>;
 }>) {
-    const [listedEngines, setListedEngines] = React.useState<readonly ReviewWalkthroughEngine[] | null>(null);
-    const [enginesError, setEnginesError] = React.useState<string | null>(null);
+    const inventory = params.reviewInventory.status === 'ready' ? params.reviewInventory.inventory : null;
+    const enginesError = params.reviewInventory.status === 'error' ? params.reviewInventory.error : null;
     const walkthrough = Array.isArray(params.actionInput.outputs)
         ? params.actionInput.outputs.includes('walkthrough') : params.comparisonReview?.defaultWalkthrough ?? false;
     const narrator = params.actionInput.narrator;
@@ -50,24 +49,9 @@ export function useComparisonReviewDraft(params: Readonly<{
         const { outputs: _outputs, ...input } = params.actionInput;
         return input;
     }, [enabled, params.actionInput]);
-    const machineInventory = params.machineInventory;
-    React.useEffect(() => {
-        if (!enabled) return;
-        let current = true;
-        void listReviewWalkthroughEngines({ sessionId: params.sessionId, machineId: params.machineId, serverId: params.serverId }).then(listed => {
-            if (!current) return;
-            if (!listed.ok) { setEnginesError(listed.error); return; }
-            setListedEngines(listed.engines);
-            setEnginesError(null);
-        });
-        return () => { current = false; };
-    }, [enabled, params.sessionId, params.machineId, params.serverId]);
-    const engines = React.useMemo(() => listedEngines?.map(engine => ({ ...engine,
-        machineAgent: findMachineAgentForBackendTarget(machineInventory.agents, resolveReviewEngineTarget(engine.engineId)),
-        machineInventoryStatus: machineInventory.status,
-    })) ?? [], [listedEngines, machineInventory.agents, machineInventory.status]);
-    const plan = React.useMemo(() => resolveReviewWalkthroughPlan({ engines, selectedEngineIds: params.engineIds,
-        walkthrough, narratorEngineId }), [engines, params.engineIds, walkthrough, narratorEngineId]);
+    const engines = React.useMemo(() => inventory ? projectReviewWalkthroughEngines(inventory) : EMPTY_ENGINES, [inventory]);
+    const plan = React.useMemo(() => resolveReviewWalkthroughPlan({ engines, reviewers: readReviewLauncherReviewers(params.actionInput),
+        walkthrough, narratorEngineId }), [engines, params.actionInput, walkthrough, narratorEngineId]);
     const submit = React.useCallback(async (submission: Readonly<{
         start: (actionId: 'review.start', input: Record<string, unknown>, operationId: string) => Promise<ActionExecuteResult>;
         input: Record<string, unknown>;
@@ -102,16 +86,15 @@ export function useComparisonReviewDraft(params: Readonly<{
         return { comparison, actionResult, capturedComparisonId };
     }, [params.comparisonReview, params.sessionId, params.machineId, params.serverId, params.setActionInput, plan]);
     // One identity while nothing it shows changes: the walkthrough chip's content and revision read it.
-    const { setActionInput, onRetryInventory } = params;
+    const { setActionInput, reviewInventory: { refresh } } = params;
     const scopeLabel = params.comparisonReview?.scopeLabel ?? '';
     const scopeDetail = params.comparisonReview?.scopeDetail;
-    const inventoryFailed = machineInventory.status === 'error';
     const fields = React.useMemo(() => ({
         scopeLabel, scopeDetail,
         plan, walkthrough, onToggleWalkthrough: () => setActionInput(previous => ({ ...previous, outputs: walkthrough ? [] : ['walkthrough'] })),
         onSelectNarrator: (engineId: string) => setActionInput(previous => ({ ...previous, narrator: { engineId } })),
-        error: enginesError ?? (inventoryFailed ? t('machineAgents.unknown') : null),
-        onRetry: inventoryFailed ? onRetryInventory : undefined,
-    }), [enginesError, inventoryFailed, onRetryInventory, plan, scopeDetail, scopeLabel, setActionInput, walkthrough]);
+        error: enginesError,
+        onRetry: enginesError ? refresh : undefined,
+    }), [enginesError, refresh, plan, scopeDetail, scopeLabel, setActionInput, walkthrough]);
     return { plan, engines, enginesError, submit, fields, launchInput };
 }

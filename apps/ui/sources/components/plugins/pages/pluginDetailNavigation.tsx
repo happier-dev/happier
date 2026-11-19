@@ -43,7 +43,7 @@ export function usePluginDetailNavigation(input: Readonly<{
      * declared companion input or the page's launch input as its own. It reads the effective input and
      * page location through `openedFrom` in its surface context. A pane opens without a `subPath`.
      */
-    surfaceInput?: Readonly<{ launchInput?: PluginSurfaceOpenRequest['input']; subPath: string | null }>;
+    surfaceInput?: Readonly<{ launchInput?: PluginSurfaceOpenRequest['input']; subPath: string | null; review?: PluginCompanionOpenedFrom['review'] }>;
 }>) {
     const owner = React.useMemo(() => createPluginPageNavigationOwner(), [input.identity, input.lifetime]);
     React.useEffect(() => () => owner.clear(), [owner]);
@@ -53,9 +53,11 @@ export function usePluginDetailNavigation(input: Readonly<{
     const pageKind = navigation ? buildQualifiedPluginContributionKey(navigation.pageKind) : input.identity;
     const companionInput = navigation?.companionInput === undefined ? input.surfaceInput?.launchInput : navigation.companionInput;
     const pageSubPath = input.surfaceInput?.subPath ?? null;
+    const review = input.surfaceInput?.review;
     const openedFrom = React.useMemo(() => navigation ? Object.freeze({ pageKind: navigation.pageKind,
-        ...(companionInput === undefined ? {} : { launchInput: companionInput }), subPath: pageSubPath }) : undefined,
-    [navigation?.pageKind.pluginId, navigation?.pageKind.localId, Boolean(navigation), companionInput, pageSubPath]);
+        ...(companionInput === undefined ? {} : { launchInput: companionInput }), subPath: pageSubPath,
+        ...(review ? { review } : {}) }) : undefined,
+    [navigation?.pageKind.pluginId, navigation?.pageKind.localId, Boolean(navigation), companionInput, pageSubPath, review]);
     const declaredItems = navigation?.items;
     const items = React.useMemo(() => declaredItems ? resolveDetailNavigationItems({ scope: 'plugin', items: declaredItems }) : EMPTY_ITEMS, [declaredItems]);
     const pages = React.useMemo(() => items.filter(item => item.navigation.kind !== 'companion'), [items]);

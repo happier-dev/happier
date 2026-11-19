@@ -1,4 +1,4 @@
-import { ReviewEngineCapabilitiesSchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import type { ReviewEngineInventory, ReviewEngineProfileSelection } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewWalkthroughResponseSchema, type ReviewFindingIdentity } from '@happier-dev/protocol/reviews/reviewNarration';
 import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -49,36 +49,38 @@ function narrationTarget(params: ReviewNarrationTarget & Readonly<{ serverId: st
     return { input: params.sessionId !== null ? { sessionId: params.sessionId } : { target: { kind: 'detached' as const } }, context };
 }
 
-/** The engines that can review this Session, with whether each can write prose. */
-export async function listReviewWalkthroughEngines(params: Readonly<{ sessionId: string | null; machineId?: string; serverId: string | null }>): Promise<
-    Readonly<{ ok: true; engines: readonly ReviewWalkthroughEngine[] }> | Failure
-> {
+/** Exact-target discovery uses the same daemon projection as REST, CLI and voice. */
+export async function listReviewEngines(params: Readonly<{
+    sessionId: string | null;
+    machineId?: string;
+    serverId: string | null;
+    expectedAccountId?: string;
+    includeDisabled?: boolean;
+    profileSelections?: readonly ReviewEngineProfileSelection[];
+    signal?: AbortSignal;
+}>): Promise<Readonly<{ ok: true; inventory: ReviewEngineInventory }> | Failure> {
     const result = await executorFor(params.serverId).execute(
         'review.engines.list',
-        { sessionId: params.sessionId, ...(!params.sessionId && params.machineId ? { machineId: params.machineId } : {}) },
+        { sessionId: params.sessionId, ...(!params.sessionId && params.machineId ? { machineId: params.machineId } : {}),
+            ...(params.includeDisabled !== undefined ? { includeDisabled: params.includeDisabled } : {}),
+            ...(params.profileSelections?.length ? { profileSelections: params.profileSelections } : {}) },
         { ...(params.sessionId ? { defaultSessionId: params.sessionId } : {}), ...(params.serverId ? { serverId: params.serverId } : {}),
+            ...(params.expectedAccountId ? { expectedAccountId: params.expectedAccountId } : {}),
+            ...(params.signal ? { signal: params.signal } : {}),
             ...(!params.sessionId && params.machineId ? { externalActionTarget: { kind: 'machine' as const, machineId: params.machineId },
                 executionRunTargetMachineId: params.machineId } : {}) },
     );
     if (!result.ok) return failure(result, 'review_engines_unavailable');
-    const items = (result.result as { items?: unknown })?.items;
-    const engines = (Array.isArray(items) ? items : []).flatMap((item): ReviewWalkthroughEngine[] => {
-        if (!item || typeof item !== 'object') return [];
-        const record = item as Record<string, unknown>;
-        const engineId = typeof record.engineId === 'string' ? record.engineId : typeof record.value === 'string' ? record.value : null;
-        if (!engineId) return [];
-        // An engine that does not declare narration is findings-only; capability is never guessed.
-        const capabilities = ReviewEngineCapabilitiesSchema.safeParse(record.capabilities);
-        return [{
-            engineId,
-            label: typeof record.label === 'string' ? record.label : engineId,
-            description: typeof record.description === 'string' ? record.description : null,
-            launchModelId: typeof record.launchModelId === 'string' ? record.launchModelId : null,
-            enabled: record.enabled !== false,
-            structuredNarration: capabilities.success && capabilities.data.structuredNarration,
-        }];
-    });
-    return { ok: true, engines };
+    // The shared Action adapter validates ReviewEngineInventorySchema at the transport boundary.
+    return { ok: true, inventory: result.result as ReviewEngineInventory };
+}
+
+/** The narration controls use the same engine row as the launcher. */
+export function projectReviewWalkthroughEngines(inventory: ReviewEngineInventory): readonly ReviewWalkthroughEngine[] {
+    return inventory.items.map(item => ({
+        ...item,
+        structuredNarration: item.capabilities.structuredNarration,
+    }));
 }
 
 async function resolveComparisonId(params: Readonly<{
@@ -132,16 +134,16 @@ export async function startReviewOfComparison(params: Readonly<{
     }
     const captured = await resolveComparisonId(params);
     if (!captured.ok) return captured;
+    const walkthroughInput = buildReviewStartWithWalkthroughInput({
+        ...(params.sessionId !== null ? { sessionId: params.sessionId }
+            : { sessionId: null, machineId: params.machineId!, cwd: params.cwd }),
+        plan: params.plan, instructions: params.instructions, comparisonId: captured.comparisonId,
+        pending: params.comparison.kind === 'workingTree',
+    });
     const result = await params.start({
         ...params.launchInput,
-        ...buildReviewStartWithWalkthroughInput({
-            ...(params.sessionId !== null ? { sessionId: params.sessionId }
-                : { sessionId: null, machineId: params.machineId!, cwd: params.cwd }),
-            plan: params.plan,
-            instructions: params.instructions,
-            comparisonId: captured.comparisonId,
-            pending: params.comparison.kind === 'workingTree',
-        }),
+        ...walkthroughInput,
+        reviewers: params.launchInput?.reviewers ?? walkthroughInput.reviewers,
     });
     if (!result.ok) return failure(result, 'review_start_failed');
     const output = (result.result ?? {}) as {

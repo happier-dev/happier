@@ -211,11 +211,15 @@ export type PluginUiMountContextV1 =
         container: PluginUiDestinationContainerV1;
         /** Retained opaque destination identity; launch input can be absent after restoration. */
         instanceKey?: string;
+        /** Demanded Review content, supplied by the host; never an authority grant. */
+        review?: ProtocolPluginUiHostApiSurfaceContextV1['mount']['review'];
     }>
     | Readonly<{
         kind: 'embedded';
         role: string;
         presentation: 'content' | 'fill';
+        /** The same contextual input is available to a surface-scoped Resource. */
+        review?: ProtocolPluginUiHostApiSurfaceContextV1['mount']['review'];
     }>;
 
 /** Canonical mounted target; the SDK carries every admitted discriminated arm. */

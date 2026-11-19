@@ -110,9 +110,11 @@ export function readPluginPageSubPath(value: string | readonly string[] | undefi
 export function selectPluginPagePlacements(
     model: PluginUiProjectionModel | null | undefined,
     slot: Readonly<{ container: 'appPage'; targetKind: PluginPageTarget['kind'] }>,
+    context?: 'review',
 ): readonly PluginUiSurfacePlacementProjection[] {
     return model
-        ? selectPluginSurfacePlacementsForBinding(model, slot)
+        ? selectPluginSurfacePlacementsForBinding(model, slot).filter(placement =>
+            (placement.binding.target.kind === 'app' ? placement.binding.target.context : undefined) === context)
         : [];
 }
 

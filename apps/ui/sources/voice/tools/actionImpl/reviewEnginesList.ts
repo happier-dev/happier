@@ -1,5 +1,4 @@
-import { z } from 'zod/mini';
-import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { ReviewEngineInventorySchema, type ReviewEngineProfileSelection } from '@happier-dev/protocol/reviews/reviewEngines';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -11,13 +10,13 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { randomUUID } from '@/platform/randomUUID';
 
-const inventorySchema = z.object({ items: z.array(ReviewEngineListItemSchema) });
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, errorMessage: errorCode });
 const normalizeId = (raw: unknown) => typeof raw === 'string' ? raw.trim() : '';
 
 /** The daemon owns the inventory and launch defaults; the UI only chooses the exact transport target. */
 export async function listReviewEnginesForVoiceTool(params: Readonly<{
   sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths'; serverId?: string;
+  profileSelections?: readonly ReviewEngineProfileSelection[];
 }>, capturedAccount?: LazyActionAccountContext): Promise<unknown> {
   const detached = params.sessionId === null;
   const sessionId = normalizeId(params.sessionId) || null;
@@ -42,13 +41,14 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{
     const response = await executeOriginalAccountMachineAction({ account, machineId, actionId: 'review.engines.list',
       requestId: randomUUID(), input: { sessionId: null, machineId,
         ...(params.includeDisabled !== undefined ? { includeDisabled: params.includeDisabled } : {}),
-        ...(params.scope ? { scope: params.scope } : {}) },
+        ...(params.scope ? { scope: params.scope } : {}),
+        ...(params.profileSelections ? { profileSelections: params.profileSelections } : {}) },
       ...(account.invocationSignal ? { signal: account.invocationSignal } : {}),
     });
     account.assertCurrent();
     if (!response.ok) return response;
-    const result = inventorySchema.safeParse(response.result);
-    return result.success ? { sessionId, items: result.data.items } : failure('invalid_action_output');
+    const result = ReviewEngineInventorySchema.safeParse(response.result);
+    return result.success ? { sessionId, ...result.data } : failure('invalid_action_output');
   } finally {
     if (!capturedAccount) account.dispose();
   }

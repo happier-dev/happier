@@ -222,6 +222,48 @@ leaf or an execution-run completion declaration. Use the canonical
 These are current 0.3 development contracts, not release or loaded-runtime
 certification.
 
+## Review contextual presentation
+
+In matching 0.3 development hosts, contribute a `reviewFinding` view to present
+your namespace alongside the opened finding. A `reviewEngineOptions` view can
+present the selected options alongside the ordinary profile fields. Both use
+the existing renderer contract; this selected-options context is read-only:
+
+```ts
+ui: {
+  views: [
+    { id: 'evidence', container: 'reviewFinding', target: { kind: 'app' },
+      renderer: 'review-renderer', title: 'Engine evidence' },
+    { id: 'options', container: 'reviewEngineOptions', target: { kind: 'app' },
+      renderer: 'review-renderer', title: 'Engine options' },
+    { id: 'review-overview', container: 'appPage', target: { kind: 'app', context: 'review' },
+      renderer: 'review-renderer', title: 'Engine Review' },
+  ],
+  renderers: [{ id: 'review-renderer', kind: 'declarative',
+    root: { kind: 'text', text: 'Engine evidence is unavailable.' },
+    documentSource: { kind: 'resource', resourceId: 'review-content' } }],
+},
+```
+
+Register `review-content` as a surface-scoped dynamic Resource with the
+declarative-document media type and `maxBytes: 512 * 1024`, returning a
+[declarative document](/plugins/ui/ui-artifacts). Its `read({ context })` receives
+`context.review`: `finding` carries `reviewId`, `commentId`, `namespace` and
+`extension`; `engineOptions` carries `engineId`, `profileId` and `options`;
+`page` carries `reviewId`. Other renderers receive the same value at
+`context.surface.mount.review`. Only your own namespace is supplied to your
+finding view. These inputs carry no access or decision authority; ordinary
+Action buttons still use the host's Action executor.
+
+The contextual page is offered inside an opened Review and retains that Review's
+Artifact route. It uses ordinary plugin page-header Actions, local navigation,
+Back and companion surfaces. A page companion receives the same Review identity
+in `surface.mount.review` and `surface.openedFrom.review`, separately from launch input.
+Unopened findings do
+not activate their views, and missing contributions leave the core finding
+and its decision controls usable. The bundled Slice review engine uses one
+Resource for these three presentations without a separate UI runtime.
+
 ## Per-start cost acknowledgement (development source)
 
 For an optional per-start cost acknowledgement, name an existing boolean option

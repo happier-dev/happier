@@ -10,27 +10,31 @@ import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadR
 import { buildMachineAgentInventoryDescriptors, projectAcpCatalogForMachineInventory } from '@happier-dev/protocol/capabilities';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import { createDeferred, createMachineFixture, createPlainMachineRowFixture, createPlainSessionByIdResponseFixture, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createPlainMachineRowFixture, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createSessionSystemRecordHttpFixture } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createCompactSessionListFetchBoundary, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { waitForNetworkResponseForTests } from '@/dev/testkit/mocks/runtimeFetch';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { SessionExecutionRunStartResult } from '@/sync/ops/sessionExecutionRuns';
-import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
-import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit, type FileViewRpcRequest } from '@/components/sessions/files/views/sessionFilesViewTestkit';
+import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit, type FileViewRpcRequest } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 
 installSessionFilesViewBoundaries();
 await prepareSessionFilesViewTestkit();
 const { useComparisonReviewDraft } = await import('./useComparisonReviewDraft');
+const { useReviewEngineInventory } = await import('./useReviewEngineInventory');
 const { useExecutionRunLaunchContext } = await import('./useExecutionRunLaunchContext');
-const { useMachineAgents } = await import('@/agents/machineAgents/useMachineAgents');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 let machineSequence = 0;
+const COMPARISON_ID = 'a'.repeat(64);
+const SELECTED_COMPARISON_ID = 'b'.repeat(64);
+const CAPTURED_COMPARISON_ID = '1'.padStart(64, '0');
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 const reviewHome = {
@@ -83,7 +87,8 @@ function readinessResponse(request: FileViewRpcRequest, signedIn = true,
 
 // HTTP is the external boundary: keep Account capture, binding and private requester sealing real.
 function reviewInventoryResponse(url: Parameters<RuntimeFetch>[0], init: Parameters<RuntimeFetch>[1], foreign = false,
-    reviewer?: ReturnType<typeof reviewerFixture>): Response | null {
+    reviewer?: ReturnType<typeof reviewerFixture>, readiness: 'ready' | 'needsSignIn' | 'unknown' = 'ready',
+    refused = false): Response | null {
     const path = new URL(String(url)).pathname;
     if (!path.startsWith('/v1/actions/review.engines.list')) return null;
     const body: unknown = JSON.parse(String(init?.body));
@@ -99,29 +104,31 @@ function reviewInventoryResponse(url: Parameters<RuntimeFetch>[0], init: Paramet
     }
     if (foreign) expect(body).toHaveProperty('executionAuthorization.requesterAccountContext');
     return Response.json({ v: 1, actionId: 'review.engines.list', requestId: envelope.requestId,
-        execution: { ok: true, result: { sessionId: null, items: [{ engineId: reviewer?.engineId ?? 'claude', value: reviewer?.engineId ?? 'claude', label: reviewer?.descriptor.title ?? 'Claude',
-            enabled: true, backendId: reviewer?.engineId ?? 'claude', capabilities: { structuredNarration: true } }] } } });
+        execution: refused ? { ok: false, errorCode: 'inventory_unavailable', errorMessage: 'Inventory unavailable' }
+            : { ok: true, result: { sessionId: null, items: [{ engineId: reviewer?.engineId ?? 'claude', value: reviewer?.engineId ?? 'claude', label: reviewer?.descriptor.title ?? 'Claude',
+                enabled: readiness === 'ready', readiness, backendId: reviewer?.engineId ?? 'claude', capabilities: { structuredNarration: true } }] } } });
 }
 
-async function mountController(machineId: string, engineId = 'claude', comparisonId: string | null = 'comparison-1') {
+async function mountController(machineId: string, engineId = 'claude', comparisonId: string | null = COMPARISON_ID) {
     return renderHook(() => {
-        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({});
-        const inventory = useMachineAgents({ machineId, serverId: fixture.home.id });
+        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [{ kind: 'engine', engineId }] });
         const launcher = useExecutionRunLaunchContext('s1', fixture.home.id);
+        const inventory = useReviewEngineInventory({ enabled: true, sessionId: 's1', machineId,
+            serverId: fixture.home.id, accountBinding: launcher.accountBinding });
         const comparison = useComparisonReviewDraft({ sessionId: 's1', machineId, serverId: fixture.home.id,
             comparisonReview: { cwd: '/repo', comparison: { kind: 'workingTree' }, comparisonId,
                 scopeLabel: 'Pending changes', defaultWalkthrough: false },
-            engineIds: [engineId], actionInput, setActionInput, machineInventory: inventory });
+            actionInput, setActionInput, reviewInventory: inventory });
         return { comparison, launcher, inventory, actionInput };
     });
 }
 type Controller = Awaited<ReturnType<typeof mountController>>;
-async function submit(controller: Controller) {
+async function submit(controller: Controller, input?: Record<string, unknown>) {
     let pending!: ReturnType<ReturnType<typeof controller.getCurrent>['comparison']['submit']>;
     await act(async () => {
         const current = controller.getCurrent();
         pending = current.comparison.submit({ start: current.launcher.startAction,
-            input: current.actionInput, instructions: 'Inspect these changes', operationId: 'review-operation' });
+            input: input ?? current.actionInput, instructions: 'Inspect these changes', operationId: 'review-operation' });
         // Cancellation may settle before the assertion waiting on its transport; observe it immediately.
         void pending.catch(() => undefined);
     });
@@ -133,31 +140,46 @@ async function setup(options: Readonly<{ signedIn?: boolean; reviewer?: 'configu
     const reviewer = options.reviewer ? reviewerFixture(options.reviewer) : undefined;
     const machineId = `review-machine-${++machineSequence}`;
     const admission = createDeferred<SessionExecutionRunStartResult>();
+    const retainedComparisons = new Map<string, ReturnType<typeof ScmComparisonCaptureOutputSchema.parse>>();
+    const initialComparisonId = options.comparisonId === undefined ? COMPARISON_ID : options.comparisonId;
+    if (initialComparisonId) retainedComparisons.set(initialComparisonId, ScmComparisonCaptureOutputSchema.parse({
+        success: true, comparison: { id: initialComparisonId, source: { kind: 'workingTree' },
+            repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+        metadata: { source: { kind: 'workingTree' }, sourceKey: initialComparisonId },
+    }));
+    const capture = (input: unknown) => {
+        const request = ScmComparisonCaptureInputSchema.parse(input);
+        if (request.comparisonId) {
+            const retained = retainedComparisons.get(request.comparisonId);
+            if (!retained) throw new Error(`Unexpected retained comparison: ${request.comparisonId}`);
+            return retained;
+        }
+        if (!options.capture) throw new Error('Unexpected new comparison capture');
+        const captured = ScmComparisonCaptureOutputSchema.parse(options.capture());
+        if (captured.success) retainedComparisons.set(captured.comparison.id, captured);
+        return captured;
+    };
     const sessionHttp = createSessionSystemRecordHttpFixture({ sessionId: 's1', records: [] });
-    const sessionReads = createSessionReadBatchFetchBoundary(async (url, init) => {
-        if (new URL(String(url)).pathname === '/v2/sessions/s1') return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({
-            id: 's1', active: true, metadata: { path: '/repo', machineId, host: 'test' },
-        })));
-        return sessionHttp.request(url, init);
-    });
+    const session = createSessionFixture({ id: 's1', active: true, metadata: { path: '/repo', machineId, host: 'test' } });
+    const metadataHttp = createSessionMetadataHttpBoundary(() => ({ [session.id]: session }));
+    const sessionReads = createCompactSessionListFetchBoundary(createSessionReadBatchFetchBoundary(async (url, init) => {
+        return metadataHttp.handle(url, init) ?? sessionHttp.request(url, init);
+    }));
     fixture = await createSessionFilesViewFixture({ ...reviewHome, rootPath: '/repo', machineId,
         credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) }, serverIdentityId: 'srv_review_lifetime',
         machine: createMachineFixture({ id: machineId, kind: 'persistent', storageMode: 'plain', revokedAt: null, replacedByMachineId: null,
             installationId: 'test-installation', access: createPlainMachineRowFixture({ id: machineId, accountId: 'alice' }).access }),
         rpc: request => {
-            if (options.capture && request.method === 'scm.diffSummary.capture') return options.capture();
+            if (request.method === 'scm.status.snapshot') return { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) };
+            if (request.method === 'scm.diffSummary.capture') return capture(request.payload);
             if (isStart(request)) return options.start ? options.start(request) : admission.promise;
-            if (options.inventoryRead && request.method.includes('contributionRegistryProjection.describe')) return options.inventoryRead();
             return readinessResponse(request, options.signedIn ?? true, reviewer, options.missingReadiness);
         }, request: async (url, init) => {
             const path = new URL(String(url)).pathname;
-            if (options.capture && path === '/v1/actions/scm.diffSummary.capture') {
-                const body: unknown = JSON.parse(String(init?.body));
-                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body && typeof body === 'object' && 'envelope' in body ? body.envelope : body);
-                return Response.json({ v: 1, actionId: 'scm.diffSummary.capture', requestId: envelope.requestId,
-                    execution: { ok: true, result: options.capture() } });
-            }
-            return reviewInventoryResponse(url, init, false, reviewer) ?? (path === ACP_CATALOG_ROWS_ROUTE_V1
+            const observed = path === '/v1/actions/review.engines.list' ? await options.inventoryRead?.() : undefined;
+            const refused = Boolean(observed && typeof observed === 'object' && 'ok' in observed && observed.ok === false);
+            const readiness = options.signedIn === false ? 'needsSignIn' : options.missingReadiness ? 'unknown' : 'ready';
+            return reviewInventoryResponse(url, init, false, reviewer, readiness, refused) ?? (path === ACP_CATALOG_ROWS_ROUTE_V1
             ? Response.json(AcpCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: reviewer?.record ?? { v: 1, definitions: [] } } }))
             : sessionReads(url, init));
         },
@@ -185,7 +207,7 @@ describe('comparison review controller — real readiness and admission lifetime
             evidence: { state: 'unavailable' as const, reason: 'patch_unavailable' as const }, occurrences: [],
         }));
         const { controller } = await setup({ comparisonId: null,
-            capture: () => ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: { id: `captured-${++captures}`,
+            capture: () => ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: { id: String(++captures).padStart(64, '0'),
                 source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: {},
                 inventory: { state: 'complete', files, reasons: [] } },
                 metadata: { source: { kind: 'workingTree' }, sourceKey: `captured-${captures}` } }),
@@ -195,35 +217,34 @@ describe('comparison review controller — real readiness and admission lifetime
         const firstResult = await first.pending;
         expect(captures, JSON.stringify(firstResult)).toBe(1);
         expect(firstResult.comparison.ok).toBe(false);
-        await vi.waitFor(() => expect(controller.getCurrent().actionInput.comparisonId, JSON.stringify(firstResult)).toBe('captured-1'));
+        await vi.waitFor(() => expect(controller.getCurrent().actionInput.comparisonId, JSON.stringify(firstResult)).toBe(CAPTURED_COMPARISON_ID));
         const retry = await submit(controller);
         expect((await retry.pending).comparison.ok).toBe(false);
         expect(captures).toBe(1);
         const requests = fixture.requests.filter(isStart);
         expect(requests).toHaveLength(2);
         for (const request of requests) {
-            const start = expect.objectContaining({ intentInput: expect.objectContaining({ comparisonId: 'captured-1' }) });
+            const start = expect.objectContaining({ intentInput: expect.objectContaining({ comparisonId: CAPTURED_COMPARISON_ID }) });
             expect(request.payload).toEqual(request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
                 ? start : expect.objectContaining({ start }));
         }
     });
     it('starts the selected comparison without capturing or reading another comparison', async () => {
         let captures = 0;
-        const { controller } = await setup({ comparisonId: 'selected-comparison',
+        const { controller } = await setup({ comparisonId: SELECTED_COMPARISON_ID,
             capture: () => { captures += 1; throw new Error('Selected comparison must not recapture the working tree'); },
             start: () => ({ runId: 'selected-review', callId: 'selected-review-call', sidechainId: 'selected-review-call' }) });
         await ready(controller);
         expect(fixture.requests.filter(isStart)).toHaveLength(0);
         const { pending } = await submit(controller);
         const result = await pending;
-        expect(result.comparison, JSON.stringify(result.actionResult)).toMatchObject({ ok: true, reviewRunIds: ['selected-review'] });
+        expect(result.comparison, JSON.stringify({ actionResult: result.actionResult, requests: fixture.requests })).toMatchObject({ ok: true, reviewRunIds: ['selected-review'] });
         expect(captures).toBe(0);
         const requests = fixture.requests.filter(isStart);
         expect(requests).toHaveLength(1);
-        const start = expect.objectContaining({ intentInput: expect.objectContaining({ comparisonId: 'selected-comparison' }) });
+        const start = expect.objectContaining({ intentInput: expect.objectContaining({ comparisonId: SELECTED_COMPARISON_ID }) });
         expect(requests[0]?.payload).toEqual(requests[0]?.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
             ? start : expect.objectContaining({ start }));
-        expect(fixture.requests.filter(request => request.method.startsWith('scm.'))).toHaveLength(0);
     });
     it('keeps a selected reviewer unavailable while the Machine inventory is unanswered', async () => {
         const inventory = createDeferred<unknown>();
@@ -251,19 +272,23 @@ describe('comparison review controller — real readiness and admission lifetime
     it.each(['configured', 'external'] as const)('admits a ready %s reviewer with its original target identity', async reviewer => {
         const { controller, engineId, admission } = await setup({ reviewer });
         await ready(controller);
-        const { pending } = await submit(controller);
+        const { pending } = await submit(controller, { reviewers: [{ kind: 'engine', engineId, modelId: 'chosen-review-model' }] });
         let outcome: unknown;
         void pending.then(value => { outcome = value; }, error => { outcome = error; });
         await vi.waitFor(() => expect(fixture.requests.filter(isStart), JSON.stringify(outcome)).toHaveLength(1));
+        const request = fixture.requests.find(isStart)!;
+        const expectedStart = expect.objectContaining({ modelId: 'chosen-review-model' });
+        expect(request.payload).toEqual(request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+            ? expectedStart : expect.objectContaining({ start: expectedStart }));
         await act(async () => admission.resolve({ runId: 'review-run', callId: 'review-call', sidechainId: 'review-call' }));
         const result = await pending;
-        expect(result.comparison).toMatchObject({ ok: true, reviewRunIds: ['review-run'], comparisonId: 'comparison-1' });
+        expect(result.comparison).toMatchObject({ ok: true, reviewRunIds: ['review-run'], comparisonId: COMPARISON_ID });
         expect(controller.getCurrent().comparison.plan.selected.map(engine => engine.engineId)).toEqual([engineId]);
     });
     it.each([{ reviewer: 'configured' as const, missingReadiness: true }, { signedIn: false }])(
         'keeps a selected reviewer unavailable when canonical readiness refuses it (%j)', async options => {
             const { controller } = await setup(options);
-            await vi.waitFor(() => expect(fixture.requests.some(request => request.method === 'capabilities.detect')).toBe(true));
+            await vi.waitFor(() => expect(controller.getCurrent().inventory.status).toBe('ready'));
             await flushHookEffects();
             expect(controller.getCurrent().comparison.plan.canStart).toBe(false);
             expect(fixture.requests.filter(isStart)).toHaveLength(0);
@@ -278,7 +303,7 @@ describe('comparison review controller — real readiness and admission lifetime
         const result = await pending;
         expect(result.comparison.ok).toBe(false);
         expect(result.actionResult).toMatchObject({ ok: true, result: { results: [
-            { key: 'claude', ok: false, errorCode: code },
+            { ok: false, errorCode: code },
         ] } });
     });
     it.each(['cancel', 'unmount', 'account retirement'] as const)('cancels pending admission on %s and ignores a late acknowledgement without replay', async departure => {

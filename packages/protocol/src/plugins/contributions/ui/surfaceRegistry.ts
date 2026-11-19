@@ -51,6 +51,20 @@ const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = lazyActionSpecAr
  * sections keep their own `contributes.sessionInfoSections` family.
  */
 export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
+  reviewFinding: Object.freeze({
+    role: 'reviewFinding' as const,
+    targets: Object.freeze({ app: 'appSurface' as const }),
+    presentations: Object.freeze(['content'] as const),
+    platforms: ALL_UI_SURFACE_PLATFORMS,
+    authoredIn: 'ui.views' as const,
+  }),
+  reviewEngineOptions: Object.freeze({
+    role: 'reviewEngineOptions' as const,
+    targets: Object.freeze({ app: 'appSurface' as const }),
+    presentations: Object.freeze(['content'] as const),
+    platforms: ALL_UI_SURFACE_PLATFORMS,
+    authoredIn: 'ui.views' as const,
+  }),
   agentSettings: Object.freeze({
     role: 'agentSettings' as const,
     targets: Object.freeze({ app: 'appSurface' as const }),

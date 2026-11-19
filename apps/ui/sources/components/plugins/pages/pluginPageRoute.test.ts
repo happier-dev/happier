@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { appendPluginPageRouteSubPath, buildPluginAppPageRoutePath, parsePluginAppPageRoutePath, buildPluginMachinePageRoutePath, buildPluginProjectPageRoutePath, pluginPageTargetKey } from './pluginPageRoute';
+import { appendPluginPageRouteSubPath, buildPluginPageRoutePath, buildPluginAppPageRoutePath, parsePluginAppPageRoutePath, buildPluginMachinePageRoutePath, buildPluginProjectPageRoutePath, pluginPageTargetKey } from './pluginPageRoute';
 
 describe('host plugin page route generation', () => {
+    it('keeps a contextual plugin page inside its opened Review and separates launch custody', () => {
+        const target = { kind: 'app' as const, context: { kind: 'review' as const, reviewId: 'review/one' } };
+        expect(buildPluginPageRoutePath({ ...target, pluginId: 'acme.notes', localId: 'overview',
+            subPath: 'findings/one two', view: 'detail' }))
+            .toBe('/artifacts/review%2Fone?pluginId=acme.notes&localId=overview&pluginPath=findings%2Fone+two&view=detail');
+        expect(pluginPageTargetKey(target)).not.toBe(pluginPageTargetKey({ kind: 'app' }));
+        expect(pluginPageTargetKey(target)).not.toBe(pluginPageTargetKey({ ...target,
+            context: { kind: 'review', reviewId: 'review/two' } }));
+    });
     it('round-trips a resource subpath containing slashes through the public route builder', () => {
         const resource = { kind: 'pullRequest', url: 'https://github.com/happier-dev/triage-qa-sandbox/pull/63' };
         const subPath = `resource/${encodeURIComponent(JSON.stringify(resource))}`;

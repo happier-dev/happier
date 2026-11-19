@@ -73,6 +73,7 @@ import {
     type PluginUiSurfaceBindingV1,
     type PluginUiJsonValueV1,
     type PluginUiLaunchInputV1,
+    type PluginUiReviewContextV1,
     type PluginUiOpenConnectedAccountsRequestV1,
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSubPathV1,
@@ -1883,6 +1884,8 @@ function PluginSurfaceHostMount(props: Readonly<(
         role: PluginUiInlineSurfaceRoleV1;
         presentation: 'content' | 'fill';
     }>;
+    /** Content supplied by the opened Review owner, never a new permission decision. */
+    reviewContext?: PluginUiReviewContextV1;
 }>): React.ReactElement | null {
     const router = useRouter();
     const targetedMount = 'targetedMount' in props ? props.targetedMount : undefined;
@@ -2458,17 +2461,23 @@ function PluginSurfaceHostMount(props: Readonly<(
             : ephemeralMount
                 ? Object.freeze({ resolved: true as const, target: ephemeralMount.physicalTarget })
         : surfaceTargetResolution;
+    const surfacePlatform = props.platform ?? 'web';
+    const surfaceEnvironment = usePluginSurfaceEnvironment(surfacePlatform);
+    const reviewContext = props.reviewContext ?? surfaceEnvironment.openedFrom?.review;
     const ordinaryResourceContext = React.useMemo(() => {
         if (!resolvedSurfaceTarget.resolved) return undefined;
         const target = resolvedSurfaceTarget.target;
         const binding = projectedMountBinding?.kind === 'destination' ? projectedMountBinding.destinationBinding : null;
         if (!hasEmbeddedRendererMount && (binding?.container === 'rightSidebarTab' || binding?.container === 'appPage')) {
-            return resolvePluginSidebarResourceContext({ binding, sessionId: props.sessionId ?? undefined, target,
-                mountInstanceKey: mountedInstanceKey, launchInput: ordinaryLaunchInput }) ?? undefined;
+            const context = resolvePluginSidebarResourceContext({ binding, sessionId: props.sessionId ?? undefined, target,
+                mountInstanceKey: mountedInstanceKey, launchInput: ordinaryLaunchInput });
+            return context ? Object.freeze({ ...context,
+                ...(reviewContext ? { review: reviewContext } : {}) }) : undefined;
         }
         return Object.freeze({ kind: 'surface' as const, mountInstanceKey: mountedInstanceKey ?? mountedSurfaceId,
-            launchInput: ordinaryLaunchInput ?? null, target });
-    }, [hasEmbeddedRendererMount, mountedInstanceKey, mountedSurfaceId, ordinaryLaunchInput, projectedMountBinding, resolvedSurfaceTarget, props.sessionId]);
+            launchInput: ordinaryLaunchInput ?? null, target,
+            ...(reviewContext ? { review: reviewContext } : {}) });
+    }, [hasEmbeddedRendererMount, mountedInstanceKey, mountedSurfaceId, ordinaryLaunchInput, projectedMountBinding, resolvedSurfaceTarget, reviewContext, props.sessionId]);
     const surfaceTargetAuthorityKey = resolvedSurfaceTarget.resolved
         ? getPluginSurfaceTargetAuthorityKey(resolvedSurfaceTarget.target)
         : null;
@@ -2490,8 +2499,6 @@ function PluginSurfaceHostMount(props: Readonly<(
         // cannot replace a fixed host action by declaring the same key.
         ...resolvePluginUiFrameworkTranslations(),
     }), [loadedSurfaceTranslations, surfaceLocale]);
-    const surfacePlatform = props.platform ?? 'web';
-    const surfaceEnvironment = usePluginSurfaceEnvironment(surfacePlatform);
     const declarativePresentationEnvironment = React.useMemo(
         () => projectHappierUiEnvironment({
             ...surfaceEnvironment,
@@ -3492,7 +3499,8 @@ function PluginSurfaceHostMount(props: Readonly<(
     const inlineMountBinding = mountBinding?.kind === 'inline' ? mountBinding : null;
     const inlinePresentation = inlineSlot?.presentation;
     // Public mount context projects the admitted binding, not each host render.
-    const surfaceMount = React.useMemo(() => mountBinding?.kind === 'inline'
+    const surfaceMount = React.useMemo(() => {
+        const mount = mountBinding?.kind === 'inline'
         ? inlinePresentation ? createPluginSurfaceInlineMountContext(mountBinding, inlinePresentation) : null
         : mountBinding?.kind === 'targetedSurface'
             ? createPluginSurfaceTargetedMountContext(mountBinding)
@@ -3502,7 +3510,9 @@ function PluginSurfaceHostMount(props: Readonly<(
                     ? createPluginSurfaceEphemeralMountContext()
                     : mountBinding?.kind === 'destination'
                         ? createPluginSurfaceDestinationMountContext(mountBinding, props.mountInstanceKey)
-                        : null, [inlinePresentation, mountBinding, props.mountInstanceKey]);
+                        : null;
+        return mount && reviewContext ? Object.freeze({ ...mount, review: reviewContext }) : mount;
+    }, [inlinePresentation, mountBinding, props.mountInstanceKey, reviewContext]);
     const renderGate: PluginSurfaceRenderGateDecision = selectedEmbeddedRenderer
         ? selectedEmbeddedRenderer.availability.state === 'available'
             ? { canRender: true as const }
@@ -4319,6 +4329,7 @@ export function PluginSurfacePlacementHost(props: Readonly<{
         role: PluginUiInlineSurfaceRoleV1;
         presentation: 'content' | 'fill';
     }>;
+    reviewContext?: PluginUiReviewContextV1;
 }>): React.ReactElement | null {
     return (
         <PluginSurfaceHost
@@ -4353,6 +4364,7 @@ export function PluginSurfacePlacementHost(props: Readonly<{
             policyContext={props.policyContext}
             reactNativeLoaderBackend={props.reactNativeLoaderBackend}
             inlineMount={props.inlineMount}
+            reviewContext={props.reviewContext}
         />
     );
 }

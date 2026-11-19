@@ -1,7 +1,5 @@
-import { resolveReviewNarratorPolicy } from '@happier-dev/protocol/reviews/reviewEngines';
-import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
-import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
-import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
+import { resolveReviewNarratorPolicy, type ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
+import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
 /**
  * A review engine as the Start review dialog shows it, read from the host's `review.engines.list`
@@ -14,17 +12,8 @@ export type ReviewWalkthroughEngine = Readonly<{
     launchModelId?: string | null;
     enabled: boolean;
     structuredNarration: boolean;
-    /** A matching Machine agent's credential readiness; null when the inventory has no matching agent. */
-    machineAgent?: MachineAgent | null;
-    machineInventoryStatus?: MachineAgentsSnapshot['status'];
+    retentionPolicy?: ReviewEngineListItem['retentionPolicy'];
 }>;
-
-export function isReviewWalkthroughEngineAvailable(engine: ReviewWalkthroughEngine): boolean {
-    if (!engine.enabled) return false;
-    if (engine.machineAgent) return isMachineAgentReady(engine.machineAgent);
-    // A settled inventory has no agent row for review-only engines. Their review inventory owns availability.
-    return engine.machineInventoryStatus === undefined || engine.machineInventoryStatus === 'ready';
-}
 
 export type ReviewWalkthroughNarrator = Readonly<{
     /** several: one model writes from every engine's findings · findings_only: the reviewer writes no prose. */
@@ -40,6 +29,7 @@ export type ReviewWalkthroughFooter =
 
 export type ReviewWalkthroughPlan = Readonly<{
     selected: readonly ReviewWalkthroughEngine[];
+    reviewers: readonly ReviewReviewerSelectionV1[];
     walkthrough: boolean;
     /** Shown only when several engines review or the one reviewer writes no prose (lab WT5-R4, R7). */
     narrator: ReviewWalkthroughNarrator | null;
@@ -49,7 +39,7 @@ export type ReviewWalkthroughPlan = Readonly<{
 }>;
 
 function isNarrationCapable(engine: ReviewWalkthroughEngine): boolean {
-    return isReviewWalkthroughEngineAvailable(engine) && engine.structuredNarration;
+    return engine.enabled && engine.retentionPolicy !== 'ephemeral' && engine.structuredNarration;
 }
 
 /**
@@ -60,27 +50,29 @@ function isNarrationCapable(engine: ReviewWalkthroughEngine): boolean {
  */
 export function resolveReviewWalkthroughPlan(params: Readonly<{
     engines: readonly ReviewWalkthroughEngine[];
-    selectedEngineIds: readonly string[];
+    reviewers: readonly ReviewReviewerSelectionV1[];
     walkthrough: boolean;
     narratorEngineId: string | null;
 }>): ReviewWalkthroughPlan {
-    const selected = params.engines.filter((engine) => isReviewWalkthroughEngineAvailable(engine) && params.selectedEngineIds.includes(engine.engineId));
-    if (selected.length === 0) {
-        return { selected, walkthrough: params.walkthrough, narrator: null, footer: null, canStart: false, blocked: 'no_engine' };
+    const selected = params.engines.filter((engine) => engine.enabled && params.reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.engineId === engine.engineId));
+    const reviewers = params.reviewers.filter(reviewer => reviewer.kind !== 'engine' || selected.some(engine => engine.engineId === reviewer.engineId));
+    if (reviewers.length === 0) {
+        return { selected, reviewers, walkthrough: params.walkthrough, narrator: null, footer: null, canStart: false, blocked: 'no_engine' };
     }
     if (!params.walkthrough) {
-        return { selected, walkthrough: false, narrator: null, footer: null, canStart: true, blocked: null };
+        return { selected, reviewers, walkthrough: false, narrator: null, footer: null, canStart: true, blocked: null };
     }
     const policy = resolveReviewNarratorPolicy({
         selectedEngineIds: selected.map((engine) => engine.engineId),
         engines: params.engines.map((engine) => ({
             value: engine.engineId,
-            enabled: isReviewWalkthroughEngineAvailable(engine),
+            enabled: engine.enabled,
+            retentionPolicy: engine.retentionPolicy,
             capabilities: { structuredNarration: engine.structuredNarration },
         })),
     });
     if (!policy.requiresSeparateNarrator) {
-        return { selected, walkthrough: true, narrator: null, footer: { kind: 'review_then_walkthrough' }, canStart: true, blocked: null };
+        return { selected, reviewers, walkthrough: true, narrator: null, footer: { kind: 'review_then_walkthrough' }, canStart: true, blocked: null };
     }
     const candidates = params.engines.filter(isNarrationCapable);
     const chosen = candidates.find((engine) => engine.engineId === params.narratorEngineId)
@@ -95,6 +87,7 @@ export function resolveReviewWalkthroughPlan(params: Readonly<{
             : { kind: 'review_then_walkthrough' };
     return {
         selected,
+        reviewers,
         walkthrough: true,
         narrator: { reason, engineId: chosen?.engineId ?? null, candidates },
         footer,
@@ -119,7 +112,7 @@ export function buildReviewStartWithWalkthroughInput(params: Readonly<{
     return {
         ...(params.sessionId !== null ? { sessionId: params.sessionId }
             : { target: { kind: 'detached' }, machineId: params.machineId, cwd: params.cwd }),
-        engineIds: params.plan.selected.map((engine) => engine.engineId),
+        reviewers: params.plan.reviewers,
         instructions: params.instructions.trim(),
         comparisonId: params.comparisonId,
         ...(params.plan.walkthrough ? { outputs: ['walkthrough'] } : {}),

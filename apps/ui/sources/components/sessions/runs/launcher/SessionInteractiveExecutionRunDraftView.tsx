@@ -61,7 +61,7 @@ import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraft
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { readReviewLauncherEngineIds, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
+import { readReviewLauncherEngineIds, readReviewLauncherReviewers, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { ExecutionRunLauncherOptions } from './ExecutionRunLauncherOptions';
 import {
@@ -104,8 +104,12 @@ import { ExecutionRunChildChoiceCard } from './ExecutionRunChildChoiceCard';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useExecutionRunLauncherDraft } from './useExecutionRunLauncherDraft';
 import { useComparisonReviewDraft, type ComparisonReviewDraftInput } from './useComparisonReviewDraft';
+import { useReviewEngineInventory } from './useReviewEngineInventory';
 import { ComparisonReviewScope, ComparisonWalkthroughChoice } from './ComparisonReviewFields';
 import { ReviewStartBody } from './ReviewStartBody';
+import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ReviewEngineOptionsPluginContent } from '@/components/reviews/plugins/ReviewPluginContent';
 import { compileReviewLauncherInput } from './reviewLauncherSelection';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import { getValueAtPath } from '@/components/sessions/actions/ActionInputFields';
@@ -188,6 +192,7 @@ export type ExecutionRunStartedPresentation = ExecutionRunReviewPresentation & R
 const UNAVAILABLE_REASON_KEYS = SESSION_EXECUTION_RUN_LAUNCH_UNAVAILABLE_KEYS;
 const RUN_SESSION_ADMISSIBLE: ContextualStartAdmissibleSet = { who: ['newAgent'], machine: 'fixed', folder: 'fixed' };
 const RUN_DETACHED_ADMISSIBLE: ContextualStartAdmissibleSet = { ...RUN_SESSION_ADMISSIBLE, folder: 'select' };
+const EMPTY_REVIEW_ENGINE_OPTIONS = Object.freeze({});
 
 /**
  * A fresh start of one refused target with its chosen selection. `waiting` are the other refused
@@ -364,16 +369,21 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         }),
     });
     const { identity, setIdentity, actionInput, setActionInput: setNormalizedActionInput, setUserActionInput: setActionInput } = launcherDraft;
+    const reviewInventory = useReviewEngineInventory({
+        enabled: intent === 'review' && !props.credentialSelectionOnly,
+        sessionId: props.sessionId,
+        machineId: machineId ?? undefined,
+        serverId,
+        accountBinding,
+    });
     const comparisonReview = useComparisonReviewDraft({
         sessionId: props.sessionId,
         machineId: machineId ?? undefined,
         serverId,
         comparisonReview: props.comparisonReview ?? null,
-        engineIds: readReviewLauncherEngineIds(actionInput),
         actionInput,
         setActionInput,
-        machineInventory: machineAgents,
-        onRetryInventory: machineAgents.refresh,
+        reviewInventory,
     });
     const options = useExecutionRunLauncherOptionsModel({
         sessionId: props.sessionId,
@@ -384,6 +394,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         singleTarget: intent !== 'review',
         enabledAgentIds,
         executionRunsBackends,
+        reviewEngines: reviewInventory.status === 'ready' ? reviewInventory.inventory.items : undefined,
         acpCatalogSnapshot,
         initialBackendTarget: backendTarget,
         inheritedModelSelection,
@@ -831,13 +842,13 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         const choice = options.backendChoices.find((candidate) => candidate.targetKey === targetKey);
         const adding = !options.selectedBackendTargetKeys.includes(targetKey);
         onSelectBackend(targetKey);
-        if (chosenRoleAgentTargetKey && choice && adding && !choiceRunsAgent(choice, chosenRoleAgentTargetKey)) {
+        if (intent !== 'review' && chosenRoleAgentTargetKey && choice && adding && !choiceRunsAgent(choice, chosenRoleAgentTargetKey)) {
             setActionInput((previous) => {
                 const { roleId: _roleId, ...next } = previous;
                 return next;
             });
         }
-    }, [chosenRoleAgentTargetKey, onSelectBackend, options.backendChoices, options.selectedBackendTargetKeys]);
+    }, [intent, chosenRoleAgentTargetKey, onSelectBackend, options.backendChoices, options.selectedBackendTargetKeys]);
     const chooseRole = React.useCallback((roleId: string) => {
         setError(null);
         const item = roles.find((candidate) => candidate.roleId === roleId);
@@ -1162,6 +1173,61 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     [actionInput, draftModelSelection, intent, machineId, options.backendChoices, options.inheritedDraftSelection, reviewModelChoice, reviewModelTarget,
         options.inheritedDraftTeamCredentialModel, props.sessionId, selectBackend, serverId, setActionInput]);
 
+    const reviewStepControls: NonNullable<React.ComponentProps<typeof ReviewStartBody>['stepControls']> = (input, setInput, stepIndex) => {
+        const reviewers = readReviewLauncherReviewers(input);
+        const configuration = reviewLauncherEngineConfiguration(input);
+        const value = typeof configuration.roleId === 'string' ? configuration.roleId : resolveExecutionRunImplicitRoleIdV1('review');
+        const item = roles.find(candidate => candidate.roleId === value);
+        const selected = options.backendChoices.filter(choice => reviewers.some(reviewer => reviewer.kind === 'engine'
+            && reviewer.engineId === (choice.reviewEngineId ?? choice.backendId)));
+        const rail = buildRolesRailPickerOption({ value, roles, onManageRoles: openRoleSettings,
+            onChange: roleId => setInput(previous => {
+                const role = roles.find(candidate => candidate.roleId === roleId);
+                const follow = role?.agentTargetKey ? options.backendChoices.find(choice => !choice.disabled
+                    && choiceRunsAgent(choice, role.agentTargetKey!)) : null;
+                const next = follow ? selectReviewLauncherEngines(previous, [follow.reviewEngineId ?? follow.backendId]) : previous;
+                return { ...next, reviewers: readReviewLauncherReviewers(next).map(reviewer => reviewer.kind === 'engine'
+                    ? { ...reviewer, roleId } : reviewer) };
+            }),
+            describeConsequence: role => role.agentTargetKey && selected.some(choice => !choiceRunsAgent(choice, role.agentTargetKey!))
+                ? t('agentStart.role.replaces', { agent: selected.map(choice => choice.title).join(' + ') }) : null,
+        });
+        const details = new Map(agentDetails);
+        for (const [index, reviewer] of reviewers.entries()) {
+            if (reviewer.kind !== 'engine') continue;
+            const choice = options.backendChoices.find(candidate => (candidate.reviewEngineId ?? candidate.backendId) === reviewer.engineId);
+            if (!choice) continue;
+            const engineInput = reviewLauncherEngineConfiguration({ ...input, reviewers: [reviewer] });
+            const parsed = ProviderBoundModelRefSchema.safeParse(engineInput.modelSelection);
+            const setEngineInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>> = update => setInput(previous => {
+                const roster = readReviewLauncherReviewers(previous);
+                const current = roster[index];
+                if (!current || current.kind !== 'engine') return previous;
+                const updated = updateReviewLauncherEngineConfiguration({ ...previous, reviewers: [current] }, update);
+                return { ...previous, reviewers: roster.map((value, at) => at === index ? readReviewLauncherReviewers(updated)[0]! : value) };
+            });
+            const profileId = choice.reviewInventoryItem?.profileId;
+            const profile = parseQualifiedPluginContributionKey(profileId);
+            const renderDetail = () => <><ExecutionRunAgentModelPicker choice={choice}
+                sessionId={props.sessionId} serverId={serverId} machineId={machineId} actionInput={engineInput}
+                selected={parsed.success ? parsed.data : null} inheritedTeamCredentialModel={null}
+                selectBackend={() => undefined} setActionInput={setEngineInput} />
+                {profile && profileId && serverId ? <ReviewEngineOptionsPluginContent pluginId={profile.pluginId}
+                    engineId={reviewer.engineId} profileId={profileId} options={reviewer.options ?? EMPTY_REVIEW_ENGINE_OPTIONS}
+                    serverId={serverId} /> : null}</>;
+            details.set(choice.targetKey, renderDetail);
+            details.set(reviewReviewerIdForSelectionV1(index), renderDetail);
+        }
+        const whoAccessory = selected.length > 0 ? {
+            label: item?.name ?? (rolesStatus === 'loading' ? t('common.loading') : value ?? t('roles.rail.title')),
+            render: (close: () => void) => rail.renderDetailContent?.({ onRequestClose: close }) ?? null,
+        } : stepIndex === 0 ? {
+            label: roleItem?.name ?? (rolesStatus === 'loading' ? t('common.loading') : roleValue ?? t('roles.rail.title')),
+            render: (close: () => void) => rolesRail.renderDetailContent?.({ onRequestClose: close }) ?? null,
+        } : undefined;
+        return { details, whoAccessory };
+    };
+
     const startQuestion = <View style={styles.composerHang}><SessionParticipantComposer
                 // The draft identity rotates as a live prop. Keying on it would remount the
                 // composer and discard the text, references and staged attachments the
@@ -1242,10 +1308,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             ) : null}
             {intent === 'review' && !props.credentialSelectionOnly ? <ReviewStartBody input={actionInput}
                 onChange={setActionInput} source={contextualSource} choices={options.backendChoices}
+                stepControls={reviewStepControls}
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}
-                whoAccessory={{ label: roleItem?.name ?? roleValue ?? t('roles.rail.title'),
-                    render: close => rolesRail.renderDetailContent?.({ onRequestClose: close }) ?? null }}
                 credentials={reviewOptions.controls}
                 narrator={props.comparisonReview ? <ComparisonWalkthroughChoice {...comparisonReview.fields} /> : null}>
                 {startQuestion}

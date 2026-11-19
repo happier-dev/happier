@@ -56,7 +56,7 @@ import {
     selectPluginPagePlacements,
     type PluginPage,
 } from './pluginPages';
-import { appendPluginPageRouteSubPath, buildPluginMachinePageRoutePath, parsePluginAppPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
+import { appendPluginPageRouteSubPath, buildPluginPageRoutePath, parsePluginAppPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
 import { usePluginPageIngress, type StagePluginPageExplicitHref } from './pluginPageIngress';
 
 /**
@@ -374,7 +374,7 @@ export function PluginPageLaunchInputScope(props: Readonly<{
             pageId: buildPluginSurfaceDestinationId(location.pluginId, location.localId), subPath: location.subPath,
         } : null, href);
     }, [store]);
-    usePluginPageIngress(stageExplicitHref, retireUnmatchedLocation, target.kind === 'app');
+    usePluginPageIngress(stageExplicitHref, retireUnmatchedLocation, targetKey === 'app');
     const value = React.useMemo(
         () => Object.freeze({ authoritiesByPageId, store, target, stageExplicitHref }),
         [authoritiesByPageId, store, target, stageExplicitHref],
@@ -631,8 +631,8 @@ function openResolvedPluginPage(input: Readonly<{
             reason: 'plugin_surface_open_sub_path_invalid',
         };
     }
-    const routePath = page.target.kind === 'machine'
-        ? buildPluginMachinePageRoutePath({ ...page.target, pluginId: page.pluginId, localId: page.localId, subPath })
+    const routePath = page.target.kind === 'machine' || (page.target.kind === 'app' && page.target.context)
+        ? buildPluginPageRoutePath({ ...page.target, pluginId: page.pluginId, localId: page.localId, subPath })
         : appendPluginPageRouteSubPath(page.routePath, subPath);
     if (request.presentation === 'window') {
         // A new realm restores through the incumbent page fallback. Runtime

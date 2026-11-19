@@ -69,6 +69,7 @@ import { beginAcpCatalogLoad } from '@/sync/store/settings/acpCatalogSnapshot';
 import { readComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
@@ -181,6 +182,7 @@ let serverId = '';
 let sequence = 0;
 let screen: Screen;
 let backends: Record<string, { available: boolean; intents: string[] }>;
+let reviewProfileIds: Readonly<Record<string, string>> = {};
 let protocolSupported = true;
 let detachedScopeSupported = true;
 let admissionFailure = false;
@@ -295,8 +297,8 @@ async function settle() {
 async function waitFor(assertion: () => void) {
     await vi.waitFor(async () => { await settle(); assertion(); });
 }
-async function mount(props: Partial<React.ComponentProps<typeof SessionInteractiveExecutionRunDraftView>> = {}) {
-    screen = await renderScreen(<SessionInteractiveExecutionRunDraftView sessionId="session_1" serverId={serverId} onRunStarted={vi.fn()} {...props} />, {
+async function mount(props: Partial<React.ComponentProps<typeof SessionInteractiveExecutionRunDraftView>> = {}, wrap: (content: React.ReactElement) => React.ReactElement = content => content) {
+    screen = await renderScreen(wrap(<SessionInteractiveExecutionRunDraftView sessionId="session_1" serverId={serverId} onRunStarted={vi.fn()} {...props} />), {
         createNodeMock: (element) => element.type === 'TextInput' || element.type === 'textarea' || element.type === 'HappierComposerInput'
             ? { focus: platform.focus, blur: vi.fn(), setNativeProps: vi.fn(), setSelection: vi.fn(), setTextAndSelection: vi.fn(),
                 setDropCaret: vi.fn(), offsetAtPoint: vi.fn(async () => null),
@@ -320,9 +322,13 @@ async function send(text = 'Inspect this', waitForCompletion = true) {
 // Select through the shared list's real row, preserving its controlled selection.
 function whoList() { return screen.findAllByType(SelectionList).find(node => node.props.testID === 'contextual-start-who')!; }
 function agentRows(): readonly SelectionListOption[] {
-    return whoList().props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : []);
+    return whoList().props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : [])
+        .filter((option: SelectionListOption) => option.testID?.startsWith('contextual-start-agent:'));
 }
-function selectedAgentIds(): readonly string[] { return [...whoList().props.selection.selectedIds]; }
+function selectedAgentIds(): readonly string[] {
+    const engines = new Set(agentRows().map(option => option.id));
+    return [...whoList().props.selection.selectedIds].filter(id => engines.has(id));
+}
 async function showAgentChoices() {
     if (screen.findByTestId('contextual-start-change-who')) await screen.pressByTestIdAsync('contextual-start-change-who');
     if (screen.findByTestId('second-opinion.reviewers-more')) await screen.pressByTestIdAsync('second-opinion.reviewers-more');
@@ -392,6 +398,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         secretAvailable = false;
         publishedProfiles = [];
         roleOverrides = {};
+        reviewProfileIds = {};
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
         startRelayFailure = null;
@@ -523,6 +530,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     execution: { ok: true, result: { items: Object.keys(backends).map((engineId) => ReviewEngineListItemSchema.parse({
                         engineId, value: engineId, label: engineId, enabled: backends[engineId]!.available,
                         capabilities: { structuredNarration: true },
+                        ...(reviewProfileIds[engineId] ? { profileId: reviewProfileIds[engineId] } : {}),
                     })) } },
                 }));
                 if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
@@ -596,6 +604,51 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
     afterEach(async () => { await disconnectActiveServerConnection(); await standardCleanup(); await home?.dispose(); restorePopoverGlobals?.(); });
 
+    it('activates contributed options only for the opened selected review engine', async () => {
+        const { buildQualifiedPluginContributionKey, createPluginContributionIdentity } = await import('@happier-dev/protocol/plugins/contribution-identity');
+        const { normalizePluginUiInlineSurfaceBindingV1 } = await import('@happier-dev/protocol/plugins/ui');
+        const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+        type PluginUiInlineSurfacePlacementProjection = import('@/sync/domains/plugins/ui/projection').PluginUiInlineSurfacePlacementProjection;
+        const { createPluginDeclarativeModelFixture } = await import('@/dev/testkit/fixtures/pluginDeclarativeModelFixture');
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const placements = ['claude', 'codex'].map(engineId => {
+            const pluginId = `fixture.${engineId}`;
+            reviewProfileIds = { ...reviewProfileIds, [engineId]: buildQualifiedPluginContributionKey(
+                createPluginContributionIdentity({ pluginId, localId: 'review' })) };
+            const binding = normalizePluginUiInlineSurfaceBindingV1({ pluginId, surfaceId: 'options', rendererId: 'options',
+                role: 'reviewEngineOptions', target: { kind: 'app' } });
+            if (!binding) throw new Error('Expected the Review options binding');
+            return { id: `surfacePlacement:${pluginId}:options`, pluginId, occurrenceId: `${pluginId}#1`,
+                contributionKind: 'surfacePlacement', descriptorId: 'options', binding, target: binding.target,
+                renderer: { kind: 'declarative', contributionId: 'options', model: createPluginDeclarativeModelFixture({
+                    pluginId, localId: 'options', occurrenceId: `${pluginId}#1`,
+                    document: { version: 1, root: { kind: 'text', text: `${engineId} contributed options` } },
+                }) }, display: {}, availability: { state: 'available', reason: 'available', diagnostics: [] },
+                headerActions: [] } satisfies PluginUiInlineSurfacePlacementProjection;
+        });
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+            surfacePlacementsById: Object.fromEntries(placements.map(placement => [placement.id, placement])) };
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        await mount({ intent: 'review', initialActionInput: { reviewers: [
+            { kind: 'engine', engineId: 'claude', options: { selectedFeature: 'auth' } },
+            { kind: 'engine', engineId: 'codex', options: { selectedFeature: 'storage' } },
+        ] } }, content => <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection,
+            pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: 'machine_1',
+            serverId, platform: 'web', accountLifetime: lifetime, reloadConnectedAccountProjection: () => {},
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} }}>
+            {content}
+        </AppShellPluginUiProjectionValueProvider>);
+        expect(screen.getTextContent()).not.toContain('contributed options');
+        const claude = agentRows().find(option => option.testID === 'contextual-start-agent:claude');
+        if (!claude) throw new Error('Expected the chosen Claude engine');
+        await screen.pressByTestIdAsync(`contextual-start-change:${claude.id}`);
+        await waitFor(() => expect(screen.getTextContent()).toContain('claude contributed options'));
+        expect(screen.getTextContent()).not.toContain('codex contributed options');
+        await screen.pressByTestIdAsync(`contextual-start-change:${claude.id}`);
+        expect(screen.getTextContent()).not.toContain('contributed options');
+        expect(emittedStarts).toEqual([]);
+    });
     it.each([false, true])('summarizes the reviewed working changes from the scoped SCM source (detached=%s)', async detached => {
         const snapshot: ScmWorkingSnapshot = {
             projectKey: `${serverId}:machine_1:/repo`, fetchedAt: 1,
@@ -1832,12 +1885,21 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(lists).toHaveLength(2);
         const second = lists[1]!;
         const rows: SelectionListOption[] = second.props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : []);
-        await act(async () => { rows.find(row => canonicalTargetKey(row.id) === canonicalTargetKey('codex'))!.onSelect?.(); });
+        await act(async () => { rows.find(row => row.testID === 'contextual-start-agent:codex')!.onSelect?.(); });
         expect(selectedAgentIds()).toHaveLength(1);
         expect([...screen.findAllByType(SelectionList).filter(node => node.props.testID === 'contextual-start-who')[1]!.props.selection.selectedIds]).toHaveLength(1);
         await screen.pressByTestIdAsync('review-start-step:1:header');
         await screen.pressByTestIdAsync('review-start-step:1:header');
         expect([...screen.findAllByType(SelectionList).filter(node => node.props.testID === 'contextual-start-who')[1]!.props.selection.selectedIds]).toHaveLength(1);
+        const accessories = screen.root.findAll(node => node.props.testID === 'contextual-start-who-accessory'
+            && typeof node.props.onPress === 'function');
+        await act(async () => { accessories.at(-1)!.props.onPress(); });
+        await waitFor(() => expect(screen.findByTestId('roles-rail-option:scout')).not.toBeNull());
+        await screen.pressByTestIdAsync('roles-rail-option:scout');
+        await settle();
+        const roleLabels = screen.findAllByType(TextLinkButton)
+            .filter(node => node.props.testID === 'contextual-start-who-accessory').map(node => node.props.label);
+        expect(roleLabels).toEqual(['Reviewer', 'Scout']);
         expect(emittedStarts).toEqual([]);
     });
     it('starts Second opinion through the real review Action with its explicit role', async () => {

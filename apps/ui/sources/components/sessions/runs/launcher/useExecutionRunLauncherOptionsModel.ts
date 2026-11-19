@@ -5,6 +5,7 @@ import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protoc
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { resolveSessionRoutePresentation } from '@/providers/session/resolveSessionRoutePresentation';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { resolveEffectiveInputFields as resolveEffectiveActionInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
@@ -41,6 +42,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     singleTarget?: boolean;
     enabledAgentIds: readonly string[];
     executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null | undefined;
+    reviewEngines?: readonly ReviewEngineListItem[];
     acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     initialBackendTarget: PersistedBackendTargetRefV2 | null;
     fallbackAgentId: string | null;
@@ -59,12 +61,13 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     const userConfiguration = useReviewLauncherEngineConfiguration(rawParams.actionInput, rawParams.setUserActionInput ?? rawParams.setActionInput, rawParams.intent === 'review');
     const params = { ...rawParams, ...configuration, setUserActionInput: userConfiguration.setActionInput };
     const actionId = resolveExecutionRunLauncherActionId(params.intent);
-    const catalogReady = params.acpCatalogSnapshot?.status === 'ready';
+    const catalogReady = params.intent === 'review' || params.acpCatalogSnapshot?.status === 'ready';
     // Only configured Agents depend on this catalog. Built-in and installed
     // Agent choices retain their own machine projection while it refreshes.
     const backendChoices = React.useMemo(() => resolveExecutionRunLauncherBackendChoices({
         enabledAgentIds: params.enabledAgentIds,
         executionRunsBackends: params.executionRunsBackends,
+        reviewEngines: params.reviewEngines,
         acpCatalogSnapshot: params.acpCatalogSnapshot,
         intent: params.intent,
         mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
@@ -74,6 +77,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
         params.acpCatalogSnapshot,
         params.enabledAgentIds,
         params.executionRunsBackends,
+        params.reviewEngines,
         params.intent,
         params.machineAgents,
         params.mergedBackendProjectionById,
@@ -109,12 +113,12 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
         if (params.intent === 'review') return readReviewLauncherEngineIds(params.actionInput);
         const raw = getValueAtPath(params.actionInput, targetFieldPath);
         return Array.isArray(raw) ? raw.map(String) : [];
-    }, [params.actionInput, targetFieldPath]);
+    }, [params.actionInput, params.intent, targetFieldPath]);
     const selectedBackendChoices = React.useMemo(() => backendChoices.filter((choice) => (
         selectedValues.includes(choice.targetKey) || selectedValues.includes(choice.backendId)
         || (choice.reviewEngineId !== undefined && selectedValues.includes(choice.reviewEngineId))
     )), [backendChoices, selectedValues]);
-    const selectedBackendChoice = selectedBackendChoices.length === 1 && selectedBackendChoices[0]?.disabled !== true
+    const selectedBackendChoice = (params.intent !== 'review' || selectedValues.length === 1) && selectedBackendChoices.length === 1 && selectedBackendChoices[0]?.disabled !== true
         ? selectedBackendChoices[0]!
         : null;
     const requestedProfileId = typeof params.actionInput.profileId === 'string' ? params.actionInput.profileId : '';
@@ -140,7 +144,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     );
     // An unanswered Machine leaves every choice unavailable; that must not rewrite the person's
     // selection, which settles against the answer when it arrives.
-    const machineAnswered = params.executionRunsBackends != null;
+    const machineAnswered = params.intent === 'review' ? params.reviewEngines !== undefined : params.executionRunsBackends != null;
 
     React.useEffect(() => {
         if (!catalogReady || !machineAnswered) return;
@@ -155,7 +159,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
             ? selectable.find((choice) => choice.targetKey === initialBackendTargetKey)
             : null;
         const preferred = initialChoice
-            ? (params.intent === 'review' ? initialChoice.backendId : initialChoice.targetKey)
+            ? (params.intent === 'review' ? initialChoice.reviewEngineId ?? initialChoice.backendId : initialChoice.targetKey)
             : selectableValues[0];
         const next = preserved.length > 0
             ? preserved
@@ -184,10 +188,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     const draftModelAgentTargetKey = draftModelSelection.success && draftModelSelection.data ? draftModelSelection.data.agentTargetKey : null;
     React.useEffect(() => {
         if (!draftModelAgentTargetKey) return;
-        if (params.intent === 'review' && selectedValues.length !== 1) {
-            params.setActionInput(clearExecutionRunChildSelection);
-            return;
-        }
+        if (params.intent === 'review' && selectedValues.length !== 1) return;
         if (!selectedBackendChoice || backendTargetKeysMatch(draftModelAgentTargetKey, selectedBackendChoice.backendTarget)) return;
         if (params.intent === 'review') {
             rawParams.setActionInput(clearExecutionRunChildSelection);

@@ -98,6 +98,10 @@ describe('plugin UI surface context', () => {
 
     expect(PluginUiSurfaceContextV1Schema.safeParse(surface).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).toEqual(surface);
+    const reviewOpener = { pageKind: { pluginId: 'acme.preview', localId: 'details' }, subPath: null,
+      review: { kind: 'page', reviewId: 'review-1' } } as const;
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...surface, openedFrom: reviewOpener }).openedFrom)
+      .toEqual(reviewOpener);
     const withTypeface = { ...surface, theme: { ...surface.theme, typography: {
       ...surface.theme.typography,
       body: { ...surface.theme.typography.body, fontFamily: 'IBMPlexMono-Regular' },
@@ -196,6 +200,18 @@ describe('plugin UI surface context', () => {
       presentation: 'content',
       destination: { pluginId: 'acme.preview', localId: 'invented' },
     }).success).toBe(false);
+  });
+
+  it('carries demanded Review identity and opaque namespaced finding data in the existing mount', () => {
+    const review = { kind: 'finding', reviewId: 'review-42', commentId: 'comment-3',
+      namespace: 'happier.review.coderabbit', extension: { category: 'security', confidence: 0.9 } };
+    const mount = { kind: 'embedded', role: 'reviewFinding', presentation: 'content', review };
+    expect(PluginUiMountContextV1Schema.parse(mount)).toEqual(mount);
+    expect(PluginUiMountContextV1Schema.safeParse({ ...mount, review: { ...review, permission: 'edit' } }).success).toBe(false);
+    expect(PluginUiMountContextV1Schema.safeParse({ ...mount, review: { ...review, commentId: '' } }).success).toBe(false);
+    const page = { kind: 'destination', destination: { pluginId: 'happier.review.coderabbit', localId: 'review' },
+      container: 'appPage', review: { kind: 'page', reviewId: 'review-42' } };
+    expect(PluginUiMountContextV1Schema.parse(page)).toEqual(page);
   });
 
   it('models concrete placement contexts for every generic plugin surface family', () => {

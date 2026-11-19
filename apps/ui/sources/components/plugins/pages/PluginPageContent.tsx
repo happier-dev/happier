@@ -125,6 +125,7 @@ export function PluginPageContent(props: Readonly<{
     /** The declared view the route names (`?view=`): the chrome titles it from the first frame of a cold load. */
     initialView?: string | null;
     projectContext?: React.ComponentProps<typeof PluginSurfacePlacementHost>['projectContext'];
+    reviewContext?: React.ComponentProps<typeof PluginSurfacePlacementHost>['reviewContext'];
     policyContext?: PluginUiPolicyEvaluationContext;
     appChrome?: boolean;
     accountScopeRestoring?: boolean;
@@ -269,7 +270,8 @@ export function PluginPageContent(props: Readonly<{
     const pageLaunchInput = launch?.input;
     const surfaceInput = React.useMemo(() => ({
         ...(pageLaunchInput === undefined ? {} : { launchInput: pageLaunchInput }), subPath: props.subPath,
-    }), [pageLaunchInput, props.subPath]);
+        ...(props.reviewContext ? { review: props.reviewContext } : {}),
+    }), [pageLaunchInput, props.subPath, props.reviewContext]);
     const detailNavigation = usePluginDetailNavigation({ identity: `${props.pluginId}/${props.localId}`,
         lifetime: accountLifetime, scope: accountLifetime?.scope ?? null, live: pageIsLive,
         presented: isFocused && isVisible, title: page?.label ?? props.pluginId, openSurface, surfaceInput });
@@ -477,6 +479,7 @@ export function PluginPageContent(props: Readonly<{
                     <PluginSurfacePlacementHost
                         placement={page.placement}
                         projectContext={props.projectContext}
+                        reviewContext={props.reviewContext}
                         projectId={props.projectContext?.target?.checkout?.id}
                         policyContext={props.policyContext}
                         pluginUiProjection={projection.pluginUiProjection}

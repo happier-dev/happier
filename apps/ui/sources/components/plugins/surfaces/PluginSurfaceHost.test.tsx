@@ -15112,6 +15112,42 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         await screen.unmount();
     });
 
+    it('offers contextual Review pages only inside the opened Review catalog', async () => {
+        const { selectPluginPagePlacements } = await import('@/components/plugins/pages/pluginPages');
+        const ordinary = surfacePlacementFixture({ binding: { pluginId: 'acme.browser', destinationId: 'ordinary',
+            rendererId: 'native-panel', container: 'appPage', target: { kind: 'app' } },
+            renderer: { kind: 'reactNative', contributionId: 'native-panel' } });
+        const contextual = surfacePlacementFixture({ binding: { pluginId: 'acme.browser', destinationId: 'review',
+            rendererId: 'native-panel', container: 'appPage', target: { kind: 'app', context: 'review' } },
+            renderer: { kind: 'reactNative', contributionId: 'native-panel' } });
+        const projection = createGeneratedProjection({ surfacePlacementsById: { [ordinary.id]: ordinary, [contextual.id]: contextual } });
+        const slot = { container: 'appPage' as const, targetKind: 'app' as const };
+        expect(selectPluginPagePlacements(projection, slot).map(placement => placement.id)).toEqual([ordinary.id]);
+        expect(selectPluginPagePlacements(projection, slot, 'review').map(placement => placement.id)).toEqual([contextual.id]);
+    });
+
+    it('mounts a contextual Review companion with the page identity independent of launch input', async () => {
+        reactNativeSurfaceProps.length = 0;
+        await primeGeneratedArtifact();
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { PluginCompanionOpenedFromContext } = await import('@/components/plugins/pages/pluginPageNavigationContext');
+        const fixture = primeExactTargetedContributions({ pluginId: 'acme.browser', occurrenceId: 'review-companion', projectionGeneration: 77 });
+        const placement = surfacePlacementFixture({ binding: { pluginId: 'acme.browser', destinationId: 'review-notes',
+            rendererId: 'native-panel', container: 'rightSidebarTab', target: { kind: 'app' } },
+            renderer: { kind: 'reactNative', contributionId: 'native-panel' }, occurrenceId: fixture.mountedTarget.occurrenceId });
+        const projection = withMountedTargetPackage(createGeneratedProjection({ surfacePlacementsById: { [placement.id]: placement } }),
+            fixture, { displayName: 'Review companion', version: '3.2.1' });
+        const review = { kind: 'page' as const, reviewId: 'review-42' };
+        const screen = await renderScreen(<PluginCompanionOpenedFromContext.Provider value={{
+            pageKind: { pluginId: 'acme.browser', localId: 'review' }, subPath: 'findings', review,
+        }}><PluginSurfacePlacementHost placement={placement} machineId="machine_1" serverId="server_1"
+            pluginUiProjection={projection} platform="web" /></PluginCompanionOpenedFromContext.Provider>);
+        await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
+        expect(readMountedSurface().mount.review).toEqual(review);
+        expect(readMountedSurface().openedFrom).toMatchObject({ review, subPath: 'findings' });
+        await screen.unmount();
+    });
+
     it.each(['sessionInfoSection', 'scmPullRequest'] as const)('projects the admitted %s binding as the public embedded mount context', async (role) => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
@@ -15168,7 +15204,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         await screen.unmount();
     });
 
-    it.each(['widget', 'scmPullRequest'] as const)('mounts %s through the registry App context', async (role) => {
+    it.each(['widget', 'scmPullRequest', 'reviewFinding', 'reviewEngineOptions'] as const)('mounts %s through the registry App context', async (role) => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
@@ -15188,6 +15224,11 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             <PluginSurfacePlacementHost
                 placement={placement}
                 inlineMount={{ role, presentation: 'content' }}
+                {...(role === 'reviewFinding' ? { reviewContext: { kind: 'finding' as const,
+                    reviewId: 'review-42', commentId: 'comment-3', namespace: 'acme.browser',
+                    extension: { category: 'security' } } } : {})}
+                {...(role === 'reviewEngineOptions' ? { reviewContext: { kind: 'engineOptions' as const,
+                    engineId: 'acme.browser:review', profileId: 'review', options: { featureIds: ['auth'] } } } : {})}
                 {...(role === 'scmPullRequest' ? { launchInput: { homeServerId: 'server_1', pullRequest: {
                     url: 'https://github.com/acme/repo/pull/42',
                 } } } : {})}
@@ -15207,6 +15248,10 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             pullRequest: { url: 'https://github.com/acme/repo/pull/42' } });
         expect(props.renderContext?.surface.mount).toMatchObject({
             kind: 'embedded', role, presentation: 'content',
+            ...(role === 'reviewFinding' ? { review: { kind: 'finding', reviewId: 'review-42',
+                commentId: 'comment-3', namespace: 'acme.browser', extension: { category: 'security' } } } : {}),
+            ...(role === 'reviewEngineOptions' ? { review: { kind: 'engineOptions', engineId: 'acme.browser:review',
+                profileId: 'review', options: { featureIds: ['auth'] } } } : {}),
         });
         await screen.unmount();
     });

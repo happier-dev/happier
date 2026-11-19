@@ -1,5 +1,6 @@
 import { normalizePluginUiSubPathV1, PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 
 /** Read the raw path before URL can erase traversal segments. */
 export function parsePluginProjectPageRoutePath(href: string): Readonly<{
@@ -45,7 +46,7 @@ export function parsePluginAppPageRoutePath(href: string): Readonly<{
     } catch { return null; }
 }
 
-export type PluginPageTarget = Readonly<{ kind: 'app' }> | Readonly<{
+export type PluginPageTarget = Readonly<{ kind: 'app'; context?: Readonly<{ kind: 'review'; reviewId: string }> }> | Readonly<{
     kind: 'project';
     workspaceRefId: string;
     serverId?: string | null;
@@ -55,7 +56,7 @@ export type PluginPageTarget = Readonly<{ kind: 'app' }> | Readonly<{
 
 export function pluginPageTargetKey(target: PluginPageTarget): string {
     if (target.kind === 'machine') return JSON.stringify(['machine', target.serverId, target.machineId]);
-    return target.kind === 'app' ? 'app' : JSON.stringify([
+    return target.kind === 'app' ? target.context ? JSON.stringify(['app', 'review', target.context.reviewId]) : 'app' : JSON.stringify([
         'project', target.serverId ?? null, target.workspaceRefId,
         target.rawWorktreeId ?? null, target.rawActiveRootPath ?? null,
     ]);
@@ -75,10 +76,18 @@ export function buildPluginMachinePageRoutePath(input: Readonly<{
 
 /** One target-aware route builder also owns navigation to a page's local location. */
 export function buildPluginPageRoutePath(input: PluginPageTarget & Readonly<{
-    pluginId: string; localId: string; subPath?: string;
+    pluginId: string; localId: string; subPath?: string; view?: string | null;
 }>): string {
     switch (input.kind) {
-        case 'app': return buildPluginAppPageRoutePath(input);
+        case 'app': {
+            if (!input.context) return buildPluginAppPageRoutePath(input);
+            const subPath = normalizePluginUiSubPathV1(input.subPath ?? '');
+            if (subPath === null) throw new Error('plugin_surface_open_sub_path_invalid');
+            const query = new URLSearchParams({ pluginId: input.pluginId, localId: input.localId });
+            if (subPath) query.set('pluginPath', subPath);
+            if (input.view != null && input.view !== input.localId) query.set('view', input.view);
+            return `${artifactViewRoute(input.context.reviewId)}?${query}`;
+        }
         case 'project': return buildPluginProjectPageRoutePath(input);
         case 'machine': return buildPluginMachinePageRoutePath(input);
     }
@@ -135,6 +144,17 @@ export type PluginPageRouteIdentity = Readonly<{
     pluginId: string;
     localId: string;
 }>;
+
+/** A contextual app page selected inside an already opened Review Artifact. */
+export type PluginReviewPageSelection = PluginPageRouteIdentity & Readonly<{ subPath: string | null; view: string | null }>;
+
+export function readPluginReviewPageSelection(params: Readonly<Record<string, unknown>>): PluginReviewPageSelection | null {
+    const identity = readPluginPageRouteIdentity(params);
+    if (!identity.pluginId && !identity.localId) return null;
+    const rawPath = Array.isArray(params.pluginPath) ? params.pluginPath[0] : params.pluginPath;
+    return { ...identity, subPath: rawPath === undefined ? '' : typeof rawPath === 'string'
+        ? normalizePluginUiSubPathV1(rawPath) : null, view: readPluginAppPageRouteView(params.view) };
+}
 
 function readRouteSegment(value: unknown): string {
     if (Array.isArray(value)) {

@@ -1,3 +1,4 @@
+import { reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -409,15 +410,15 @@ describe('real execution Run launch admission', () => {
             return { error: 'Method not found', errorCode: 'METHOD_NOT_FOUND' };
         });
         const hook = await renderHook(() => useExecutionRunLaunchContext(null, home.id, { machineId: machine.id, cwd: '/work/rejoined' }));
-        const { startReviewOfComparison, listReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
+        const { startReviewOfComparison, listReviewEngines, projectReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
         const { resolveReviewWalkthroughPlan } = await import('@/sync/domains/reviews/reviewWalkthroughPlan');
-        const inventory = await listReviewWalkthroughEngines({ sessionId: null, machineId: machine.id, serverId: home.id });
+        const inventory = await listReviewEngines({ sessionId: null, machineId: machine.id, serverId: home.id });
         expect(inventory, JSON.stringify({ inventory, methods: boundary.rpc.mock.calls.map(([request]) => request.method) }))
-            .toMatchObject({ ok: true, engines: expect.arrayContaining([expect.objectContaining({ engineId: 'claude', enabled: true })]) });
+            .toMatchObject({ ok: true, inventory: { items: expect.arrayContaining([expect.objectContaining({ engineId: 'claude', enabled: true })]) } });
         const outcome = await startReviewOfComparison({ sessionId: null, machineId: machine.id, serverId: home.id,
             cwd: '/work/rejoined', comparison: { kind: 'workingTree' }, comparisonId: 'detached-evidence', instructions: 'Review.',
-            plan: resolveReviewWalkthroughPlan({ engines: inventory.ok ? inventory.engines : [],
-                selectedEngineIds: ['claude'], walkthrough: false, narratorEngineId: null }),
+            plan: resolveReviewWalkthroughPlan({ engines: inventory.ok ? projectReviewWalkthroughEngines(inventory.inventory) : [],
+                reviewers: reviewReviewersForEngineIdsV1(['claude']), walkthrough: false, narratorEngineId: null }),
             start: actionInput => hook.getCurrent().startAction('review.start', actionInput, 'detached-review'),
         });
         expect(outcome, JSON.stringify({ outcome, methods: boundary.rpc.mock.calls.map(([request]) => request.method) }))
@@ -684,7 +685,7 @@ describe('real execution Run launch admission', () => {
             }, method: 'selectActionInput', payload: {
                 hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
                 sessionId: session.id, serverId: home.id,
-                draft: { engineIds: ['claude'], instructions: 'Review the selected comparison' },
+                draft: { reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the selected comparison' },
             } })).then((result) => { settled = true; return result; }) : null;
         const started = createDeferred<void>();
         const screen = selecting
@@ -694,7 +695,7 @@ describe('real execution Run launch admission', () => {
             })()
             : await renderScreen(React.createElement(SessionInteractiveExecutionRunDraftView, {
                 sessionId: session.id, serverId: home.id, intent: 'review',
-                initialText: 'Review the selected comparison', initialActionInput: { engineIds: ['claude'] },
+                initialText: 'Review the selected comparison', initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] },
                 comparisonReview: { cwd: '/work/rejoined', comparison: { kind: 'workingTree' },
                     comparisonId: 'captured-comparison', scopeLabel: 'Pending changes',
                     preselectedEngineIds: ['claude'], defaultWalkthrough: false },

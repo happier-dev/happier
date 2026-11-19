@@ -74,10 +74,10 @@ it('opens a both companion with the page own launch input and publishes the page
     const opened: unknown[] = [];
     const lifetime = {};
     let host!: ReturnType<typeof usePluginDetailNavigation>;
-    let setPage!: (page: Readonly<{ launchInput?: { reviewId: string }; subPath: string | null }>) => void;
+    let setPage!: (page: Readonly<{ launchInput?: { reviewId: string }; subPath: string | null; review?: { kind: 'page'; reviewId: string } }>) => void;
     function Fixture() {
-        const [page, update] = React.useState<Readonly<{ launchInput?: { reviewId: string }; subPath: string | null }>>(
-            { launchInput: { reviewId: 'r-1' }, subPath: 'reviews/r-1' });
+        const [page, update] = React.useState<Readonly<{ launchInput?: { reviewId: string }; subPath: string | null; review?: { kind: 'page'; reviewId: string } }>>(
+            { launchInput: { reviewId: 'r-1' }, subPath: 'reviews/r-1', review: { kind: 'page', reviewId: 'artifact-1' } });
         setPage = update;
         host = usePluginDetailNavigation({ identity: 'acme.review/detail', lifetime, scope: null, live: true, presented: true,
             title: 'Review', surfaceInput: page,
@@ -86,7 +86,7 @@ it('opens a both companion with the page own launch input and publishes the page
     }
     const screen = await renderScreen(<AppPaneProvider><Fixture /></AppPaneProvider>);
     await act(async () => { host.owner.setPageNavigation({ navigation: descriptor }); });
-    expect(host.model?.openedFrom).toEqual({ pageKind: { pluginId: 'acme.review', localId: 'detail' }, launchInput: { reviewId: 'r-1' }, subPath: 'reviews/r-1' });
+    expect(host.model?.openedFrom).toEqual({ pageKind: { pluginId: 'acme.review', localId: 'detail' }, launchInput: { reviewId: 'r-1' }, subPath: 'reviews/r-1', review: { kind: 'page', reviewId: 'artifact-1' } });
     await act(async () => { host.readColumn('side').selectTab!('notes'); });
     // The page moved to another entity: the companion's opener follows the page as it is now.
     await act(async () => { setPage({ subPath: 'reviews/r-2' }); });

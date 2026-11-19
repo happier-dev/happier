@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it } from 'vitest';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import type { ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -38,6 +39,11 @@ it('exposes the applied inherited draft tuple without stamping it into child lau
 
 afterEach(standardCleanup);
 
+function availableReviewEngine(engineId: string): ReviewEngineListItem {
+    return { engineId, label: engineId, enabled: true, capabilities: { structuredNarration: true } };
+}
+const REVIEW_ENGINES = ['claude', 'codex'].map(availableReviewEngine);
+
 it('keeps each reviewer model when another reviewer is added', async () => {
     const selected = ProviderBoundModelRefSchema.parse({
         agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'review-source', modelId: 'review-model',
@@ -48,9 +54,7 @@ it('keeps each reviewer model when another reviewer is added', async () => {
         }, selected));
         const model = useExecutionRunLauncherOptionsModel({
             sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
-            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: {
-                claude: { available: true, intents: ['review'] }, codex: { available: true, intents: ['review'] },
-            }, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: null, reviewEngines: REVIEW_ENGINES, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
             initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' },
         });
         return { actionInput, model };
@@ -93,9 +97,7 @@ it('retains repeated engine models, Session reviewers and requested people when 
     const hook = await renderHook(() => {
         const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(original);
         const model = useExecutionRunLauncherOptionsModel({ sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
-            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: {
-                claude: { available: true, intents: ['review'] }, codex: { available: true, intents: ['review'] },
-            }, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: null, reviewEngines: REVIEW_ENGINES, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
             initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' } });
         return { actionInput, model };
     });
@@ -110,7 +112,7 @@ it('authors the exact configured review engine target from the Machine inventory
     const hook = await renderHook(() => {
         const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [] });
         const model = useExecutionRunLauncherOptionsModel({ sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
-            enabledAgentIds: [], executionRunsBackends: { [engineId]: { available: true, intents: ['review'] } },
+            enabledAgentIds: [], executionRunsBackends: null, reviewEngines: [availableReviewEngine(engineId)],
             acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
             initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' } });
         return { actionInput, model };
@@ -138,12 +140,12 @@ it.each([true, false])('keeps report selection %s explicit through the options o
 });
 
 it('keeps the authored reviewers while the Machine has not answered, then settles them against its answer', async () => {
-    let machineBackends: Record<string, { available: boolean; intents: string[] }> | null = null;
+    let reviewEngines: readonly ReviewEngineListItem[] | undefined;
     const hook = await renderHook(() => {
         const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }], permissionMode: 'read_only' });
         const model = useExecutionRunLauncherOptionsModel({
             sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
-            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: machineBackends,
+            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: null, reviewEngines,
             acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
             initialBackendTarget: { kind: 'backend', backendId: 'claude' }, fallbackAgentId: 'claude',
             machineCapabilitiesState: { status: 'loading' },
@@ -152,9 +154,9 @@ it('keeps the authored reviewers while the Machine has not answered, then settle
     });
     expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }]);
     expect(hook.getCurrent().model.backendChoices.every((choice) => choice.disabled)).toBe(true);
-    expect(hook.getCurrent().model.initialBackendChoice?.backendId).toBe('claude');
+    expect(hook.getCurrent().model.initialBackendChoice).toBeNull();
 
-    machineBackends = { claude: { available: true, intents: ['review'] }, codex: { available: true, intents: ['review'] } };
+    reviewEngines = REVIEW_ENGINES;
     await hook.rerender();
     expect(hook.getCurrent().model.backendChoices.map((choice) => choice.disabled)).toEqual([false, false]);
     expect(hook.getCurrent().actionInput.reviewers).toEqual([{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }]);

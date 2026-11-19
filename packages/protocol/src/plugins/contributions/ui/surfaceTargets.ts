@@ -17,6 +17,8 @@ export const PluginSurfaceProjectTargetV1Schema = lazyZodSchema(() => z.strictOb
 
 export const PluginSurfaceAppTargetV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('app'),
+  /** The existing app page is offered inside the opened Review rather than global navigation. */
+  context: z.optional(z.literal('review')),
 }));
 
 /** Whole Machine pages use an exact Machine identity, separately from Services panels. */
