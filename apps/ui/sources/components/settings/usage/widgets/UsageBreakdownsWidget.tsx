@@ -28,6 +28,7 @@ import {
   leadingUsageRows,
   UsageShowAllRows,
   UsageBodyNoUsage,
+  UsageBodyNote,
 } from './usageBodyKit';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
@@ -105,6 +106,12 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
       : resolveUsageMeasuredTokens(accounting.totals.tokens).total
     : null;
   const rowBasis = (label: string | undefined) => label === basisPhrase ? null : label;
+  // Token totals added up from their parts are said once under the card when every counted row is (USAGE-ACCEPT 1118 #11),
+  // and on a row only where that row differs from the rest.
+  const countedRows = dimensions.flatMap(dimension => accounting?.breakdowns?.[dimension] ?? [])
+    .map(entry => resolveUsageMeasuredTokens(entry.tokens)).filter(tokens => tokens.total !== null);
+  const fromPartsOnce = countedRows.length > 1 && countedRows.every(tokens => tokens.fromParts);
+  const rowFromParts = (fromParts: boolean) => fromParts && !fromPartsOnce ? t('usage.board.page.tokensFromParts') : null;
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
@@ -123,9 +130,9 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
             // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
             metric === 'cost'
               ? [tokens.total === null ? null : formatTokenCount(tokens.total),
-                tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
+                rowFromParts(tokens.fromParts),
                 rowBasis(usagePageCostRow(entry.cost, selection)?.label)].filter(Boolean).join(' · ')
-              : tokens.fromParts ? t('usage.board.page.tokensFromParts') : undefined,
+              : rowFromParts(tokens.fromParts) ?? undefined,
         };
       });
     if (rows.length === 0) return [];
@@ -235,11 +242,14 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
             onToggle={() => setExpanded(current => current.includes(block.dimension)
               ? current.filter(entry => entry !== block.dimension) : [...current, block.dimension])} />,
         };
-      }) }} coverage={<UsageCoverageLine
-        slice={props.slice}
-        sources={['accounting']}
-        onRetry={props.model.refresh}
-        testID={`${props.testID}.coverage`}
-      />} />
+      }) }} coverage={<>
+        {fromPartsOnce ? <UsageBodyNote testID={`${props.testID}.fromParts`}>{t('usage.board.page.tokensFromPartsOnce')}</UsageBodyNote> : null}
+        <UsageCoverageLine
+          slice={props.slice}
+          sources={['accounting']}
+          onRetry={props.model.refresh}
+          testID={`${props.testID}.coverage`}
+        />
+      </>} />
   );
 }

@@ -191,7 +191,8 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
       ); }) : null}
       {groups.map((group) => {
         // A caveat every row shares is said once under the group title, never repeated per row.
-        const notes = group.rows.map(row => [usageWorkSessionOutcomeLine(row)].filter(Boolean) as string[]);
+        const fromParts = t('usage.board.page.tokensFromParts');
+        const notes = group.rows.map(row => [usageWorkSessionOutcomeLine(row), row.tokensFromParts ? fromParts : null].filter(Boolean) as string[]);
         const shared = (notes[0] ?? []).filter(note => notes.every(rowNotes => rowNotes.includes(note)));
         // The group title may already be that caveat ("No linked outcome yet"); it is not said twice.
         const said = shared.filter(note => note.toLocaleLowerCase() !== group.title.toLocaleLowerCase());
@@ -199,7 +200,8 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
         return (
         <View key={group.key} style={styles.group}>
           <UsageWorkSectionTitle quiet>{group.title}</UsageWorkSectionTitle>
-          {said.length ? <Text style={[styles.note, sectionStyle]}>{said.join(' · ')}</Text> : null}
+          {said.length ? <Text style={[styles.note, sectionStyle]}>{said
+            .map(note => note === fromParts ? t('usage.board.page.tokensFromPartsOnce') : note).join(' · ')}</Text> : null}
           <RankedRows
             theme={theme}
             label={group.title}

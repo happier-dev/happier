@@ -728,8 +728,9 @@ describe('Work and Coach widget bodies', () => {
       id="usage_project_ledger" testID="parts-ledger" />);
     const rows = screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'parts-ledger.projects')!;
     expect(rows.props.rows[0][1]).toBe(1727);
-    expect(rows.props.rows[0][2]).toContain(t('usage.board.page.tokensFromParts'));
-    expect(screen.getTextContent()).toContain(t('usage.board.page.tokensFromParts'));
+    // Every row is a floor, so the total says it once and the row does not repeat it (USAGE-ACCEPT 1118 #11).
+    expect(rows.props.rows[0][2]).not.toContain(t('usage.board.page.tokensFromParts'));
+    expect(screen.getTextContent().split(t('usage.board.page.tokensFromParts')).length - 1).toBe(1);
   });
   it('bounds the project ledger behind Show all and says the PR qualifier once for the band, not on every row', async () => {
     const many = Array.from({ length: 12 }, (_, index) => ({ ...contribution(`m${index}`, `ms${index}`, null), projectKey: `project-${index}` }));

@@ -140,6 +140,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const anyLinked = summary.projects.some((row) => row.outcomes.length > 0);
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
+  const allRowsFromParts = summary.tokensFromParts && summary.projects.every(project => project.tokensFromParts);
   const combineDatums = (label: string, values: readonly ReturnType<typeof datum>[]) => {
     const details = values.filter(value => value !== null);
     return details.length === 0 ? null : { label, value: details.map(value => `${value.label}: ${value.value}`).join(' · '),
@@ -325,7 +326,10 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           [anyLinked
             ? t('usage.board.work.ledgerRowLine', { sessions: row.sessionIds.length, prs: row.outcomes.length })
             : sessionsLine(row.sessionIds.length), compact ? compactBasis(row.amount, row.moneyBasis) : null,
-            row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null,
+            // When every row's tokens were added up from their parts, the total below says it once, not every row (USAGE-ACCEPT
+            // 1118 #11); a mixed ledger keeps it on the rows it concerns.
+            row.tokensFromParts && !allRowsFromParts
+              ? t('usage.board.page.tokensFromParts') : null,
             projectPlace(row.projectKey)].filter(Boolean).join(' · '),
           ...(anyLinked
             ? [row.unallocated === null || row.unallocated > 0

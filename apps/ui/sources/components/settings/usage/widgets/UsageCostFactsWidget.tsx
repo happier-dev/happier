@@ -6,8 +6,6 @@ import { ChartDatum, formatHappierDataValue, HappierDataMetric } from '@happier-
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { getPreferredLanguage, t } from '@/text';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
@@ -17,6 +15,7 @@ import {
   UsageBodyNoUsage,
   usagePartialHistoryLabel,
   useUsageAnalyticsView,
+  UsageBodyNote,
 } from './usageBodyKit';
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { usagePageCostCaption } from '../usageCostPresentation';
@@ -66,6 +65,8 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   ));
   // One qualifier, said once: when every fact is partial the band says so once, not under each figure (R9).
   const partialOnce = facts.length > 1 && facts.every((fact) => !fact.complete);
+  // The same for token totals added up from their parts: once under the figures, not after each one (USAGE-ACCEPT 1118 #11).
+  const fromPartsOnce = facts.length > 1 && facts.every((fact) => resolveUsageMeasuredTokens(fact.tokens).fromParts);
   if (!props.slice.accounting)
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   // The prices behind API-equivalent money live with the money they make (U10); unpriced models
@@ -126,10 +127,9 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
                   : tokens.total === null ? null
                   : fact.kind === 'api_equivalent'
                     ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(tokens.total) })
-                    : t('usage.board.page.factTokens', {
-                      tokens: formatTokenCount(tokens.total),
-                    }),
-                tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
+                    // The tokens on the rows that carried this money, not every token of the Agents that reported it.
+                    : t('usage.board.page.factCostTokens', { tokens: formatTokenCount(tokens.total) }),
+                tokens.fromParts && !fromPartsOnce ? t('usage.board.page.tokensFromParts') : null,
                 fact.complete || partialOnce ? null : t('usage.board.page.factIncomplete'),
               ]
                 .filter(Boolean)
@@ -139,7 +139,9 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
             {hiddenPrecision ? <ChartDatum testID={`${props.testID}.fact.${fact.kind}.detail`}
               datum={{ label: t(KIND_TITLE[fact.kind]),
                 value: exactAmount === null ? `${exactTokens} ${t('usage.board.page.tokensUnit')}` : `${fact.currency} ${exactAmount}`,
-                subtitle: [t('usage.board.page.factTokens', { tokens: exactTokens }), tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
+                subtitle: [fact.amountUsd === null ? null : fact.kind === 'api_equivalent'
+                  ? t('usage.board.page.factApiTokens', { tokens: exactTokens }) : t('usage.board.page.factCostTokens', { tokens: exactTokens }),
+                  tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
                   fact.complete ? null : t('usage.board.page.factIncomplete')].filter(Boolean).join(' · ') }}>
               {figure}
             </ChartDatum> : figure}
@@ -148,9 +150,10 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
       </View>
       {/* The figures count overlapping populations, so they never present as parts of one sum. */}
       {facts.length > 1 ? (
-        <Text style={styles.partial} testID={`${props.testID}.partial`}>
-          {[partialOnce ? usagePartialHistoryLabel() : null, t('usage.board.page.factsOverlap')].filter(Boolean).join(' · ')}
-        </Text>
+        <UsageBodyNote testID={`${props.testID}.partial`}>
+          {[partialOnce ? usagePartialHistoryLabel() : null, fromPartsOnce ? t('usage.board.page.tokensFromPartsOnce') : null,
+            t('usage.board.page.factsOverlap')].filter(Boolean).join(' · ')}
+        </UsageBodyNote>
       ) : null}
       {prices}
       <UsageCoverageLine
@@ -164,7 +167,6 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  partial: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
   body: { gap: 16 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 18 },
   // Two figures share a phone row (lab d2views P, 2×2): two bases and the gap fit a 390 px sheet's column.

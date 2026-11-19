@@ -3,6 +3,8 @@ import * as React from 'react';
 import type { PluginUiThemeV1 } from '@happier-dev/plugin-sdk/ui';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageHistoryReadState, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import type {
@@ -1031,6 +1033,15 @@ export function UsageCoverageLine(
     />
   );
 }
+
+/** A card's one quiet closing note (a qualifier said once for every figure above it, never under each). */
+export function UsageBodyNote(props: Readonly<{ children: string; testID?: string }>) {
+    return <Text style={noteStyles.note} testID={props.testID}>{props.children}</Text>;
+}
+
+const noteStyles = StyleSheet.create((theme) => ({
+    note: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
+}));
 
 /** The Agent's catalog mark, standing on its own (no tile), in ink. */
 export function UsageAgentMark(props: Readonly<{ agentId: string; serverId: string | null; size?: number; color?: string }>) {
