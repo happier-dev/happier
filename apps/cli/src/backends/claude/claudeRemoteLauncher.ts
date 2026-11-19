@@ -1760,7 +1760,7 @@ export async function claudeRemoteLauncher(
                             unifiedTerminalLaunchOptionsHash = p.mode.claudeUnifiedTerminalEnabled === true
                                 ? hashClaudeUnifiedTerminalLaunchOptionsForQueue(p.mode)
                                 : null;
-                            permissionHandler.handleModeChange(p.mode.permissionMode);
+                            permissionHandler.admitPromptPermissionMode(p.mode.permissionMode);
                             const providerMessage = await resolveQueuedPromptForProvider(p);
                             if (p.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(p.mode)) {
                                 await beginPromptTurn();
@@ -1802,7 +1802,7 @@ export async function claudeRemoteLauncher(
                         const nextMode = msg.mode;
                         mode = nextMode;
                         unifiedTerminalLaunchOptionsHash = nextUnifiedTerminalLaunchOptionsHash;
-                        permissionHandler.handleModeChange(nextMode.permissionMode);
+                        permissionHandler.admitPromptPermissionMode(nextMode.permissionMode);
                         const providerMessage = await resolveQueuedPromptForProvider(msg);
                         if (msg.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(nextMode)) {
                             await beginPromptTurn();

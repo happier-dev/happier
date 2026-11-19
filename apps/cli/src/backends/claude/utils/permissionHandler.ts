@@ -90,7 +90,8 @@ export class PermissionHandler {
     private exitedPlanModeLocalIds = new Map<string, number>();
     private exitedPlanModeFallbackUntilMs: number = 0;
     private metadataWatcherAbort: AbortController | null = null;
-    private permissionModeUpdatedAt = 0;
+    private permissionMetadataUpdatedAt = 0;
+    private permissionModeOverridesPrompt = false;
 
     constructor(session: Session) {
         this.session = session;
@@ -391,7 +392,8 @@ export class PermissionHandler {
         const { response, toolName, sourceLocalId } = params;
         if (response.approved) {
             if (response.mode) {
-                this.handleModeChange(response.mode);
+                this.permissionModeOverridesPrompt = true;
+                this.applyPermissionMode(response.mode);
             }
             const updatedPermissions = response.updatedPermissions;
             this.applyUpdatedPermissionsAllowlist(updatedPermissions);
@@ -483,26 +485,34 @@ export class PermissionHandler {
         this.onPermissionRequestCallback = callback;
     }
 
-    handleModeChange(mode: PermissionMode, updatedAt?: number) {
-        const hasUpdatedAt = typeof updatedAt === 'number' && Number.isFinite(updatedAt);
-        if (hasUpdatedAt && updatedAt < this.permissionModeUpdatedAt) {
-            return;
+    admitPromptPermissionMode(mode: PermissionMode): void {
+        this.permissionModeOverridesPrompt = false;
+        // Compare client metadata revisions with the Session's accepted revision.
+        this.permissionMetadataUpdatedAt = Math.max(this.permissionMetadataUpdatedAt, this.session.lastPermissionModeUpdatedAt);
+        if (mode === 'default' && this.permissionMode !== 'default') return;
+        this.applyPermissionMode(mode);
+    }
+
+    applyMetadataPermissionMode(mode: PermissionMode, updatedAt: number): void {
+        // Both the watcher and launcher observe this metadata. A repeated snapshot
+        // must not undo a later reply or reapply an override after prompt admission.
+        if (!Number.isFinite(updatedAt) || updatedAt <= this.permissionMetadataUpdatedAt) return;
+        this.permissionMetadataUpdatedAt = updatedAt;
+        if (mode !== this.permissionMode) {
+            this.permissionModeOverridesPrompt = true;
         }
-        if (!hasUpdatedAt && mode === 'default' && this.permissionMode !== 'default' && this.permissionModeUpdatedAt > 0) {
-            return;
-        }
+        this.applyPermissionMode(mode);
+    }
+
+    private applyPermissionMode(mode: PermissionMode): void {
         this.permissionMode = mode;
-        if (hasUpdatedAt) {
-            this.permissionModeUpdatedAt = updatedAt;
-        } else if (mode !== 'default' && this.permissionModeUpdatedAt === 0) {
-            this.permissionModeUpdatedAt = Date.now();
-        }
         this.tryAutoApprovePendingRequestsForPermissionMode(mode);
     }
 
     private resolveEffectivePermissionModeForToolCall(mode: EnhancedMode): PermissionMode {
+        if (this.permissionModeOverridesPrompt) return this.permissionMode;
         const requestedMode = mode?.permissionMode ?? this.permissionMode;
-        if (requestedMode === 'default' && this.permissionMode !== 'default' && this.permissionModeUpdatedAt > 0) {
+        if (requestedMode === 'default' && this.permissionMode !== 'default') {
             return this.permissionMode;
         }
         return requestedMode;
@@ -912,6 +922,7 @@ export class PermissionHandler {
         this.allowedToolIdentifiers.clear();
         this.agentStateRequestStore.dispose();
         this.permissionMode = 'default';
+        this.permissionModeOverridesPrompt = false;
         this.exitedPlanModeLocalIds.clear();
         this.exitedPlanModeFallbackUntilMs = 0;
 

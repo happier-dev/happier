@@ -114,6 +114,7 @@ export function createPermissionHandlerSessionStub(sessionId = 'test-session-id'
     },
     drainCriticalMetadataWrites: vi.fn(async () => {}),
     cleanup: vi.fn(),
+    lastPermissionModeUpdatedAt: 0,
     adoptLastPermissionModeFromMetadata: vi.fn(() => true),
     setLastPermissionMode: vi.fn(),
     getOrCreatePermissionRpcRouter() {
@@ -144,6 +145,7 @@ export function createPermissionHandlerSessionStubWithMetadata(params: {
     },
     drainCriticalMetadataWrites: vi.fn(async () => {}),
     cleanup: vi.fn(),
+    lastPermissionModeUpdatedAt: 0,
     adoptLastPermissionModeFromMetadata: vi.fn(() => true),
     setLastPermissionMode: vi.fn(),
     getOrCreatePermissionRpcRouter() {
