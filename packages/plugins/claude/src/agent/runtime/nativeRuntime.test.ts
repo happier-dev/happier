@@ -823,6 +823,37 @@ describe('createClaudeNativeRuntime', () => {
     });
   });
 
+  it.each(['HOME', 'USERPROFILE'])('locates the native transcript from a default-home session runtime descriptor using %s', async (homeEnvKey) => {
+    const home = await mkdtemp(join(tmpdir(), 'claude-default-report-home-'));
+    const configDir = join(home, '.claude');
+    const project = join(configDir, 'projects', 'selected-project');
+    const path = join(project, 'claude-provider-session.jsonl');
+    await mkdir(project, { recursive: true });
+    await writeFile(path, '{"type":"user","message":"owned selected conversation"}\n');
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => createNativeOperations('default-report-session').runtime,
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create', sessionId: 'default-report-session', cwd: '/repo/project',
+      launchEnvironment: { values: { [homeEnvKey]: home }, unset: [] },
+      runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { backendMode: 'agentSdk' } },
+    }, context as unknown as AgentSessionRuntimeContext);
+    try {
+      if (!session.runtimeDescriptorV1) throw new Error('Session did not publish its runtime descriptor');
+      expect(await claudeHandoffSurface.resolveNativeTranscriptPathCandidate({
+        identity: { v: 1, vendorResumeId: 'claude-provider-session' },
+        runtimeDescriptorV1: session.runtimeDescriptorV1,
+      }, {
+        signal: new AbortController().signal,
+        deadlineAtMs: Date.now() + 30_000,
+        maxSerializedBytes: 1024 * 1024,
+      })).toEqual({ path, containmentRoot: configDir });
+    } finally {
+      await session.dispose();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('opens with the exact host-prepared isolated Claude environment without recustodying credentials', async () => {
     const openSession = vi.fn<ClaudeNativeSessionFactory>(
       () => createNativeOperations('host-prepared-claude').runtime,

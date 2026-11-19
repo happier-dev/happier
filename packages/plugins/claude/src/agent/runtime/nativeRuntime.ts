@@ -33,6 +33,7 @@ import { isRuntimeConfigUpdateOutcomeApplied, isRuntimeConfigUpdateOutcomeDeferr
 
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
 import { createClaudeNativePermissionEngine } from '../permissions/nativePermissionEngine.js';
+import { resolveClaudeConfigDir } from '../environment.js';
 import { CLAUDE_STATIC_MODELS } from '../models.js';
 import { CLAUDE_KIMI_PURPOSE } from './connectedAccountKeys.js';
 import { AGENT_DEFINITION } from '../definition.js';
@@ -781,7 +782,6 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   const initialProviderSessionId = readClaudeProviderIdentityValue(initialProviderSessionIdRaw) ?? undefined;
   const sourceRuntimeDescriptor = request.runtimeDescriptorV1;
   const sourceRuntimeAgent = sourceRuntimeDescriptor?.agent;
-  const effectiveConfigDir = request.launchEnvironment?.values.CLAUDE_CONFIG_DIR?.trim();
   const runtimeDescriptorV1 = sourceRuntimeDescriptor
     && sourceRuntimeDescriptor.v === 1
     && sourceRuntimeDescriptor.agentId === 'claude'
@@ -791,7 +791,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
         ...sourceRuntimeDescriptor,
         agent: Object.freeze({
           ...sourceRuntimeAgent,
-          ...(effectiveConfigDir ? { configDir: effectiveConfigDir } : {}),
+          configDir: resolveClaudeConfigDir(request.launchEnvironment?.values ?? {}),
         }),
       })
     : undefined;
