@@ -707,6 +707,28 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
         expect(input().props.value).toBe('Inspect the current changes');
     });
+    it('saves an ordinary detached Review with its selected project and no invented Session', async () => {
+        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+            initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] } });
+        await type('Inspect this project');
+        await screen.pressByTestIdAsync('review-start-advanced:header');
+        const requestsBeforeSave = home.requests.length;
+        await screen.pressByTestIdAsync('review-start-save-as-workflow');
+        const entry = reviewRouterPush.mock.calls.at(-1)?.[0];
+        expect(entry, screen.getTextContent()).toMatchObject({ pathname: '/workflows/new', params: { serverId } });
+        const seed = readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, { serverId, accountId: 'account_1' });
+        expect(seed).toMatchObject({ project: { machineId: 'machine_1', directory: '/repo' }, executionTarget: 'detached_run' });
+        const block = seed?.draft?.blocks[0];
+        if (block?.kind !== 'action') throw new Error('Expected the ordinary Review Action');
+        expect(block.input).toMatchObject({ target: { kind: 'literal', value: { kind: 'detached' } },
+            cwd: { kind: 'literal', value: '/repo' }, instructions: { kind: 'literal', value: 'Inspect this project' } });
+        expect(block.input).not.toHaveProperty('sessionId');
+        expect(block.input).not.toHaveProperty('sourceSession');
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
+    });
+
     it('activates contributed options only for the opened selected review engine', async () => {
         const { buildQualifiedPluginContributionKey, createPluginContributionIdentity } = await import('@happier-dev/protocol/plugins/contribution-identity');
         const { normalizePluginUiInlineSurfaceBindingV1 } = await import('@happier-dev/protocol/plugins/ui');
