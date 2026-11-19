@@ -13,6 +13,7 @@ import {
 
 import { areRequestedPrismaOutputsCurrent, type BuildDbProvider } from '../../../../../apps/server/scripts/generateClients';
 import { repoRootDir } from '../paths';
+import { shouldSkipServerSharedDepsBuild } from './providerSourcePreparation.mjs';
 import type { EnvOverrides } from '../env';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spawnProcess';
 import { terminateProcessTreeByPid } from './processTree';
@@ -455,18 +456,7 @@ export function resolveSharedDepsBuildArgs(): string[] {
   return ['--filter', resolveServerAppWorkspaceName(), 'run', '--silent', 'build:shared'];
 }
 
-export function shouldSkipServerSharedDepsBuild(env: NodeJS.ProcessEnv): boolean {
-  const raw = (
-    env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD ??
-    env.HAPPY_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD ??
-    ''
-  )
-    .toString()
-    .trim()
-    .toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
-}
-
+export { shouldSkipServerSharedDepsBuild };
 export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
   if (provider === 'sqlite') {
     return ['--filter', resolveServerAppWorkspaceName(), 'run', '--silent', 'migrate:sqlite:deploy'];

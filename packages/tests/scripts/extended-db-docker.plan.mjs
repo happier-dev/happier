@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { shouldUseCliSourceEntrypoint } from '../src/testkit/process/providerSourcePreparation.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
@@ -152,9 +153,7 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
     env: { CI: '1' },
   };
 
-  const sourceEntrypoint = String(env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
-    ?? env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ?? '').trim().toLowerCase();
-  const usesSourceEntrypoint = ['1', 'true', 'yes', 'y'].includes(sourceEntrypoint);
+  const usesSourceEntrypoint = shouldUseCliSourceEntrypoint(env);
   const e2eStep = {
     kind: 'e2e',
     command: 'pnpm',

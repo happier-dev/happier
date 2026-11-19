@@ -21,6 +21,7 @@ import {
 } from '@happier-dev/cli-common/workspaceBundleLock';
 
 import { repoRootDir } from '../paths';
+import { shouldUseCliSourceEntrypoint } from './providerSourcePreparation.mjs';
 import {
   ensureCliBundledPluginProjectionsCurrent,
   ensureCliDistSnapshotEntrypoint,
@@ -537,19 +538,7 @@ async function resolveCliSourceLaunchSpec(
   }
 }
 
-export function shouldUseCliSourceEntrypoint(env: NodeJS.ProcessEnv): boolean {
-  const raw = (
-    env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ??
-    env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ??
-    ''
-  )
-    .toString()
-    .trim()
-    .toLowerCase();
-
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
-}
-
+export { shouldUseCliSourceEntrypoint };
 export async function resolveCliTestLaunchSpec(
   params: Readonly<{ testDir: string; env: NodeJS.ProcessEnv }>,
   options: CliLaunchOptions,

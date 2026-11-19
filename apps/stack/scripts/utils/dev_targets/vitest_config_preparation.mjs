@@ -1,5 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import {
+  shouldSkipServerSharedDepsBuild,
+  shouldUseCliSourceEntrypoint,
+} from '../../../../../packages/tests/src/testkit/process/providerSourcePreparation.mjs';
 
 // The `plugins: [...]` list text with nested brackets balanced (`?? []` inside
 // an element must not end the list).
@@ -15,7 +19,7 @@ function pluginListText(source) {
 }
 
 /** Read resolver declarations without evaluating configs or running global setup. */
-export function readVitestSourcePreparation(repoRoot, configPath) {
+export function readVitestSourcePreparation(repoRoot, configPath, env = {}) {
   const sourceResolver = resolve(repoRoot, 'scripts/testing/vitestWorkspacePackageResolution.ts');
   const hasSourcePlugin = (path, source, name, symbolVisits = new Set()) => {
     const key = `${path}:${name}`;
@@ -31,7 +35,7 @@ export function readVitestSourcePreparation(repoRoot, configPath) {
         catch (error) { if (error.code === 'ENOENT') return false; throw error; }
       }
     }
-    const declaration = new RegExp(`\\b(?:const|let)\\s+${name}\\s*=\\s*([\\s\\S]*?)(?:\\n\\};|;(?=\\s*(?:export|const|let|$)))`, 'u').exec(source);
+    const declaration = new RegExp(`\\b(?:const|let)\\s+${name}(?:\\s*:\\s*\\w+)?\\s*=\\s*([\\s\\S]*?)(?:\\n\\};|;(?=\\s*(?:export|const|let|$)))`, 'u').exec(source);
     if (!declaration) return false;
     const expression = declaration[1];
     for (const call of expression.matchAll(/\b(\w+)\s*(?:\(|\.resolveId\s*\()/gu)) {
@@ -73,6 +77,13 @@ export function readVitestSourcePreparation(repoRoot, configPath) {
         if (inherited) break;
       }
     }
+    // The core harness merges a config factory that supplies the source resolver.
+    if (!directResolver && !inherited
+      && /import\s*\{[^}]*\bmergeConfig\b[^}]*\}\s*from\s*['"]vitest\/config['"]/u.test(source)
+      && /import\s*\{\s*createUiProductionHooksVitestConfig\s*\}\s*from\s*['"]\.\/vitest\.uiProductionHooks['"]/u.test(source)
+      && /\bmergeConfig\(\s*createUiProductionHooksVitestConfig\(\)\s*,/u.test(source)) {
+      inherited = read(resolve(dirname(path), 'vitest.uiProductionHooks.ts'));
+    }
     if (!directResolver && !inherited) return null;
     const setup = /\bglobalSetup\s*:\s*\[([^\]]*)\]/u.exec(source);
     if (!setup && /\bglobalSetup\s*:/u.test(source)) return null;
@@ -84,6 +95,15 @@ export function readVitestSourcePreparation(repoRoot, configPath) {
       let setupSource;
       try { setupSource = readFileSync(resolve(dirname(path), literal[1]), 'utf8'); }
       catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+      // Both core setups consume the same decisions as the runtime launchers.
+      // Keep arbitrary setup modules on the conservative preparation path.
+      if (dirname(path) === resolve(repoRoot, 'packages/tests')
+        && /^src\/testkit\/vitest\/globalSetup\.core(?:Fast|Slow)\.ts$/u.test(literal[1])
+        && /\bawait prepareCliForGlobalSetup\(/u.test(setupSource)
+        && /\bawait prepareServerSharedDepsForRun\(/u.test(setupSource)) {
+        if (!shouldUseCliSourceEntrypoint(env) || !shouldSkipServerSharedDepsBuild(env)) return null;
+        continue;
+      }
       if (!/from\s*['"]\.\/test-setup['"]/u.test(setupSource)) return null;
       if (/\bbuildMode\s*:\s*['"](?:full|shared-only)['"]/u.test(setupSource)) buildsDist = true;
       else if (!/\bbuildMode\s*:\s*['"]none['"]/u.test(setupSource)) return null;

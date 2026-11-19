@@ -131,3 +131,27 @@ test('shared source resolver configs skip package-dist preparation in both dispa
     assert.equal(native.stdout, 'source-test', component);
   }
 });
+
+test('composed core configs skip package publication only in source mode', async () => {
+  const { resolvePackageCommandPolicy } = await import('./remote_commands.mjs');
+  const cliSource = 'HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1';
+  const skipServerBuild = 'HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD=yes';
+  const cwd = join(repoRoot, 'packages/tests');
+  for (const [config, selection] of [
+    ['vitest.core.fast.config.ts', 'src/testkit/process/extendedDbDocker.plan.spec.ts'],
+    ['vitest.core.slow.config.ts', 'suites/core-e2e/triage.savedViews.journey.slow.e2e.test.ts'],
+  ]) {
+    const args = ['vitest', 'run', '--config', config, selection];
+    const policy = async (...assignments) => resolvePackageCommandPolicy(
+      assignments.length ? ['env', ...assignments, ...args] : args, { repoRoot, cwd, env: {} });
+    const source = await policy(cliSource, skipServerBuild);
+    assert.equal(source.kind, 'source-test', config);
+    assert.equal(source.heavyClass, 'focused-validation', config);
+    assert.equal(source.workspaceLock, '', config);
+    assert.equal((await policy()).kind, 'runtime', config);
+    assert.equal((await policy(cliSource)).kind, 'runtime', config);
+    assert.equal((await policy(skipServerBuild)).kind, 'runtime', config);
+    assert.equal((await policy(cliSource, 'HAPPY_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD=1',
+      'HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD=0')).kind, 'runtime', config);
+  }
+});

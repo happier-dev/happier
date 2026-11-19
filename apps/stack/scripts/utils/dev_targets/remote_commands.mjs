@@ -43,7 +43,9 @@ export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOU
 // PATH participates through the tools it resolves (controller_coalescing.mjs).
 const COMMAND_ENVIRONMENT = Object.freeze({
   preparation: ['HAPPIER_STACK_SKIP_REFRESH_DEPS', 'HAPPIER_STACK_DISABLE_REFRESH_DEPS', 'HAPPIER_CLI_TEST_SKIP_BUILD'],
-  payload: ['HAPPIER_TYPESCRIPT_COMPILER', 'GOMAXPROCS', 'HAPPIER_TYPECHECK_LOCATIONS_ONLY', 'HAPPIER_TYPECHECK_SELECTION'],
+  payload: ['HAPPIER_TYPESCRIPT_COMPILER', 'GOMAXPROCS', 'HAPPIER_TYPECHECK_LOCATIONS_ONLY', 'HAPPIER_TYPECHECK_SELECTION',
+    'HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', 'HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT',
+    'HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD', 'HAPPY_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD'],
   vitest: ['HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
     'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS', 'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS'],
   controller: ['HOME', 'PATH', 'NODE_OPTIONS', 'CI',
@@ -791,7 +793,8 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
   if ((facts.component === 'apps/cli' || policy.kind === 'runtime') && policy.workerTool === 'vitest'
     && policy.runnerKnown === '1' && facts.resolverOverride === '0' && policy.generatorCheck === '0'
     && facts.config === commandBasename(facts.config)) {
-    const preparation = readVitestSourcePreparation(repoRoot, join(repoRoot, facts.component, facts.config));
+    const preparation = readVitestSourcePreparation(repoRoot, join(repoRoot, facts.component, facts.config),
+      { ...env, ...facts.commandEnvironment });
     const skipBuild = isCliTestBuildSkipped(env);
     if (preparation && (!preparation.buildsDist || skipBuild)) {
       policy.kind = 'source-test';
