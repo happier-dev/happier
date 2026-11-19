@@ -5,6 +5,7 @@ import { ActionCompletionStateV1Schema, freezeActionCompletionContractV1, prepar
   resumeActionCompletionV1, type ActionCompletionDeclaration } from './actionCompletion.js';
 import { ActionSpecSchema } from './specs/definition.js';
 import { getActionSpec } from './actionSpecs.js';
+import { withExecutionRunStartFailureDetails } from '../execution/runs/responseSchemas.js';
 
 const declaration: ActionCompletionDeclaration = {
   awaits: 'workflow_runs',
@@ -24,6 +25,31 @@ it('retains the Workflow completion owner and native fallback when validating an
   if (native?.awaits !== 'execution_runs') throw new Error('Expected native completion declaration');
   const spec = ActionSpecSchema.parse({ ...getActionSpec('review.start'), completion: { ...declaration, executionRuns: native } });
   expect(spec.completion).toMatchObject({ awaits: 'workflow_runs', executionRuns: { awaits: 'execution_runs' } });
+});
+
+it('completes an admitted person-only Review without mistaking its empty executable roster for a launch failure', async () => {
+  const completion = getActionSpec('review.start').completion;
+  if (!completion) throw new Error('Expected Review completion declaration');
+  const reviewRound = { reviewId: 'person-review', roundOrdinal: 1 };
+  const receipt = { intent: 'review', sessionId: null, reviewRound, reviewedFingerprint: null, results: [] };
+  const prepare = (result: unknown) => prepareActionCompletionV1(completion, { ok: true, result });
+
+  expect(prepare(receipt)).toEqual({ kind: 'completed', value: receipt });
+  const { reviewRound: _reviewRound, ...unadmitted } = receipt;
+  expect(prepare(unadmitted)).toEqual({ kind: 'failed', errorCode: 'action_failed' });
+  const failedReviewer = { key: 'reviewer-2', ok: false, errorCode: 'engine_unavailable',
+    details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
+  expect(prepare({ ...receipt, results: [failedReviewer] })).toEqual({ kind: 'failed', errorCode: 'engine_unavailable', noRunsLaunched: true });
+
+  const partial = prepare({ ...receipt, results: [{ key: 'reviewer-1', ok: true, result: { runId: 'native-review' } }, failedReviewer] });
+  expect(partial).toMatchObject({ kind: 'awaiting', state: { awaitedRuns: [{ key: 'reviewer-1', runId: 'native-review' }] } });
+  if (partial.kind !== 'awaiting') throw new Error('Expected native reviewer completion');
+  expect(await resumeActionCompletionV1({ actionId: 'review.start', completion: freezeActionCompletionContractV1(completion),
+    state: partial.state, resolveDeclaration: () => completion,
+    observeRun: async () => ({ kind: 'completed', result: {}, commentIds: [], materialization: { kind: 'complete' } }),
+  })).toMatchObject({ kind: 'completed', value: { reviewRound, perEngineOutcome: [
+    { key: 'reviewer-1', outcome: 'completed' }, { key: 'reviewer-2', outcome: 'launch_failed', errorCode: 'engine_unavailable' },
+  ] } });
 });
 
 it('retains the accepted workflow handle and waits for its terminal output once', async () => {

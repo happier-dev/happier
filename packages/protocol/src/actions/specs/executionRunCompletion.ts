@@ -244,6 +244,8 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
 
 export const reviewStartCompletion: ActionCompletionDeclaration = {
   awaits: 'workflow_runs',
+  immediateResultSchema: lazyZodSchema(() => FanoutOutputSchema.check(z.refine(output =>
+    output.intent === 'review' && output.reviewRound !== undefined && output.results.length === 0))),
   executionRuns: reviewStartExecutionRunCompletion,
   terminalOutputSchema: StrictJsonValueSchema,
   launched: output => {
