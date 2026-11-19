@@ -1,9 +1,9 @@
-export type NativeThemePreferenceTransitionControllerDependencies = {
+export type NativeThemePreferenceTransitionControllerDependencies<Surface> = {
     animateOverlay: () => Promise<void> | void;
-    captureSurface: () => Promise<string | null> | string | null;
+    captureSurface: () => Promise<Surface | null> | Surface | null;
     hideOverlay: () => void;
-    releaseSurface?: (uri: string) => void;
-    showOverlay: (uri: string, direction?: 'sunrise' | 'night') => void;
+    releaseSurface?: (surface: Surface) => void;
+    showOverlay: (surface: Surface, direction?: 'sunrise' | 'night') => void;
     waitForFrame: () => Promise<void> | void;
     recordBreadcrumb?: (breadcrumb: NativeThemePreferenceTransitionBreadcrumb) => void;
 };
@@ -12,13 +12,13 @@ export type NativeThemePreferenceTransitionBreadcrumb = Readonly<{
     phase: 'mutation-before-overlay' | 'overlay-shown';
 }>;
 
-export function createNativeThemePreferenceTransitionController(
-    dependencies: NativeThemePreferenceTransitionControllerDependencies,
+export function createNativeThemePreferenceTransitionController<Surface>(
+    dependencies: NativeThemePreferenceTransitionControllerDependencies<Surface>,
 ) {
     return {
         async run(mutation: () => void, direction?: 'sunrise' | 'night'): Promise<void> {
-            const uri = await dependencies.captureSurface();
-            if (!uri) {
+            const surface = await dependencies.captureSurface();
+            if (surface === null) {
                 mutation();
                 return;
             }
@@ -26,12 +26,12 @@ export function createNativeThemePreferenceTransitionController(
                 dependencies.recordBreadcrumb?.({ phase: 'mutation-before-overlay' });
                 mutation();
                 dependencies.recordBreadcrumb?.({ phase: 'overlay-shown' });
-                dependencies.showOverlay(uri, direction);
+                dependencies.showOverlay(surface, direction);
                 await dependencies.waitForFrame();
                 await dependencies.animateOverlay();
             } finally {
                 dependencies.hideOverlay();
-                dependencies.releaseSurface?.(uri);
+                dependencies.releaseSurface?.(surface);
             }
         },
     };
