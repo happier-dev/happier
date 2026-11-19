@@ -1,5 +1,7 @@
 import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
 import { join } from 'node:path';
+import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { runAddedHostedSession } from './lifecycle/hostedSessionScope';
 import { describe, expect, it } from 'vitest';
 
@@ -17,6 +19,7 @@ import { createDeferredStartupMetadataPlan } from './startup/createDeferredStart
 import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
@@ -770,6 +773,27 @@ describe('createSessionMetadata', () => {
         } as any);
 
         expect(metadata.path).toBe('/tmp/happier-explicit-directory');
+    });
+
+    it('joins the accepted physical Project from a logical native Session directory', async () => {
+        const scratch = await mkdtemp(join(tmpdir(), 'happier-session-project-alias-'));
+        try {
+            const physical = join(await realpath(scratch), 'workspace');
+            await mkdir(physical);
+            const logical = join(scratch, 'logical-workspace');
+            await symlink(physical, logical, process.platform === 'win32' ? 'junction' : 'dir');
+            const workspace = { id: 'accepted-checkout', serverId: 'home', machineId: 'machine-1', rootPath: physical, createdAtMs: 1 };
+            const observations = [undefined, logical].map(machineWorkspacePath => {
+                const { metadata } = createMetadata({ flavor: 'codex', machineId: 'machine-1', directory: logical,
+                    launchControlMetadata: { ...captureSessionLaunchControlMetadata({ explicitEnvironment: {}, processEnvironment: {} }),
+                        ...(machineWorkspacePath === undefined ? {} : { machineWorkspacePath }) },
+                });
+                return { path: metadata.path, association: resolveSessionProjectKeyV1(metadata, 'home', [workspace]) };
+            });
+            expect(observations).toEqual([undefined, logical].map(() => ({ path: logical,
+                association: { kind: 'resolved', projectKey: { serverId: 'home', projectKey: workspace.id }, ref: workspace },
+            })));
+        } finally { await rm(scratch, { recursive: true, force: true }); }
     });
 
     it('publishes the agent and machine workspace roots captured at daemon launch', () => {

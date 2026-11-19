@@ -8,6 +8,7 @@
  */
 
 import os from 'node:os';
+import { realpathSync } from 'node:fs';
 import { sessionProcessEnvironment } from './lifecycle/hostedSessionScope';
 import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { resolve } from 'node:path';
@@ -252,6 +253,18 @@ export interface SessionMetadataResult {
     metadata: Metadata;
 }
 
+function resolveMachineWorkspacePath(sessionPath: string, machineWorkspacePath: string | null): string {
+    // A different host root belongs to the launching Machine's namespace (for example a sandbox mount).
+    if (machineWorkspacePath && machineWorkspacePath !== sessionPath) return machineWorkspacePath;
+    try {
+        // Project acceptance uses the physical checkout; keep its identity separate from the logical display path.
+        return realpathSync(sessionPath);
+    } catch {
+        // An unavailable directory cannot establish a physical identity; preserve the requested root.
+        return sessionPath;
+    }
+}
+
 /**
  * Creates session state and metadata for backend agents.
  *
@@ -304,7 +317,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
             sessionWorkspaceLocationV1: buildSessionWorkspaceLocationV1({
                 machineId: opts.machineId,
                 agentPath: sessionPath,
-                machinePath: launchControlMetadata.machineWorkspacePath ?? sessionPath,
+                machinePath: resolveMachineWorkspacePath(sessionPath, launchControlMetadata.machineWorkspacePath),
             }),
         } : {}),
         ...(launchControlMetadata.sessionDirectoryKind === 'managed'

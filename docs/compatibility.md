@@ -5526,7 +5526,11 @@ Protocol owner. The optional nullable `Session.projectKey` row field carries the
 accepted Home-local anchor; readers qualify it with the row's Home and can group
 or filter before private Project refs or labels load. Missing and null both mean
 not yet published. Older rows remain readable through exact Machine/root
-association, using a published sandbox's host `machinePath`. An explicit
+association, using a published sandbox's host `machinePath`. Native Sessions
+publish the physical filesystem root as `machinePath`,
+matching Project acceptance, while its requested display path and `agentPath`
+retain their logical spelling. A different explicit host/agent mapping remains
+in the launching Machine's namespace. An explicit
 Home-qualified `workspaceId` selects its accepted checkout independently of the
 Session's subdirectory or execution Machine. Legacy `projectId` only checks a
 resolved ref; it cannot establish association alone. Incomplete or ambiguous ref
