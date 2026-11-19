@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -17,6 +17,7 @@ import type {
 } from '@happier-dev/protocol/reviews/comments/v1';
 import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -128,8 +129,11 @@ function isReviewCommentActiveItem(comment: ReviewCommentV1): boolean {
 }
 
 export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceProps) {
-    // A Home/Account switch retires the entire prior view, including pending reads and mutations.
-    return <ScopedReviewCommentsSessionSurface key={props.scope ? serverAccountScopeKeySuffix(props.scope) : 'unscoped'} {...props} />;
+    // Retire reads, continuation and rows together when the addressed comment scope changes.
+    const key = JSON.stringify([props.scope ? serverAccountScopeKeySuffix(props.scope) : null,
+        props.projectId, props.workspace?.machineId, props.workspace?.path,
+        props.workspaceId, props.sessionId, props.runId]);
+    return <ScopedReviewCommentsSessionSurface key={key} {...props} />;
 }
 
 function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceProps) {
@@ -154,7 +158,9 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
     const externalHeader = props.header === 'external';
     const panelOpen = externalHeader ? props.open === true : ownPanelOpen;
     const [showHistory, setShowHistory] = React.useState(false);
-    const [loadFailed, setLoadFailed] = React.useState(false);
+    const [loadFailed, setLoadFailed] = React.useState<Readonly<{ cursor?: string }> | null>(null);
+    const [loading, setLoading] = React.useState(false);
+    const loadController = React.useRef<AbortController | null>(null);
     // The last action that failed: on the card it was taken on (null for a bulk action), with its retry.
     const [mutationFailure, setMutationFailure] = React.useState<Readonly<{ commentId: string | null; retry: () => void }> | null>(null);
     // Comments are read when the panel opens; until then the count is unknown, never "0".
@@ -163,37 +169,54 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
     const [selectedActiveStates, setSelectedActiveStates] = React.useState<readonly ReviewCommentStateV1[]>(
         ACTIVE_REVIEW_COMMENT_STATES,
     );
+    const workspaceMachineId = props.workspace?.machineId;
+    const workspacePath = props.workspace?.path;
 
-    const loadComments = React.useCallback(async () => {
-        if (!props.projectId && !props.workspace && !props.workspaceId && !props.sessionId && !props.runId) return;
-        setLoadFailed(false);
+    const loadComments = React.useCallback(async (cursor?: string) => {
+        if (!props.projectId && !workspaceMachineId && !props.workspaceId && !props.sessionId && !props.runId) return;
+        loadController.current?.abort();
+        const controller = new AbortController();
+        loadController.current = controller;
+        setLoadFailed(null);
+        setLoading(true);
         try {
             const response = await actions.list({
                 ...(props.sessionId ? { sessionId: props.sessionId }
-                    : props.workspace ? { workspace: props.workspace }
+                    : workspaceMachineId && workspacePath ? { workspace: { machineId: workspaceMachineId, path: workspacePath } }
                     : { projectId: props.projectId, workspaceId: props.workspaceId }),
                 runId: props.runId,
                 includeHistory: true,
                 limit: 100,
-            }) as ReviewCommentListResponseV1;
-            setCommentsState((state) => applyReviewCommentList(state, response));
+                ...(cursor ? { cursor } : {}),
+            }, { signal: controller.signal }) as ReviewCommentListResponseV1;
+            if (controller.signal.aborted) return;
+            setCommentsState((state) => cursor
+                ? { ...response.items.reduce(upsertReviewComment, state), cursor: response.cursor }
+                : applyReviewCommentList(state, response));
             setLoaded(true);
             setBulkTransitionResult(null);
         } catch {
-            setLoadFailed(true);
+            if (!controller.signal.aborted) setLoadFailed({ cursor });
+        } finally {
+            if (loadController.current === controller) {
+                loadController.current = null;
+                setLoading(false);
+            }
         }
-    }, [actions, props.projectId, props.runId, props.sessionId, props.workspace, props.workspaceId]);
+    }, [actions, props.projectId, props.runId, props.sessionId, props.workspaceId, workspaceMachineId, workspacePath]);
 
     React.useEffect(() => {
         if (!panelOpen) return;
         void loadComments();
+        return () => { loadController.current?.abort(); };
     }, [loadComments, panelOpen]);
 
     const activeComments = selectReviewComments(commentsState, { states: ACTIVE_REVIEW_COMMENT_STATES })
         .filter(isReviewCommentActiveItem);
     const activeCount = activeComments.length;
+    const unresolvedCount = loaded && !commentsState.cursor ? activeCount : null;
     const onUnresolvedCountChange = props.onUnresolvedCountChange;
-    React.useEffect(() => { onUnresolvedCountChange?.(loaded ? activeCount : null); }, [activeCount, loaded, onUnresolvedCountChange]);
+    React.useEffect(() => { onUnresolvedCountChange?.(unresolvedCount); }, [unresolvedCount, onUnresolvedCountChange]);
     const filteredActiveComments = selectedActiveStates.length === 0
         ? []
         : selectReviewComments(commentsState, { states: selectedActiveStates }).filter(isReviewCommentActiveItem);
@@ -438,6 +461,12 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         </View>
     ) : null;
     const renderCardNotice = (comment: ReviewCommentV1) => mutationFailure?.commentId === comment.id ? renderMutationFailure() : null;
+    const listFooter = commentsState.cursor ? <TextLinkButton
+        testID={`${props.testID ?? 'review-comments'}-load-more`}
+        label={t('common.more')}
+        disabled={loading}
+        onPress={() => loadComments(commentsState.cursor ?? undefined)}
+    /> : null;
 
     // A host that draws the disclosure in its own bar shows nothing here until the panel is opened.
     if (externalHeader && !panelOpen) return null;
@@ -451,7 +480,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         >
             {externalHeader ? null : <ReviewCommentsHeaderButton
                 labels={headerLabels}
-                unresolvedCount={loaded ? activeCount : null}
+                unresolvedCount={unresolvedCount}
                 expanded={panelOpen}
                 onPress={togglePanel}
                 testID={`${props.testID ?? 'review-comments'}-header`}
@@ -483,7 +512,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                     </View>
                     {loadFailed ? (
                         <SurfaceStateCard size="line" kind="error" title={t('files.reviewComments.durable.loadFailed')}
-                            action={{ label: t('common.retry'), onPress: () => void loadComments() }} />
+                            action={{ label: t('common.retry'), onPress: () => void loadComments(loadFailed.cursor) }} />
                     ) : null}
                     {/* A card's failure sits with that card; only a bulk action's failure belongs to the whole list. */}
                     {mutationFailure && mutationFailure.commentId === null ? renderMutationFailure() : null}
@@ -492,9 +521,9 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                         <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
                     ) : null}
                     {!loaded ? null : showHistory ? (
-                        <ScrollView style={styles.list} nestedScrollEnabled keyboardShouldPersistTaps="handled">
                             <ReviewCommentsHistoryView
                                 comments={panelComments}
+                                listFooter={listFooter}
                                 labels={historyLabels}
                                 cardActions={{
                                     onOpenFile, canOpenFile,
@@ -503,10 +532,10 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                                 }}
                                 testID={`${props.testID ?? 'review-comments'}-history`}
                             />
-                        </ScrollView>
                     ) : (
                         <ReviewCommentsPanel
                             comments={panelComments}
+                            listFooter={listFooter}
                             labels={activeLabels}
                             selectedStates={selectedActiveStates}
                             stateOptions={ACTIVE_REVIEW_COMMENT_STATES}
@@ -620,5 +649,4 @@ const styles = StyleSheet.create((theme) => ({
     panel: { flexShrink: 1, minHeight: 0, gap: theme.space.s8, paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8, paddingBottom: theme.space.s12 },
     bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s8 },
     tabs: { flexShrink: 1, minWidth: 0 },
-    list: { flexShrink: 1, minHeight: 0 },
 }));

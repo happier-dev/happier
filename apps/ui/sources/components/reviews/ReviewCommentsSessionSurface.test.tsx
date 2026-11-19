@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ReviewCommentActionIdV1} from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
@@ -24,6 +25,12 @@ import {
 import { ReviewCommentsSessionSurface } from './ReviewCommentsSessionSurface';
 const submitMessageSpy = vi.fn(async (..._args: unknown[]) => undefined);
 vi.mock('@/sync/sync', () => ({ sync: { submitMessage: (...args: unknown[]) => submitMessageSpy(...args) } }));
+
+// The native recycler is the physical layout boundary; list/card behavior stays real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
+});
 
 vi.mock('@/components/ui/text/Text', async () => {
     const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
@@ -107,6 +114,78 @@ function deferred<T>() {
 const settleMenu = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
 
 describe('ReviewCommentsSessionSurface', () => {
+    it('reaches comments after the first hundred only on explicit continuation and cancels retired scope demand', async () => {
+        const pending = deferred<{ items: ReviewCommentV1[]; cursor: null }>();
+        const onUnresolvedCountChange = vi.fn();
+        const requests: { input: unknown; signal?: AbortSignal }[] = [];
+        const execute = vi.fn(async (_action: ActionId, input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+            requests.push({ input, signal: options?.signal });
+            const query = input as { projectId?: string; cursor?: string };
+            if (query.projectId === 'project-2') return { items: [comment({ id: 'new-scope', projectId: 'project-2' })], cursor: null };
+            if (query.cursor === 'page-3') return pending.promise;
+            if (query.cursor === 'page-2') return { items: [comment({ id: 'later-page' })], cursor: 'page-3' };
+            return { items: Array.from({ length: 100 }, (_, index) => comment({ id: `first-${index}` })), cursor: 'page-2' };
+        });
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} onUnresolvedCountChange={onUnresolvedCountChange} testID="comments" />);
+        await flushHookEffects();
+        expect(requests).toHaveLength(1);
+        expect(screen.findByTestId('comments-load-more')).not.toBeNull();
+        expect(onUnresolvedCountChange).toHaveBeenLastCalledWith(null);
+        await screen.pressByTestIdAsync('comments-load-more');
+        expect(requests).toHaveLength(2);
+        expect(screen.findHostByTestId('review-comment-later-page')).not.toBeNull();
+        expect(screen.findHostByTestId('review-comment-first-0')).not.toBeNull();
+        await act(async () => { screen.findByTestId('comments-load-more')?.props.onPress(); });
+        expect(requests).toHaveLength(3);
+        await screen.update(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-2" execute={execute} onUnresolvedCountChange={onUnresolvedCountChange} testID="comments" />);
+        await flushHookEffects();
+        expect(requests[2]?.signal?.aborted).toBe(true);
+        await act(async () => { pending.resolve({ items: [comment({ id: 'retired-scope' })], cursor: null }); });
+        expect(screen.findHostByTestId('review-comment-new-scope')).not.toBeNull();
+        expect(screen.findHostByTestId('review-comment-retired-scope')).toBeNull();
+        expect(onUnresolvedCountChange).toHaveBeenLastCalledWith(1);
+    });
+
+    it('keeps empty candidate continuation available after failure and retries the same page', async () => {
+        let continuationAttempts = 0;
+        const execute = vi.fn(async (_action: ActionId, input: unknown) => {
+            if (!(input as { cursor?: string }).cursor) return { items: [], cursor: 'page-2' };
+            continuationAttempts += 1;
+            if (continuationAttempts === 1) throw new Error('offline');
+            return { items: [comment({ id: 'after-empty-page' })], cursor: null };
+        });
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('comments-load-more');
+        expect(screen.findByTestId('comments-load-more')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('files.reviewComments.durable.loadFailed');
+        await screen.pressByTestIdAsync('comments-load-more');
+        expect(continuationAttempts).toBe(2);
+        expect(screen.findHostByTestId('review-comment-after-empty-page')).not.toBeNull();
+        expect(screen.findByTestId('comments-load-more')).toBeNull();
+    });
+
+    it('retains demanded pages when reporting the final count rerenders the same workspace host', async () => {
+        const execute = vi.fn(async (_action: ActionId, input: unknown) => (
+            (input as { cursor?: string }).cursor
+                ? { items: [comment({ id: 'later-page' })], cursor: null }
+                : { items: [comment({ id: 'first-page' })], cursor: 'next' }
+        ));
+        function WorkspaceHost() {
+            const [, setCount] = React.useState<number | null>(null);
+            return <ReviewCommentsSessionSurface scope={RUN.scope} workspace={{ machineId: 'machine', path: '/repo' }}
+                execute={execute} onUnresolvedCountChange={setCount} testID="comments" />;
+        }
+        const screen = await renderScreen(<WorkspaceHost />);
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('comments-load-more');
+        await flushHookEffects();
+        expect(screen.findHostByTestId('review-comment-later-page')).not.toBeNull();
+        expect(screen.findHostByTestId('review-comment-first-page')).not.toBeNull();
+        expect(screen.findByTestId('comments-load-more')).toBeNull();
+        expect(execute).toHaveBeenCalledTimes(2);
+    });
+
     let initialLanguage: ReturnType<typeof getPreferredLanguage>;
     beforeEach(() => {
         initialLanguage = getPreferredLanguage();
@@ -341,7 +420,8 @@ describe('ReviewCommentsSessionSurface', () => {
         const workspace = { machineId: 'machine-1', path: '/repo' };
         await renderScreen(<ReviewCommentsSessionSurface workspace={workspace} workspaceId="legacy-ref" execute={execute} />);
         await flushHookEffects();
-        expect(execute).toHaveBeenCalledWith('reviews.comments.list', expect.objectContaining({ workspace, includeHistory: true }));
+        expect(execute).toHaveBeenCalledWith('reviews.comments.list', expect.objectContaining({ workspace, includeHistory: true }),
+            expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(execute.mock.calls[0]?.[1]).not.toHaveProperty('workspaceId');
     });
 
@@ -467,7 +547,7 @@ describe('ReviewCommentsSessionSurface', () => {
         expect(execute).toHaveBeenCalledWith('reviews.comments.list', expect.objectContaining({
             sessionId: 'session-1',
             includeHistory: true,
-        }));
+        }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(screen.getTextContent()).toContain('Opened from product header.');
         // Read, the header says how many are open; pressed again, the panel closes.
         expect(screen.getTextContent()).toContain('1');
