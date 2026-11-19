@@ -3,6 +3,8 @@
  * Shared Triage projection bounds stay at their protocol owner.
  */
 
+import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
+
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 export const SENTRY_PLUGIN_ID = 'happier.sentry';
@@ -50,7 +52,7 @@ export const SENTRY_TRIAGE_SETTINGS_RENDERER_ID = 'sentry-triage-sources';
 export const SENTRY_TRIAGE_SETTINGS_ARTIFACT_ID = 'sentry-triage-sources-native';
 
 export const SENTRY_ACTION_IDS = Object.freeze({
-  setupIssueEvent: 'automation/setup-issue-transition-v1',
+  setupIssueEvent: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1,
   resetIssueEvent: 'automation/reset-issue-transition-v1',
   listInstances: 'sentry/list-instances',
   listScopeUnits: 'sentry/list-projects',

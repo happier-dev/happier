@@ -51,6 +51,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 import { GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID } from './adapter.js';
+import { GITHUB_CI_MOUNTED_ACTION_ID_V1 } from './actions/mounted.js';
 import { GITHUB_CI_ACTION_BINDINGS_V1 } from './actions/contribution.js';
 import { githubCiBranchCountsResourceV1 } from './actions/branchCounts.js';
 import { GITHUB_OVERVIEW_TARGET_ACTIONS_V1 } from './actions/overview.js';
@@ -400,7 +401,7 @@ const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA = {
 /** Named schema references retain exact Action payloads in portable declarations. */
 type GithubActionSchemas = {
   readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus]: readonly [typeof GithubPullRequestPreviewStatusActionInputV1Schema.jsonSchema, typeof GithubPullRequestPreviewStatusResultV1Schema.jsonSchema];
-  readonly 'ui/ci-view-v1': readonly [typeof ForgeCiMountedIntentInputV1Schema, typeof ForgeCiMountedIntentResultV1Schema];
+  readonly [GITHUB_CI_MOUNTED_ACTION_ID_V1]: readonly [typeof ForgeCiMountedIntentInputV1Schema, typeof ForgeCiMountedIntentResultV1Schema];
   readonly [GITHUB_TRIAGE_ACTION_IDS_V1.linkSession]: readonly [typeof TriageSourceCredentialInputsV1.linkSession.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.linkSession.declaration.resultSchema.jsonSchema];
   readonly [GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace]: readonly [typeof TriageSourceCredentialInputsV1.prepareReviewWorkspace.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema];
   readonly [GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace]: readonly [typeof TriageSourceCredentialInputsV1.verifyReviewWorkspace.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema];
@@ -823,7 +824,7 @@ function createGithubPlugin(): GithubPlugin {
     ...GITHUB_CI_ACTION_BINDINGS_V1,
     ...GITHUB_OVERVIEW_TARGET_ACTIONS_V1,
     ...GITHUB_PROJECT_READINESS_ACTIONS_V1,
-    'ui/ci-view-v1': {
+    [GITHUB_CI_MOUNTED_ACTION_ID_V1]: {
       title: 'Control the mounted Actions view',
       description: 'Applies typed selection, filters, trigger draft and log controls to one current mount. It never mounts a page or performs a provider write.',
       surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [], dangerLevel: 'safe',

@@ -12,6 +12,8 @@
  * an Action `hostAccess` reference, which would leave the grant unreferenceable.
  */
 
+import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
+
 /** The plugin id of this source. */
 export const POSTHOG_PLUGIN_ID = 'happier.posthog';
 
@@ -67,7 +69,7 @@ export const POSTHOG_TRIAGE_SETTINGS_ARTIFACT_ID = 'posthog-triage-sources-nativ
 
 /** The Action ids that carry the three source read roles. */
 export const POSTHOG_ACTION_IDS = {
-    setupIssueEvent: 'automation/setup-issue-transition-v1',
+    setupIssueEvent: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1,
     resetIssueEvent: 'automation/reset-issue-transition-v1',
     configuration: 'posthog/configuration',
     listInstances: 'posthog/list-instances',
