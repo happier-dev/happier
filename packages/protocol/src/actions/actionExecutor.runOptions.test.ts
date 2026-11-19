@@ -8,6 +8,7 @@ import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest.j
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
+import { ReviewEngineInventorySchema } from '../reviews/reviewEngines.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   const reviews = createInMemoryReviewRecordPortV1();
@@ -542,12 +543,15 @@ it.each(['execution.run.start', 'review.start', 'subagents.plan.start', 'subagen
       engine: { agentTargetKey: START_TARGET_KEY, modelId: 'role-model', effort: 'high' },
       runsAs: { kind: 'background_run', intent: 'task' }, profileId: 'launch-profile',
       workspaceWrites: 'deny', secondOpinion: 'off' } as const;
+    const profileSourceCustody = { kind: 'development', registeredRootId: 'execution-profile-root' } as const;
+    const engine = { engineId: 'codex', value: START_TARGET_KEY, label: 'Codex', enabled: true,
+      capabilities: { structuredNarration: false } };
     const deps = createDeps({ executionRunCheckProtocolV2: async () => ({ ok: true }),
-      reviewEnginesList: vi.fn(async () => ({ items: [{ id: START_TARGET_KEY, enabled: true }] })) });
+      reviewEnginesList: vi.fn(async () => ReviewEngineInventorySchema.parse({ items: [engine],
+        selectionItems: [{ ...engine, profileId: 'example.execution-profile', profileSourceCustody }] })) });
     const input = actionId === 'execution.run.start' ? RUN_START_BASE
       : actionId === 'review.start' ? { sessionId: 's1', scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review' }
       : { sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'Task' };
-    const profileSourceCustody = { kind: 'development', registeredRootId: 'execution-profile-root' } as const;
     const result = await createActionExecutor(deps).execute(actionId, { ...input, roleId: role.roleId,
       profileId: 'example.execution-profile', profileSourceCustody }, {
       ...RUN_DISPATCHER_CALLER, agentStartContext: { ...START_CONTEXT, roles: { [role.roleId]: role } },
