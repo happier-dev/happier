@@ -8780,7 +8780,7 @@ const machineDetailPageTranslations = { ja: translated({
             isolation: {
                 title: "分離",
                 whereTitle: "セッションの実行場所",
-                offline: ({ machine }: { machine: string }) => `${machine} はオフラインです。戻ったら変更できます。それまでは表示どおりのままです。`,
+                offline: "戻ったら変更できます。それまでは表示どおりのままです。",
                 notManager: "作業の実行場所を変更できるのは所有者か管理者だけです。",
                 unreadable: ({ machine }: { machine: string }) => `${machine} で作業がどこで実行されるかを今は読み取れません。`,
                 invalid: "Happier はこの設定を読み取れません。アプリを更新してからもう一度お試しください。",

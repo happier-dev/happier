@@ -8843,7 +8843,7 @@ const machineDetailPageTranslations = { fr: translated({
             isolation: {
                 title: "Isolation",
                 whereTitle: "Où s’exécutent les sessions",
-                offline: ({ machine }: { machine: string }) => `${machine} est hors ligne. Tu pourras changer ceci à son retour ; d’ici là, rien ne change.`,
+                offline: "Tu pourras changer ceci à son retour ; d’ici là, rien ne change.",
                 notManager: "Seul le propriétaire ou un administrateur peut changer où le travail s’exécute.",
                 unreadable: ({ machine }: { machine: string }) => `Happier ne peut pas lire où le travail s’exécute sur ${machine} pour le moment.`,
                 invalid: "Happier ne peut pas lire ces réglages. Mets l’app à jour, puis réessaie.",

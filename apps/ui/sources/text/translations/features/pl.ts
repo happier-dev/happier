@@ -8857,7 +8857,7 @@ const machineDetailPageTranslations = { pl: translated({
             isolation: {
                 title: "Izolacja",
                 whereTitle: "Gdzie działają sesje",
-                offline: ({ machine }: { machine: string }) => `${machine} jest offline. Zmienisz to, gdy wróci; do tego czasu zostaje tak, jak widać.`,
+                offline: "Zmienisz to, gdy wróci; do tego czasu zostaje tak, jak widać.",
                 notManager: "Tylko właściciel lub administrator może zmienić, gdzie działa praca.",
                 unreadable: ({ machine }: { machine: string }) => `Happier nie może teraz odczytać, gdzie działa praca na ${machine}.`,
                 invalid: "Happier nie może odczytać tych ustawień. Zaktualizuj aplikację i spróbuj ponownie.",

@@ -15,7 +15,7 @@ export const english = {
         isolation: {
             title: "Isolation",
             whereTitle: "Where sessions run",
-            offline: ({ machine }: { machine: string }) => `${machine} is offline. You can change this once it’s back; until then it stays as shown.`,
+            offline: "You can change this once it’s back; until then it stays as shown.",
             notManager: "Only the owner or an administrator can change where work runs.",
             unreadable: ({ machine }: { machine: string }) => `Happier can’t read where work runs on ${machine} right now.`,
             invalid: "Happier can’t read these settings. Update the app, then try again.",

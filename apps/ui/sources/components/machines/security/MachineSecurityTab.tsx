@@ -231,7 +231,7 @@ function MachineSecurityIsolationPage(props: PushedPageProps & Readonly<{
   const { policy } = useMachineIsolationPolicy({ serverId: props.serverId, machine: props.machine });
   // Nothing set up yet: the lead goes on to say what a sandbox would change (lab scene 1 `unset`).
   const unset = policy !== null && Object.keys(policy.configuredSandboxes).length === 0;
-  const availability = describeMachineIsolationAvailability(props.machine, props.online, props.machineName);
+  const availability = describeMachineIsolationAvailability(props.machine, props.online);
   const continuation = detail.length > 0 ? detail.join(' ') : unset ? t('machineDetailPage.isolation.leadInvite') : null;
   return (
     <View testID="machine-security-isolation-page">

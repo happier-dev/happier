@@ -77,7 +77,7 @@ export function MachineIsolationPage(
         : undefined,
     [machine.id, machine.installationId],
   );
-  const { readOnlyReason, offline } = describeMachineIsolationAvailability(machine, props.online, machineName);
+  const { readOnlyReason, offline } = describeMachineIsolationAvailability(machine, props.online);
 
   const save = React.useCallback(
     async (next: MachineIsolationPolicyV1) => {

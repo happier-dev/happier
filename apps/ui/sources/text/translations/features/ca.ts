@@ -8827,7 +8827,7 @@ const machineDetailPageTranslations = { ca: translated({
             isolation: {
                 title: "Aïllament",
                 whereTitle: "On s’executen les sessions",
-                offline: ({ machine }: { machine: string }) => `${machine} està desconnectada. Podràs canviar això quan torni; fins aleshores es queda com veus.`,
+                offline: "Podràs canviar això quan torni; fins aleshores es queda com veus.",
                 notManager: "Només el propietari o un administrador pot canviar on s’executa la feina.",
                 unreadable: ({ machine }: { machine: string }) => `Happier no pot llegir ara on s’executa la feina a ${machine}.`,
                 invalid: "Happier no pot llegir aquests ajustos. Actualitza l’app i torna-ho a provar.",

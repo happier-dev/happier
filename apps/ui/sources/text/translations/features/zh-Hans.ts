@@ -8720,7 +8720,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             isolation: {
                 title: "隔离",
                 whereTitle: "会话在哪里运行",
-                offline: ({ machine }: { machine: string }) => `${machine} 处于离线状态。它回来后才能更改；在此之前保持现状。`,
+                offline: "它回来后才能更改；在此之前保持现状。",
                 notManager: "只有所有者或管理员可以更改工作的运行位置。",
                 unreadable: ({ machine }: { machine: string }) => `Happier 目前无法读取 ${machine} 上工作的运行位置。`,
                 invalid: "Happier 无法读取这些设置。请更新应用后重试。",

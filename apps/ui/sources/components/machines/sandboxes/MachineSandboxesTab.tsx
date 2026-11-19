@@ -34,7 +34,7 @@ export function MachineSandboxesTab(props: MachinePageTabBodyProps) {
     const openIsolation = React.useCallback(() => setParams({ id: 'security', page: 'isolation', add: 'sessions' }), [setParams]);
     if (!machine) return null;
     // The Isolation door's own decision: the invite never leads where nothing can be added.
-    const availability = describeMachineIsolationAvailability(machine, props.online, target.machineSentenceName);
+    const availability = describeMachineIsolationAvailability(machine, props.online);
     const empty = <MachineSandboxesEmpty serverId={props.serverId} machine={machine} machineName={target.machineSentenceName}
         availability={availability} onOpenIsolation={openIsolation} />;
     return (

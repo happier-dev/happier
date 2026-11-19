@@ -21,18 +21,16 @@ export type MachineIsolationAvailability = Readonly<{
 export function describeMachineIsolationAvailability(
   machine: Machine,
   online: boolean | null,
-  machineName: string,
 ): MachineIsolationAvailability {
   if (!canManageMachine(machine))
     return {
       readOnlyReason: t('machineDetailPage.isolation.notManager'),
       offline: false,
     };
+  // The page header and the Machine's offline notice already say it is offline: this says only what waits for it.
   if (online !== true)
     return {
-      readOnlyReason: t('machineDetailPage.isolation.offline', {
-        machine: machineName,
-      }),
+      readOnlyReason: t('machineDetailPage.isolation.offline'),
       offline: true,
     };
   return { readOnlyReason: null, offline: false };
