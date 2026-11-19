@@ -1405,9 +1405,17 @@ function projectWorkflowRunRows(
     const attentionRuns = runGroups.get(ATTENTION_PLACEMENT_GROUP_KEY_V1);
     let mergeItems = sessionItems;
     if (attentionRuns) {
-        const headerIndex = sessionItems.findIndex(item => item.type === 'header' && item.headerKind === 'attention');
-        if (headerIndex < 0) mergeItems = [{ ...attentionRuns.header, eligibleCount: attentionRuns.rows.length }, ...sessionItems];
-        else mergeItems = sessionItems.map((item, index) => index === headerIndex && item.type === 'header'
+        // A step belongs to its Run: once the Run is in Needs you, the step is shown under it there, never also as a
+        // Needs-you row of its own (fix 5, ruling 2026-11-19). Its count stays: the nested row replaces the dropped one.
+        const runKeys = new Set(attentionRuns.rows.map(row => JSON.stringify([row.serverId, row.runId])));
+        const unpromotedItems = sessionItems.filter(item => {
+            if (item.type !== 'session' || item.occurrenceRole !== 'needsYou') return true;
+            const origin = params.resolveSessionRow(item.serverId ?? null, item.sessionId)?.origin;
+            return origin?.kind !== 'run_step' || !runKeys.has(JSON.stringify([item.serverId, origin.runId]));
+        });
+        const headerIndex = unpromotedItems.findIndex(item => item.type === 'header' && item.headerKind === 'attention');
+        if (headerIndex < 0) mergeItems = [{ ...attentionRuns.header, eligibleCount: attentionRuns.rows.length }, ...unpromotedItems];
+        else mergeItems = unpromotedItems.map((item, index) => index === headerIndex && item.type === 'header'
             ? { ...item, eligibleCount: (item.eligibleCount ?? 0) + attentionRuns.rows.length } : item);
     }
     const output = mergeWorkflowRunGroups(mergeItems, runGroups);

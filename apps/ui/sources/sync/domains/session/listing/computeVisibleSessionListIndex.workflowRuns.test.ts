@@ -77,6 +77,29 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         }
         expect(project('succeeded', false).some(row => row.type === 'header' && row.headerKind === 'attention')).toBe(false);
     });
+    // LABPARITY-ACCEPT-F-1118 fix 5 (ruling 11-19): a step needing you got its own Needs-you row AND nested under its
+    // promoted Run, so it was listed twice in Needs you.
+    it.each(['both', 'top'] as const)('Run promoted to Needs you; its step needing you is listed once, under the Run (%s)', (placement) => {
+        const needsYou = createSessionViewerFixture({ attention: {
+            needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' } });
+        const rows = computeVisibleSessionListIndex({
+            source, hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            resolveSessionRow: (serverId, sessionId) => ({ ...resolveSessionRow(serverId, sessionId), ...(sessionId === 'step' ? { viewer: needsYou } : {}) }),
+            sessionListAttentionPlacementV1: placement, attentionPlacement: { mode: 'global' },
+            presentation: { enabled: false, presentation: 'grouped' },
+            workFilter: normalizeSessionListFilterV1({ show: 'both', startedBy: ['you'], homeServerIds: ['home'] }),
+            workflowRuns: [{ serverId: 'home', summary: { ...summary('manual', 'user', true), invocationAttentionRequired: true } }],
+        })!;
+        const step = rows.filter(row => row.type === 'session' && row.sessionId === 'step');
+        expect(step).toEqual([expect.objectContaining({ groupKind: 'attention', reportsDepth: 1 })]);
+        const headerIndex = rows.findIndex(row => row.type === 'header' && row.headerKind === 'attention');
+        const nextHeader = rows.findIndex((row, index) => index > headerIndex && row.type === 'header');
+        const band = rows.slice(headerIndex + 1, nextHeader < 0 ? undefined : nextHeader);
+        expect(band.map(row => row.type === 'workflow_run' ? `run:${row.runId}` : row.type === 'session' ? `session:${row.sessionId}` : 'h'))
+            .toEqual(['run:manual', 'session:step']);
+        expect(rows[headerIndex]).toMatchObject({ eligibleCount: band.length });
+    });
+
     it('keeps existing project order and appends new Run groups in first-seen order', () => {
         const group = (path: string) => sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity('home',
             resolveSessionProjectGroupingKeyParts({ machineId: 'machine-1', path })));
