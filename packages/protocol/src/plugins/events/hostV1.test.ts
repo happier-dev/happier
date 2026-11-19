@@ -38,6 +38,9 @@ describe('Host Events V1 catalog', () => {
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
     expect(parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { entityIds: ['managed'] }))
       .toEqual({ entityIds: ['managed'] });
+    const reviewHint = { entityIds: ['review', 'unrelated'], reviewIds: ['review'] };
+    expect(parseHostEventPayloadV1(eventId, reviewHint)).toEqual(reviewHint);
+    expect(() => parseHostEventPayloadV1(eventId, { entityIds: ['review'], reviewIds: [''] })).toThrow();
     expect(() => parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { entityIds: ['managed'], content: 'private' })).toThrow();
   });
   it('carries only receipt identity in an Account deployment invalidation', () => {
