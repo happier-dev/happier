@@ -7,6 +7,7 @@ import type {
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import type { SessionTaskSnapshotEntry } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { createCursorTodoWorkStateUpdater } from '../workState/projection.js';
 import { buildCursorPlanPermissionInput, buildCursorPlanResponse } from './plans.js';
 import { buildCursorHostQuestions, buildCursorQuestionAnswers } from './questions.js';
@@ -304,6 +305,11 @@ export function createCursorAcpExtensionHandlers(params: Readonly<{
 
   return Object.freeze({
     askQuestion,
+    publishPlan: (items: readonly SessionTaskSnapshotEntry[], signal?: AbortSignal) => updateCursorTodoWorkState({
+      todos: items.map(item => ({ content: item.title, status: item.status })),
+      merge: false,
+      signal,
+    }),
     createPlan,
     updateTodosRequest,
     updateTodosNotification,

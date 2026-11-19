@@ -2,6 +2,7 @@ import type { DaemonProviderModelProjectionRowV1 } from '@happier-dev/protocol/r
 import type { AgentAcpProviderTurnSourceFactory } from './acpProviderTurns.js';
 import type { PluginAgentAcpTransport, PluginAgentAcpSkillsSessionDeliveryV2 } from '@happier-dev/protocol';
 
+import type { SessionTaskSnapshotEntry } from '../sessions/taskSnapshotPublisher.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef } from '../identity.js';
 import type {
@@ -67,6 +68,8 @@ export type AgentAcpNotificationExtension = (
 ) => void | Promise<void>;
 
 export type AgentAcpRuntimeExtensions = Readonly<{
+  /** Publish the standard ACP plan through the Agent’s existing checklist owner. */
+  publishPlan?: (items: readonly SessionTaskSnapshotEntry[], signal?: AbortSignal) => Promise<void>;
   requests?: Readonly<Record<string, AgentAcpRequestExtension>>;
   notifications?: Readonly<Record<string, AgentAcpNotificationExtension>>;
 }>;

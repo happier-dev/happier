@@ -1,3 +1,4 @@
+import type { SessionTaskSnapshotEntry } from '@happier-dev/plugin-sdk/sessions/work-state';
 import type { AgentMessage } from '../../core';
 import type { TransportHandler } from '../../transport';
 import type { LegacyAcpToolRuntime } from '../toolCalls/legacy/runtime';
@@ -48,6 +49,7 @@ export interface SessionUpdate {
  * Context for session update handlers.
  */
 export interface HandlerContext {
+  observePlan?: (items: readonly SessionTaskSnapshotEntry[]) => void;
   /** Transport handler for agent-specific behavior */
   transport: TransportHandler;
   /** Sole legacy lifecycle owner; callers consume immutable snapshots. */

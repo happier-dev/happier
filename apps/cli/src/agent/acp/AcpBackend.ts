@@ -426,6 +426,8 @@ export interface AcpBackendOptions {
   /** Observes unintentional loss of the usable provider connection, including its mandatory journal source. */
   onConnectionLost?: (loss: Readonly<{ detail: string }>) => void;
 
+  observePlan?: HandlerContext['observePlan'];
+
   /** Observes only accumulator-owned terminal result publications. */
   onPublishedTerminalToolResult?: (result: MergedAcpToolResult) => void;
 }
@@ -1830,6 +1832,7 @@ export class AcpBackend implements CatalogAcpBackend {
       transport: this.transport,
       toolCalls: this.toolCalls,
       idleTimeout: this.idleTimeout,
+      ...(!this.replayCapture && this.options.observePlan ? { observePlan: this.options.observePlan } : {}),
       recentPromptHadChangeTitle: this.recentPromptHadChangeTitle,
       toolCallCountSincePrompt: this.toolCallCountSincePrompt,
       emit: (msg) => this.emit(msg),

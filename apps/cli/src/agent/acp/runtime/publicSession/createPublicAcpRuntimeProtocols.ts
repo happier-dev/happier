@@ -75,6 +75,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
   models?: AgentSessionHostServices['models'];
   modes?: AgentSessionHostServices['modes'];
   transcripts?: PublicAcpComposerDependencies['transcripts'];
+  planWorkState?: () => NonNullable<PublicAcpComposerDependencies['planWorkState']>;
   titleSession?: PublicAcpComposerDependencies['titleSession'];
   resumeHistorySession?: AcpReplayHistorySessionClient;
   sidechainSession?: AcpReplaySidechainSessionClient;
@@ -108,6 +109,7 @@ export function createPublicAcpRuntimeProtocols(params: Readonly<{
     models: scope === 'session' ? params.models ?? UNBOUND_MODELS : UNBOUND_MODELS,
     modes: scope === 'session' ? params.modes ?? UNBOUND_MODES : UNBOUND_MODES,
     ...(scope === 'session' && params.transcripts ? { transcripts: params.transcripts } : {}),
+    ...(scope === 'session' && params.planWorkState ? { planWorkState: params.planWorkState() } : {}),
     ...(scope === 'session' && params.titleSession ? { titleSession: params.titleSession } : {}),
     ...(scope === 'session' && params.sidechainSession ? { sidechainSession: params.sidechainSession } : {}),
     ...(scope === 'session' && params.resumeHistorySession

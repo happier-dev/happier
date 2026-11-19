@@ -46,6 +46,8 @@ export interface CreateAcpBackendOptions {
 
   /** The host Exec owner supplied the complete process tuple. */
   hostFinalizedLaunch?: true;
+  /** `primary`: the Session's own Agent, adopted by a respawned runner. */
+  sessionHolderRole?: 'primary';
 
   /** Opaque host launch frame, written before any ACP protocol bytes. */
   stdinPreamble?: AcpBackendOptions['stdinPreamble'];
@@ -114,6 +116,7 @@ export interface CreateAcpBackendOptions {
   createExtensionContext?: AcpExtensionContextFactory;
   onProcessExit?: AcpBackendOptions['onProcessExit'];
   onConnectionLost?: AcpBackendOptions['onConnectionLost'];
+  observePlan?: AcpBackendOptions['observePlan'];
   onPublishedTerminalToolResult?: AcpBackendOptions['onPublishedTerminalToolResult'];
 }
 
@@ -146,6 +149,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     env: options.env,
     ...(options.unsetEnv ? { unsetEnv: options.unsetEnv } : {}),
     ...(options.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
+    ...(options.sessionHolderRole ? { sessionHolderRole: options.sessionHolderRole } : {}),
     ...(options.stdinPreamble === undefined ? {} : { stdinPreamble: options.stdinPreamble }),
     ...(options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
     ...(options.transformAgentChildLaunchEnvironment
@@ -198,6 +202,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
       : {}),
     ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {}),
     ...(options.onConnectionLost ? { onConnectionLost: options.onConnectionLost } : {}),
+    ...(options.observePlan ? { observePlan: options.observePlan } : {}),
     ...(options.onPublishedTerminalToolResult
       ? { onPublishedTerminalToolResult: options.onPublishedTerminalToolResult }
       : {}),

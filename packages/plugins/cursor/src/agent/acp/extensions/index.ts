@@ -11,6 +11,7 @@ export function createCursorAcpRuntimeExtensions(params: Readonly<{
 }>): AgentAcpRuntimeExtensions {
   const handlers = createCursorAcpExtensionHandlers(params);
   return Object.freeze({
+    publishPlan: handlers.publishPlan,
     requests: Object.freeze({
       'cursor/ask_question': handlers.askQuestion,
       'cursor/create_plan': handlers.createPlan,

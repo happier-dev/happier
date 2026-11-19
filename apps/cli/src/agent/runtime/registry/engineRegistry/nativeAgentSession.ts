@@ -5652,6 +5652,21 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 session: hostRuntimeParams.session,
                 source: acpToolNormalizationSource,
             });
+            const workState = createNativeAgentSessionWorkStateService({
+                session: hostRuntimeParams.session,
+                pluginId: identity.pluginId,
+                contributionId,
+                agentId: params.agent.id,
+                occurrenceId: identity.occurrenceId,
+                declarations: [
+                    ...(readAgentSessionCapabilities(params.agent.richDefinition?.definition)?.workStateSources ?? []),
+                    { id: 'acp-plan', itemKinds: ['todo'] },
+                ],
+                isCurrent: identity.isCurrent,
+                ...(hostRuntimeParams.recordRuntimeLimitMeasurement
+                    ? { recordRuntimeLimitMeasurement: hostRuntimeParams.recordRuntimeLimitMeasurement }
+                    : {}),
+            });
             const context = composeNativeAgentSessionRuntimeContext({
                 identity,
                 contributionId,
@@ -5685,6 +5700,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     services,
                     interactions: currentSessionUi.interactions,
                     transcripts: nativeHostSessionServices.transcripts,
+                    planWorkState: () => workState.publisher('acp-plan'),
                     titleSession: hostRuntimeParams.session,
                     media: currentSessionHandle.media,
                     models: publications.services.models,
@@ -5716,20 +5732,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         ? { configurationDefaults: params.acpSessionConfigurationDefaults }
                         : {}),
                 }),
-                workState: createNativeAgentSessionWorkStateService({
-                    session: hostRuntimeParams.session,
-                    pluginId: identity.pluginId,
-                    contributionId,
-                    agentId: params.agent.id,
-                    occurrenceId: identity.occurrenceId,
-                    declarations: readAgentSessionCapabilities(
-                        params.agent.richDefinition?.definition,
-                    )?.workStateSources ?? [],
-                    isCurrent: identity.isCurrent,
-                    ...(hostRuntimeParams.recordRuntimeLimitMeasurement
-                        ? { recordRuntimeLimitMeasurement: hostRuntimeParams.recordRuntimeLimitMeasurement }
-                        : {}),
-                }),
+                workState,
             });
             recordOpenPhase('native_context');
             const persistedRollbackTurns = resumeId && sessionCapabilities.conversationRollback === true

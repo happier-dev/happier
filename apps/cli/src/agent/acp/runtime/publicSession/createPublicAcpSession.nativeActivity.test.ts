@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { HostSessionApprovalRequest, HostSessionApprovalResult, HostSessionConfirmationRequest, HostSessionConfirmationResult, HostSessionQuestionsRequest, HostSessionQuestionsResult, HostSessionInteractionRequest, HostSessionInteractionResult } from '@/agent/runtime/state/currentSessionUiTypes';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { createNativeAgentSessionWorkStateService } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionWorkState';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createPublicAcpSession, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 
@@ -17,6 +20,58 @@ async function approve(request: HostSessionInteractionRequest): Promise<HostSess
 }
 
 describe('public ACP native requests', () => {
+  it('publishes a Session plan and clears it through the canonical work-state publisher', async () => {
+    await withTempDir('happier-acp-work-state-', async dir => {
+      const session = createMutableApiSessionClientFixture({ sessionId: 'host-session' });
+      const script = writeAcpTestAgentScript({ dir, fileName: 'plan.mjs', source: `
+        import { createInterface } from 'node:readline';
+        const send = value => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\\n');
+        let prompts = 0;
+        for await (const line of createInterface({ input: process.stdin })) {
+          const message = JSON.parse(line);
+          if (message.method === 'initialize') send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+          if (message.method === 'session/new') send({ id: message.id, result: { sessionId: 'native-session' } });
+          if (message.method === 'session/prompt') {
+            const entries = prompts++ === 0 ? [{ content: 'Check output', priority: 'high', status: 'in_progress' }] : [];
+            send({ method: 'session/update', params: { sessionId: 'native-session', update: { sessionUpdate: 'plan', entries } } });
+            send({ id: message.id, result: { stopReason: 'end_turn' } });
+          }
+        }
+      ` });
+      const planWorkState = createNativeAgentSessionWorkStateService({ session, pluginId: 'fixture',
+        contributionId: 'fixture', agentId: 'fixture', occurrenceId: 'host-session',
+        declarations: [{ id: 'acp-plan', itemKinds: ['todo'] }], isCurrent: () => true }).publisher('acp-plan');
+      const runtime = await createPublicAcpSession({ kind: 'create', sessionId: 'host-session', cwd: dir }, {
+        transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' } },
+      }, {
+        ...{ planWorkState },
+        pluginId: 'fixture', agentId: 'fixture', signal: new AbortController().signal, isCurrent: () => true,
+        systemTools: { resolve: async () => ({ toolId: 'fixture', launch: { kind: 'binary', executablePath: process.execPath, args: [script] } }) },
+        interactions: { request: approve },
+        media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+        models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+      });
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = runtime.watch(event => { events.push(event); });
+      const prompt = async (turnId: string) => {
+        await runtime.send({ inputIds: [turnId], input: { text: turnId }, delivery: { kind: 'newTurn', turnId },
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+        await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-complete', turnId })));
+        return readSessionWorkStateV1FromMetadata(session.getMetadataSnapshot());
+      };
+      try {
+        expect((await prompt('first'))?.items).toEqual([
+          expect.objectContaining({ kind: 'todo', origin: 'vendor', status: 'active', title: 'Check output' }),
+        ]);
+        expect((await prompt('second'))?.items).toEqual([]);
+      } finally {
+        subscription.dispose();
+        await runtime.dispose();
+        await session.close();
+      }
+    });
+  });
+
   it.each([
     { includeRequests: false, sessionScopedPermissions: false },
     { includeRequests: true, sessionScopedPermissions: false },

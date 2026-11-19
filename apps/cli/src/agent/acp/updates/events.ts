@@ -93,6 +93,13 @@ function planEntriesToTodos(entries: unknown[]): AcpPlanTodo[] {
   return todos;
 }
 
+const planWorkStatus = {
+  pending: 'pending',
+  in_progress: 'active',
+  completed: 'complete',
+  cancelled: 'cancelled',
+} as const satisfies Record<AcpPlanTodo['status'], 'pending' | 'active' | 'complete' | 'cancelled'>;
+
 /**
  * Normalize a standard ACP `plan` SessionUpdate (`entries: [{content, priority, status}]`) into the
  * shared, cross-provider TodoWrite -> TodoView checklist. This legacy ACP path has one standard-plan
@@ -107,6 +114,12 @@ export function handlePlanUpdate(
   if (!entries) return { handled: false };
 
   const todos = planEntriesToTodos(entries);
+  if (ctx.observePlan && (entries.length === 0 || todos.length > 0)) {
+    ctx.observePlan(todos.map(todo => ({
+      title: todo.content, status: planWorkStatus[todo.status],
+      ...(todo.priority ? { priority: todo.priority } : {}),
+    })));
+  }
   if (todos.length === 0) return { handled: true };
 
   ctx.emit({ type: 'tool-call', toolName: 'TodoWrite', args: { todos }, callId: ACP_PLAN_TOOL_CALL_ID });

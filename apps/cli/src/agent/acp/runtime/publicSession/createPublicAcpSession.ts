@@ -49,6 +49,7 @@ import type { HostCurrentSessionInteractionsService as PluginCurrentSessionInter
 import { createHash, randomUUID } from 'node:crypto';
 import { extname, isAbsolute, relative, sep } from 'node:path';
 
+import { createSessionTaskSnapshotPublisher, type WorkStatePublisher } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { createAcpBackend, type CreateAcpBackendOptions } from '@/agent/acp/createAcpBackend';
 import { readAgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
@@ -143,6 +144,7 @@ export type PublicAcpComposerDependencies = Readonly<{
   models: AgentSessionHostServices['models'];
   modes: AgentSessionHostServices['modes'];
   transcripts?: AcpSessionDiagnosticPublisher;
+  planWorkState?: WorkStatePublisher;
   titleSession?: AcpSessionTitleTarget;
   resumeHistorySession?: AcpReplayHistorySessionClient;
   sidechainSession?: AcpReplaySidechainSessionClient;
@@ -972,6 +974,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
                   createExtensionContext: undefined,
                   onProcessExit: undefined,
                   onConnectionLost: undefined,
+                  observePlan: undefined,
                   onPublishedTerminalToolResult: undefined,
                   fsEnabled: false,
                   permissionHandler: undefined,
@@ -1385,6 +1388,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     bufferedMessages?.dispose();
   };
 
+  const publishPlan = !executionRunRequest && dependencies.planWorkState
+    ? options.extensions?.publishPlan ?? createSessionTaskSnapshotPublisher(dependencies.planWorkState, {
+      kind: 'todo', origin: 'vendor',
+    }) : undefined;
   const backendOptions: CreateAcpBackendOptions = {
     ...(options.providerTurnSource && providerTurns ? {
       providerTurnSource: options.providerTurnSource,
@@ -1726,6 +1733,13 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     },
     onProcessExit: observeProcessExit,
     onConnectionLost: observeConnectionLost,
+    ...(publishPlan ? { observePlan: async (items) => {
+      try {
+        await publishPlan(items, dependencies.signal);
+      } catch {
+        logger.debug('[ACP] Plan publication unavailable');
+      }
+    } } : {}),
     onPublishedTerminalToolResult: observePublishedTerminalToolResult,
   };
   backend = createAcpBackend(backendOptions);
