@@ -81,7 +81,7 @@ it.each([
             localAgentId: 'default', occurrenceId: 'schema-run', isCurrent: () => true },
         options: { cwd: '/repo', runId: 'schema-run', scope: 'session_owned' as const, backendId: 'acme.schema/default',
             modelId: 'schema-model', permissionMode: 'read_only' as const, selectedModelSupportsStructuredOutput,
-            start: { intent: 'review', runClass: 'bounded' as const, retentionPolicy: 'ephemeral' as const, structuredInput: { v: 1 } } },
+            start: { intent: 'review', runClass: 'bounded' as const, retentionPolicy: 'ephemeral' as const, structuredInput: { v: 1 as const } } },
         createSessionContext: (({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} })) satisfies NativeAgentSessionContextLeaseFactory,
     };
     const host = retained

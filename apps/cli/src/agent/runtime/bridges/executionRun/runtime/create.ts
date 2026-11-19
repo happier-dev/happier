@@ -357,7 +357,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             try {
                 if (effectiveBackendTarget && usesExecutionRunProviderModel(opts)) {
                     await assertExecutionRunStructuredAnalysisModelAllowed({
-                        backendTarget: effectiveBackendTarget,
+                        backendTarget: convertBackendTargetRefV2ToV1(effectiveBackendTarget),
                         intent: opts.start?.intent,
                         modelId: opts.modelId,
                         modelSelection: opts.modelSelection,
@@ -579,7 +579,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 }
                 const selectedModelSupportsStructuredOutput = opts.start?.intent === 'review'
                     ? providerLaunch?.providerBinding && effectiveBackendTarget
-                        ? await readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget: effectiveBackendTarget,
+                        ? await readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget: convertBackendTargetRefV2ToV1(effectiveBackendTarget),
                             prepared: providerLaunch, signal })
                         : await opts.start.readSelectedModelStructuredOutputSupport?.(signal) ?? false
                     : undefined;

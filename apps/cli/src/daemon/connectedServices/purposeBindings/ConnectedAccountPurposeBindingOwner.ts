@@ -2036,7 +2036,8 @@ export function createConnectedAccountPurposeBindingOwner(
         return { credentialSource: 'connectedAccount', binding };
       } catch (error) {
         if (isPluginError(error) && error.code === 'plugin_connected_account_binding_unavailable'
-          && error.details?.reasonCode === 'unselected') {
+          && error.details !== null && typeof error.details === 'object'
+          && Reflect.get(error.details, 'reasonCode') === 'unselected') {
           return { credentialSource: 'machineLogin' };
         }
         throw error;
