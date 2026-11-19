@@ -298,10 +298,10 @@ describe('original CLI Session Action delivery', () => {
                 if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
                 if (url.endsWith('/v2/sessions/remote-board')) return { status: 404, data: { error: 'not_found' } };
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 1 } };
-                if (url.endsWith('/v1/machines')) return { status: 200, data: [{ id: machineId, active: !offline,
+                if (url === `https://home.test/v1/machines/${machineId}`) return { status: 200, data: { machine: { id: machineId, active: !offline,
                     kind: 'persistent', revokedAt: null, replacedByMachineId: null,
                     managedMachineRef: null,
-                    access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: mode, accessState: 'ready' } }] };
+                    access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: mode, accessState: 'ready' } } } };
                 throw new Error(`Unexpected Home read: ${url}`);
             });
             vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
@@ -310,6 +310,7 @@ describe('original CLI Session Action delivery', () => {
                 const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
                 const target = { kind: 'machine' as const, machineId };
                 expect(envelope.target).toEqual(target);
+                expect(envelope).not.toHaveProperty('machineRuntimeDemand');
                 delivered.push(body);
                 if (offline) return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
                     requestId: envelope.requestId, execution: { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' } }) };
@@ -332,7 +333,8 @@ describe('original CLI Session Action delivery', () => {
             const result = method === 'execute' ? await executor.execute(actionId, invokedInput, context)
                 : await executor.prepare(actionId, invokedInput, context).then(prepared => prepared.kind === 'ready'
                     ? prepared.invocation.run() : prepared.result);
-            expect(result).toEqual(offline ? { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' } : execution);
+            expect(result).toEqual(offline ? { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable',
+                requestId: ExternalActionRequestEnvelopeSchema.parse(delivered[0]).requestId } : execution);
             expect(await executor.execute(actionId, input, { surface: 'cli', externalActionTarget: { kind: 'machine', machineId: 'machine-a' } }))
                 .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
             expect(await createCliActionExecutorFromCredentials({ ...options, machineId: 'machine-a' }).execute(actionId, input, { surface: 'cli' }))

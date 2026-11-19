@@ -588,6 +588,11 @@ describe('CLI Session target composition', () => {
         expect(new URL(String(url)).origin).toBe(home);
         return { status: 200, data: { sessions: pathname.endsWith('/archived') ? [] : [createCompactSessionListRowFixture(listedSession)], nextCursor: null, hasNext: false } };
       }
+      if (String(url) === `${home}/v1/machines/machine-selected`) {
+        expect(config?.headers).toMatchObject({ Authorization: 'Bearer token' });
+        return { status: 200, data: { machine: { id: 'machine-selected', active: true,
+          kind: 'persistent', revokedAt: null, replacedByMachineId: null, managedMachineRef: null } } };
+      }
       return read(url, config);
     });
     const sent: string[] = [];
