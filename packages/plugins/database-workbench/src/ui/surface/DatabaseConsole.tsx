@@ -141,7 +141,9 @@ function ConsoleResult(
       <Text
         tone="secondary"
         value={
-          last.affectedRows !== undefined
+          last.affectedRows === 1
+            ? props.translate('plugins.database.console.affectedOne', '1 row changed')
+            : last.affectedRows !== undefined
             ? props.translate(
                 'plugins.database.console.affected',
                 '{count} rows changed',

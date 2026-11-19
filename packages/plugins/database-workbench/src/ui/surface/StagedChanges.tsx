@@ -51,11 +51,13 @@ function outcomeLine(
   switch (outcome.kind) {
     case 'applied':
       return {
-        text: translate(
-          'plugins.database.apply.applied',
-          '{count} rows changed',
-          { count: outcome.count },
-        ),
+        text: outcome.count === 1
+          ? translate('plugins.database.apply.appliedOne', '1 row changed')
+          : translate(
+            'plugins.database.apply.applied',
+            '{count} rows changed',
+            { count: outcome.count },
+          ),
         tone: 'success',
       };
     case 'conflict':
