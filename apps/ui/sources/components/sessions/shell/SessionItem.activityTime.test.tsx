@@ -663,6 +663,26 @@ describe('SessionItem activity time', () => {
         });
     });
 
+    it.each([1024, 390] as const)('keeps the amber needs-you mark on a pinned unread Lines 2 row with a count at %i px', async (width) => {
+        // Acceptance SESSION-ROWS-ACCEPT-1119 r2: at 390 a pinned, unread Needs-you row with 12/12 lost its mark.
+        windowDimensions = { width, height: 844, scale: 1, fontScale: 1 };
+        hasUnreadMessagesValue = true;
+        const now = Date.now();
+        const sessionId = `sess_pinned_unread_${width}`;
+        const session = createSessionFixture({
+            ...createSession(sessionId, { name: 'QA-1113A Team Claude', path: '/workspace/example', host: 'tester.local' }),
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: now,
+        });
+        const status = projectStatus(session, now);
+        mockSessionStatus = { ...status, awareness: { ...status.awareness, progress: { done: 12, total: 12, dim: true, complete: true } } };
+        const SessionItem = await importSessionItem();
+        const screen = await renderScreen(
+            <SessionItem session={session} serverId="server_a" pinned selected={false} compact compactMinimal={false} inAttentionShelf />,
+        );
+        expect(screen.findByTestId(`session-row-attention-indicator-dot-${sessionId}-trailing`)).toBeTruthy();
+        expect(screen.findByTestId(`session-row-progress-chip:${sessionId}`)).toBeTruthy();
+    });
+
     it('preserves session identity and an accessible touch area in compact native phone rows', async () => {
         platformOs = 'ios';
         windowDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 };
