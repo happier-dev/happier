@@ -64,6 +64,9 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
             : target.agentId,
         controls: target.controls,
         facts: field === 'capabilitySelection' ? withSessionMcpScope(target) : target.facts,
+        appliedConnectedServices: field === 'connectedServices'
+            && readBackendTargetKeyV2(selection.agentTarget ?? target.values.agentTarget) === readBackendTargetKeyV2(target.values.agentTarget)
+            ? target.values.connectedServices : undefined,
         values: { ...target.values, ...selection,
             ...(selection.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: {
                 ...selection.sessionConfigOptionOverrides,
@@ -114,5 +117,11 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
         return oneScope ? first : unavailable('differs_between_targets');
     }
     // Connected Services retain the canonical account picker; the host supplies its exact Home context.
-    return first.kind === 'connectedServices' ? first : unavailable('not_supported_on_target');
+    if (first.kind !== 'connectedServices') return unavailable('not_supported_on_target');
+    return {
+        ...first,
+        unavailableNativeSignInServiceIds: [...new Set(models.flatMap(model => (
+            model.kind === 'connectedServices' ? model.unavailableNativeSignInServiceIds : []
+        )))],
+    };
 }

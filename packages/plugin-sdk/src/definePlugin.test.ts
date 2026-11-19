@@ -2627,6 +2627,7 @@ describe('definePlugin', () => {
             }>) => screenText.includes(promptText),
         }) satisfies AgentTerminalPromptSubmitVerificationPolicyV1;
         const connectedAccountLaunch = Object.freeze({
+            switchContinuity: { continuityMode: 'restart_same_home', supportedTransitions: ['connected_to_connected'] } as const,
             requestAuthUses: Object.freeze([Object.freeze({
                 purpose: 'model_upstream',
                 materialization: Object.freeze({
@@ -2707,6 +2708,7 @@ describe('definePlugin', () => {
         // Cold catalogs carry the same public capability and consent facts as
         // the executable descriptor, without publishing native-home entries.
         expect(plugin.manifest.contributes.agents?.[0]?.capabilities).toMatchObject({
+            connectedToNativeSwitchUnsupported: true,
             providerStateSharing: {
                 config: { supported: true, modes: ['linked', 'isolated'] },
                 state: { supported: true, modes: ['shared', 'isolated'],

@@ -559,6 +559,7 @@ function useBulkAccountChip(
     agentId: available?.agentId ?? '',
     agentIdentity: available?.agentIdentity ?? null,
     connectedAccounts: available?.connectedAccounts ?? NO_CONNECTED_ACCOUNTS,
+    unavailableNativeSignInServiceIds: available?.unavailableNativeSignInServiceIds,
     context: available?.context ?? INERT_ACCOUNT_CONTEXT,
     value: pending !== undefined ? pending : current.value,
     pending: pending !== undefined,

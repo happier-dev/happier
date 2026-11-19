@@ -5093,6 +5093,7 @@ export function useSessionComposerController({
             machineId: controlMachineTarget?.machineId ?? null,
             serverId: sessionRouteServerId,
             connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
+            connectedToNativeSwitchUnsupported: currentLifecycleAgentCapabilities?.capabilities.connectedToNativeSwitchUnsupported,
             armedAuthoringTarget: armedContinuationTarget ? armedContinuationTarget.authoringTarget : undefined,
             agentIdentity: currentSessionAgentCatalogEntry
                 ? parseQualifiedPluginContributionKey(currentSessionAgentCatalogEntry.qualifiedId)

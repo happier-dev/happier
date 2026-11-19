@@ -60,6 +60,7 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
     includeNativeAuthOption?: boolean;
+    unavailableNativeSignInServiceIds?: readonly string[];
     allowDefaultProfileFallback?: boolean;
     resolveOptionAvailability?: (params: Readonly<{
         serviceId: string;
@@ -227,6 +228,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             onRecoverTeamCredentialResource: recoverTeamCredentialResource,
             defaultProfileIdByServiceId: props.defaultProfileIdByServiceId,
             includeNativeAuthOption: props.includeNativeAuthOption,
+            unavailableNativeSignInServiceIds: props.unavailableNativeSignInServiceIds,
             nativeRoute,
             appliedTeamRoute,
             allowDefaultProfileFallback: props.allowDefaultProfileFallback,
@@ -255,6 +257,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         props.allowDefaultProfileFallback,
         props.defaultProfileIdByServiceId,
         props.includeNativeAuthOption,
+        props.unavailableNativeSignInServiceIds,
         profileOptionsByServiceId,
         groupOptionsByServiceId,
         props.teamCredentialResources,

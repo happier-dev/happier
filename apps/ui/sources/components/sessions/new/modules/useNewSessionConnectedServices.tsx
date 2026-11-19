@@ -103,6 +103,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
    * popover chooses no row (Mixed means nothing is chosen). A pick still authors through the same writer.
    */
   mixedLabel?: string;
+  unavailableNativeSignInServiceIds?: readonly string[];
   modelSelection?: RouteSelection;
   providerSources?: readonly ProviderRouteSource[];
   /** The selected Agent's Gateways and Providers for the "Runs through" popover; omitted, it names none. */
@@ -569,6 +570,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
       appliedRoute={routePresentation.applied}
       defaultProfileIdByServiceId={settings.connectedServicesDefaultProfileByServiceId}
       resolveOptionAvailability={resolveOptionAvailability}
+      unavailableNativeSignInServiceIds={params.unavailableNativeSignInServiceIds}
       onOpenSettings={(serviceId) => {
         router.push(resolveConnectedServiceProfileActionRoute(
           { serviceId },
@@ -591,6 +593,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     connectedAccountDefaultsStatus,
     connectedServicesBindingsByServiceId,
     params.mixedLabel,
+    params.unavailableNativeSignInServiceIds,
     resolveOptionAvailability,
     router,
     setBindingForService,

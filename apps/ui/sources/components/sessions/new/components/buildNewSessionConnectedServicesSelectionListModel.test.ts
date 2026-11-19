@@ -61,6 +61,22 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it.each([false, true])('shows a continuity refusal for own sign-in with a native route descriptor: %s', (withNativeRoute) => {
+        const onBrowse = vi.fn();
+        const model = buildModel({
+            bindingsByServiceId: { anthropic: { source: 'connected', selection: 'profile', profileId: 'work' } },
+            unavailableNativeSignInServiceIds: ['anthropic'],
+            nativeRoute: withNativeRoute ? {
+                agentTargetKey: 'agent:happier.agent.claude/claude', active: false, onBrowse,
+            } : undefined,
+        });
+        const nativeId = withNativeRoute
+            ? 'route-source:native:agent%3Ahappier.agent.claude%2Fclaude'
+            : createNativeServiceOptionId('anthropic');
+        expect(firstStaticSection(model).options.find(option => option.id === nativeId))
+            .toMatchObject({ disabled: true, selected: false });
+        expect(model.optionAvailabilityById.get(nativeId)).toMatchObject({ availability: 'unavailable' });
+    });
     it.each(['muse', 'pi', 'opencode', 'codex'])('filters brokered Team sources using %s provider declarations while retaining personal login', agentId => {
         const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
         const key = `${service.pluginId}/${service.localId}`;

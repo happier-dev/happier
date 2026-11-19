@@ -40,6 +40,7 @@ import { presentConnectSheet } from '@/components/settings/connectedServices/set
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
+import { resolveUnavailableNativeSignInServiceIds } from '@/components/sessions/connectedServices/unavailableNativeSignInServiceIds';
 import type { SessionRouteSources } from '@/components/sessions/new/components/useSessionRouteSourceSections';
 import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator';
 import { buildConnectedServicesBindingsPayload } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
@@ -418,6 +419,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+    connectedToNativeSwitchUnsupported?: true;
     agentIdentity?: PluginContributionIdentityV1 | null;
     armedContinuationAgent?: Readonly<{
         agentId: string;
@@ -522,6 +524,9 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             agentId: params.agentId ?? '',
         })?.bindingsByServiceId ?? {}
     ), [params.agentId, params.sessionMetadata]);
+    const unavailableNativeSignInServiceIds = React.useMemo(() => resolveUnavailableNativeSignInServiceIds(
+        params.connectedToNativeSwitchUnsupported, metadataBindingsByServiceId,
+    ), [params.connectedToNativeSwitchUnsupported, metadataBindingsByServiceId]);
     const [optimisticBindingsByServiceId, setOptimisticBindingsByServiceId] = React.useState(metadataBindingsByServiceId);
     const lastMetadataBindingsByServiceIdRef = React.useRef(metadataBindingsByServiceId);
     // Metadata objects may be recreated by the session projection on each render;
@@ -986,6 +991,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             }}
             defaultProfileIdByServiceId={params.settings.connectedServicesDefaultProfileByServiceId}
             resolveOptionAvailability={resolveOptionAvailability}
+            unavailableNativeSignInServiceIds={unavailableNativeSignInServiceIds}
             onOpenSettings={(serviceId) => {
                 requestClose();
                 fireAndForget(openConnectSheet(serviceId).then((result) => {
@@ -1000,6 +1006,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     ), [
         groupOptionsByServiceId,
         optimisticBindingsByServiceId,
+        unavailableNativeSignInServiceIds,
         params.settings.connectedServicesDefaultProfileByServiceId,
         params.teamCredentialResources,
         params.teamCredentialDisplayNames,

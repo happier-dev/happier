@@ -23,6 +23,7 @@ import {
 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
+import { resolveUnavailableNativeSignInServiceIds } from '@/components/sessions/connectedServices/unavailableNativeSignInServiceIds';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { SessionConfigOptionControl } from '@/sync/domains/sessionControl/configOptionsControl';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
@@ -170,6 +171,7 @@ export type SessionAuthoringFieldControlModel =
         /** The Agent's contribution identity: it keys the Agent's default authentication. */
         agentIdentity: AgentExecutionTargetV1['identity'] | null;
         connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+        unavailableNativeSignInServiceIds: readonly string[];
         context: SessionAuthoringConnectedServicesContext;
     }>
     | Readonly<{
@@ -195,6 +197,7 @@ export type SessionAuthoringAgentTargetOption = Readonly<{
     agentId: string;
     /** Native no-tools enforcement declared by the Agent on this Machine. */
     noTools?: boolean;
+    connectedToNativeSwitchUnsupported?: true;
     /**
      * This Agent's readiness on the exact Machine (installed, signed in or a
      * connected default), from the Machine Agent inventory. Absent while that
@@ -459,6 +462,7 @@ function preservedValue(label: string, facts: SessionAuthoringControlFacts) {
 export function resolveSessionAuthoringFieldControl(params: Readonly<{
     field: SessionAuthoringFieldId;
     values: WorkflowSessionAuthoringSelection;
+    appliedConnectedServices?: WorkflowSessionAuthoringSelection['connectedServices'];
     controls: SessionAuthoringControls;
     facts?: SessionAuthoringControlFacts;
     /**
@@ -708,6 +712,10 @@ export function resolveSessionAuthoringFieldControl(params: Readonly<{
                 agentId: selectedAgentTarget.agentId,
                 agentIdentity: selectedAgentTarget.target.identity,
                 connectedAccounts: declarations,
+                unavailableNativeSignInServiceIds: resolveUnavailableNativeSignInServiceIds(
+                    selectedAgentTarget.connectedToNativeSwitchUnsupported,
+                    params.appliedConnectedServices?.bindingsByServiceId,
+                ),
                 context: facts.connectedServices,
             };
         }

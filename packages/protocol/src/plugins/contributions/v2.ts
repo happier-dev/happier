@@ -543,6 +543,8 @@ const PluginAgentCommonCapabilitiesV2Shape = {
   structuredOutput: z.optional(PluginAgentStructuredOutputCapabilityV2Schema),
   nativeSandbox: z.optional(z.strictObject({ off: z.literal(true) })),
   providerStateSharing: z.optional(PluginAgentProviderStateSharingCapabilityV2Schema),
+  /** An existing connected Session cannot switch to native sign-in with continuity. */
+  connectedToNativeSwitchUnsupported: z.optional(z.literal(true)),
 };
 const PluginAgentCapabilitiesV2Shape = {
   ...PluginAgentCommonCapabilitiesV2Shape,
@@ -703,6 +705,7 @@ const PluginAgentExternalSessionsAuxiliaryV2Schema = lazyZodSchema(() => z.stric
   capabilities: z.strictObject({
     surfaces: PluginAgentCapabilitySurfacesV2Schema.check(z.refine((values) => values.includes('externalSessions'), 'An auxiliary-only Agent must declare the externalSessions surface.')),
     providerStateSharing: z.optional(PluginAgentProviderStateSharingCapabilityV2Schema),
+    connectedToNativeSwitchUnsupported: z.optional(z.literal(true)),
   }),
 }));
 

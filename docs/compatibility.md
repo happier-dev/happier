@@ -9855,6 +9855,16 @@ selection. The tools object stays closed. Earlier strict development readers
 require matching daemon and UI source under the unpublished direct cut. This
 adds no stored format or ABI change.
 
+Unreleased 0.3 Agent manifests and Machine catalog projections can carry
+optional `capabilities.connectedToNativeSwitchUnsupported: true`. The SDK derives
+it from the executable Connected Account continuity declaration when it omits
+the connected-to-native transition in both its direct and shared-state paths.
+Older plugin declarations can omit the field. New and existing Session pickers
+can still offer native sign-in where no connected Session state must move. The
+daemon continues to decide whether a requested switch can run. Matching strict
+development readers load together. There is no stored format, migration,
+runtime ABI or wire epoch change.
+
 Unreleased 0.3 Agent-session realtime RPC failures and terminal diagnostics
 can carry the existing closed Action `failureCause`. The daemon projects the
 provider's typed cause and the UI preserves it in the SDK diagnostic. Older

@@ -125,6 +125,30 @@ describe('Session-specific field intersection', () => {
             kind: 'connectedServices', agentId: 'claude', agentIdentity: claude.identity, connectedAccounts: [claudeAccount],
         });
     });
+    it('carries a native sign-in refusal from a connected peer on its own Machine', () => {
+        const service = { pluginId: 'happier.connect.github', localId: 'github' } as const;
+        const serviceId = `${service.pluginId}/${service.localId}`;
+        const choices = (unsupported: boolean) => [{ ...agentTargets[0]!,
+            connectedAccounts: [{ service, purpose: 'auth' as const }],
+            ...(unsupported ? { connectedToNativeSwitchUnsupported: true as const } : {}),
+        }];
+        const connected = { v: 2, bindingsByServiceId: {
+            [serviceId]: { source: 'connected', selection: 'profile', profileId: 'qa' },
+        } } as const;
+        const targets = [
+            { ...target(), facts: { agentTargets: choices(false), connectedServices: { serverId: 'home' } } },
+            { ...target(), values: { ...target().values, connectedServices: connected },
+                facts: { agentTargets: choices(true), connectedServices: { serverId: 'home' } } },
+        ];
+        const params = { ...base, field: 'connectedServices' as const, targets };
+        expect(resolveCrossSessionAuthoringFieldControl(params))
+            .toMatchObject({ kind: 'connectedServices', unavailableNativeSignInServiceIds: [serviceId] });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...params, targets: [targets[0]!] }))
+            .toMatchObject({ kind: 'connectedServices', unavailableNativeSignInServiceIds: [] });
+        const nativePeer = { ...target(), facts: targets[1]!.facts };
+        expect(resolveCrossSessionAuthoringFieldControl({ ...params, targets: [nativePeer] }))
+            .toMatchObject({ kind: 'connectedServices', unavailableNativeSignInServiceIds: [] });
+    });
     it('keeps distinct catalogs for two Sessions with the same effective Agent, including a pending switch', () => {
         const targets = [target(), { ...target(), controls: { ...controls(), modelOptions: [{ value: 'model-a', label: 'Model A' }] } }];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'modelSelection' })).toMatchObject({ kind: 'options', options: [{ id: 'model-a' }] });

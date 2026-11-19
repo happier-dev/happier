@@ -1421,12 +1421,19 @@ function projectActionContracts(
 
 function projectAgent(localId: string, definition: PluginAgentDefinition) {
     const sharing = definition.connectedAccountLaunch?.stateSharingDescriptor;
+    const continuity = definition.connectedAccountLaunch?.switchContinuity;
+    const { connectedToNativeSwitchUnsupported: _authoredUnsupported, ...capabilities } = definition.declaration.capabilities;
     return Object.freeze({ ...definition.declaration, id: localId,
         ...(definition.accountSettings ? { accountSettings: {
             settingLocalIds: [...definition.accountSettings.settingLocalIds],
         } } : {}),
         capabilities: {
-            ...definition.declaration.capabilities,
+            ...capabilities,
+            // Publish a definite refusal only. Service-specific sharing and
+            // restart viability remain decisions of the executable switch owner.
+            ...(continuity && !continuity.supportedTransitions?.includes('connected_to_native')
+                && !continuity.providerStateSharingRequired?.supportedTransitions.includes('connected_to_native')
+                ? { connectedToNativeSwitchUnsupported: true as const } : {}),
             // The executable descriptor is the owner. Publish only its public
             // support and consent facts, never its native-home paths or entries.
             ...(sharing ? { providerStateSharing: {

@@ -139,10 +139,13 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             // Retained facts of a Machine not answering now decide nothing.
             const readiness = machineAgent && !machineAgent.stale
                 ? resolveMachineAgentExecutionStateV1({ inventoryState: machineAgent.state }) : undefined;
-            const noTools = projectionInputs?.pluginProjectionV2?.agentsById[entry.agentId]?.capabilities?.tools?.noTools;
+            const capabilities = projectionInputs?.pluginProjectionV2?.agentsById[entry.agentId]?.capabilities;
+            const noTools = capabilities?.tools?.noTools;
             options.push({
                 pickerEntry: entry,
                 ...(noTools === undefined ? {} : { noTools }),
+                ...(capabilities?.connectedToNativeSwitchUnsupported
+                    ? { connectedToNativeSwitchUnsupported: true } : {}),
                 ...(readiness === undefined ? {} : { readiness }),
                 ...(machineAgent ? { machineAgent } : {}),
                 id: entry.backendTargetKey,

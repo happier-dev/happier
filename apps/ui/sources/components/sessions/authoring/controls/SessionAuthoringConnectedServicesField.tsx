@@ -39,6 +39,7 @@ export type SessionAuthoringConnectedServicesChipParams = Readonly<{
     agentId: string;
     agentIdentity: PluginContributionIdentityV1 | null;
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+    unavailableNativeSignInServiceIds?: readonly string[];
     context: SessionAuthoringConnectedServicesContext;
     value: ConnectedServiceBindingsV2 | null | undefined;
     onChange: (value: ConnectedServiceBindingsV2 | null) => void;
@@ -127,6 +128,7 @@ export function useSessionAuthoringConnectedServicesChip(props: SessionAuthoring
         defaultAuthAgentId: props.agentId,
         defaultAuthConsumer: props.agentIdentity,
         connectedAccounts: props.connectedAccounts,
+        unavailableNativeSignInServiceIds: props.unavailableNativeSignInServiceIds,
         agentOptionState,
         settings: {
             connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId ?? {},

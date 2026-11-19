@@ -53,6 +53,7 @@ export type ConnectedServicesSelectionListTranslationKey =
     | DirectDeliveryDisclosureTranslationKey
     | 'connectedServices.authModal.nativeAuthTitle'
     | 'connectedServices.authModal.nativeAuthSubtitle'
+    | 'connectedServices.diagnostics.status.provider_session_state_unavailable_for_resume'
     | 'connectedServices.authModal.groupSubtitle'
     | 'connectedServices.detail.groups.activeMember'
     | 'connectedServices.authModal.notConnectedTitle'
@@ -108,6 +109,7 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     defaultProfileIdByServiceId?: Readonly<Record<string, string | undefined>>;
     /** Connected-account-only consumers can suppress the implicit local CLI auth fallback. */
     includeNativeAuthOption?: boolean;
+    unavailableNativeSignInServiceIds?: readonly string[];
     /** Runs through browses one native model source for the exact selected Agent. */
     nativeRoute?: Readonly<{ agentTargetKey: string; active: boolean; onBrowse?: () => void }>;
     /** The Team source the Session's applied route runs through; it follows the model selection, so the Session may carry no binding for it. */
@@ -203,8 +205,20 @@ export function buildNewSessionConnectedServicesSelectionListModel(
     const markUnavailable = (optionId: string, unavailableReason: string) => {
         optionAvailabilityById.set(optionId, { availability: 'unavailable', unavailableReason });
     };
-    const resolveAvailability = (input: Parameters<NonNullable<BuildNewSessionConnectedServicesSelectionListModelParams['resolveOptionAvailability']>>[0]) => {
-        const result = params.resolveOptionAvailability?.(input) ?? {};
+    const readAvailability = (
+        input: Parameters<NonNullable<BuildNewSessionConnectedServicesSelectionListModelParams['resolveOptionAvailability']>>[0],
+    ): ConnectedServicesSelectionOptionAvailability => {
+        if (input.binding.source === 'native' && params.unavailableNativeSignInServiceIds?.includes(input.serviceId)) {
+            return {
+                disabled: true,
+                availability: 'unavailable',
+                subtitle: params.translate('connectedServices.diagnostics.status.provider_session_state_unavailable_for_resume'),
+            };
+        }
+        return params.resolveOptionAvailability?.(input) ?? {};
+    };
+    const resolveAvailability = (input: Parameters<typeof readAvailability>[0]) => {
+        const result = readAvailability(input);
         if (result.availability) {
             optionAvailabilityById.set(input.optionId, {
                 availability: result.availability,
@@ -537,9 +551,9 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             (params.appliedTeamRoute !== undefined || params.bindingsByServiceId[serviceId]?.source === 'team_resource')
             && !(params.profileOptionsByServiceId[serviceId] ?? []).some(isConnectedServiceProfileOptionSelectable)
         ));
-        const unavailable = params.supportedServiceIds.map(serviceId => params.resolveOptionAvailability?.({
+        const unavailable = params.supportedServiceIds.map(serviceId => readAvailability({
             serviceId, optionId: createNativeServiceOptionId(serviceId), binding: { source: 'native' },
-        })).find(availability => availability?.disabled);
+        })).find(availability => availability.disabled);
         const selected = route.active && params.bindingsKnown !== false && params.supportedServiceIds.every(serviceId => (
             !params.bindingsByServiceId[serviceId] || params.bindingsByServiceId[serviceId]?.source === 'native'
         ));
