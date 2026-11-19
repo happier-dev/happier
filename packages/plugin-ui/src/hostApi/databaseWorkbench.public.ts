@@ -2,7 +2,7 @@ import type {
   DatabaseStatsCounterComparisonV1,
   DatabaseStatsObservationV1,
   DatabaseTargetV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/database';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 
 /** One selected Resource's host-owned presented-demand lifetime. */

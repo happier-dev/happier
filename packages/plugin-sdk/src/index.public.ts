@@ -1,4 +1,4 @@
-export type { PluginDatabaseEngineContributionV1, PluginDatabaseEngineDefinitionV1, PluginDatabaseEngineRuntimeV1, PluginDatabaseEngineOpenInputV1, DatabaseEngineConnectionV1, DatabaseEnginesServiceV1, DatabaseTargetV1, DatabaseStatsObservationV1, DatabaseStatsCounterComparisonV1 } from './databaseEngines.js';
+export type { PluginDatabaseEngineContributionV1, PluginDatabaseEngineDefinitionV1, PluginDatabaseEngineRuntimeV1, PluginDatabaseEngineOpenInputV1, DatabaseEngineConnectionV1, DatabaseEnginesServiceV1 } from './databaseEngines.js';
 export type { PluginServiceLaunchEnvironmentContributionV1 } from './serviceLaunchEnvironments.js';
 export type { PluginServiceLaunchEnvironmentInputV1, PluginServiceLaunchEnvironmentProjectionV1, PluginServiceLaunchEnvironmentResultV1, PluginServiceLaunchEnvironmentRuntimeV1, PluginServiceLaunchEnvironmentDefinitionV1 } from './serviceLaunchEnvironments.js';
 export type { ActionConfirmationWhen } from './definePlugin.js';

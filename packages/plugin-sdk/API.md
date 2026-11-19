@@ -3926,8 +3926,6 @@
 | `./usage` | `AppCallsUsagePartV1` | type | any |
 | `./usage` | `AppCallsUsageV1` | type | any |
 | `./usage` | `AppCallsUsageWindowV1` | type | any |
-| `./usage` | `UsageModelPriceCatalog` | type | any |
-| `./usage` | `UsageModelPriceOverridesV1` | type | any |
 | `./usage` | `UsageModelPriceOverridesV1Schema` | value | any |
 | `./usage` | `UsageModelPriceReadResultSchema` | value | any |
 | `./usage` | `projectAppCallsCostMetricSeriesV1` | value | any |
