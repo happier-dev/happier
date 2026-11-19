@@ -64,6 +64,18 @@ wire epoch and adds no compatibility adapter. The inspected `../0.2` frontier
 at `73c533b470ac33a7605b50689b6cd93089a3ae6f` has no deployment suggestion
 Action contract.
 
+## Automation Event watcher broker grants (unreleased 0.3)
+
+The existing signed Provider broker V1 grant supports an additive Automation
+Event watcher scope. The Home signs the current publisher, Team resource revision,
+and Machine route at activation. The watcher resolves repository details locally.
+Each finite GitHub read carries the
+grant over the existing carrier and uses its existing expiry and clock tolerance.
+The watcher receives a fresh grant at the next activation or reconnect and retains
+checkpoint and publication ownership on its assigned Machine. Older verifiers
+refuse the unknown watcher scope. Existing Session and Execution Run grants retain
+their wire shape and keep working across this change.
+
 ## Compose App enrollment (unreleased 0.3)
 
 The existing `managedEnrollment` registration carrier accepts a `deploymentApp`

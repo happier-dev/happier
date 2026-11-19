@@ -1,12 +1,13 @@
-import axios from 'axios';
+import axios from './credentialAxios';
 import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '@happier-dev/protocol';
+import { GITHUB_BROKER_WATCHER_V1, ProviderBrokerWatcherOpenRequestV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { describe, expect, it, vi } from 'vitest';
 
 import { openTeamCredentialProviderBroker } from './providerBrokerApi';
 
-vi.mock('axios', () => ({
+vi.mock('./credentialAxios', () => ({
   default: { post: vi.fn() },
-  post: vi.fn(),
 }));
 
 describe('Provider broker narrow HTTP API', () => {
@@ -44,5 +45,32 @@ describe('Provider broker narrow HTTP API', () => {
         signal: expect.any(AbortSignal),
       },
     );
+  });
+
+  it('opens a watcher grant with the exact publisher proof and Machine bearer', async () => {
+    const pluginId = GITHUB_BROKER_WATCHER_V1.service.pluginId;
+    const request = ProviderBrokerWatcherOpenRequestV1Schema.parse({
+      v: 1, scope: 'automation_event_watcher', resourceId: 'resource-1', initiatorMachineId: 'worker-1',
+      caller: {
+        pluginId, occurrenceId: 'occurrence-1', contributionLocalId: GITHUB_BROKER_WATCHER_V1.backgroundServiceId,
+        sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'archive' },
+        materialization: { pluginId, machineId: 'worker-1', materializationId: 'materialization-1' },
+      },
+    });
+    const response = { ok: false, reasonCode: 'broker_unavailable' };
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: response });
+
+    await expect(openTeamCredentialProviderBroker({
+      serverBaseUrl: 'https://home.example.test/', token: 'machine-token', request,
+      requestHeaders: { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: 'signed-publisher-proof' },
+    })).resolves.toEqual(response);
+
+    expect(axios.post).toHaveBeenLastCalledWith(`https://home.example.test${PROVIDER_BROKER_OPEN_HTTP_PATH_V1}`, request, {
+      headers: {
+        Authorization: 'Bearer machine-token', 'Content-Type': 'application/json',
+        [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: 'signed-publisher-proof',
+      },
+      maxRedirects: 0,
+    });
   });
 });

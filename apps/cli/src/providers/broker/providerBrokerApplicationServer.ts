@@ -1,7 +1,7 @@
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { parseQualifiedPluginActionId, formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, ProviderBrokerActionExecuteRequestV3Schema, ProviderBrokerActionExecuteResponseV3Schema, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { encodeProviderBrokerAuthorityV1, PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, ProviderBrokerActionExecuteRequestV3Schema, ProviderBrokerActionExecuteResponseV3Schema, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import fastify, { errorCodes, type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
@@ -140,7 +140,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     const requestDiagnostic = (request: FastifyRequest) => {
         const remotePort = request.raw.socket.remotePort;
         const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
-        if (!context || context.kind === 'external' || context.kind === 'action_operation') return { applicationRequestId: request.id };
+        if (!context || context.kind === 'external' || context.kind === 'action_operation'
+            || context.kind === 'automation_event_watcher') return { applicationRequestId: request.id };
         const consumer = context.authority.payload.consumer;
         const grantId = closeRequestIdSchema.safeParse(context.authority.payload.grantId);
         return { applicationRequestId: request.id,
@@ -194,7 +195,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 response,
                 // Only the private stream has a recipient Session to attribute
                 // the refusal to; the external carrier answers an API key.
-                context && context.kind !== 'external' && context.kind !== 'account_connection' ? context.expected.resourceId : undefined,
+                context && context.kind !== 'external' && context.kind !== 'account_connection'
+                    ? context.authority.payload.resourceId : undefined,
             );
         }
         const recordResponseFailure = (outcome: 'failed' | 'cancelled', responseBytes: number): void => {
@@ -330,14 +332,19 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                     if (typeof value === 'string') headers[name] = value;
                 }
                 const localConsumer = !context ? input.localConsumer : undefined;
-                // Only private/Account model streams forward inference here.
+                // Private model and watcher streams share this authenticated
+                // HTTP application ingress.
                 const streamContext = context && context.kind !== 'external' && context.kind !== 'action_operation'
                     ? context : undefined;
                 if (localConsumer ? !localConsumer.authorize(headers) : !streamContext) {
                     return reply.code(403).send();
                 }
-                // The Agent's bearer is its local capability, meaningful only to
-                // the tunnel; authority comes from the stream's admission.
+                if (streamContext?.kind === 'automation_event_watcher'
+                    && headers.authorization !== `Bearer ${encodeProviderBrokerAuthorityV1(streamContext.authority)}`) {
+                    return writeProviderBrokerApplicationFailure(reply, { ok: false, reasonCode: 'transport_identity_mismatch' });
+                }
+                // The local bearer authenticates the tunnel. Only the
+                // custodian supplies the credential for the provider.
                 delete headers.authorization;
                 // Private diagnostics must never become upstream Provider headers.
                 delete headers[PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER];
@@ -355,6 +362,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                     signal: controller.signal,
                 };
                 const privateClose = streamContext
+                    && streamContext.kind !== 'automation_event_watcher'
                     && request.method === 'DELETE' && forwardedRequest.pathAndQuery === PROVIDER_BROKER_PRIVATE_CLOSE_PATH;
                 const suppliedCloseId = privateClose
                     ? closeRequestIdSchema.safeParse(request.headers[PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER])

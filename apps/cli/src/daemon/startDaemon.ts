@@ -303,8 +303,13 @@ import {
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { createConnectedAccountActionTeamResourceCatalogReader } from './connectedServices/purposeBindings/actionTeamResourceCatalog';
 import { createTeamCredentialBrokerActionExecutor } from '@/providers/broker/teamCredentialActionExecution';
+import { createTeamCredentialBrokerWatcherRead } from '@/providers/broker/teamCredentialBrokerWatcherRead';
 import { withTeamCredentialActionRuntime } from '@/providers/broker/teamCredentialActionRuntime';
 import { createTeamCredentialBrokerActionPurposeExecutor } from '@/providers/broker/teamCredentialActionClient';
+import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
+import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   createDaemonTeamCredentialDirectMaterialReconciler,
@@ -1951,6 +1956,26 @@ export async function startDaemon(
         return forward;
     };
     const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
+      automationEventWatcherTransport: {
+        async openBroker(request, signal) {
+          signal.throwIfAborted();
+          const publisherProof = await createDefaultPluginInstallationPublisherHeader({
+            method: 'POST', path: PROVIDER_BROKER_OPEN_HTTP_PATH_V1, body: request,
+          });
+          signal.throwIfAborted();
+          if (!publisherProof) throw new PluginError({ code: 'broker_unavailable', message: 'The watcher publisher proof is unavailable' });
+          return await openTeamCredentialProviderBroker({ request, signal, token: credentials.token,
+            serverBaseUrl: readDaemonHomeServerHttpBaseUrl(),
+            requestHeaders: { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherProof } });
+        },
+        async openTunnel(request) {
+          const runtime = machineIrohRuntime;
+          if (!runtime || !externalActionAccountId) throw new PluginError({ code: 'broker_unavailable', message: 'The Machine carrier is unavailable' });
+          return await createProviderBrokerMachineCarrierTunnelOpen({
+            accountId: externalActionAccountId, localMachineId: machineId, runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
+          })(request);
+        },
+      },
       acquireServiceExportForward,
       deploymentAccountExecution: {
         credentials,
@@ -3947,6 +3972,7 @@ export async function startDaemon(
                 }, input.signal ? { signal: input.signal } : undefined);
                 const runtimeInput: Parameters<typeof startDaemonProviderBrokerRuntimeWithCustody>[0]['runtime'] = {
                   machineId: registeredMachineId,
+                  watcherReads: createTeamCredentialBrokerWatcherRead({ purposeBindings: connectedAccountPurposeBindingRuntime }),
                   actionOperations: {
                     admit: async (request, signal) => await api.admitTeamCredentialProviderBrokerRequest(request, { signal }),
                     execute: createTeamCredentialBrokerActionExecutor({

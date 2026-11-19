@@ -1,4 +1,4 @@
-import type { ProviderBrokerSourceOpenFailureReasonV1, ProviderBrokerSourceApplicationBindingV1, ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerSourceOpenFailureReasonV1, ProviderBrokerSourceApplicationBindingV1, ProviderBrokerModelRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProviderBrokerRequestPolicySnapshot } from './providerBrokerRequestHandler';
 import { projectProviderConnectionBrokerApplication } from './providerConnectionCpxBridge';
@@ -160,8 +160,8 @@ export type TeamCredentialBrokerSourceAcquireResult =
     }>;
 
 export type TeamCredentialBrokerSourceOwner = Readonly<{
-  readAdmittedRequestPolicy(authority: ProviderBrokerRouteGrantPayloadV1): ProviderBrokerRequestPolicySnapshot | null;
-  retainAdmittedRequestPolicy(authority: ProviderBrokerRouteGrantPayloadV1, snapshot: ProviderBrokerRequestPolicySnapshot): void;
+  readAdmittedRequestPolicy(authority: ProviderBrokerModelRouteGrantPayloadV1): ProviderBrokerRequestPolicySnapshot | null;
+  retainAdmittedRequestPolicy(authority: ProviderBrokerModelRouteGrantPayloadV1, snapshot: ProviderBrokerRequestPolicySnapshot): void;
   /**
    * The current source member a request would use, read without starting or
    * joining managed custody. The Home attributes and admits the request
@@ -203,7 +203,7 @@ export type TeamCredentialBrokerOpenedSource = Readonly<{
 type SourceOpenResult = Promise<TeamCredentialBrokerOpenedSource
   | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason; failureCause?: ActionFailureCauseV1 }> | null>;
 
-function admittedRequestPolicyKey(authority: ProviderBrokerRouteGrantPayloadV1): string {
+function admittedRequestPolicyKey(authority: ProviderBrokerModelRouteGrantPayloadV1): string {
   return JSON.stringify(['policy', authority.teamId, authority.resourceId, authority.sourceRevision,
     authority.brokerPlacementFingerprint, authority.initiatorTokenEpoch, authority.initiator, authority.target,
     authority.consumer, authority.executionRunOccurrenceId ?? null, authority.application]);

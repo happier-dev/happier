@@ -10,8 +10,8 @@ import {
 } from '@happier-dev/iroh-native/node';
 import {
   createProviderBrokerRouteGrantSigningInputV1,
-  type ProviderBrokerRouteGrantPayloadV1,
-  type SignedProviderBrokerRouteGrantV1,
+  type ProviderBrokerModelRouteGrantPayloadV1,
+  type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import { createPeerMediationLoopbackApp } from './server';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -29,8 +29,8 @@ const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
 const sourceEndpoint = 'a'.repeat(64);
 const targetEndpoint = 'b'.repeat(64);
 
-function signedAuthority(): SignedProviderBrokerRouteGrantV1 {
-  const payload: ProviderBrokerRouteGrantPayloadV1 = {
+function signedAuthority(): SignedProviderBrokerModelRouteGrantV1 {
+  const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
     v: 1, grantId: 'grant-1', aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 10_000,
     teamId: 'team-1', resourceId: 'resource-1',
     sourceRevision: 'source-revision-7',

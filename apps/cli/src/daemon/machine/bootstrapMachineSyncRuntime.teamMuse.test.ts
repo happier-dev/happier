@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import OpenAI from 'openai';
 import { openExactSessionTeamCredentialProviderBinding } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from '@/providers/broker/providerBrokerPrivateProtocol';
-import type { ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerModelRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import { resolveTeamCredentialModelCompatibility } from '@/providers/broker/teamCredentialModelCompatibility';
 import { resolveTeamCredentialBrokerRequestPolicy } from '@/providers/broker/requestPolicySnapshot';
@@ -108,7 +108,7 @@ it('reads custodian Muse models for a Team member without impersonating requeste
       model: { ...catalog.rows[0]!, application: { ...catalog.application, agentTargetKey: 'agent:happier.agent.pi/pi' },
         deliveryMode: 'brokered' },
     })).resolves.toMatchObject({ compatibility: { confirmed: true } });
-    const authority: ProviderBrokerRouteGrantPayloadV1 = {
+    const authority: ProviderBrokerModelRouteGrantPayloadV1 = {
       v: 1, grantId: 'home-admitted-member', aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 200,
       teamId: 'team', resourceId: 'shared-muse', sourceRevision: catalog.sourceRevision, brokerPlacementFingerprint: 'c'.repeat(64), initiatorTokenEpoch: 0,
       initiator: { accountId: 'member-b', machineId: 'member-own-machine', endpointId: 'a'.repeat(64) },

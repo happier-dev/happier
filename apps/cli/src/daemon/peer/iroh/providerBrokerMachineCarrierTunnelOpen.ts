@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { z } from 'zod/mini';
 
-import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, IrohProviderBrokerHandshakeSchema, ProviderBrokerAdmissionFailureCodeV1Schema, ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type SignedProviderBrokerRouteGrantV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, IrohProviderBrokerHandshakeSchema, ProviderBrokerAdmissionFailureCodeV1Schema, ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, ProviderBrokerWatcherOpenResponseV1Schema, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type SignedProviderBrokerRouteGrantV1, type SignedProviderBrokerRouteGrantV2, type ProviderBrokerAccountOpenResponseV2, type ProviderBrokerWatcherOpenResponseV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
 
 import {
@@ -63,9 +63,9 @@ export type ProviderBrokerMachineCarrierTunnel = Readonly<{
   close(): Promise<void>;
   readFailureDiagnostic?(): Promise<MachineCarrierFailureDiagnostic | undefined>;
 }>;
-type BrokerOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerAccountOpenResponseV2 | ProviderBrokerActionOpenResponseV3;
-const BrokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, ProviderBrokerActionOpenResponseV3Schema]);
-type BrokerAuthority = Extract<ProviderBrokerOpenResponseV1, { ok: true }>['authority'] | SignedProviderBrokerRouteGrantV2 | SignedProviderBrokerActionRouteGrantV3;
+type BrokerOpenResponse = ProviderBrokerOpenResponseV1 | ProviderBrokerWatcherOpenResponseV1 | ProviderBrokerAccountOpenResponseV2 | ProviderBrokerActionOpenResponseV3;
+const BrokerOpenResponseSchema = z.union([ProviderBrokerOpenResponseV1Schema, ProviderBrokerWatcherOpenResponseV1Schema, ProviderBrokerAccountOpenResponseV2Schema, ProviderBrokerActionOpenResponseV3Schema]);
+type BrokerAuthority = SignedProviderBrokerRouteGrantV1 | SignedProviderBrokerRouteGrantV2 | SignedProviderBrokerActionRouteGrantV3;
 function brokerAuthorityBinding(authority: BrokerAuthority) {
   if (authority.payload.v === 3) return providerBrokerActionRouteGrantExpectedBindingV3(SignedProviderBrokerActionRouteGrantV3Schema.parse(authority));
   return authority.payload.v === 2
@@ -109,6 +109,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     const authority = brokerOpen.authority;
     const nowMs = (input.nowMs ?? Date.now)();
     const payload = authority.payload;
+    const watcher = 'scope' in payload;
     if (
       payload.initiator.accountId !== input.accountId
       || payload.initiator.machineId !== input.localMachineId
@@ -163,7 +164,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         if (!refreshBrokerOpen) {
           throw new MachineCarrierError('broker_fresh_handshake_unavailable', 'Fresh Provider broker admission is unavailable.');
         }
-        const recordOutcome = payload.v === 1 && payload.consumer.kind === 'session'
+        const recordOutcome = !watcher && payload.v === 1 && payload.consumer.kind === 'session'
           ? input.beginSessionApplicationRequest?.(payload.consumer.sessionId) : undefined;
         const freshOpen = BrokerOpenResponseSchema.parse(await refreshBrokerOpen(signal));
         if (!freshOpen.ok) {
@@ -176,7 +177,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
             }));
             homeRefreshRefusalRecorded = true;
           }
-          else if (payload.v === 1 && payload.consumer.kind === 'session') {
+          else if (!watcher && payload.v === 1 && payload.consumer.kind === 'session') {
             try {
               logger.infoFile('[provider-broker-application]', { stage: 'evidence_capture',
                 sessionId: payload.consumer.sessionId, turnId: null, pid: process.pid,
@@ -217,7 +218,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     };
     const refreshHandshake = async () => {
       const requestId = randomUUID();
-      const consumerId = payload.consumer.kind === 'session' ? payload.consumer.sessionId : payload.consumer.kind === 'execution_run' ? payload.consumer.executionRunId : payload.consumer.operationId;
+      const consumerId = watcher ? payload.consumer.occurrenceId : payload.consumer.kind === 'session' ? payload.consumer.sessionId : payload.consumer.kind === 'execution_run' ? payload.consumer.executionRunId : payload.consumer.operationId;
       const record = (details: Readonly<{
         outcome: 'started' | 'accepted' | 'refused' | 'failed';
         grantId?: string;
@@ -241,11 +242,11 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         throw error;
       }
     };
-    const admittedRun = payload.v === 3 || payload.v === 2 && payload.consumer.kind === 'execution_run';
+    const fixedAdmission = watcher || payload.v === 3 || payload.v === 2 && payload.consumer.kind === 'execution_run';
     // A signed Run open owns its admission until the existing grant expiry.
     // Sessions still refresh before dial and for each later carrier stream.
-    let firstHandshake = admittedRun ? handshake : refreshBrokerOpen ? await refreshHandshake() : null;
-    const sessionConsumerId = payload.v === 1 && payload.consumer.kind === 'session' ? payload.consumer.sessionId : undefined;
+    let firstHandshake = fixedAdmission ? handshake : refreshBrokerOpen ? await refreshHandshake() : null;
+    const sessionConsumerId = !watcher && payload.v === 1 && payload.consumer.kind === 'session' ? payload.consumer.sessionId : undefined;
     const transportInput: ProviderBrokerMachineCarrierTransportOpenInput = {
       alpn: MACHINE_ALPN,
       remoteEndpointId: payload.target.endpointId,
@@ -258,12 +259,12 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         }),
       } : {}),
       handshakeProvider: async () => {
-        if (admittedRun && firstHandshake) {
+        if (fixedAdmission && firstHandshake) {
           if (releasing) throw new MachineCarrierError('broker_consumer_closed', 'Provider broker consumer has been withdrawn.');
           signal?.throwIfAborted();
           const verified = verifyAuthority(firstHandshake.authority, (input.nowMs ?? Date.now)());
           if (verified.valid) return firstHandshake;
-          if (payload.v === 3 || verified.reasonCode !== 'grant_expired') {
+          if (watcher || payload.v === 3 || verified.reasonCode !== 'grant_expired') {
             throw new MachineCarrierError(verified.reasonCode, 'Provider broker authority is no longer current.');
           }
           firstHandshake = await refreshHandshake();
@@ -295,7 +296,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
       throw error;
     }
     const readFailureDiagnostic = tunnel.readFailureDiagnostic;
-    if (readFailureDiagnostic && payload.consumer.kind === 'session') {
+    if (readFailureDiagnostic && !watcher && payload.consumer.kind === 'session') {
       input.observeSessionCarrierFailure?.(payload.consumer.sessionId, readFailureDiagnostic);
     }
     let releaseSettled = false;
@@ -311,7 +312,7 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     };
     const retire = async (): Promise<void> => {
       if (releaseSettled) return;
-      if (payload.v === 3) { await close(); releaseSettled = true; return; }
+      if (watcher || payload.v === 3) { await close(); releaseSettled = true; return; }
       releasing = true;
       const requestId = randomUUID();
       // This is the only release condition that must precede runner Stop.

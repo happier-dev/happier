@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginHttpService as createPortablePluginHttpService, createStablePluginHttpHost as createPortableStablePluginHttpHost,
     type CreatePluginHttpServiceParams, type StablePluginHttpHost as PortableStablePluginHttpHost, type StablePluginHttpPurposeHost as PortableStablePluginHttpPurposeHost, type StablePluginHttpCredentialBindingHost as PortableStablePluginHttpCredentialBindingHost, type StablePluginHttpHostParams as PortableStablePluginHttpHostParams, type StablePluginHttpBindingPolicy as PortableStablePluginHttpBindingPolicy } from '@happier-dev/cli-common/plugins/http';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
@@ -19,9 +20,19 @@ export function createPluginHttpService(params: CreatePluginHttpServiceParams) {
     return createPortablePluginHttpService({ ...params, operationContext, trace: runTracedExternalActionInnerStage });
 }
 export function createStablePluginHttpHost(params: StablePluginHttpHostParams): StablePluginHttpHost {
-    return createPortableStablePluginHttpHost({ ...params, operationContext, trace: runTracedExternalActionInnerStage,
+    const host = createPortableStablePluginHttpHost({ ...params, operationContext, trace: runTracedExternalActionInnerStage,
         adapter: { ...params.adapter, async openWebSocket(input, options) {
             normalizePluginWebSocketOpenInput(input);
             return await params.adapter.openWebSocket(input, options);
         } } });
+    return Object.freeze({
+        ...host,
+        bind(seed: PluginInvocationServicesSeed, binding: PluginInvocationServiceBinding, policy?: StablePluginHttpBindingPolicy) {
+            const adapter = binding.watcherHttpAdapter;
+            if (!adapter) return host.bind(seed, binding, policy);
+            const bindAdapter = host.prepareAdapterBinding?.(seed, binding, policy);
+            if (!bindAdapter) throw new PluginError({ code: 'broker_unavailable', message: 'The watcher HTTP transport is unavailable' });
+            return bindAdapter(adapter);
+        },
+    });
 }

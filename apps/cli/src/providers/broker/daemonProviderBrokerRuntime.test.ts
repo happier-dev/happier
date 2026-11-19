@@ -19,7 +19,9 @@ import {
   type SignedProviderBrokerRouteGrantV1,
 } from '@happier-dev/protocol';
 import { createPeerMediationLoopbackApp } from '@/daemon/peer/mediation/loopback/server';
-import { createProviderBrokerRouteGrantSigningInputV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { createProviderBrokerRouteGrantSigningInputV2, GITHUB_BROKER_WATCHER_V1,
+  type SignedProviderBrokerModelRouteGrantV1, type SignedProviderBrokerRouteGrantV2,
+  type SignedProviderBrokerWatcherRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderConnectionIdSchema,
   ProviderContributionV1Schema, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { createProviderManagedRuntimeBindingFingerprintV1 } from '@happier-dev/protocol/providers/contributions';
@@ -53,6 +55,7 @@ import {
   createConnectedServicesBrokerSourceOpen,
 } from './connectedServicesSource';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createTeamCredentialBrokerWatcherRead } from './teamCredentialBrokerWatcherRead';
 import {
   createTeamCredentialBrokerSourceOwner,
   type TeamCredentialBrokerOperation,
@@ -1333,10 +1336,10 @@ async function keepAliveRequestsThroughApplicationTarget(input: Readonly<{
 
 const homeKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
 const homeTrustRoots = [{ keyId: 'home', publicKey: Buffer.from(homeKey.publicKey).toString('base64url') }];
-const signedAuthority = (payload: SignedProviderBrokerRouteGrantV1['payload'] = authority.payload): SignedProviderBrokerRouteGrantV1 => ({
+const signBrokerAuthority = <Payload extends SignedProviderBrokerRouteGrantV1['payload']>(payload: Payload) => ({
   payload,
   signature: {
-    alg: 'Ed25519',
+    alg: 'Ed25519' as const,
     keyId: 'home',
     valueBase64Url: Buffer.from(tweetnacl.sign.detached(
       Buffer.from(createProviderBrokerRouteGrantSigningInputV1(payload)),
@@ -1344,6 +1347,8 @@ const signedAuthority = (payload: SignedProviderBrokerRouteGrantV1['payload'] = 
     )).toString('base64url'),
   },
 });
+const signedAuthority = (payload: SignedProviderBrokerModelRouteGrantV1['payload'] = authority.payload) =>
+  signBrokerAuthority(payload);
 
 /** The target's real machine/1 admission route in front of the real broker
  * runtime; each call admits one new carrier stream. */
@@ -1385,6 +1390,109 @@ function startBrokerAdmission(
     };
   };
 }
+
+it('serves only finite GitHub watcher reads through the signed machine/1 broker path', async () => {
+  const refuseModelPath = (): never => { throw new Error('Unexpected model or local default access'); };
+  const github = GITHUB_BROKER_WATCHER_V1;
+  const githubAccount = { service: github.service, accountId: 'custodian-github' };
+  const source = { v: 1, kind: 'connected_account', target: { kind: 'account', account: githubAccount }, credentialIncarnation: 'github-row' } as const;
+  const purpose = { consumer: { pluginId: github.service.pluginId, localId: github.attemptActionId }, purpose: github.purposeId };
+  const grant: SignedProviderBrokerWatcherRouteGrantV1 = signBrokerAuthority({
+    v: 1, scope: 'automation_event_watcher', grantId: 'watcher-grant', aud: authority.payload.aud,
+    teamId: authority.payload.teamId, resourceId: authority.payload.resourceId,
+    initiator: authority.payload.initiator, target: authority.payload.target, issuedAt: 100, expiresAt: 200,
+    resourceRevision: 7, source, consumer: { occurrenceId: 'active-watcher', purpose },
+  });
+  const bindingOwner = createConnectedAccountPurposeBindingOwner({
+    store: { read: refuseModelPath, update: refuseModelPath, subscribe: () => ({ dispose() {} }) },
+    selectTarget: refuseModelPath,
+    async resolveTarget(target) {
+      if (target.kind !== 'account' || target.account.accountId !== githubAccount.accountId) return null;
+      return { displayName: 'Custodian GitHub', account: githubAccount };
+    },
+    async materializeAccount({ account, request }) {
+      expect(account).toEqual(githubAccount);
+      expect(request).toEqual({ kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] });
+      return { kind: 'httpHeaders', headers: { Authorization: 'Bearer custodian-fixture-only' } };
+    },
+    projectTargetAccounts: refuseModelPath,
+    assertTargetAccountMaterializable: async () => {},
+  });
+  const upstream: string[] = [];
+  let upstreamStarted!: () => void;
+  const waitingForUpstream = new Promise<void>(resolve => { upstreamStarted = resolve; });
+  let upstreamCancelled!: () => void;
+  const waitingForCancellation = new Promise<void>(resolve => { upstreamCancelled = resolve; });
+  let nowMs = 150;
+  const runtime = await startDaemonProviderBrokerRuntime({
+    machineId: 'broker-machine', resolveTrustRoots: () => homeTrustRoots, nowMs: () => nowMs,
+    resolveRequestPolicy: refuseModelPath, admitRequest: refuseModelPath, authorizeModelCatalog: refuseModelPath,
+    sourceOwner: createTeamCredentialBrokerSourceOwner({ machineId: 'broker-machine',
+      custody: { retire: async () => true }, selectConnectedServicesSourceMember: refuseModelPath,
+      openConnectedServicesSource: refuseModelPath, openProviderConnectionSource: refuseModelPath }),
+    createRequestId: (() => { let id = 0; return () => 'watcher-read-' + ++id; })(),
+    watcherReads: createTeamCredentialBrokerWatcherRead({
+      purposeBindings: { ...bindingOwner, owner: bindingOwner },
+      httpAdapter: {
+        openWebSocket: refuseModelPath,
+        async request(request, options) {
+          const headers = new Headers(request.headers);
+          expect(headers.get('authorization')).toBe('Bearer custodian-fixture-only');
+          expect(headers.get('cookie')).toBeNull();
+          if (request.url.endsWith('/pending_deployments')) {
+            upstreamStarted();
+            const signal = options?.signal;
+            if (!signal) throw new Error('The read must be cancellable');
+            return await new Promise((_, reject) => signal.addEventListener('abort', () => {
+              upstreamCancelled();
+              reject(signal.reason);
+            }, { once: true }));
+          }
+          upstream.push(request.url);
+          const conditional = headers.get('if-none-match') === '"timeline-version"';
+          return { finalUrl: request.url, status: conditional ? 304 : 200,
+            headers: { etag: '"timeline-version"', 'x-poll-interval': '60', authorization: 'Bearer custodian-fixture-only' },
+            body: conditional ? new Uint8Array() : new TextEncoder().encode('[{"id":"101"}]') };
+        },
+      },
+    }),
+  });
+  closeTasks.push(runtime.close);
+  const admit = startBrokerAdmission(runtime, nowMs, { v: 1, kind: 'provider_broker', authority: grant });
+  const target = await admit();
+  expect(target).toMatchObject({ statusCode: 204, port: expect.any(Number) });
+  expect((await admit('d'.repeat(64))).statusCode).toBe(403);
+  const otherResource = signBrokerAuthority({ ...grant.payload, resourceId: 'other-resource' });
+  const headers = { authorization: `Bearer ${encodeProviderBrokerAuthorityV1(grant)}`, cookie: 'worker-cookie' };
+  const path = '/v1/repos/acme/widgets/events?per_page=100';
+  const initial = await rawRequestThroughApplicationTarget({ ...target, method: 'GET', path, headers });
+  expect(initial).toMatch(/^HTTP\/1\.1 200/);
+  expect(initial).toContain('[{"id":"101"}]');
+  expect(initial).toMatch(/x-poll-interval: 60/i);
+  expect(initial).not.toContain('custodian-fixture-only');
+  const conditional = await rawRequestThroughApplicationTarget({ ...(await admit()), method: 'GET', path,
+    headers: { ...headers, 'if-none-match': '"timeline-version"' } });
+  expect(conditional).toMatch(/^HTTP\/1\.1 304/);
+  expect(conditional).toMatch(/etag: "timeline-version"/i);
+  for (const denied of [
+    { method: 'GET', path, headers: { authorization: `Bearer ${encodeProviderBrokerAuthorityV1(otherResource)}` } },
+    { method: 'GET', path: '/v1//other.invalid/repos/acme/widgets/events', headers },
+    { method: 'GET', path: '/v1/repos/acme/widgets/contents', headers },
+    { method: 'POST', path, headers },
+  ] as const) {
+    expect(await rawRequestThroughApplicationTarget({ ...(await admit()), ...denied })).toMatch(/^HTTP\/1\.1 403/);
+  }
+  expect(upstream).toEqual(Array(2).fill('https://api.github.com/repos/acme/widgets/events?per_page=100'));
+  const cancellation = new AbortController();
+  const pending = rawRequestThroughApplicationTarget({ ...(await admit()), method: 'GET',
+    path: '/v1/repos/acme/widgets/actions/runs/501/pending_deployments', headers, signal: cancellation.signal });
+  await waitingForUpstream;
+  cancellation.abort();
+  await pending;
+  await waitingForCancellation;
+  nowMs = 200;
+  expect((await admit()).statusCode).toBe(403);
+});
 
 describe('Provider-broker release after grant expiry (machine/1 admission + broker runtime)', () => {
   it.each(['resource_test', 'private'] as const)('retains a failed exact source open through the %s application response', async (ingress) => {
@@ -1704,7 +1812,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
   };
 
   async function startRetainedTarget(personal = false, personalCatalogError?: ProviderErrorV1) {
-    type Consumer = SignedProviderBrokerRouteGrantV1['payload']['consumer'];
+    type Consumer = SignedProviderBrokerModelRouteGrantV1['payload']['consumer'];
     const diagnostics = vi.spyOn(logger, 'warnLocalFile');
     closeTasks.push(async () => { diagnostics.mockRestore(); });
     const unused = (): never => { throw new Error('Unexpected effect boundary'); };

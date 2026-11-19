@@ -1,4 +1,4 @@
-import type { ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerModelRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import type { ProviderSourceModelCatalogRequest, ProviderSourceModelCatalogResult } from '@/providers/modelManagement/sourceCatalog';
 import { resolveTeamCredentialBrokerSourceCatalog } from './resourceTestCandidate';
@@ -8,7 +8,7 @@ import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 /** The custodian reads its own catalog; Home independently admits the recipient. */
 export async function resolveTeamCredentialBrokerRequestPolicy(input: Readonly<{
   machineId: string;
-  authority: ProviderBrokerRouteGrantPayloadV1;
+  authority: ProviderBrokerModelRouteGrantPayloadV1;
   signal: AbortSignal;
   readResource(resourceId: string, signal: AbortSignal): Promise<TeamCredentialResourceSummaryV1 | null>;
   readSourceModelCatalogs(request: ProviderSourceModelCatalogRequest, signal?: AbortSignal): Promise<ProviderSourceModelCatalogResult>;

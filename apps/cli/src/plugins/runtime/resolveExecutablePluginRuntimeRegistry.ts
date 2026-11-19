@@ -593,6 +593,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         /** Daemon startup injects the measured Background Indexer policy. */
         daemonDatabaseLimits?: PluginDaemonDatabaseLimitsPolicy;
         connectedAccounts?: StablePluginConnectedAccountsOwner;
+        automationEventWatcherTransport?: import('@/providers/broker/teamCredentialWatcherClient').TeamCredentialWatcherTransport;
         /** Canonical current Account resolver for dynamic target-Action form refs. */
         actionFormConnectedAccounts?: Pick<
             ConnectedAccountPurposeBindingOwner,
@@ -3232,6 +3233,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     let reconcileAdoptedHealthChecks: (() => void) | undefined;
     const automationAssembly = await assembleAutomationRuntime({
         credentials: sessionCredentials,
+        ...(params?.automationEventWatcherTransport ? { watcherTransport: params.automationEventWatcherTransport } : {}),
         async readNativePresence(definition, target, signal) {
             const activation = resolveExactActivationTarget(definition.eventRef.pluginId);
             const occurrenceId = readCurrentPluginOccurrenceId(definition.eventRef.pluginId);
@@ -4121,6 +4123,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
         async listener(event) {
             if (event.eventId !== '@happier/automation/event-sources-invalidated') return;
+            if (event.payload.reason === 'reconnect') automationAssembly.resetWatcherBrokerOnReconnect();
             if (event.payload.definitionsChanged !== false) {
                 automationAssembly.invalidateSourceDefinitions(event.payload.pluginIds);
                 await automationAssembly.refreshSourceDefinitions(event.payload.pluginIds);
@@ -4708,6 +4711,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ? { actionFormConnectedAccounts: params.actionFormConnectedAccounts }
             : {}),
         resolveAutomationEventHistoryGapSource,
+        bindAutomationEventWatcherRead: automationAssembly.bindAutomationEventWatcherRead,
         resolveOptionalAccess(pluginId) {
             return committed?.generations.get(pluginId)?.installation?.optionalAccess
                 ?? Object.freeze([]);

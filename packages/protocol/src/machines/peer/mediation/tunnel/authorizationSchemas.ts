@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from '../../../../zodRuntimePolicy.js';
-import { ProviderBrokerSourceApplicationBindingV1Schema, ProviderBrokerRouteGrantPayloadV1Schema } from '../../../../providers/brokerRouteGrantV1.js';
+import { ProviderBrokerSourceApplicationBindingV1Schema, ProviderBrokerModelRouteGrantPayloadV1Schema } from '../../../../providers/brokerRouteGrantV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../../../../auth/authToken.js';
 import { TeamCredentialSourceBindingV1Schema } from '../../../../teams/credentials/sourceBindingV1.js';
 
@@ -41,7 +41,7 @@ export const ProviderBrokerExternalApiKeyRelayBindingV1Schema = lazyZodSchema(()
   requestId: z.string().check(z.minLength(1)),
   externalApiKeyId: z.string().check(z.uuid()),
   operationId: z.nullable(z.string().check(z.uuid())),
-  brokerPlacementFingerprint: ProviderBrokerRouteGrantPayloadV1Schema.shape.brokerPlacementFingerprint,
+  brokerPlacementFingerprint: ProviderBrokerModelRouteGrantPayloadV1Schema.shape.brokerPlacementFingerprint,
   assignedAccountId: z.string().check(z.minLength(1)),
   assignedTeamMembershipId: z.string().check(z.minLength(1)),
 }));

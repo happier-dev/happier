@@ -1,4 +1,5 @@
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
+import { GITHUB_BROKER_WATCHER_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createDeploymentTargetRoleExecEnvironmentForHost } from '@/deployments/targets/createDeploymentTargetRoleExecEnvironmentForHost';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -170,6 +171,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
      * bindings. The target Action lifecycle remains the operation owner.
      */
     resolveAutomationEventHistoryGapSource?: ResolveRegistryCurrentAutomationEventHistoryGapSource;
+    bindAutomationEventWatcherRead?: Awaited<ReturnType<typeof import('../composition/automationAssembly').assembleAutomationRuntime>>['bindAutomationEventWatcherRead'];
     resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
     /** Captured invocation custody, never ambient daemon credential fallback. */
     readDeploymentTargetRoleAdmissionHost?(context: import('@happier-dev/protocol').ActionExecutorContext):
@@ -582,6 +584,14 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             if ('status' in snapshot) return snapshot;
             if (snapshot.purposes.length === 0) return null;
             if (snapshot.teamResourceSelections?.length) {
+                const [selected] = snapshot.teamResourceSelections;
+                if (input.pluginId === GITHUB_BROKER_WATCHER_V1.service.pluginId
+                    && input.localId === GITHUB_BROKER_WATCHER_V1.attemptActionId && selected?.selection.deliveryMode === 'brokered') {
+                    const adapter = params.bindAutomationEventWatcherRead?.({ caller: input.caller, selected, input: input.input });
+                    return adapter ? { watcherHttpAdapter: adapter, dispose() {} }
+                        : { status: 'unavailable' as const, code: 'plugin_connected_account_team_resource_unavailable',
+                            message: 'The Team credential requires its current Automation Event watcher' };
+                }
                 let context = input.approvalContext;
                 const action = { pluginId: input.pluginId, localId: input.localId };
                 const actionId = formatQualifiedPluginActionId(action);

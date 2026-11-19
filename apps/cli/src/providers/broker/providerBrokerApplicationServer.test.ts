@@ -11,8 +11,8 @@ import {
   encodeProviderBrokerAuthorityV1,
   ProviderConnectionIdSchema,
   ProviderConnectionSecurityFingerprintV1Schema,
-  type ProviderBrokerRouteGrantPayloadV1,
-  type SignedProviderBrokerRouteGrantV1,
+  type ProviderBrokerModelRouteGrantPayloadV1,
+  type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
@@ -37,7 +37,7 @@ import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3 } from '@happier-dev/protocol/pr
 import { requestThroughApplicationTarget } from './providerBroker.testkit';
 
 const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
-const payload: ProviderBrokerRouteGrantPayloadV1 = {
+const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
   v: 1,
   grantId: 'grant-1',
   aud: 'happier-provider-broker-route-v1',
@@ -78,7 +78,7 @@ const expectedBinding = {
   application: payload.application,
 } as const;
 
-function signedAuthority(grantId = payload.grantId): SignedProviderBrokerRouteGrantV1 {
+function signedAuthority(grantId = payload.grantId): SignedProviderBrokerModelRouteGrantV1 {
   const signedPayload = { ...payload, grantId };
   return {
     payload: signedPayload,
@@ -96,7 +96,7 @@ function signedAuthority(grantId = payload.grantId): SignedProviderBrokerRouteGr
 async function closeApplicationTarget(input: Readonly<{
   port: number;
   localCapability: string;
-  authority: SignedProviderBrokerRouteGrantV1;
+  authority: SignedProviderBrokerModelRouteGrantV1;
   requestId?: string;
 }>): Promise<string> {
   const request = [

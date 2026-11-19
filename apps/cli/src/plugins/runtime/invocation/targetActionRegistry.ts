@@ -172,6 +172,7 @@ type TargetActionFormAdmission = Readonly<{
 
 type TargetActionConnectedAccountOperationBinding = Readonly<{
     exactPurposeBindingSubjectId?: string;
+    watcherHttpAdapter?: PluginInvocationServiceBinding['watcherHttpAdapter'];
     executeBrokeredAction?: Extract<import('@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission').ActionPurposeBindingAdmission, { kind: 'brokered' }>['execute'];
     connectedAccountsOwner?: import('./services/connectedAccounts').StablePluginConnectedAccountsOwner;
     dispose(): void;
@@ -405,6 +406,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     bindConnectedAccountActionOperation?(input: Readonly<{
         pluginId: string;
         pluginVersion: string;
+        caller?: PluginInvocationCaller;
         approvalContext?: import('@happier-dev/protocol').ActionExecutorContext;
         localId: string;
         input: JsonValue;
@@ -782,6 +784,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         ? await params.bindConnectedAccountActionOperation?.({
                         pluginId: registration.pluginId,
                         pluginVersion: registration.pluginVersion,
+                        ...(invocation.caller ? { caller: invocation.caller } : {}),
                         ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
                         localId: registration.localId,
                         input,
@@ -834,12 +837,15 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     }
                     const exactPurposeBindingSubjectId = invocation.exactPurposeBindingSubjectId
                         ?? connectedAccountOperationBinding?.exactPurposeBindingSubjectId;
+                    const watcherHttpAdapter = connectedAccountOperationBinding?.watcherHttpAdapter;
                     const effectiveServiceBinding = exactPurposeBindingSubjectId !== undefined
+                        || watcherHttpAdapter !== undefined
                         || invocation.execOutputObserver !== undefined || invocation.execChannelInput !== undefined
                         || invocation.execInvocationTimeoutMs !== undefined
                         ? Object.freeze({
                             ...serviceBinding,
                             ...(exactPurposeBindingSubjectId === undefined ? {} : { exactPurposeBindingSubjectId }),
+                            ...(watcherHttpAdapter ? { watcherHttpAdapter } : {}),
                             ...(connectedAccountOperationBinding?.connectedAccountsOwner
                                 ? { connectedAccountsOwner: connectedAccountOperationBinding.connectedAccountsOwner } : {}),
                             ...(invocation.execOutputObserver === undefined ? {} : { execOutputObserver: invocation.execOutputObserver }),

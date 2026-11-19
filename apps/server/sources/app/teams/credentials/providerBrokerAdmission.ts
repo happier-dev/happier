@@ -2,7 +2,7 @@ import { brokerFailureForBindingRejection } from './brokerBindingFailure';
 export { openTeamCredentialActionBroker, admitTeamCredentialActionBrokerRequest } from './actionBrokerAdmission';
 import { z } from 'zod/mini';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerRequestAdmissionV1Schema, SignedProviderBrokerRouteGrantV1Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerOpenRequestV1, type ProviderBrokerOpenResponseV1, type ProviderBrokerRequestAdmissionV1, type SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerRequestAdmissionV1Schema, SignedProviderBrokerModelRouteGrantV1Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerOpenRequestV1, type ProviderBrokerOpenResponseV1, type ProviderBrokerRequestAdmissionV1, type SignedProviderBrokerModelRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -100,7 +100,7 @@ type PublicFailure = Omit<Failure, 'refusalReason'>;
 export type TeamCredentialProviderBrokerOpenResult =
     | Readonly<{
         ok: true;
-        authority: SignedProviderBrokerRouteGrantV1;
+        authority: SignedProviderBrokerModelRouteGrantV1;
         target: Extract<ProviderBrokerOpenResponseV1, { ok: true }>['target'];
     }>
     | PublicFailure;
@@ -116,7 +116,7 @@ export type TeamCredentialProviderBrokerOpenInput = Readonly<{
     readProviderProjection: ProviderProjectionReader;
     readPoolSourceEligibility?: PoolSourceEligibilityReader;
     resolveExecutionRunCurrentness?: TeamCredentialExecutionRunCurrentnessResolver;
-    verifyRefreshAuthority?: (authority: SignedProviderBrokerRouteGrantV1) => boolean;
+    verifyRefreshAuthority?: (authority: SignedProviderBrokerModelRouteGrantV1) => boolean;
     signal?: AbortSignal;
 }>;
 
@@ -256,13 +256,13 @@ export async function authorizeTeamCredentialProviderModelCatalog(
 async function authorizeTeamCredentialProviderModelCatalogUnreported(
     input: Readonly<{
         authenticatedBrokerAccountId: string;
-        authority: SignedProviderBrokerRouteGrantV1;
+        authority: SignedProviderBrokerModelRouteGrantV1;
         expectedResourceRevision: number;
-        verifyAuthority: (authority: SignedProviderBrokerRouteGrantV1) => boolean;
+        verifyAuthority: (authority: SignedProviderBrokerModelRouteGrantV1) => boolean;
         resolveExecutionRunCurrentness?: TeamCredentialExecutionRunCurrentnessResolver;
     }>,
 ): Promise<Readonly<{ ok: true }> | Failure> {
-    const authority = SignedProviderBrokerRouteGrantV1Schema.safeParse(input.authority);
+    const authority = SignedProviderBrokerModelRouteGrantV1Schema.safeParse(input.authority);
     if (!authority.success || !input.verifyAuthority(authority.data)) return failure('invalid_request');
     let executionRun: CurrentExecutionRun | undefined;
     if (authority.data.payload.consumer.kind === 'execution_run') {
@@ -1024,7 +1024,7 @@ type TeamCredentialProviderBrokerRequestAdmissionInput = Readonly<{
     authenticatedBrokerAccountId: string;
     request: ProviderBrokerRequestAdmissionV1;
     observedAt: Date;
-    verifyAuthority: (authority: SignedProviderBrokerRouteGrantV1) => boolean;
+    verifyAuthority: (authority: SignedProviderBrokerModelRouteGrantV1) => boolean;
     resolveExecutionRunCurrentness?: TeamCredentialExecutionRunCurrentnessResolver;
 }>;
 
@@ -1080,7 +1080,7 @@ type ActiveBrokerJob = Readonly<{
 async function readActiveBrokerJobInTx(
     tx: Tx,
     input: Readonly<{
-        grant: SignedProviderBrokerRouteGrantV1['payload'];
+        grant: SignedProviderBrokerModelRouteGrantV1['payload'];
         expectedResourceRevision: number;
         generation: boolean;
         executionRun: CurrentExecutionRun | null;

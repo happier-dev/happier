@@ -12,6 +12,8 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/cry
 import { createAutomationEventActionExecutor } from '../automations/automationEventActionExecutor';
 import { MachinePresenceReadResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { AutomationEventSourceDefinitionV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { createAutomationEventWatcherBroker, type AutomationEventWatcherBindingInput } from '../automations/automationEventWatcherBroker';
+import type { TeamCredentialWatcherTransport } from '@/providers/broker/teamCredentialWatcherClient';
 
 type ConsumerLifecycle = Readonly<{
     isCurrent(): boolean;
@@ -32,7 +34,9 @@ export async function assembleAutomationRuntime(input: Readonly<{
     readHealthSources?(): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>>;
     readNativePresence?(definition: AutomationEventSourceDefinitionV1,
         target: Readonly<{ serverId: string; machineId: string }>, signal: AbortSignal): Promise<unknown>;
+    watcherTransport?: TeamCredentialWatcherTransport;
 }>) {
+    const watcherBroker = input.watcherTransport ? createAutomationEventWatcherBroker(input.watcherTransport) : undefined;
     // Native controllers also consume sources assigned to another observer.
     // The existing definitions invalidation retires this same assembly's view;
     // the next admission borrows one refresh, with no idle or per-arrival scan.
@@ -287,6 +291,15 @@ export async function assembleAutomationRuntime(input: Readonly<{
                     await reportNativePresenceObservation(entry);
                 }
             }
+            watcherBroker?.reconcileAdopted();
+        },
+        resetWatcherBrokerOnReconnect: () => watcherBroker?.resetOnReconnect(),
+        bindAutomationEventWatcherRead(request: AutomationEventWatcherBindingInput) {
+            const caller = request.caller;
+            if (!watcherBroker || caller?.kind !== 'plugin' || !caller.materialization) return null;
+            const materialization = caller.materialization;
+            return watcherBroker.bind(request, input.resolveConsumerLifecycle(caller.pluginId).retirementSignal,
+                kind => resolveAdoptedDefinitionSet(materialization, caller.occurrenceId, { kind }));
         },
         readHealthAlertSource,
         refreshActivatedPlugin,

@@ -1,17 +1,26 @@
 import { SignedProviderBrokerActionRouteGrantV3Schema, ProviderBrokerActionRouteGrantPayloadV3Schema, createProviderBrokerActionRouteGrantSigningInputV3, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { SignedProviderBrokerRouteGrantV1Schema, ProviderBrokerRouteGrantPayloadV1Schema, createProviderBrokerRouteGrantSigningInputV1, type SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import {
+    SignedProviderBrokerRouteGrantV1Schema, ProviderBrokerRouteGrantPayloadV1Schema, createProviderBrokerRouteGrantSigningInputV1,
+    type ProviderBrokerModelRouteGrantPayloadV1, type ProviderBrokerWatcherRouteGrantPayloadV1,
+    type SignedProviderBrokerModelRouteGrantV1, type SignedProviderBrokerRouteGrantV1, type SignedProviderBrokerWatcherRouteGrantV1,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import tweetnacl from 'tweetnacl';
 import { signRouteGrantPayload } from './mintDirectRouteGrantV1';
 import { SignedProviderBrokerRouteGrantV2Schema, createProviderBrokerRouteGrantSigningInputV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+
+type ProviderBrokerGrantSigningInputV1<Payload> = Readonly<{
+    payload: Payload;
+    signingKey: Readonly<{ keyId: string; secretKey: Uint8Array }>;
+}>;
 
 /** Signs only a strict payload. The Home resource admission producer must derive
  * every identity and the carrier admission lifetime before calling this owner.
  * This function does not establish resource permission or select signing keys.
  */
-export function signProviderBrokerRouteGrantV1(input: Readonly<{
-    payload: unknown;
-    signingKey: Readonly<{ keyId: string; secretKey: Uint8Array }>;
-}>): SignedProviderBrokerRouteGrantV1 {
+export function signProviderBrokerRouteGrantV1(input: ProviderBrokerGrantSigningInputV1<ProviderBrokerModelRouteGrantPayloadV1>): SignedProviderBrokerModelRouteGrantV1;
+export function signProviderBrokerRouteGrantV1(input: ProviderBrokerGrantSigningInputV1<ProviderBrokerWatcherRouteGrantPayloadV1>): SignedProviderBrokerWatcherRouteGrantV1;
+export function signProviderBrokerRouteGrantV1(input: ProviderBrokerGrantSigningInputV1<unknown>): SignedProviderBrokerRouteGrantV1;
+export function signProviderBrokerRouteGrantV1(input: ProviderBrokerGrantSigningInputV1<unknown>): SignedProviderBrokerRouteGrantV1 {
     const payload = ProviderBrokerRouteGrantPayloadV1Schema.parse(input.payload);
     return SignedProviderBrokerRouteGrantV1Schema.parse({
         payload,

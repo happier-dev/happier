@@ -1,20 +1,46 @@
 import { SignedProviderBrokerActionRouteGrantV3Schema, createProviderBrokerActionRouteGrantSigningInputV3, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { isDeepStrictEqual } from 'node:util';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, createProviderBrokerRouteGrantSigningInputV1, createProviderBrokerRouteGrantSigningInputV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import type { ProviderBrokerRouteGrantPayloadV1, SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol';
+import type { ProviderBrokerModelRouteGrantPayloadV1, ProviderBrokerWatcherRouteGrantPayloadV1,
+    SignedProviderBrokerModelRouteGrantV1, SignedProviderBrokerWatcherRouteGrantV1,
+    SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { findRouteGrantTrustRoot, isRouteGrantIssuedTooFarInFuture, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
 
-export type ProviderBrokerRouteGrantExpectedBindingV1 = Pick<ProviderBrokerRouteGrantPayloadV1,
+type ProviderBrokerModelRouteGrantExpectedBindingV1 = Pick<ProviderBrokerModelRouteGrantPayloadV1,
     'teamId' | 'resourceId' | 'sourceRevision' | 'brokerPlacementFingerprint' | 'initiator' | 'target' | 'consumer' | 'application'>;
+type ProviderBrokerWatcherRouteGrantExpectedBindingV1 = Pick<ProviderBrokerWatcherRouteGrantPayloadV1,
+    'scope' | 'teamId' | 'resourceId' | 'resourceRevision' | 'source' | 'initiator' | 'target' | 'consumer'>;
+export type ProviderBrokerRouteGrantExpectedBindingV1 =
+    ProviderBrokerModelRouteGrantExpectedBindingV1 | ProviderBrokerWatcherRouteGrantExpectedBindingV1;
 
 /** The signed identity of one broker operation, as every carrier and handler
  * binds it. The model is deliberately not part of it: it is a current request
  * fact (`04-private-iroh-broker-transport.md:270`). */
 export function providerBrokerRouteGrantExpectedBindingV1(
+    authority: SignedProviderBrokerModelRouteGrantV1,
+): ProviderBrokerModelRouteGrantExpectedBindingV1;
+export function providerBrokerRouteGrantExpectedBindingV1(
+    authority: SignedProviderBrokerWatcherRouteGrantV1,
+): ProviderBrokerWatcherRouteGrantExpectedBindingV1;
+export function providerBrokerRouteGrantExpectedBindingV1(
+    authority: SignedProviderBrokerRouteGrantV1,
+): ProviderBrokerRouteGrantExpectedBindingV1;
+export function providerBrokerRouteGrantExpectedBindingV1(
     authority: SignedProviderBrokerRouteGrantV1,
 ): ProviderBrokerRouteGrantExpectedBindingV1 {
     const { payload } = authority;
+    if ('scope' in payload) return {
+        scope: payload.scope,
+        teamId: payload.teamId,
+        resourceId: payload.resourceId,
+        resourceRevision: payload.resourceRevision,
+        source: payload.source,
+        initiator: payload.initiator,
+        target: payload.target,
+        consumer: payload.consumer,
+    };
     return {
         teamId: payload.teamId,
         resourceId: payload.resourceId,
@@ -64,7 +90,12 @@ export function verifyProviderBrokerRouteGrantV1(input: Readonly<{
     if (isRouteGrantIssuedTooFarInFuture(authority.payload.issuedAt, input.nowMs)) return { valid: false, reasonCode: 'grant_not_yet_valid' };
     const payload = authority.payload;
     const expected = input.expected;
-    if (
+    if ('scope' in payload || 'scope' in expected) {
+        if (!('scope' in payload && 'scope' in expected)
+            || !sameStrictJsonValue(providerBrokerRouteGrantExpectedBindingV1(authority), expected)) {
+            return { valid: false, reasonCode: 'grant_binding_mismatch' };
+        }
+    } else if (
         payload.teamId !== expected.teamId
         || payload.resourceId !== expected.resourceId
         || payload.sourceRevision !== expected.sourceRevision

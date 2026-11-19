@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import type { ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerModelRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { logger } from '@/ui/logger';
 import { PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH } from './providerBrokerPrivateProtocol';
 import { observeConnectedServiceMaterializationPhase } from '@/daemon/connectedServices/materialize/materializationPhase';
@@ -9,7 +9,7 @@ const diagnosticGrantId = z.uuid();
 
 /** Observe only the private endpoint demand; inference keeps its existing logs. */
 export function providerBrokerEndpointPhaseDiagnostic(
-    authority: ProviderBrokerRouteGrantPayloadV1,
+    authority: ProviderBrokerModelRouteGrantPayloadV1,
     request: Readonly<{ method?: string; pathAndQuery: string }>,
 ): ProviderBrokerApplicationPhaseDiagnostic | undefined {
     if (request.method !== 'GET' || request.pathAndQuery !== PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) return undefined;

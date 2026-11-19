@@ -12,7 +12,11 @@ import type {
   SignedProviderBrokerRouteGrantV1,
   UsageObservationTokens,
 } from '@happier-dev/protocol';
-import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type IrohProviderBrokerHandshake, type SignedProviderBrokerRouteGrantV2, type ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema,
+  SignedProviderBrokerModelRouteGrantV1Schema, SignedProviderBrokerWatcherRouteGrantV1Schema,
+  SignedProviderBrokerRouteGrantV2Schema, type IrohProviderBrokerHandshake, type SignedProviderBrokerModelRouteGrantV1,
+  type SignedProviderBrokerWatcherRouteGrantV1, type SignedProviderBrokerRouteGrantV2,
+  type ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 
@@ -32,6 +36,7 @@ import {
   type ProviderBrokerExternalRequestPolicySnapshot,
   type ProviderBrokerModelCatalogAuthorization,
   type ProviderBrokerRequestAdmission,
+  type ProviderBrokerRequestHandlerResult,
   type TeamCredentialRequestModelCatalog,
 } from './providerBrokerRequestHandler';
 import type {
@@ -93,11 +98,6 @@ export function revalidateExternalProviderBrokerAuthorization(
   if (PROVIDER_BROKER_OPERATION_AUTHORITY_LOST.has(result.reasonCode)) return false;
   throw new Error('external broker authority unavailable');
 }
-
-type VerifiedAuthority = Extract<
-  ProviderBrokerRouteGrantVerificationResultV1,
-  Readonly<{ valid: true }>
->;
 
 type ProviderBrokerApplicationTargetInput = Readonly<{
   handshake: IrohProviderBrokerHandshake;
@@ -414,6 +414,11 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     retire(request: Readonly<{ authority: SignedProviderBrokerRouteGrantV2 }>): Promise<void>;
     revalidateCurrentness?(request: Readonly<{ authority: SignedProviderBrokerRouteGrantV2 }>, signal?: AbortSignal): Promise<void>;
   }>;
+  watcherReads?(request: Readonly<{
+    authority: SignedProviderBrokerWatcherRouteGrantV1;
+    requestId: string;
+    request: ManagedServiceRequest;
+  }>): Promise<ProviderBrokerRequestHandlerResult>;
   resolveTrustRoots: () => readonly DirectRouteGrantTrustRoot[];
   nowMs: () => number;
   verifyAuthority?: (input: Readonly<{
@@ -424,7 +429,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     enforceExpiry?: boolean;
   }>) => ProviderBrokerRouteGrantVerificationResultV1;
   resolveRequestPolicy(input: Readonly<{
-    authority: SignedProviderBrokerRouteGrantV1['payload'];
+    authority: SignedProviderBrokerModelRouteGrantV1['payload'];
     request: ManagedServiceRequest;
   }>): Promise<Readonly<{
     resourceRevision: number;
@@ -866,32 +871,58 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
           throw error;
         }
       }
-      const legacyAuthority = SignedProviderBrokerRouteGrantV1Schema.safeParse(request.authority);
-      if (!legacyAuthority.success) return null;
+      const parsedAuthority = SignedProviderBrokerRouteGrantV1Schema.safeParse(request.authority);
+      if (!parsedAuthority.success) return null;
       if (
         encodeProviderBrokerAuthorityV1(request.handshake.authority)
-          !== encodeProviderBrokerAuthorityV1(legacyAuthority.data)
-        || request.authority.payload.target.machineId !== input.machineId
-        || request.authority.payload.target.endpointId !== request.localEndpointId
+          !== encodeProviderBrokerAuthorityV1(parsedAuthority.data)
+        || parsedAuthority.data.payload.target.machineId !== input.machineId
+        || parsedAuthority.data.payload.target.endpointId !== request.localEndpointId
       ) return null;
-      const expected = expectedBinding(legacyAuthority.data);
+      if ('scope' in parsedAuthority.data.payload) {
+        const watcher = SignedProviderBrokerWatcherRouteGrantV1Schema.safeParse(parsedAuthority.data);
+        const read = input.watcherReads;
+        if (!watcher.success || !read) return null;
+        const authority = watcher.data;
+        const expected = expectedBinding(authority);
+        const verifyRead = () => verify({ authority, expected,
+          authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId, enforceExpiry: true });
+        if (!verifyRead().valid) return null;
+        return await application.createStreamTarget({
+          kind: 'automation_event_watcher',
+          authority,
+          async read(applicationRequest) {
+            // The request bearer was bound to this carrier by the application
+            // ingress. A keep-alive stream may outlast a finite grant.
+            const verified = verifyRead();
+            if (!verified.valid) return { ok: false,
+              reasonCode: verified.reasonCode === 'grant_expired' ? 'grant_expired' : 'transport_identity_mismatch' };
+            return await read({ authority, requestId: input.createRequestId(), request: applicationRequest });
+          },
+        }, request.signal);
+      }
+      const modelAuthority = SignedProviderBrokerModelRouteGrantV1Schema.safeParse(parsedAuthority.data);
+      if (!modelAuthority.success) return null;
+      const expected = expectedBinding(modelAuthority.data);
       const verified: ProviderBrokerRouteGrantVerificationResultV1 = verify({
         authority: request.authority,
         authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
         expected,
       });
       if (!verified.valid) return null;
-      const authoritative = verified as VerifiedAuthority;
+      const authoritative = SignedProviderBrokerModelRouteGrantV1Schema.safeParse(verified.authority);
+      if (!authoritative.success) return null;
+      const authority = authoritative.data;
       if (
-        authoritative.authority.payload.application.agentTargetKey
+        authority.payload.application.agentTargetKey
           !== expected.application.agentTargetKey
-        || authoritative.authority.payload.application.implementationIdentity.pluginId
+        || authority.payload.application.implementationIdentity.pluginId
           !== expected.application.implementationIdentity.pluginId
-        || authoritative.authority.payload.application.implementationIdentity.localId
+        || authority.payload.application.implementationIdentity.localId
           !== expected.application.implementationIdentity.localId
-        || authoritative.authority.payload.application.endpointTemplateId
+        || authority.payload.application.endpointTemplateId
           !== expected.application.endpointTemplateId
-        || authoritative.authority.payload.application.protocol
+        || authority.payload.application.protocol
           !== expected.application.protocol
       ) return null;
       // Expiry bounds new work, not the operation (L10/04 §5.6, L10/11 A3):
@@ -908,14 +939,14 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
       request.signal.throwIfAborted();
       return await application.createStreamTarget({
         authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
-        authority: authoritative.authority,
+        authority,
         expected,
         releaseOnly: !current.valid,
         streamLifetime: createPrivateProviderBrokerStreamLifetime({
           sourceOwner: input.sourceOwner,
-          application: authoritative.authority.payload.application,
-          operation: authoritative.authority.payload.consumer,
-          brokerAdmissionFingerprint: authoritative.authority.payload.brokerPlacementFingerprint,
+          application: authority.payload.application,
+          operation: authority.payload.consumer,
+          brokerAdmissionFingerprint: authority.payload.brokerPlacementFingerprint,
           ...(input.revalidateOperationCurrentness ? {
             revalidateOperationCurrentness: input.revalidateOperationCurrentness,
           } : {}),

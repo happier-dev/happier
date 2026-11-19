@@ -4,6 +4,8 @@ import { z } from '../zodRuntimePolicy.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
+import { AutomationEventActionHttpCallerV1Schema } from '../automations/automationEventV1.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposes.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { IrohEndpointDescriptorV1Schema, IrohEndpointIdV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
@@ -20,6 +22,13 @@ import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderLocal
 import { ProviderConnectionSecurityFingerprintV1Schema, ProviderManagedRuntimeBindingFingerprintV1Schema } from './fingerprints.js';
 
 export const PROVIDER_BROKER_ROUTE_AUDIENCE_V1 = 'happier-provider-broker-route-v1' as const;
+/** The first declared watcher served by the finite Provider read scope. */
+export const GITHUB_BROKER_WATCHER_V1 = Object.freeze({
+  service: Object.freeze({ pluginId: 'happier.scm.forge.github', localId: 'github-account' }),
+  backgroundServiceId: 'automation-repository-event-checkpointed-pull',
+  attemptActionId: 'automation/run-repository-event-source-attempt-v1',
+  purposeId: 'github-connected-account',
+} as const);
 export const PROVIDER_BROKER_OPEN_HTTP_PATH_V1 = '/v1/teams/credential-resources/broker/open' as const;
 export const PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1 = '/v1/teams/credential-resources/broker/admit' as const;
 export const PROVIDER_BROKER_MODEL_CATALOG_AUTHORIZE_HTTP_PATH_V1 = '/v1/teams/credential-resources/broker/models/authorize' as const;
@@ -79,7 +88,7 @@ export const ProviderBrokerApplicationBindingV1Schema = lazyZodSchema(() => z.ex
  * The resource revision is bound inside the opaque job fingerprint below;
  * current-resource lookup ends the admitted job after a revision change.
  */
-export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+const providerBrokerRouteGrantCommonV1 = {
   v: z.literal(1),
   grantId: IdentitySchema,
   aud: z.literal(PROVIDER_BROKER_ROUTE_AUDIENCE_V1),
@@ -87,14 +96,18 @@ export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.str
   expiresAt: z.number().check(z.int(), z.positive()),
   teamId: IdentitySchema,
   resourceId: IdentitySchema,
+  initiator: z.strictObject({ accountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
+  target: z.strictObject({ custodianAccountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
+};
+
+export const ProviderBrokerModelRouteGrantPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+  ...providerBrokerRouteGrantCommonV1,
   sourceRevision: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   /** Home-computed opaque job fingerprint binding placement and the admitted
    * resource revision, without disclosing a Pool id. */
   brokerPlacementFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
   /** Epoch of the exact signed opening credential. Home rechecks revocation on every request. */
   initiatorTokenEpoch: z.number().check(z.int(), z.nonnegative()),
-  initiator: z.strictObject({ accountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
-  target: z.strictObject({ custodianAccountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
   consumer: ProviderBrokerRuntimeConsumerV1Schema,
   executionRunOccurrenceId: z.optional(IdentitySchema),
   application: ProviderBrokerApplicationBindingV1Schema,
@@ -121,15 +134,41 @@ export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.str
   }
 })));
 
-export const SignedProviderBrokerRouteGrantV1Schema = lazyZodSchema(() => z.strictObject({
-  payload: ProviderBrokerRouteGrantPayloadV1Schema,
-  signature: DirectRouteGrantSignatureV2Schema,
-}).check(z.superRefine((authority, context) => {
+export const ProviderBrokerWatcherRouteGrantPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+  ...providerBrokerRouteGrantCommonV1,
+  scope: z.literal('automation_event_watcher'),
+  resourceRevision: z.number().check(z.int(), z.nonnegative()),
+  source: TeamCredentialSourceBindingV1Schema,
+  consumer: z.strictObject({ occurrenceId: IdentitySchema, purpose: QualifiedConnectedAccountPurposeV1Schema }),
+}).check(z.superRefine((payload, context) => {
+  if (payload.expiresAt <= payload.issuedAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Expiry must follow issue time' });
+  if (payload.initiator.accountId === payload.target.custodianAccountId) context.addIssue({ code: 'custom', path: ['target'], message: 'Broker Accounts must be distinct' });
+  if ((payload.initiator.machineId === payload.target.machineId) !== (payload.initiator.endpointId === payload.target.endpointId)) {
+    context.addIssue({ code: 'custom', path: ['target'], message: 'Broker Machine and endpoint identities must agree' });
+  }
+})));
+
+export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.union([
+  ProviderBrokerModelRouteGrantPayloadV1Schema, ProviderBrokerWatcherRouteGrantPayloadV1Schema,
+]));
+
+const checkProviderBrokerRouteGrantHeaderBudgetV1 = z.superRefine((authority: unknown, context) => {
   const bytes = new TextEncoder().encode(createCanonicalJsonSigningInput(authority));
   if (Math.ceil(bytes.byteLength * 8 / 6) > PROVIDER_BROKER_AUTHORITY_MAX_ENCODED_BYTES) {
     context.addIssue({ code: 'custom', message: 'Encoded broker authority exceeds the native HTTP header budget' });
   }
-})));
+});
+export const SignedProviderBrokerModelRouteGrantV1Schema = lazyZodSchema(() => z.strictObject({
+  payload: ProviderBrokerModelRouteGrantPayloadV1Schema,
+  signature: DirectRouteGrantSignatureV2Schema,
+}).check(checkProviderBrokerRouteGrantHeaderBudgetV1));
+export const SignedProviderBrokerWatcherRouteGrantV1Schema = lazyZodSchema(() => z.strictObject({
+  payload: ProviderBrokerWatcherRouteGrantPayloadV1Schema,
+  signature: DirectRouteGrantSignatureV2Schema,
+}).check(checkProviderBrokerRouteGrantHeaderBudgetV1));
+export const SignedProviderBrokerRouteGrantV1Schema = lazyZodSchema(() => z.union([
+  SignedProviderBrokerModelRouteGrantV1Schema, SignedProviderBrokerWatcherRouteGrantV1Schema,
+]));
 
 export const IrohProviderBrokerHandshakeV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -149,7 +188,15 @@ export const ProviderBrokerOpenRequestV1Schema = lazyZodSchema(() => z.strictObj
   /** A previously Home-signed open may be presented only to reauthorize its
    * exact target for another carrier handshake. The Home verifies and
    * revalidates every current resource/source/Machine fact before re-signing. */
-  refreshAuthority: z.optional(SignedProviderBrokerRouteGrantV1Schema),
+  refreshAuthority: z.optional(SignedProviderBrokerModelRouteGrantV1Schema),
+}));
+
+export const ProviderBrokerWatcherOpenRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  scope: z.literal('automation_event_watcher'),
+  resourceId: IdentitySchema,
+  initiatorMachineId: IdentitySchema,
+  caller: AutomationEventActionHttpCallerV1Schema,
 }));
 
 export const ProviderBrokerRequestFactsV1Schema = lazyZodSchema(() => z.strictObject({
@@ -165,7 +212,7 @@ export const ProviderBrokerRequestFactsV1Schema = lazyZodSchema(() => z.strictOb
 
 export const ProviderBrokerRequestAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  authority: SignedProviderBrokerRouteGrantV1Schema,
+  authority: SignedProviderBrokerModelRouteGrantV1Schema,
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
   sourceMemberKey: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   requestId: IdentitySchema,
@@ -176,7 +223,7 @@ export const ProviderBrokerRequestAdmissionV1Schema = lazyZodSchema(() => z.stri
  * cannot reserve allowance, record usage, or acquire Provider credentials. */
 export const ProviderBrokerModelCatalogAuthorizationV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
-  authority: SignedProviderBrokerRouteGrantV1Schema,
+  authority: SignedProviderBrokerModelRouteGrantV1Schema,
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
 }));
 
@@ -270,7 +317,16 @@ export const ProviderBrokerOpenTargetV1Schema = lazyZodSchema(() => z.strictObje
 export const ProviderBrokerOpenResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.strictObject({
     ok: z.literal(true),
-    authority: SignedProviderBrokerRouteGrantV1Schema,
+    authority: SignedProviderBrokerModelRouteGrantV1Schema,
+    target: ProviderBrokerOpenTargetV1Schema,
+  }),
+  ProviderBrokerAdmissionFailureV1Schema,
+]));
+
+export const ProviderBrokerWatcherOpenResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({
+    ok: z.literal(true),
+    authority: SignedProviderBrokerWatcherRouteGrantV1Schema,
     target: ProviderBrokerOpenTargetV1Schema,
   }),
   ProviderBrokerAdmissionFailureV1Schema,
@@ -298,13 +354,19 @@ export type ProviderBrokerApplicationBindingV1 = z.infer<typeof ProviderBrokerAp
 /** The one admission-failure vocabulary for broker open and per-request admission. */
 export type ProviderBrokerAdmissionFailureCodeV1 = z.infer<typeof ProviderBrokerAdmissionFailureCodeV1Schema>;
 export type ProviderBrokerRouteGrantPayloadV1 = z.infer<typeof ProviderBrokerRouteGrantPayloadV1Schema>;
+export type ProviderBrokerModelRouteGrantPayloadV1 = z.infer<typeof ProviderBrokerModelRouteGrantPayloadV1Schema>;
+export type ProviderBrokerWatcherRouteGrantPayloadV1 = z.infer<typeof ProviderBrokerWatcherRouteGrantPayloadV1Schema>;
 export type SignedProviderBrokerRouteGrantV1 = z.infer<typeof SignedProviderBrokerRouteGrantV1Schema>;
+export type SignedProviderBrokerModelRouteGrantV1 = z.infer<typeof SignedProviderBrokerModelRouteGrantV1Schema>;
+export type SignedProviderBrokerWatcherRouteGrantV1 = z.infer<typeof SignedProviderBrokerWatcherRouteGrantV1Schema>;
 export type IrohProviderBrokerHandshakeV1 = z.infer<typeof IrohProviderBrokerHandshakeV1Schema>;
 export type ProviderBrokerOpenRequestV1 = z.infer<typeof ProviderBrokerOpenRequestV1Schema>;
 export type ProviderBrokerRequestFactsV1 = z.infer<typeof ProviderBrokerRequestFactsV1Schema>;
 export type ProviderBrokerRequestAdmissionV1 = z.infer<typeof ProviderBrokerRequestAdmissionV1Schema>;
 export type ProviderBrokerModelCatalogAuthorizationV1 = z.infer<typeof ProviderBrokerModelCatalogAuthorizationV1Schema>;
 export type ProviderBrokerOpenResponseV1 = z.infer<typeof ProviderBrokerOpenResponseV1Schema>;
+export type ProviderBrokerWatcherOpenRequestV1 = z.infer<typeof ProviderBrokerWatcherOpenRequestV1Schema>;
+export type ProviderBrokerWatcherOpenResponseV1 = z.infer<typeof ProviderBrokerWatcherOpenResponseV1Schema>;
 export type ProviderBrokerRequestAdmissionResponseV1 = z.infer<typeof ProviderBrokerRequestAdmissionResponseV1Schema>;
 export type ProviderBrokerModelCatalogAuthorizationResponseV1 = z.infer<typeof ProviderBrokerModelCatalogAuthorizationResponseV1Schema>;
 

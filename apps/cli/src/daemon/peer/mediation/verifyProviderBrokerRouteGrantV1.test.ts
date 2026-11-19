@@ -3,13 +3,14 @@ import tweetnacl from 'tweetnacl';
 import {
     ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS,
     createProviderBrokerRouteGrantSigningInputV1,
-    type ProviderBrokerRouteGrantPayloadV1,
-    type SignedProviderBrokerRouteGrantV1,
+    type ProviderBrokerModelRouteGrantPayloadV1,
+    type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
-import { verifyProviderBrokerRouteGrantV1 } from './verifyProviderBrokerRouteGrantV1';
+import { GITHUB_BROKER_WATCHER_V1, type ProviderBrokerWatcherRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { providerBrokerRouteGrantExpectedBindingV1, verifyProviderBrokerRouteGrantV1 } from './verifyProviderBrokerRouteGrantV1';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
-const payload: ProviderBrokerRouteGrantPayloadV1 = {
+const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
     v: 1, grantId: 'grant', aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 200,
     teamId: 'team', resourceId: 'resource',
     sourceRevision: 'source-revision-7',
@@ -25,17 +26,40 @@ const payload: ProviderBrokerRouteGrantPayloadV1 = {
         protocol: 'openai-responses',
     },
 };
-function sign(value = payload): SignedProviderBrokerRouteGrantV1 {
+function sign<T extends ProviderBrokerModelRouteGrantPayloadV1 | ProviderBrokerWatcherRouteGrantPayloadV1>(value: T): {
+    payload: T; signature: SignedProviderBrokerModelRouteGrantV1['signature'];
+} {
     return { payload: value, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createProviderBrokerRouteGrantSigningInputV1(value)), key.secretKey)).toString('base64url') } };
 }
 const input = {
-    authority: sign(), nowMs: 150,
+    authority: sign(payload), nowMs: 150,
     trustRoots: [{ keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') }],
     expected: { teamId: payload.teamId, resourceId: payload.resourceId, sourceRevision: payload.sourceRevision, brokerPlacementFingerprint: payload.brokerPlacementFingerprint, initiator: payload.initiator, target: payload.target, consumer: payload.consumer, application: payload.application },
     authenticatedRemoteEndpointId: payload.initiator.endpointId,
 };
 
 describe('verifyProviderBrokerRouteGrantV1', () => {
+    it('checks watcher resource revision and expiry with the existing Home signature and clock tolerance', () => {
+        const scope = GITHUB_BROKER_WATCHER_V1;
+        const issuedAt = 60_000;
+        const watcher = sign({
+            v: 1, grantId: 'watcher-grant', aud: payload.aud, issuedAt, expiresAt: issuedAt + 60_000,
+            scope: 'automation_event_watcher', teamId: 'team', resourceId: 'resource', resourceRevision: 5,
+            source: { v: 1, kind: 'connected_account', credentialIncarnation: 'connection',
+                target: { kind: 'account', account: { service: scope.service, accountId: 'github' } } },
+            initiator: payload.initiator, target: payload.target,
+            consumer: { occurrenceId: 'observer', purpose: { consumer: { pluginId: scope.service.pluginId,
+                localId: scope.attemptActionId }, purpose: scope.purposeId } },
+        } satisfies ProviderBrokerWatcherRouteGrantPayloadV1);
+        const request = { ...input, authority: watcher, expected: providerBrokerRouteGrantExpectedBindingV1(watcher),
+            nowMs: issuedAt - ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS };
+        expect(verifyProviderBrokerRouteGrantV1(request)).toEqual({ valid: true, authority: watcher });
+        expect(verifyProviderBrokerRouteGrantV1({ ...request, authority: sign({ ...watcher.payload, resourceRevision: 6 }) }))
+            .toEqual({ valid: false, reasonCode: 'grant_binding_mismatch' });
+        expect(verifyProviderBrokerRouteGrantV1({ ...request, nowMs: watcher.payload.expiresAt }))
+            .toEqual({ valid: false, reasonCode: 'grant_expired' });
+    });
+
     it('admits the exact cross-Account authority repeatedly for independent streams', () => {
         expect(verifyProviderBrokerRouteGrantV1(input)).toEqual({ valid: true, authority: input.authority });
         expect(verifyProviderBrokerRouteGrantV1(input)).toEqual({ valid: true, authority: input.authority });
@@ -48,7 +72,7 @@ describe('verifyProviderBrokerRouteGrantV1', () => {
     });
 
     it('rejects changed exact authority even if a Home signed the substituted grant', () => {
-        const substitutes: ProviderBrokerRouteGrantPayloadV1[] = [
+        const substitutes: ProviderBrokerModelRouteGrantPayloadV1[] = [
             { ...payload, resourceId: 'other' }, { ...payload, teamId: 'other' },
             { ...payload, sourceRevision: 'other-source-revision' },
             { ...payload, brokerPlacementFingerprint: 'd'.repeat(64) },

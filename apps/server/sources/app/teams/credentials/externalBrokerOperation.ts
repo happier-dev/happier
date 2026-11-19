@@ -1,6 +1,6 @@
 import { z } from "zod/mini";
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
-import { ProviderBrokerRouteGrantPayloadV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerModelRouteGrantPayloadV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import type { Tx } from "@/storage/inTx";
 
@@ -9,7 +9,7 @@ const ExternalBrokerOperationSchema = z.strictObject({
     v: z.literal(1),
     operationId: z.string().check(z.uuid()),
     brokerMachineId: z.string().check(z.minLength(1)),
-    brokerPlacementFingerprint: ProviderBrokerRouteGrantPayloadV1Schema.shape.brokerPlacementFingerprint,
+    brokerPlacementFingerprint: ProviderBrokerModelRouteGrantPayloadV1Schema.shape.brokerPlacementFingerprint,
     sourceBindingJson: z.string().check(z.minLength(1)),
 });
 

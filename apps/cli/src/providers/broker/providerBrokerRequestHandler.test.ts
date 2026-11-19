@@ -8,14 +8,14 @@ import {
     ProviderConnectionIdSchema,
     type PeerTcpTunnelRelayAuthorizationV2,
     type ProviderBrokerResourceTestRelayBindingV1,
-    type ProviderBrokerRouteGrantPayloadV1,
-    type SignedProviderBrokerRouteGrantV1,
+    type ProviderBrokerModelRouteGrantPayloadV1,
+    type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
-const payload: ProviderBrokerRouteGrantPayloadV1 = {
+const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
     v: 1, grantId: 'grant', aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 200,
     teamId: 'team', resourceId: 'resource',
     sourceRevision: 'source-revision-7',
@@ -38,7 +38,7 @@ const providerSource = TeamCredentialSourceBindingV1Schema.parse({
     connectionSecurityFingerprint: 'connection-security:v1:source',
     credentialSlotId: 'apiKey',
 });
-function authority(value = payload): SignedProviderBrokerRouteGrantV1 {
+function authority(value = payload): SignedProviderBrokerModelRouteGrantV1 {
     return { payload: value, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createProviderBrokerRouteGrantSigningInputV1(value)), key.secretKey)).toString('base64url') } };
 }
 function resourceTestRelayAuthorization(
@@ -419,7 +419,7 @@ describe('createProviderBrokerRequestHandler', () => {
     });
 
     it('keeps concurrent stream authority, target access, and headers isolated', async () => {
-        const secondPayload: ProviderBrokerRouteGrantPayloadV1 = {
+        const secondPayload: ProviderBrokerModelRouteGrantPayloadV1 = {
             ...payload,
             grantId: 'grant-2',
             resourceId: 'resource-2',

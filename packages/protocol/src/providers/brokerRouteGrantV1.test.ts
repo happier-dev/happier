@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ProviderBrokerRouteGrantPayloadV1Schema,
+  ProviderBrokerModelRouteGrantPayloadV1Schema,
   SignedProviderBrokerRouteGrantV1Schema,
   IrohProviderBrokerHandshakeV1Schema,
   ProviderBrokerOpenRequestV1Schema,
@@ -142,7 +143,7 @@ describe('Provider broker authority V1', () => {
     expect(ProviderBrokerRouteGrantPayloadV1Schema.safeParse(missingPlacement).success).toBe(false);
     expect(ProviderBrokerRouteGrantPayloadV1Schema.safeParse({ ...payload, brokerPlacementFingerprint: 'pool-id' }).success).toBe(false);
     expect(ProviderBrokerRouteGrantPayloadV1Schema.safeParse({ ...payload, brokerPoolId: 'pool-id' }).success).toBe(false);
-    expect(ProviderBrokerRouteGrantPayloadV1Schema.parse(payload).brokerPlacementFingerprint).toBe(brokerPlacementFingerprint);
+    expect(ProviderBrokerModelRouteGrantPayloadV1Schema.parse(payload).brokerPlacementFingerprint).toBe(brokerPlacementFingerprint);
   });
 
   it('requires an exact occurrence on signed Run authority while open resolves it daemon-side', () => {

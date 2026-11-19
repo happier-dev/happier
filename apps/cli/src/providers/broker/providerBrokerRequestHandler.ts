@@ -7,9 +7,7 @@ import type {
     ProviderBrokerAdmissionFailureCodeV1,
     ProviderBrokerApplicationBindingV1,
     ProviderBrokerRelayApplicationBindingV1,
-    ProviderBrokerRouteGrantPayloadV1,
     PeerTcpTunnelRelayAuthorizationV2,
-    SignedProviderBrokerRouteGrantV1,
     UsageObservationTokens,
 } from '@happier-dev/protocol';
 import type { ProviderBrokerRouteGrantExpectedBindingV1 } from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
@@ -28,7 +26,9 @@ import { readProviderBrokerTransportFailure } from './providerBrokerTransportFai
 import { providerBrokerEndpointPhaseDiagnostic, runProviderBrokerApplicationPhase } from './providerBrokerApplicationFailureContext';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH,
     PROVIDER_BROKER_MODEL_ID_HEADER, projectProviderBrokerEndpointMetadata } from './providerBrokerPrivateProtocol';
-import type { SignedProviderBrokerRouteGrantV2, ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { SignedProviderBrokerModelRouteGrantV1, ProviderBrokerModelRouteGrantPayloadV1,
+    SignedProviderBrokerRouteGrantV2, SignedProviderBrokerWatcherRouteGrantV1,
+    ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import type { TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
@@ -49,7 +49,7 @@ async function requestProviderAccess(
 }
 
 export type ProviderBrokerRequestAdmission = Readonly<{
-    authority: SignedProviderBrokerRouteGrantV1;
+    authority: SignedProviderBrokerModelRouteGrantV1;
     streamLifetime?: ProviderBrokerApplicationStreamLifetime;
     expectedResourceRevision: number;
     expectedSourceRevision: string;
@@ -92,7 +92,7 @@ export type ProviderBrokerExternalRequestPolicySnapshot =
 export type ProviderBrokerModelCatalogAuthorization =
     | Readonly<{
         kind: 'private';
-        authority: SignedProviderBrokerRouteGrantV1;
+        authority: SignedProviderBrokerModelRouteGrantV1;
     }>
     | Readonly<{
         kind: 'external_api_key';
@@ -112,7 +112,7 @@ export type ProviderBrokerApplicationStreamLifetime = Readonly<{
         resourceId: string;
         brokerMachineId: string;
         /** The verified route grant's runtime consumer; Action operations use their own stream target. */
-        operation: ProviderBrokerRouteGrantPayloadV1['consumer'];
+        operation: ProviderBrokerModelRouteGrantPayloadV1['consumer'];
         expectedResourceRevision: number;
         application: ProviderBrokerApplicationBindingV1;
         modelId: string;
@@ -139,7 +139,7 @@ export type ProviderBrokerApplicationStreamLifetime = Readonly<{
 export type ProviderBrokerPrivateAuthenticatedStreamContext = Readonly<{
     kind?: 'private';
     authenticatedRemoteEndpointId: string;
-    authority: SignedProviderBrokerRouteGrantV1;
+    authority: SignedProviderBrokerModelRouteGrantV1;
     expected: ProviderBrokerRouteGrantExpectedBindingV1;
     /** True when the stream was admitted after its authority expired. Such a
      * stream may only retire the exact claim that authority names; every
@@ -161,7 +161,12 @@ export type ProviderBrokerExternalAuthenticatedStreamContext =
 export type ProviderBrokerAuthenticatedStreamContext =
     | ProviderBrokerPrivateAuthenticatedStreamContext
     | ProviderBrokerExternalAuthenticatedStreamContext
-    | ProviderBrokerAccountAuthenticatedStreamContext;
+    | ProviderBrokerAccountAuthenticatedStreamContext
+    | Readonly<{
+        kind: 'automation_event_watcher';
+        authority: SignedProviderBrokerWatcherRouteGrantV1;
+        read(request: ManagedServiceRequest): Promise<ProviderBrokerRequestHandlerResult>;
+    }>;
 
 /** Hub catalog/admission returns the same scoped managed-service access as a
  * local consumer. The stream has no credential or catalog selection authority. */
@@ -286,10 +291,10 @@ function routeMatchesApplicationProtocol(
 }
 
 export function createProviderBrokerRequestHandler(input: Readonly<{
-    readAdmittedRequestPolicy?(authority: ProviderBrokerRouteGrantPayloadV1): ProviderBrokerRequestPolicySnapshot | null;
-    retainAdmittedRequestPolicy?(authority: ProviderBrokerRouteGrantPayloadV1, snapshot: ProviderBrokerRequestPolicySnapshot): void;
+    readAdmittedRequestPolicy?(authority: ProviderBrokerModelRouteGrantPayloadV1): ProviderBrokerRequestPolicySnapshot | null;
+    retainAdmittedRequestPolicy?(authority: ProviderBrokerModelRouteGrantPayloadV1, snapshot: ProviderBrokerRequestPolicySnapshot): void;
     resolveRequestPolicy: (input: Readonly<{
-        authority: ProviderBrokerRouteGrantPayloadV1;
+        authority: ProviderBrokerModelRouteGrantPayloadV1;
         request: ManagedServiceRequest;
     }>) => Promise<ProviderBrokerRequestPolicySnapshot | null>;
     /**
@@ -374,6 +379,11 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
     };
     return async ({ context, carrierRequest, request }) => {
         if (!context) return { ok: false, reasonCode: 'transport_identity_mismatch' };
+        if (context.kind === 'automation_event_watcher') {
+            if (carrierRequest) return { ok: false, reasonCode: 'transport_identity_mismatch' };
+            const sanitized = sanitizeProviderBrokerRequestV1(request);
+            return sanitized ? await context.read(sanitized) : { ok: false, reasonCode: 'request_malformed' };
+        }
         if (context.kind === 'account_connection') {
             if (carrierRequest || context.authenticatedRemoteEndpointId !== context.authority.payload.initiator.endpointId) {
                 return { ok: false, reasonCode: 'transport_identity_mismatch' };

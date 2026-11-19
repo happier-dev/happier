@@ -205,6 +205,8 @@ export type ManagedNativeCredentialInvocationBinding = Readonly<{
  * Concrete service construction owns availability.
  */
 export type PluginInvocationServiceBinding = Readonly<{
+    /** Physical HTTP transport for the exact admitted Automation Event source Action. */
+    watcherHttpAdapter?: import('../../fetch/service').PluginHttpRuntimeAdapter;
     kind: 'plugin_invocation_service_binding_v1';
     id: string;
     occurrenceId: string;

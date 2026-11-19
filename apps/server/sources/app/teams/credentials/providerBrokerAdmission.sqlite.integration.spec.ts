@@ -6,7 +6,7 @@ import {
     ProviderConnectionIdSchema,
     type ProviderBrokerOpenRequestV1,
     type ProviderBrokerRequestAdmissionV1,
-    type SignedProviderBrokerRouteGrantV1,
+    type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 import { db } from '@/storage/db';
@@ -313,7 +313,7 @@ async function createBrokerFixture(
             sessionId?: string;
             consumer?: ProviderBrokerOpenRequestV1['consumer'];
             modelId?: string;
-            refreshAuthority?: SignedProviderBrokerRouteGrantV1;
+            refreshAuthority?: SignedProviderBrokerModelRouteGrantV1;
             resolveExecutionRunCurrentness?: OpenInput['resolveExecutionRunCurrentness'];
             readCurrentPresence?: OpenInput['readCurrentPresence'];
             readPoolSourceEligibility?: OpenInput['readPoolSourceEligibility'];
@@ -343,14 +343,14 @@ async function createBrokerFixture(
             ...(input.readPoolSourceEligibility ? { readPoolSourceEligibility: input.readPoolSourceEligibility } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
             ...(input.refreshAuthority
-                ? { verifyRefreshAuthority: (candidate: SignedProviderBrokerRouteGrantV1) => candidate.payload.grantId === input.refreshAuthority!.payload.grantId }
+                ? { verifyRefreshAuthority: (candidate: SignedProviderBrokerModelRouteGrantV1) => candidate.payload.grantId === input.refreshAuthority!.payload.grantId }
                 : {}),
             ...(input.resolveExecutionRunCurrentness
                 ? { resolveExecutionRunCurrentness: input.resolveExecutionRunCurrentness }
                 : {}),
         }),
         admit: async (input: Readonly<{
-            authority: SignedProviderBrokerRouteGrantV1;
+            authority: SignedProviderBrokerModelRouteGrantV1;
             resource: FixtureResource;
             requestId: string;
             generation?: boolean;
@@ -379,7 +379,7 @@ async function createBrokerFixture(
                 : {}),
         }),
         catalog: async (input: Readonly<{
-            authority: SignedProviderBrokerRouteGrantV1;
+            authority: SignedProviderBrokerModelRouteGrantV1;
             resource: FixtureResource;
             resolveExecutionRunCurrentness?: OpenInput['resolveExecutionRunCurrentness'];
         }>) =>
@@ -721,7 +721,7 @@ describe('Team credential Provider broker admission', () => {
                 authenticatedBrokerAccountId: fixture.custodian.id,
                 authority: opened.authority,
                 expectedResourceRevision: resource.revision,
-                verifyAuthority: (candidate: SignedProviderBrokerRouteGrantV1) => candidate.payload.grantId === opened.authority.payload.grantId,
+                verifyAuthority: (candidate: SignedProviderBrokerModelRouteGrantV1) => candidate.payload.grantId === opened.authority.payload.grantId,
             };
             await expect(authorizeTeamCredentialProviderModelCatalog(authorityInput))
                 .resolves.toEqual({ ok: true });
@@ -1419,7 +1419,7 @@ describe('Team credential Provider broker admission', () => {
             modelId: 'model-1', sourceRevision: 'source-revision-1', initiatorMachineId: fixture.worker.id,
             consumer: { kind: 'session', sessionId: session.id }, application: FIXTURE_APPLICATION,
         };
-        const open = (refreshAuthority?: SignedProviderBrokerRouteGrantV1) => app.inject({
+        const open = (refreshAuthority?: SignedProviderBrokerModelRouteGrantV1) => app.inject({
             method: 'POST', url: '/v1/teams/credential-resources/broker/open',
             headers: { authorization: `Bearer ${token}` }, payload: { ...payload, ...(refreshAuthority ? { refreshAuthority } : {}) },
         });

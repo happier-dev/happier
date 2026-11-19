@@ -8,8 +8,8 @@ import {
   createProviderBrokerRouteGrantSigningInputV1,
   ProviderConnectionIdSchema,
   type ProviderBrokerOpenResponseV1,
-  type ProviderBrokerRouteGrantPayloadV1,
-  type SignedProviderBrokerRouteGrantV1,
+  type ProviderBrokerModelRouteGrantPayloadV1,
+  type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import { createProviderBrokerMachineCarrierTunnelOpen } from './providerBrokerMachineCarrierTunnelOpen';
 import type { DaemonMachineIrohRuntime } from './daemonMachineIrohRuntime';
@@ -49,8 +49,8 @@ const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('ba
 const initiatorEndpoint = 'a'.repeat(64);
 const targetEndpoint = 'b'.repeat(64);
 
-function authority(overrides: Partial<ProviderBrokerRouteGrantPayloadV1> = {}): SignedProviderBrokerRouteGrantV1 {
-  const payload: ProviderBrokerRouteGrantPayloadV1 = {
+function authority(overrides: Partial<ProviderBrokerModelRouteGrantPayloadV1> = {}): SignedProviderBrokerModelRouteGrantV1 {
+  const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
     v: 1,
     grantId: 'grant-1',
     aud: 'happier-provider-broker-route-v1',
@@ -86,7 +86,7 @@ function authority(overrides: Partial<ProviderBrokerRouteGrantPayloadV1> = {}): 
 }
 
 function brokerOpen(
-  signed: SignedProviderBrokerRouteGrantV1 = authority(),
+  signed: SignedProviderBrokerModelRouteGrantV1 = authority(),
   targetOverrides: Partial<Extract<ProviderBrokerOpenResponseV1, { ok: true }>['target']> = {},
 ): Extract<ProviderBrokerOpenResponseV1, { ok: true }> {
   return {

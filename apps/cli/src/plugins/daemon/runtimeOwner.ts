@@ -159,6 +159,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   /** Host-private custody used to sign nested requests to this Home. */
   externalActionHomeBinding?: ExternalActionHomeBinding;
   deploymentAccountExecution?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['deploymentAccountExecution'];
+  automationEventWatcherTransport?: NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>['automationEventWatcherTransport'];
   /** Existing daemon-local transfer carrier for host-authored Composer media. */
   resolveComposerMediaStageTransferRpcHandler?: () => RpcHandlerInvoker | null;
   /** Fresh server/machine identity; never the daemon feature cache. */
@@ -865,6 +866,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         refreshAccountCensus: pluginIds => stateStore.refreshRuntime(pluginIds),
         resolveRuntimeRegistry: async () => {
           const registry = await resolveExecutablePluginRuntimeRegistry({
+            ...(params.automationEventWatcherTransport ? { automationEventWatcherTransport: params.automationEventWatcherTransport } : {}),
             ...(params.signal ? { signal: params.signal } : {}),
             ...(params.awaitAccountSettingsReadiness
               ? { awaitAccountSettingsReadiness: params.awaitAccountSettingsReadiness }

@@ -8,7 +8,7 @@ import {
   FeaturesResponseSchema,
   ProviderBrokerModelCatalogAuthorizationV1Schema,
   ProviderBrokerRequestAdmissionV1Schema,
-  type SignedProviderBrokerRouteGrantV1,
+  type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -222,14 +222,14 @@ it('keeps admitted Team custody through a missing Home resource on wakes and clo
   } });
   onTestFinished(runtime.close);
   const open = async (sessionId: string) => {
-    const payload: SignedProviderBrokerRouteGrantV1['payload'] = {
+    const payload: SignedProviderBrokerModelRouteGrantV1['payload'] = {
       v: 1, grantId: `grant-${sessionId}`, aud: 'happier-provider-broker-route-v1', issuedAt: 100, expiresAt: 200,
       teamId: 'team-1', resourceId: resource.id, sourceRevision: 'source-revision-7', brokerPlacementFingerprint: 'c'.repeat(64),
       initiatorTokenEpoch: 0, initiator: { accountId: 'worker-account', machineId: 'worker-machine', endpointId: 'a'.repeat(64) },
       target: { custodianAccountId: 'custodian-account', machineId: 'broker-machine', endpointId: 'b'.repeat(64) },
       consumer: { kind: 'session', sessionId }, application,
     };
-    const authority: SignedProviderBrokerRouteGrantV1 = { payload, signature: { alg: 'Ed25519', keyId: 'home',
+    const authority: SignedProviderBrokerModelRouteGrantV1 = { payload, signature: { alg: 'Ed25519', keyId: 'home',
       valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createProviderBrokerRouteGrantSigningInputV1(payload)), signingKey.secretKey)).toString('base64url') } };
     const target = await runtime.resolveProviderBrokerApplicationTarget({ handshake: { v: 1, kind: 'provider_broker', authority }, authority,
       authenticatedRemoteEndpointId: payload.initiator.endpointId, localEndpointId: payload.target.endpointId, signal: new AbortController().signal });

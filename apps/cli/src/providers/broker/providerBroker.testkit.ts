@@ -1,5 +1,5 @@
 import { connect } from 'node:net';
-import { encodeProviderBrokerAuthorityV1, type SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol';
+import { encodeProviderBrokerAuthorityV1, type SignedProviderBrokerModelRouteGrantV1 } from '@happier-dev/protocol';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 
@@ -59,7 +59,7 @@ export async function requestThroughApplicationTarget(input: Readonly<{
   port: number;
   localCapability: string;
   /** An Agent-supplied bearer. The target must never treat it as authority. */
-  authority?: SignedProviderBrokerRouteGrantV1;
+  authority?: SignedProviderBrokerModelRouteGrantV1;
   /** Overrides the default small JSON body; used to probe the ingress limit. */
   body?: string;
   path?: string;

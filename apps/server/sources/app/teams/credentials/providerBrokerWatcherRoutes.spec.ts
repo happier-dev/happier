@@ -1,0 +1,151 @@
+import { expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
+
+import {
+    GITHUB_BROKER_WATCHER_V1,
+    PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
+    ProviderBrokerWatcherOpenRequestV1Schema,
+    ProviderBrokerWatcherOpenResponseV1Schema,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+
+import { createServiceAccountTokenIdentityFields } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
+import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { resolvePeerMediationGrantSigningConfig } from '@/app/machines/peer/mediation/mintDirectRouteGrantV1';
+import { verifyProviderBrokerRouteGrantSignatureV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
+import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { db } from '@/storage/db';
+import { createEnvPatcher, peerMediationGrantSigningEnv } from '@/testkit/env';
+import { createLightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
+
+import { PROVIDER_BROKER_ROUTE_GRANT_TTL_MS } from './providerBrokerAdmission';
+import { registerTeamCredentialProviderBrokerRoutes } from './providerBrokerRoutes';
+
+it('signs a watcher grant for its proven Machine, declared purpose, and selected resource, and refuses fresh opens after withdrawal', async () => {
+    const harness = await createLightSqliteHarness({ tempDirPrefix: 'watcher-broker-open-', initAuth: false });
+    const app = createAuthenticatedTestApp();
+    const signingVars = { ...peerMediationGrantSigningEnv(), HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' };
+    const env = createEnvPatcher(Object.keys(signingVars));
+    env.setMany(signingVars);
+    try {
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Watcher Team' } });
+        const requesterMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: requester.id, role: 'member' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'owner' } });
+        const initiatorMachineId = 'github-watcher';
+        const installationId = 'watcher-installation';
+        const materializationId = 'watcher-materialization';
+        const initiatorEndpointId = 'a'.repeat(64);
+        const brokerEndpointId = 'b'.repeat(64);
+        const keyPair = tweetnacl.sign.keyPair();
+        await createTrustedMachineInstallation({ accountId: requester.id, machineId: initiatorMachineId, installationId, keyPair });
+        await db.machine.update({ where: { id: initiatorMachineId }, data: {
+            pluginMaterializationRevision: 1n,
+            operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1], endpointId: initiatorEndpointId } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const broker = await db.machine.create({ data: {
+            id: 'github-custodian-broker', accountId: custodian.id, metadata: '{}', kind: 'persistent',
+            operationProtocolCapabilities: {
+                providerBrokerIngress: { protocolVersions: [1] },
+                irohMachineEndpoint: { protocolVersions: [1], endpointId: brokerEndpointId },
+            },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+        const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.create({ data: { accountId: requester.id, pluginId: manifest.id,
+            enabled: true, desiredVersion: null, writableCollections: [], releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.create({ data: {
+            accountId: requester.id, serverIdentityId: await getOrCreateServerIdentityId(process.env),
+            machineId: initiatorMachineId, materializationId, pluginId: manifest.id, version: manifest.version,
+            sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts: [], enabled: true,
+            trustState: 'trusted', observedAt: new Date(),
+        } });
+        const ref = { service: GITHUB_BROKER_WATCHER_V1.service, accountId: 'custodian-github-account' };
+        const credential = await db.serviceAccountToken.create({ data: {
+            accountId: custodian.id, ...createServiceAccountTokenIdentityFields({ ref, authenticationModeId: 'device' }),
+            token: Buffer.from('fixture'), metadata: { v: 4, storage: 'stored_envelope_v1', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', values: {} },
+        } });
+        const source = { v: 1, kind: 'connected_account', target: { kind: 'account', account: ref }, credentialIncarnation: credential.id };
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: custodian.id, displayName: 'Repository credential',
+            enabled: true, revision: 1, disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+            sourceBindingJson: JSON.stringify(source), brokerMachineId: broker.id,
+            memberGrants: { create: { teamMembershipId: requesterMembership.id, deliveryMode: 'brokered' } },
+        } });
+        app.decorate('machineDaemonPresence', { in: () => ({ fetchSockets: async () => [
+            { data: { clientType: 'machine-scoped', userId: requester.id, machineId: initiatorMachineId } },
+            { data: { clientType: 'machine-scoped', userId: custodian.id, machineId: broker.id } },
+        ] }) });
+        registerTeamCredentialProviderBrokerRoutes(app);
+
+        const body = ProviderBrokerWatcherOpenRequestV1Schema.parse({
+            v: 1,
+            scope: 'automation_event_watcher',
+            resourceId: resource.id,
+            initiatorMachineId,
+            caller: {
+                pluginId: manifest.id,
+                contributionLocalId: GITHUB_BROKER_WATCHER_V1.backgroundServiceId,
+                occurrenceId: 'live-watcher-occurrence',
+                materialization: { pluginId: manifest.id, machineId: initiatorMachineId, materializationId },
+                sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'watcher-generation' } },
+            },
+        });
+        const proof = (payload: unknown) => createSignedPluginInstallationPublisherHeader({
+            keyPair, machineId: initiatorMachineId, installationId, path: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
+            body: payload, nonce: crypto.randomUUID(),
+        });
+        const open = (payload: typeof body, header = proof(payload)) => app.inject({
+            method: 'POST', url: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
+            headers: { 'x-test-user-id': requester.id, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: header },
+            payload,
+        });
+        const response = await open(body);
+        expect({ status: response.statusCode, body: response.json() }).toMatchObject({ status: 200, body: { ok: true } });
+        const result = ProviderBrokerWatcherOpenResponseV1Schema.parse(response.json());
+        if (!result.ok) throw new Error(result.reasonCode);
+        expect(result.authority.payload).toMatchObject({
+            scope: 'automation_event_watcher', teamId: team.id, resourceId: resource.id, resourceRevision: resource.revision,
+            source,
+            consumer: { occurrenceId: body.caller.occurrenceId, purpose: {
+                consumer: { pluginId: manifest.id, localId: GITHUB_BROKER_WATCHER_V1.attemptActionId },
+                purpose: GITHUB_BROKER_WATCHER_V1.purposeId,
+            } },
+            initiator: { accountId: requester.id, machineId: initiatorMachineId, endpointId: initiatorEndpointId },
+            target: { custodianAccountId: custodian.id, machineId: broker.id, endpointId: brokerEndpointId },
+        });
+        expect(result.target).toMatchObject({ custodianAccountId: custodian.id, brokerMachineId: broker.id, endpointId: brokerEndpointId });
+        expect(result.authority.payload.expiresAt - result.authority.payload.issuedAt).toBe(PROVIDER_BROKER_ROUTE_GRANT_TTL_MS);
+        const signing = resolvePeerMediationGrantSigningConfig(process.env);
+        if (!signing.ok) throw new Error(signing.reasonCode);
+        const verifies = () => verifyProviderBrokerRouteGrantSignatureV1({
+            authority: result.authority, signingCapability: signing.capability, nowMs: result.authority.payload.issuedAt,
+        });
+        expect(verifies()).toBe(true);
+        expect((await open({ ...body, caller: { ...body.caller, occurrenceId: 'different-occurrence' } }, proof(body))).json())
+            .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        expect((await open({ ...body, initiatorMachineId: broker.id })).json())
+            .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        expect((await open({ ...body, caller: { ...body.caller, contributionLocalId: 'wrong-service' } })).json())
+            .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await db.pluginMachineMaterialization.update({ where: { machineId_materializationId: { machineId: initiatorMachineId, materializationId } },
+            data: { enabled: false } });
+        expect((await open(body)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await db.pluginMachineMaterialization.update({ where: { machineId_materializationId: { machineId: initiatorMachineId, materializationId } },
+            data: { enabled: true } });
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { memberGrants: { deleteMany: {} } } });
+        expect((await open(body)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        expect(verifies()).toBe(true);
+    } finally {
+        env.restore();
+        await app.close();
+        await harness.close();
+    }
+}, 180_000);
