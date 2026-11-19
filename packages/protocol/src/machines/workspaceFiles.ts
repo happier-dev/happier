@@ -6,6 +6,7 @@ import { ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD
 import { stringifySerializedJsonValue } from '../crypto/serializedJsonValue.js';
 import { SESSION_DATA_KEY_NONCE_BYTES, SESSION_DATA_KEY_TAG_BYTES } from '../crypto/sessionDataKeyBundleV0.js';
 import { FilesystemEffectFailureDetailsV1Schema } from './filesystemFailure.js';
+import { ManagedWorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 
 // Native root-namespace ACK: Engine.IO message (4), Socket.IO ACK (3), its
 // incrementing numeric id, and the JSON argument array. Socket.IO's Number
@@ -38,6 +39,7 @@ export const WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS = 1_024;
 
 export const DaemonWorkspaceFileListRequestSchema = lazyZodSchema(() => z.strictObject({
   rootPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(10_000)),
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
   query: z.optional(z.string().check(maxCodeUnits(WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS))),
   includeHidden: z.optional(z.boolean()),
   limit: z.optional(z.number().check(z.int(), z.positive())),

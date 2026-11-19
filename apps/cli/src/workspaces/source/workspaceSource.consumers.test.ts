@@ -162,8 +162,8 @@ describe('workspace source consumers', () => {
     // Admitted Actions bind the same selection before reaching their effect owners.
     const deps = { workingDirectory: visibleRoot, accessPolicy: { kind: 'restrictedRoots' as const, roots: [visibleRoot] },
       getAdditionalAllowedReadDirs: () => [], getAdditionalAllowedWriteDirs: () => [] };
-    const action = <T>(input: unknown, effect: () => Promise<T>) =>
-      runWithWorkspaceSource(admission.selectWorkspaceSource(undefined, input), effect);
+    const action = async <T>(input: unknown, effect: () => Promise<T>) =>
+      runWithWorkspaceSource(await admission.selectWorkspaceSource(undefined, input), effect);
     const write = (input: Record<string, unknown>) => action(input, async () =>
       (await createWriteFileRpcActionExecutor(deps).execute('daemon.filesystem.writeFile', input, ownerContext())));
     const mutate = (actionId: 'daemon.filesystem.createDirectory' | 'daemon.filesystem.rename' | 'daemon.filesystem.delete', input: Record<string, unknown>) =>
@@ -398,7 +398,7 @@ describe('workspace source consumers', () => {
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'member-request', target: machine, input: {} }),
       } });
       const context = { externalActionExecutionAuthorization, signal: new AbortController().signal };
-      const source = admission.selectWorkspaceSource(context, { rootPath: join(tmpdir(), 'not-the-session-root') });
+      const source = await admission.selectWorkspaceSource(context, { rootPath: join(tmpdir(), 'not-the-session-root') });
       expect(source).toBe(target.source);
       expect(await admission.action(context, { kind: 'unknown', reason: 'session_requester_unavailable' }, source)).toBeNull();
     });

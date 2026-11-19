@@ -16,6 +16,23 @@ const mutations = [
 ] as const;
 
 describe('filesystem Action parity', () => {
+  it('delivers the exact managed workspace address to the filesystem Action', async () => {
+    const actionId = 'daemon.filesystem.listDirectory';
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'project', managedId: 'resource',
+      controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/workspace' };
+    const received: unknown[] = [];
+    const executor = createActionExecutor({ filesystemActionExecute: async ({ input }) => {
+      received.push(input);
+      return { success: true, entries: [] };
+    } });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user',
+      bypassApprovals: true, externalActionTarget: { kind: 'machine', machineId: 'controller' } };
+    const request = { rootPath: workspace.rootPath, path: workspace.rootPath, workspace };
+    const result = await executor.execute(actionId, request, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(received).toEqual([request]);
+  });
+
   it('preserves a declared filename capability failure while keeping Action refusal terminal', async () => {
     const actionId = FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles;
     const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',

@@ -8,12 +8,12 @@ import { createHash } from 'node:crypto';
 import type { ZodMiniType as ZodType } from 'zod/mini';
 
 import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol/plugins/openableContent';
-import type { WorkspaceStatFileRequestV1 } from '@happier-dev/protocol';
+import type { WorkspaceStatFileRequestV1, WorkspaceStatFileRequestV2 } from '@happier-dev/protocol/rpc';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import {
   FilesystemCreateDirectoryInputSchema,
   FilesystemRenameInputSchema,
@@ -40,7 +40,7 @@ import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { installWorkspaceTree } from '@/workspaces/source/copyWorkspaceTree';
 
-type StatFileRequest = WorkspaceStatFileRequestV1;
+type StatFileRequest = WorkspaceStatFileRequestV1 | WorkspaceStatFileRequestV2;
 type StatFileResponse =
   | Readonly<{
       success: true;
@@ -413,13 +413,16 @@ export function registerPathMutationHandlers(
   deps: FilesystemMutationDeps & FilesystemMutationActionIngress,
 ): void {
   rpcHandlerManager.registerHandler<StatFileRequest, StatFileResponse>(RPC_METHODS.STAT_FILE, async (data, context) => {
-    const path = typeof data?.path === 'string' ? data.path : '';
+    const managed = data && typeof data === 'object' && 'workspace' in data;
+    const file = managed ? data.file : data;
+    const rootPath = managed ? data.workspace.rootPath : data?.rootPath;
+    const path = typeof file?.path === 'string' ? file.path : '';
     logger.debug('Stat file request:', path);
 
-    const validation = data?.rootPath === undefined
+    const validation = rootPath === undefined
       ? validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy)
       : authorizeFilesystemPathWithinRoot({
-          targetPath: path, rootPath: typeof data.rootPath === 'string' ? data.rootPath : '',
+          targetPath: path, rootPath: typeof rootPath === 'string' ? rootPath : '',
           defaultDirectory: deps.workingDirectory, accessPolicy: deps.accessPolicy,
           additionalAllowedDirs: deps.getAdditionalAllowedReadDirs(),
         });
@@ -433,7 +436,7 @@ export function registerPathMutationHandlers(
       const kind = stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other';
       let contentHash: string | undefined;
       let sizeBytes = stats.size;
-      if (data?.includeContentHash === true && kind === 'file' && stats.size <= HARD_OPENABLE_CONTENT_MAX_BYTES_V1) {
+      if (file?.includeContentHash === true && kind === 'file' && stats.size <= HARD_OPENABLE_CONTENT_MAX_BYTES_V1) {
         const bytes = await readFileWithinContentHashLimit(validation.resolvedPath, () => assertFilesystemEffectCurrent(context));
         // Name the exact buffer hashed, rather than pairing a pre-read stat
         // size with post-read bytes if a concurrent write changed the length.
@@ -459,7 +462,9 @@ export function registerPathMutationHandlers(
       if (nodeError.code === 'ENOENT') {
         return { success: true, exists: false };
       }
-      return { success: false, error: error instanceof Error ? error.message : 'Failed to stat path' };
+      const errorCode = readRpcErrorCode(error);
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to stat path',
+        ...(errorCode ? { errorCode } : {}) };
     }
   });
 

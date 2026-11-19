@@ -52,6 +52,8 @@ export function checkFileWriteExpectation(path: string, expectation: string | nu
   }
 }
 
+export type GuardedFileReplaceInput = GuardedFileReplaceOptions & Readonly<{ source: GuardedFileReplaceSource | Readonly<{ kind: 'absent' }> }>;
+
 /** The expectation owner for inline saves, uploaded saves, review reverts and text replacements. */
 export function commitGuardedFileReplace(input: GuardedFileReplaceOptions & Readonly<{ source: GuardedFileReplaceSource }>): Promise<GuardedFileReplaceResult>;
 export function commitGuardedFileReplace(input: GuardedFileReplaceOptions & Readonly<{ source: Readonly<{ kind: 'absent' }> }>): Promise<GuardedFileAbsenceResult>;

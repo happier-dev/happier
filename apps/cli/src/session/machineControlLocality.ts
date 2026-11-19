@@ -145,7 +145,7 @@ export async function readOwnSessionMachineWorkspace(input: Readonly<{
   if (input.candidatePath !== undefined && !requestedPath) return null;
   const creation = SessionCreationCorrespondenceV1ReadSchema.safeParse(metadata.sessionCreationCorrespondenceV1);
   // A policy-selected target can outlive the holder registration that serves this Session.
-  const requiresManagedTarget = creation.success && creation.data.recipe.managedCreationOrigin !== undefined
-    && creation.data.recipe.managedCreation !== undefined;
+  const requiresManagedTarget = creation.success && (creation.data.recipe.projectFilesOrigin?.targetWorkspace.kind === 'managed'
+    || creation.data.recipe.managedCreationOrigin !== undefined && creation.data.recipe.managedCreation !== undefined);
   return { rootPath, ...(requestedPath ? { requestedPath } : {}), ...(requiresManagedTarget ? { requiresManagedTarget: true as const } : {}) };
 }

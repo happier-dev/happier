@@ -33,9 +33,11 @@ export type FilesystemEffectRequester = Readonly<{
 
 /** The Session facts an admitted RPC or Action request carries. */
 export type FilesystemEffectSessionContext = Readonly<{
+  signal?: AbortSignal;
   sessionActionOrigin?: SessionActionRpcOriginV1;
   callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
   externalActionExecutionAuthorization?: ExternalActionExecutionAuthorizationV1;
+  machineAdmission?: RpcHandlerContext['machineAdmission'];
   authorization?: unknown;
 }>;
 
@@ -64,7 +66,7 @@ export type FilesystemEffectAdmission = Readonly<{
     ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown,
     source?: WorkspaceSource): Promise<unknown>;
   /** The workspace source of this admitted request: this Machine's disk or the Session's target. */
-  selectWorkspaceSource(context: FilesystemEffectSessionContext | undefined, input: unknown): WorkspaceSource;
+  selectWorkspaceSource(context: FilesystemEffectSessionContext | undefined, input: unknown): Promise<WorkspaceSource>;
 }>;
 
 /** Admission belongs to ingress; admitted filesystem work observes local cancellation. */
@@ -90,6 +92,11 @@ export function createFilesystemEffectAdmission(params: Readonly<{
     requester: FilesystemEffectRequester; identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> }>) => Promise<unknown>;
   /** Session placement owner: the target source of a Session running in an execution target. */
   resolveWorkspaceTarget?: WorkspaceTargetSourceResolver;
+  /** Existing Home-backed Session workspace proof, spent only when its live placement is absent. */
+  readRetainedSessionWorkspace?: (sessionId: string, signal?: AbortSignal) => Promise<Readonly<{ requiresManagedTarget?: true }> | null>;
+  /** Restore a committed Project target on the first demand following a controller restart. */
+  restoreManagedWorkspaceTarget?: (workspace: NonNullable<WorkspaceSourcePlacement['workspace']>,
+    context: FilesystemEffectSessionContext | undefined) => Promise<WorkspaceSource | null>;
 }> = {}): FilesystemEffectAdmission {
   const unavailable = {
     errorCode: 'filesystem_identity_custody_unavailable' as const,
@@ -178,7 +185,10 @@ export function createFilesystemEffectAdmission(params: Readonly<{
     }
   };
   return { rpc: (rpcContext, source) => admit({ rpcContext }, undefined, source),
-    selectWorkspaceSource: (context, input) => selectWorkspaceSource(readFilesystemEffectPlacement(context, input), params.resolveWorkspaceTarget),
+    selectWorkspaceSource: async (context, input) => selectWorkspaceSource(readFilesystemEffectPlacement(context, input),
+      params.resolveWorkspaceTarget, params.readRetainedSessionWorkspace
+        ? sessionId => params.readRetainedSessionWorkspace!(sessionId, context?.signal) : undefined,
+      params.restoreManagedWorkspaceTarget ? workspace => params.restoreManagedWorkspaceTarget!(workspace, context) : undefined),
     action: (actionContext, alreadySelectedIdentity, source) => admit({ actionContext }, alreadySelectedIdentity, source),
     resolveRpcRequester: rpcContext => resolveRequester({ rpcContext }),
     resolveActionRequester: actionContext => resolveRequester({ actionContext }),
@@ -227,7 +237,7 @@ export function createFilesystemEffectRpcRegistrar(
   return { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>): void {
     registrar.registerHandler<TRequest, unknown>(method, async (input, context) => {
       // The source is chosen once here; every consumer the handler reaches reads it.
-      const source = admission.selectWorkspaceSource(context, input);
+      const source = await admission.selectWorkspaceSource(context, input);
       const ownerEffect = () => runWithWorkspaceSourceDemand(source, () => handler(input, context));
       if (admission.executeRpc) return await admission.executeRpc(method, input, context, ownerEffect, projectFailure, source);
       const failure = await admission.rpc(context, source);

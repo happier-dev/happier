@@ -3,7 +3,7 @@ import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accou
 import { readMachinePresenceAutomationOccurrenceV1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
 import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1, refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
-import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { registerManagedWorkspaceTarget, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { z } from 'zod/mini';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { acquireDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
@@ -762,6 +762,47 @@ export class ApiMachineClient {
         readAgentIsolation: () => this.lifecycleDependencies.agentIsolation?.read(),
         // Sessions placed on a target: their Files/Git run in the target, never on this Machine's disk.
         resolveWorkspaceTarget: resolveSessionTargetWorkspace,
+        restoreManagedWorkspaceTarget: async (workspace, context) => {
+            const openTarget = this.lifecycleDependencies.openManagedProjectWorkspace;
+            const accountId = context?.machineAdmission?.actorAccountId
+                ?? context?.externalActionExecutionAuthorization?.binding.accountId
+                ?? context?.callerInputAuthorization?.binding.accountId;
+            if (!openTarget || !accountId) return null;
+            const lifetime = new AbortController();
+            const cancel = () => lifetime.abort(context?.signal?.reason);
+            context?.signal?.addEventListener('abort', cancel, { once: true });
+            let retained = false;
+            try {
+                context?.signal?.throwIfAborted();
+                const runtime = await this.resolveInstalledAccountRuntime(lifetime.signal, accountId);
+                if (!runtime) return null;
+                const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
+                const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+                const snapshot = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
+                    credentials: runtime.credentials, serverId: runtime.serverId, signal: lifetime.signal,
+                    selection: { key: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.workspaceId } },
+                }));
+                const ref = snapshot.workspaceRefs[0];
+                if (!ref || !isDeepStrictEqual(workspaceAddressFromRefV2(ref), workspace)) return null;
+                const target = await openTarget({ workspace, requesterAccountId: runtime.accountId, lifetime: lifetime.signal });
+                lifetime.signal.throwIfAborted();
+                retained = registerManagedWorkspaceTarget({ workspace, target });
+                return resolveSessionTargetWorkspace({ workspace });
+            } finally {
+                context?.signal?.removeEventListener('abort', cancel);
+                if (!retained) lifetime.abort();
+            }
+        },
+        readRetainedSessionWorkspace: async (sessionId, signal) => {
+            const runtime = await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal);
+            if (!runtime) return null;
+            const { readOwnSessionMachineWorkspace } = await import('@/session/machineControlLocality');
+            return await readOwnSessionMachineWorkspace({
+                sessionId, signal, credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                machineId: this.machine.id, currentMachineHost: this.machine.metadata?.host ?? '',
+                currentMachineHomeDir: this.machine.metadata?.homeDir ?? '',
+            }).catch(() => null);
+        },
         // Filesystem effects consume the receiving connection's authenticated
         // Home, like generic Machine admission, not an advisory saved descriptor.
         resolveHomeServerIdentityId: () => this.machineRpcAdmissionBoundary.resolveHomeServerIdentityId?.()
@@ -2941,7 +2982,7 @@ export class ApiMachineClient {
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs }) : null;
         // The workspace source is chosen once per admitted Action; every effect below reads it.
-        return async (request) => runWithWorkspaceSourceDemand(this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
+        return async (request) => runWithWorkspaceSourceDemand(await this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
             const requester = await this.filesystemEffectAdmission.resolveActionRequester?.(request.context);
             const source = currentWorkspaceSource();
             // A member of a target Session is served by the target's source (owner ruling 2026-11-12);

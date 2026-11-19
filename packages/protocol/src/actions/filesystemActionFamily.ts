@@ -6,6 +6,7 @@ import { TransferEndpointCandidateSchema } from '../machines/transfer/transferSt
 import { WorkspaceSyncEntryExpectationV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { FilesystemEffectFailureDetailsV1Schema } from '../machines/filesystemFailure.js';
+import { ManagedWorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 export { FilesystemEffectFailureDetailsV1Schema, type FilesystemEffectFailureDetailsV1 } from '../machines/filesystemFailure.js';
 
 export const FILESYSTEM_WRITE_GUARD_ERROR_CODES = ['hash_mismatch', 'expected_file_missing', 'expected_file_absent'] as const;
@@ -27,8 +28,13 @@ const FilesystemFailureSchema = lazyZodSchema(() => z.strictObject({
   details: z.optional(FilesystemEffectFailureDetailsV1Schema),
 }));
 
+const filesystemRoot = () => ({
+  rootPath: z.string().check(z.minLength(1)),
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
+});
+
 export const FilesystemReadFileInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)), path: z.string().check(z.minLength(1)),
+  ...filesystemRoot(), path: z.string().check(z.minLength(1)),
   offset: z.optional(z.number().check(z.int(), z.nonnegative())),
   length: z.optional(z.number().check(z.int(), z.positive())),
 }).check(z.refine(input => input.offset === undefined || input.length !== undefined, {
@@ -40,7 +46,7 @@ export const FilesystemReadFileOutputSchema = lazyZodSchema(() => z.union([
   FilesystemFailureSchema,
 ]));
 export const FilesystemWriteFileInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)), path: z.string().check(z.minLength(1)), content: z.string(),
+  ...filesystemRoot(), path: z.string().check(z.minLength(1)), content: z.string(),
   expectedHash: z.optional(z.nullable(z.string())),
 }));
 export const FilesystemWriteFileOutputSchema = lazyZodSchema(() => z.union([
@@ -52,7 +58,7 @@ export const FilesystemDirectoryEntrySchema = lazyZodSchema(() => z.strictObject
   modified: z.optional(z.number()), gitIgnored: z.optional(z.boolean()),
 }));
 export const FilesystemListDirectoryInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)), path: z.string().check(z.minLength(1)), includeGitIgnore: z.optional(z.boolean()),
+  ...filesystemRoot(), path: z.string().check(z.minLength(1)), includeGitIgnore: z.optional(z.boolean()),
 }));
 export const FilesystemListDirectoryOutputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ success: z.literal(true), entries: z.array(FilesystemDirectoryEntrySchema),
@@ -72,7 +78,7 @@ export const FilesystemTreeNodeSchema: z.ZodMiniType<FilesystemTreeNode> = z.laz
   modified: z.optional(z.number()), children: z.optional(z.array(FilesystemTreeNodeSchema)),
 }));
 export const FilesystemGetDirectoryTreeInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)), path: z.string().check(z.minLength(1)), maxDepth: z.number().check(z.int(), z.nonnegative()),
+  ...filesystemRoot(), path: z.string().check(z.minLength(1)), maxDepth: z.number().check(z.int(), z.nonnegative()),
 }));
 export const FilesystemGetDirectoryTreeOutputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ success: z.literal(true), tree: FilesystemTreeNodeSchema, truncated: z.optional(z.boolean()) }),
@@ -82,22 +88,22 @@ export const FilesystemGetDirectoryTreeOutputSchema = lazyZodSchema(() => z.unio
 // These are public Action schemas: their classic carriers supply the existing
 // author DTO/JSON-schema projections, constructed lazily at this public seam.
 export const FilesystemCreateDirectoryInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)),
+  ...filesystemRoot(),
   path: z.string().check(z.minLength(1)),
 }));
 export const FilesystemRenameInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)),
+  ...filesystemRoot(),
   from: z.string().check(z.minLength(1)),
   to: z.string().check(z.minLength(1)),
   overwrite: z.boolean(),
 }));
 export const FilesystemDeleteInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)),
+  ...filesystemRoot(),
   path: z.string().check(z.minLength(1)),
   recursive: z.boolean(),
 }));
 export const FilesystemLocalCopyInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)),
+  ...filesystemRoot(),
   from: z.string().check(z.minLength(1)),
   to: z.string().check(z.minLength(1)),
   overwrite: z.boolean(),
@@ -156,7 +162,7 @@ export type FilesystemTargetCopyInput = z.infer<typeof FilesystemTargetCopyInput
 export type FilesystemMutationOutput = z.infer<typeof FilesystemMutationOutputSchema>;
 
 export const FilesystemUploadInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)),
+  ...filesystemRoot(),
   path: z.string().check(z.minLength(1)),
   source: z.strictObject({ sourceId: z.string().check(z.minLength(1)), sizeBytes: z.number().check(z.int(), z.nonnegative()),
     sha256: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/i))) }),
@@ -170,14 +176,14 @@ export const FileDownloadDestinationV1ProtocolSchema = projectZodProtocolSchema(
 export type FileDownloadDestinationV1 = z.infer<typeof FileDownloadDestinationV1Schema>;
 
 export const FilesystemDownloadInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)),
+  ...filesystemRoot(),
   path: z.string().check(z.minLength(1)),
   destination: FileDownloadDestinationV1Schema,
   asZip: z.boolean(),
   format: z.optional(z.literal('entry_tree')),
 }).check(z.refine(input => !input.format || !input.asZip, { message: 'Entry-tree export cannot also be a ZIP export' })));
 export const FilesystemTransferCancelInputSchema = lazyZodSchema(() => z.strictObject({
-  rootPath: z.string().check(z.minLength(1)), direction: z.enum(['upload', 'download']), transferId: z.string().check(z.minLength(1)),
+  ...filesystemRoot(), direction: z.enum(['upload', 'download']), transferId: z.string().check(z.minLength(1)),
 }));
 
 const PreparedFilesystemEndpointSchema = lazyZodSchema(() => z.intersection(TransferEndpointCandidateSchema, z.strictObject({

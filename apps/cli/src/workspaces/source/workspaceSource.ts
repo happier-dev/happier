@@ -152,10 +152,25 @@ export function workspaceTargetUnavailable(): PluginError {
 }
 
 /** The single source decision, made once at request admission. */
-export function selectWorkspaceSource(placement: WorkspaceSourcePlacement, resolveTarget?: WorkspaceTargetSourceResolver): WorkspaceSource {
+export async function selectWorkspaceSource(
+  placement: WorkspaceSourcePlacement,
+  resolveTarget?: WorkspaceTargetSourceResolver,
+  readRetainedSessionWorkspace?: (sessionId: string) => Promise<Readonly<{ requiresManagedTarget?: true }> | null>,
+  restoreManagedWorkspaceTarget?: (workspace: NonNullable<WorkspaceSourcePlacement['workspace']>) => Promise<WorkspaceSource | null>,
+): Promise<WorkspaceSource> {
   const target = resolveTarget?.(placement);
   if (target?.kind === 'target') return target;
-  if (placement.workspace) throw workspaceTargetUnavailable();
+  if (placement.workspace) {
+    if (!placement.sessionId) {
+      const restored = await restoreManagedWorkspaceTarget?.(placement.workspace);
+      if (restored?.kind === 'target') return restored;
+    }
+    throw workspaceTargetUnavailable();
+  }
+  if (placement.sessionId && readRetainedSessionWorkspace) {
+    const retained = await readRetainedSessionWorkspace(placement.sessionId);
+    if (!retained || retained.requiresManagedTarget) throw workspaceTargetUnavailable();
+  }
   return target ?? localWorkspaceSource;
 }
 
@@ -176,11 +191,11 @@ export async function runWithWorkspaceSourceDemand<T>(source: WorkspaceSource, e
 /** Bind each arrival's selected source before its handler runs (registrars without their own admission wrapper). */
 export function bindWorkspaceSourceRegistrar(
   registrar: RpcHandlerRegistrar,
-  select: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource,
+  select: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource | Promise<WorkspaceSource>,
 ): RpcHandlerRegistrar {
   return { ...registrar, registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
-    registrar.registerHandler<TRequest, TResponse>(method, (input, context) =>
-      runWithWorkspaceSourceDemand(select(context, input), () => handler(input, context)));
+    registrar.registerHandler<TRequest, TResponse>(method, async (input, context) =>
+      runWithWorkspaceSourceDemand(await select(context, input), () => handler(input, context)));
   } };
 }
 

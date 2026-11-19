@@ -3,6 +3,7 @@ import { basename, join } from 'path';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
 import type { ActionId } from '@happier-dev/protocol';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { listDirectoryEntries } from './directoryListing/listDirectoryEntries';
 import { validatePath } from '../pathSecurity';
@@ -64,6 +65,13 @@ function normalizeNonNegativeInt(value: number, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
+function directoryFailure(error: unknown, fallback: string): Extract<ListDirectoryResponse, { success: false }> {
+  const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error && typeof error.code === 'string'
+    ? error.code : undefined);
+  return { success: false, error: error instanceof Error ? error.message : fallback,
+    ...(code ? { errorCode: code } : {}) };
+}
+
 async function listDirectoryForRpc(
   data: ListDirectoryRequest | undefined,
   deps: Pick<DirectoryHandlerDeps, 'workingDirectory' | 'accessPolicy' | 'getAdditionalAllowedReadDirs' | 'limits' | 'assertCurrentAuthority'>,
@@ -105,7 +113,7 @@ async function listDirectoryForRpc(
     };
   } catch (error) {
     logger.debug('Failed to list directory:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Failed to list directory' };
+    return directoryFailure(error, 'Failed to list directory');
   }
 }
 
@@ -186,6 +194,7 @@ async function getDirectoryTreeForRpc(
 
       return node;
     } catch (error) {
+      if (currentDepth === 0) throw error;
       logger.debug(`Failed to process ${nodePath}:`, error instanceof Error ? error.message : String(error));
       return null;
     }
@@ -200,7 +209,7 @@ async function getDirectoryTreeForRpc(
     return { success: true, tree, ...(truncated ? { truncated: true } : {}) };
   } catch (error) {
     logger.debug('Failed to get directory tree:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Failed to get directory tree' };
+    return directoryFailure(error, 'Failed to get directory tree');
   }
 }
 

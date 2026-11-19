@@ -1,4 +1,5 @@
 import type { RPC_METHODS } from './methods.js';
+import type { WorkspaceAddressV2 } from '../workspaces/workspaceRefV1.js';
 
 export {
   DaemonPluginSettingsWatchRequestSchema,
@@ -23,6 +24,12 @@ export type WorkspaceStatFileRequestV1 = Readonly<{
   path: string;
   rootPath?: string;
   includeContentHash?: boolean;
+}>;
+
+/** Older stat handlers require a top-level path, so a managed request fails closed there. */
+export type WorkspaceStatFileRequestV2 = Readonly<{
+  workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>;
+  file: Omit<WorkspaceStatFileRequestV1, 'rootPath'>;
 }>;
 
 export {
