@@ -61,10 +61,10 @@ type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unkn
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
   | 'card' | 'rowRole' | 'kindLabel' | 'destination' | 'wrapItem' | 'glyph' | 'loadingGlyph' | 'glyphBadge' | 'title' | 'titleIdentifier' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline' | 'bylineLead'
-  | 'reason' | 'listFact' | 'signal'
+  | 'titlePending' | 'reason' | 'listFact' | 'signal'
   | 'agent' | 'age' | 'titleMeta' | 'titleMetaAlign'
-  | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
-  | 'testID' | 'titleMinWidth' | 'columnTitles'
+  | 'fields' | 'peek' | 'preview' | 'previewAspectRatio' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
+  | 'testID' | 'titleMinWidth' | 'columnsOverflow' | 'columnTitles' | 'titleSubtitle'
 >>;
 type _AuthorCollectionRowRoleIsPublic = Assert<IsEqual<
   NonNullable<CollectionAnatomy<unknown>['rowRole']>, HappierCollectionRowRole
@@ -182,6 +182,7 @@ type _AuthorFormFieldKeysAreCurated = Assert<IsEqual<keyof FormProps['hints']['f
   | 'placeholder'
   | 'defaultValue'
   | 'unit'
+  | 'role'
   | 'widget'
   | 'inputType'
   | 'contextMode'
@@ -214,6 +215,7 @@ type _AuthorItemPropKeysAreCurated = Assert<IsEqual<keyof ItemProps,
   | 'detailNumberOfLines'
   | 'icon'
   | 'accessory'
+  | 'showChevron'
   | 'accessoryWraps'
   | 'accessoryBelow'
   | 'fieldAccessory'
@@ -291,6 +293,8 @@ type _AuthorPageHeaderPropKeysAreCurated = Assert<IsEqual<keyof PageHeaderProps,
   | 'detailsPlacement'
   | 'compactPresentation'
   | 'meta'
+  | 'count'
+  | 'countPending'
   | 'actions'
   | 'focusTarget'
   | 'testID'
@@ -357,6 +361,7 @@ type _AuthorSelectionTilesPropKeysAreCurated = Assert<IsEqual<keyof SelectionTil
   | 'descriptionPlacement'
   | 'renderOptionFooter'
   | 'renderOptionAccessory'
+  | 'scroll'
   | 'accessibilityLabel'
   | 'accessibilityLabelKey'
   | 'testID'
