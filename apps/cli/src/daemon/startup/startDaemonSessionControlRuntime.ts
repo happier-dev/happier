@@ -11576,7 +11576,13 @@ export async function startDaemonSessionControlRuntime(
     executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
     managedGuestLocalStop: createManagedGuestLocalStop({
       captureElevation: () => params.getApiMachineForSessions()?.captureMachineAdminAccess() ?? null,
-      requestProcessExit: () => params.requestShutdown('happier-cli'),
+      requestProcessExit: () => {
+        logger.infoFile('[DAEMON RUN] CLI shutdown origin', {
+          caller: 'managed_guest_local_stop',
+          reason: 'retention_process_exit',
+        });
+        params.requestShutdown('happier-cli');
+      },
     }),
     get machineId() { return params.machineId; },
     get serverBaseUrl() { return params.serverBaseUrl; },
@@ -12541,7 +12547,13 @@ export async function startDaemonSessionControlRuntime(
       stopSession: (sessionId, intent, signal) => intent === 'explicit_stop'
         ? stopSessionExplicit(sessionId, signal) : stopSession(sessionId),
       spawnSession,
-      requestShutdown: () => params.requestShutdown('happier-cli'),
+      requestShutdown: () => {
+        logger.infoFile('[DAEMON RUN] CLI shutdown origin', {
+          caller: 'daemon_control_stop',
+          reason: 'authenticated_stop_request',
+        });
+        params.requestShutdown('happier-cli');
+      },
       ...(params.requestSelfRestart
         ? { requestSelfRestart: params.requestSelfRestart }
         : {}),
