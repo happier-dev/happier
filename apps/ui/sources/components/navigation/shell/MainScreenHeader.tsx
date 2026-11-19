@@ -77,6 +77,8 @@ export type MainScreenHeaderProps = Readonly<{
   countPending?: boolean;
   /** What the open search reports (its scope, "Search everything"), under the field. Never a count. */
   status?: React.ReactNode;
+  /** A control at the count line's end (a phone's view switch). Drawn only with the line, so it never takes a row alone. */
+  countTrailing?: React.ReactNode;
 }>;
 
 /**
@@ -99,6 +101,10 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
   const columnMaxWidth = useLayoutMaxWidth();
   // The count line's one owner (shared with a plugin page header's `count`) formats, draws and reserves it.
   const hasCount = props.countPending === true || (props.count !== undefined && formatHappierPageCount(props.count) !== null);
+  const countLine = hasCount ? (
+    <HappierPageCountLine parts={props.count ?? NO_COUNT} {...(props.countPending === true ? { pending: true } : {})}
+      {...(props.testID === undefined ? {} : { testID: `${props.testID}:count` })} renderText={renderCountText} />
+  ) : null;
   const createControl =
     props.createTrigger !== undefined
       ? props.createTrigger
@@ -182,10 +188,12 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
             />
           ) : null}
           {props.status}
-          {hasCount ? (
-            <HappierPageCountLine parts={props.count ?? NO_COUNT} {...(props.countPending === true ? { pending: true } : {})}
-              {...(props.testID === undefined ? {} : { testID: `${props.testID}:count` })} renderText={renderCountText} />
-          ) : null}
+          {countLine === null || props.countTrailing == null ? countLine : (
+            <View style={styles.countLine} {...(props.testID === undefined ? {} : { testID: `${props.testID}:countLine` })}>
+              <View style={styles.countLineText}>{countLine}</View>
+              {props.countTrailing}
+            </View>
+          )}
           </View>
         </View>
       ) : null}
@@ -228,6 +236,15 @@ const styles = StyleSheet.create((theme) => ({
   count: {
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
+  },
+  countLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+  },
+  countLineText: {
+    flex: 1,
+    minWidth: 0,
   },
   countDanger: {
     color: theme.colors.state.danger.textForeground,

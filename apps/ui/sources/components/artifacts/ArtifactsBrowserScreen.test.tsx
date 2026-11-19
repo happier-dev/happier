@@ -803,6 +803,21 @@ describe('Artifacts browser recovery', () => {
         expect(screen.findByTestId('artifacts:header:count')).not.toBeNull();
     });
 
+    it('puts the phone view switch on the count line, and draws none while nothing is listed (LABPARITY-ACCEPT-F fix 6)', async () => {
+        const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
+        vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
+        vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
+        const screen = await renderRows([artifactFixture('document')]);
+        const countLine = screen.findByTestId('artifacts:header:countLine');
+        expect(countLine).not.toBeNull();
+        expect(countLine?.findAll(node => node.props.testIDPrefix === 'artifacts:view')).toHaveLength(1);
+        await screen.pressByTestIdAsync('artifacts:search:toggle');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:search'), 'onChangeText', 'zzz'); });
+        expect(screen.findByTestId('artifacts:noMatch')).not.toBeNull();
+        // Nothing to switch between: no switch, so no row of its own above the empty line.
+        expect(screen.findAll(node => node.props.testIDPrefix === 'artifacts:view')).toHaveLength(0);
+    });
+
     it('keeps the kind and order chips on a phone, as on a desktop, and no second copy of them in the title (owner O5)', async () => {
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);

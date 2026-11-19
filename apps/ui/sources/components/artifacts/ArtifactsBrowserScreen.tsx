@@ -441,7 +441,6 @@ function BrowserHeader(props: Readonly<{
     viewSwitch: React.ReactNode;
     toolbar: React.ReactNode;
 }>) {
-    const styles = stylesheet;
     const limit = props.usage?.limitBytes ?? null;
     const phone = useDeviceType() === 'phone';
     const overQuota = props.usage !== null && limit !== null && props.usage.usedBytes >= limit;
@@ -474,12 +473,9 @@ function BrowserHeader(props: Readonly<{
                     <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.usedBytes, limitBytes: limit }} />
                 ) : null}
             </> : undefined}
-            status={phone && (meter || props.viewSwitch) ? (
-                <View style={styles.phoneStatusRow}>
-                    <View style={styles.phonePresentSlot}>{meter}</View>
-                    {props.viewSwitch}
-                </View>
-            ) : undefined}
+            status={phone ? meter ?? undefined : undefined}
+            // A phone's view switch ends the count line; with nothing listed there is no line and nothing to switch.
+            countTrailing={phone ? props.viewSwitch : undefined}
         />
     );
 }
@@ -663,16 +659,6 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
 const stylesheet = StyleSheet.create((theme) => ({
     screen: {
         flex: 1,
-    },
-    phonePresentSlot: {
-        flex: 1,
-        minWidth: 0,
-    },
-    phoneStatusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: theme.space.s8,
     },
     listFacts: {
         flexDirection: 'row',
