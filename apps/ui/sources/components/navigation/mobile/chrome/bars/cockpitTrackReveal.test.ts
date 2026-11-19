@@ -6,15 +6,17 @@ describe('a scrolling phone bar keeps its selected tab in view', () => {
     const viewport = 300;
     const fade = 16;
     it('scrolls just enough to show a selected tab cut off at the end, clear of the edge fade', () => {
-        expect(resolveCockpitTrackRevealX({ x: 280, width: 60, offset: 0, viewport, fade })).toBe(56);
+        expect(resolveCockpitTrackRevealX({ x: 270, width: 60, offset: 0, viewport, fade })).toBe(46);
         expect(resolveCockpitTrackRevealX({ x: 320, width: 60, offset: 0, viewport, fade })).toBe(96);
     });
-    // UI refinements 11-18 (TRIAGE-W1-BROWSER-A r239): the bar opens at its start. At 390 four 50 px tabs in a 175 px
-    // track (three whole and the next one's half) had the selected last tab scroll the track 25 px, cutting Projects in
-    // half at the start. A selected tab showing as the peek is in view; only one hidden further moves the track.
-    it('opens at its start while the selected tab shows as the peeking half at the end', () => {
-        expect(resolveCockpitTrackRevealX({ x: 150, width: 50, offset: 0, viewport: 175, fade })).toBeNull();
-        expect(resolveCockpitTrackRevealX({ x: 160, width: 50, offset: 0, viewport: 175, fade })).toBe(51);
+    // UI refinements 11-19 ruling (a): the selected tab is always fully visible. The track opens at its start unless
+    // that shows the selected tab only partly; then it scrolls just enough to show it whole. At 390 four 50 px tabs sit
+    // in a 175 px track (three whole and the next one's half): a selected end tab showing only its peek half scrolls.
+    it('opens at its start while the selected tab is whole there', () => {
+        expect(resolveCockpitTrackRevealX({ x: 100, width: 50, offset: 0, viewport: 175, fade })).toBeNull();
+    });
+    it('scrolls a selected end tab showing only its peek half just enough to show it whole', () => {
+        expect(resolveCockpitTrackRevealX({ x: 150, width: 50, offset: 0, viewport: 175, fade })).toBe(41);
     });
     it('scrolls back to a selected tab hidden before the start', () => {
         expect(resolveCockpitTrackRevealX({ x: 40, width: 50, offset: 120, viewport, fade })).toBe(24);
