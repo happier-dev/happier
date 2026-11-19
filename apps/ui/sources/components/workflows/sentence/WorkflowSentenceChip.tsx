@@ -201,8 +201,10 @@ export function WorkflowSentenceUnit(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // Beside its clause word ("if", "then") a long chip gives way and ellipsizes, never running past the line.
   anchor: {
     maxWidth: '100%',
+    flexShrink: 1,
     minWidth: 0,
   },
   chip: {

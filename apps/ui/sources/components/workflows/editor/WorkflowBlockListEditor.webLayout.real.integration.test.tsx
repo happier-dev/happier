@@ -108,7 +108,7 @@ async function applyHomeFixture() {
     clearDaemonMergedProjectionCacheForTests();
 }
 
-async function renderDocument(blocks: readonly unknown[], width: number, selectedBlockId: string | null = null, documentGrid: 'wide' | 'compact' = 'wide') {
+async function renderDocument(blocks: readonly unknown[], width: number, selectedBlockId: string | null = null, documentGrid: 'wide' | 'phone' | 'compact' = 'wide') {
     await applyHomeFixture();
     const editor = await import('./WorkflowBlockListEditor');
     const { WorkflowDocumentGridContext } = await import('./workflowEditorStyles');
@@ -232,6 +232,34 @@ describe('the document grid, as a browser lays it out', () => {
         } finally {
             pointer.coarse = true;
         }
+    });
+});
+
+describe('the phone document, as a browser lays it out', () => {
+    it('stands the marks in one column on the page edge with names and cards on the next edge, joined by the spine (WF-ACCEPT-1119 item 4)', async () => {
+        const container = await renderDocument([
+            step('find', 'Find the cause', 'Run the checks and find what broke.'),
+            { kind: 'action', id: 'notify', name: 'Tell me', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Checks fixed' } } },
+        ], 390, null, 'phone');
+        const layout = await measureWebLayout(container, { viewport: { width: 390, height: 1200 }, settle });
+        const page = container.getBoundingClientRect();
+        const findRing = layout.rect('workflow-editor-step-find-label-ordinal');
+        const notifyRing = layout.rect('workflow-editor-action-notify-label-ordinal');
+        const nameEdge = layout.rect('workflow-editor-step-find-label').left;
+        // The marks stand in one column on the page's edge (lab 1116b phone: centre ≈ 28 at a page edge of 18)...
+        for (const ring of [findRing, notifyRing]) expect(Math.abs(ring.left - page.left)).toBeLessThanOrEqual(1);
+        // ...and every name and card shares the one edge after it: a card never runs under its number.
+        for (const id of ['workflow-editor-step-find-card', 'workflow-editor-action-notify-label', 'workflow-editor-action-notify-card']) {
+            expect(Math.abs(layout.rect(id).left - nameEdge), id).toBeLessThanOrEqual(1);
+        }
+        // The name follows its mark at the header's mark-to-title gap, the phone's own gutter (not the wide one).
+        expect(nameEdge - findRing.right).toBeGreaterThan(4);
+        expect(nameEdge - findRing.right).toBeLessThanOrEqual(12);
+        // The spine leaves from under the first mark and reaches the next, beside the card rather than under it.
+        const spine = layout.rects.get('workflow-editor-find-spine')![0]!;
+        expect(Math.abs(spine.top - findRing.bottom)).toBeLessThanOrEqual(1);
+        expect(Math.abs(spine.bottom - notifyRing.top)).toBeLessThanOrEqual(1);
+        expect(spine.right).toBeLessThan(nameEdge);
     });
 });
 

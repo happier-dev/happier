@@ -5,7 +5,7 @@ import { resolveAgentInputPanelLayoutStyle } from '@/components/sessions/agentIn
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from '@/components/ui/forms/multiTextInputTypography';
-import { HAPPIER_FILTER_CHIP_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FILTER_CHIP_METRICS, HAPPIER_PAGE_METRICS, HAPPIER_SEGMENTED_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The document draws at its lab rhythm under every pointer; text-labelled authoring controls are
@@ -57,6 +57,12 @@ export const WORKFLOW_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx
  */
 export const WORKFLOW_PAGE_MARK_EDGE_PX = HAPPIER_PAGE_METRICS.pageTextInsetPx
     + HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx / 2 - ORDINAL_SIZE / 2;
+
+/**
+ * The editor's view tabs (lab rounds 1116b and 1116c): the first tab's glyph on the title's edge, its plain press
+ * frame hanging into the gutter as a chip's does, so the title, the tabs and the cards read down one edge.
+ */
+export const WORKFLOW_PAGE_TABS_EDGE_PX = WORKFLOW_PAGE_TITLE_EDGE_PX - HAPPIER_SEGMENTED_METRICS.plain.paddingHorizontalPx;
 
 /** The document's gutter: from a list's edge to its name column (the ordinal and the gap after it). */
 export const WORKFLOW_DOCUMENT_GUTTER_PX = ORDINAL_SIZE + WORKFLOW_ORDINAL_GAP_PX;
@@ -728,6 +734,12 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
     },
+    /** A Workspace or changed-option chip's anchor, held to the row so a long value ellipsizes instead of running past the card. */
+    stepChipAnchor: {
+        maxWidth: '100%',
+        flexShrink: 1,
+        minWidth: 0,
+    },
     /** Its label/value rows (lab `.uwe-kb`). */
     kindCardBody: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,
@@ -971,20 +983,27 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * The document's grid on a phone (owner 25: the composer started far right of its number). A phone page
- * draws no header mark, so a step's number stands where that mark would and its name follows at the
- * header's own mark-to-title gap; the wide grid hangs numbers under the header's mark. The editor
- * publishes which grid its document uses, and every grid-dependent row reads it through
- * `useWorkflowDocumentGridStyles`, so names, lanes and the spine move together.
+ * The document's grids. The editor publishes which one its document uses, and every grid-dependent row reads it
+ * through `useWorkflowDocumentGridStyles`, so names, cards, lanes and the spine move together.
+ *
+ * - `wide`: numbers hang under the header's mark and names start on the title's edge.
+ * - `phone`: the Steps document on a phone (lab round 1116b `page-proposed-open-390`). The numbers and the first
+ *   cards' marks stand in one column on the page edge; names and cards share the next edge, at the header's own
+ *   mark-to-title gap, so each step reads on one left edge with the spine running down the marks (WF-ACCEPT-1119).
+ * - `compact`: one card on its own (the Sentence view's card, the Automate builder; lab round 1116c): its number on
+ *   its heading line and the card running under it, the column's full width.
+ *
+ * `phone` and `compact` are both narrow: their cards recompose for a narrow column.
  */
-export type WorkflowDocumentGrid = 'wide' | 'compact';
+export type WorkflowDocumentGrid = 'wide' | 'phone' | 'compact';
 export const WorkflowDocumentGridContext = React.createContext<WorkflowDocumentGrid>('wide');
 
 const COMPACT_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
 const COMPACT_GUTTER_PX = ORDINAL_SIZE + COMPACT_ORDINAL_GAP_PX;
 const COMPACT_LANE_LEFT_PX = -(COMPACT_GUTTER_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2;
 
-const compactDocumentGrid = StyleSheet.create({
+/** The narrow grids' columns: the number on the column's edge, the name at the header's mark-to-title gap after it. */
+const narrowDocumentGrid = StyleSheet.create({
     blockColumn: { paddingLeft: COMPACT_GUTTER_PX },
     blockGap: { paddingLeft: COMPACT_GUTTER_PX },
     listEnd: { paddingLeft: COMPACT_GUTTER_PX },
@@ -995,8 +1014,9 @@ const compactDocumentGrid = StyleSheet.create({
     laneFork: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX - LANE_BEND },
     laneJoinBend: { left: COMPACT_LANE_LEFT_PX, width: COMPACT_GUTTER_PX + SPINE_WIDTH },
     heading: { gap: COMPACT_ORDINAL_GAP_PX, marginLeft: -COMPACT_GUTTER_PX },
-    // A phone gives a block's card the whole width: it runs under the number column (FIN 2026-11-13),
-    // so its value boxes are not squeezed by the gutter; the name keeps its column.
+});
+/** `compact` only: the lone card takes the column's whole width, running under its number. */
+const cardUnderNumberGrid = StyleSheet.create({
     blockCard: { marginLeft: -COMPACT_GUTTER_PX },
     // A card with no number column has nothing to run under: its host's edge cancels the run-under, so the card
     // keeps the page inset and the phone width its rows wrap at (WAVE-ACCEPT-1117C: x≈0, label-left form).
@@ -1018,25 +1038,32 @@ const WIDE_GRID_STYLES = {
     cardAlone: workflowEditorStyles.cardAlone,
 };
 /**
- * The same rows with the compact overrides layered on, key for key (the compiler checks every key). Each pair is a
- * plain (mutable) tuple because React Native's `StyleProp` accepts arrays, not readonly ones.
+ * The phone's rows: the narrow columns layered on, key for key (the compiler checks every key); cards keep the
+ * name column. Each pair is a plain (mutable) tuple because React Native's `StyleProp` accepts arrays, not readonly ones.
  */
-const COMPACT_GRID_STYLES: { readonly [Key in keyof typeof WIDE_GRID_STYLES]: [(typeof WIDE_GRID_STYLES)[Key], (typeof compactDocumentGrid)[Key]] } = {
-    blockColumn: [workflowEditorStyles.blockColumn, compactDocumentGrid.blockColumn],
-    blockGap: [workflowEditorStyles.blockGap, compactDocumentGrid.blockGap],
-    listEnd: [workflowEditorStyles.listEnd, compactDocumentGrid.listEnd],
-    listNote: [workflowEditorStyles.listNote, compactDocumentGrid.listNote],
-    laneEndInserter: [workflowEditorStyles.laneEndInserter, compactDocumentGrid.laneEndInserter],
-    laneLabelRow: [workflowEditorStyles.laneLabelRow, compactDocumentGrid.laneLabelRow],
-    laneTurn: [workflowEditorStyles.laneTurn, compactDocumentGrid.laneTurn],
-    laneFork: [workflowEditorStyles.laneFork, compactDocumentGrid.laneFork],
-    laneJoinBend: [workflowEditorStyles.laneJoinBend, compactDocumentGrid.laneJoinBend],
-    heading: [workflowEditorStyles.heading, compactDocumentGrid.heading],
-    blockCard: [workflowEditorStyles.blockCard, compactDocumentGrid.blockCard],
-    cardAlone: [workflowEditorStyles.cardAlone, compactDocumentGrid.cardAlone],
-};
+const PHONE_GRID_STYLES = {
+    blockColumn: [workflowEditorStyles.blockColumn, narrowDocumentGrid.blockColumn],
+    blockGap: [workflowEditorStyles.blockGap, narrowDocumentGrid.blockGap],
+    listEnd: [workflowEditorStyles.listEnd, narrowDocumentGrid.listEnd],
+    listNote: [workflowEditorStyles.listNote, narrowDocumentGrid.listNote],
+    laneEndInserter: [workflowEditorStyles.laneEndInserter, narrowDocumentGrid.laneEndInserter],
+    laneLabelRow: [workflowEditorStyles.laneLabelRow, narrowDocumentGrid.laneLabelRow],
+    laneTurn: [workflowEditorStyles.laneTurn, narrowDocumentGrid.laneTurn],
+    laneFork: [workflowEditorStyles.laneFork, narrowDocumentGrid.laneFork],
+    laneJoinBend: [workflowEditorStyles.laneJoinBend, narrowDocumentGrid.laneJoinBend],
+    heading: [workflowEditorStyles.heading, narrowDocumentGrid.heading],
+    blockCard: workflowEditorStyles.blockCard,
+    cardAlone: workflowEditorStyles.cardAlone,
+} satisfies { readonly [Key in keyof typeof WIDE_GRID_STYLES]: unknown };
+/** The lone card's rows: the phone's, with the card running under its number. */
+const COMPACT_GRID_STYLES = {
+    ...PHONE_GRID_STYLES,
+    blockCard: [workflowEditorStyles.blockCard, cardUnderNumberGrid.blockCard],
+    cardAlone: [workflowEditorStyles.cardAlone, cardUnderNumberGrid.cardAlone],
+} satisfies { readonly [Key in keyof typeof WIDE_GRID_STYLES]: unknown };
+const GRID_STYLES = { wide: WIDE_GRID_STYLES, phone: PHONE_GRID_STYLES, compact: COMPACT_GRID_STYLES } as const;
 
 /** The grid-dependent document styles for the grid the editor publishes (stable per grid). */
-export function useWorkflowDocumentGridStyles(): typeof WIDE_GRID_STYLES | typeof COMPACT_GRID_STYLES {
-    return React.useContext(WorkflowDocumentGridContext) === 'compact' ? COMPACT_GRID_STYLES : WIDE_GRID_STYLES;
+export function useWorkflowDocumentGridStyles(): (typeof GRID_STYLES)[WorkflowDocumentGrid] {
+    return GRID_STYLES[React.useContext(WorkflowDocumentGridContext)];
 }

@@ -374,7 +374,7 @@ export function WorkflowInputsEditor(props: Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const compact = React.useContext(WorkflowDocumentGridContext) === 'compact';
+    const compact = React.useContext(WorkflowDocumentGridContext) !== 'wide';
     return (
         <View testID={`${props.testIDPrefix}-inputs`} style={styles.root}>
             <Text style={styles.title}>{props.title ?? t('workflows.inputs.title')}</Text>

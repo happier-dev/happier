@@ -861,7 +861,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         : editable
           ? 'endPastInserter'
           : 'end';
-  // On a phone a leaf's card runs under its number (`blockCard`); its spine then links its end to the next mark.
+  // A lone card (the compact grid) runs under its number (`blockCard`); its spine then links its end to the next mark.
   const cardUnderNumber = compactGrid && (block.kind === 'action' || block.kind === 'workflow'
     || (block.kind === 'step' && row.summary === null));
   const SummaryRowFrame = Platform.OS === 'web' ? View : React.Fragment;

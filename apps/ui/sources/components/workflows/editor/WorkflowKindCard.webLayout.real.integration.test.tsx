@@ -64,3 +64,40 @@ it("keeps a card with no number column on its host's edge on a phone grid", asyn
   expect(Math.abs(card.left - edge.left)).toBeLessThanOrEqual(0.5);
   expect(Math.abs(card.right - edge.right)).toBeLessThanOrEqual(0.5);
 });
+
+/**
+ * The phone's first cards (WF-ACCEPT-1119 item 4): each card's mark stands in the number column on the page edge,
+ * beside its card rather than under it, and the cards keep the steps' name edge.
+ */
+it('stands a first card beside its mark on the phone grid', async () => {
+  const { WorkflowCardGutterRow, WorkflowKindCard } =
+    await import('./WorkflowKindCard');
+  const { WorkflowDocumentGridContext } =
+    await import('./workflowEditorStyles');
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () =>
+    root!.render(
+      <View style={{ width: 390, paddingLeft: 18, paddingRight: 18 }}>
+        <View testID="edge" style={{ height: 1 }} />
+        <WorkflowDocumentGridContext.Provider value="phone">
+          <WorkflowCardGutterRow icon="clock" spineTo="card">
+            <WorkflowKindCard testID="card" title="When it runs" />
+          </WorkflowCardGutterRow>
+        </WorkflowDocumentGridContext.Provider>
+      </View>,
+    ),
+  );
+  const layout = await measureWebLayout(host, {
+    viewport: { width: 390, height: 600 },
+    settle: (replay) => act(replay),
+  });
+  const edge = layout.rect('edge');
+  const card = layout.rect('card');
+  // The card starts one number column (22) and the header's mark gap in, leaving the mark its column (never
+  // under the card, as the lone card's grid draws it), and ends on the page's edge.
+  expect(card.left - edge.left).toBeGreaterThan(22);
+  expect(card.left - edge.left).toBeLessThanOrEqual(34);
+  expect(Math.abs(card.right - edge.right)).toBeLessThanOrEqual(0.5);
+});

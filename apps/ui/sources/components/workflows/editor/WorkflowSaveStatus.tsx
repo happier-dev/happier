@@ -243,8 +243,9 @@ export function WorkflowStatusReadout(props: Readonly<{
  *
  * While there are changes it reads "Unsaved changes · Save ⌘S"; pressing Save
  * turns this same element into "Saving…", then "Saved just now", which ages to
- * "Saved 2m ago". It sits alone on its line under the page's primary action, so
- * its changing length never moves a neighbour. Every committed transition is
+ * "Saved 2m ago". It leads the header's right-aligned actions (beside the name on
+ * a phone), so its changing length moves only its own start, never a control
+ * after it. Every committed transition is
  * announced once through the polite live region; nothing toasts.
  */
 export function WorkflowSaveStatus(props: Readonly<{

@@ -121,7 +121,7 @@ import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { formatWorkflowIssueText } from '../editor/workflowIssueText';
-import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_MARK_EDGE_PX, WORKFLOW_PAGE_TITLE_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_TABS_EDGE_PX, WORKFLOW_PAGE_TITLE_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
@@ -214,9 +214,9 @@ const styles = StyleSheet.create((theme) => ({
     firstCards: {
         gap: theme.space.s16,
     },
-    /** Wide: the tabs start on the mark edge, under the header's mark (owner 2026-11-06). */
-    pageTabsOnMark: {
-        paddingLeft: WORKFLOW_PAGE_MARK_EDGE_PX,
+    /** Wide: the first tab's glyph on the title's edge (lab 1116b/1116c, WF-ACCEPT-1119 item 3). */
+    pageTabsOnTitle: {
+        paddingLeft: WORKFLOW_PAGE_TABS_EDGE_PX,
     },
     /**
      * The steps share the header's column (lab round 1105 P1), so a card ends where the header's actions
@@ -232,8 +232,11 @@ const styles = StyleSheet.create((theme) => ({
     documentUnderTitle: {
         paddingLeft: WORKFLOW_DOCUMENT_INSET_PX,
     },
-    /** Wide: the Flow map's cards start on the title's edge, where the Steps view's cards do (WF-ACCEPT-1118B item 8). */
-    flowUnderTitle: {
+    /**
+     * Wide: the Flow map's cards (WF-ACCEPT-1118B item 8) and the Sentence view's clauses, step heading and card
+     * (lab 1116c, WF-ACCEPT-1119 item 3) start on the title's edge, where the Steps view's cards do.
+     */
+    onTitleEdge: {
         paddingLeft: WORKFLOW_PAGE_TITLE_EDGE_PX,
     },
     undoRow: {
@@ -367,7 +370,7 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** A catalog's Session-scoped Run action uses the canonical Session chooser. */
     runNowAction?: React.ReactNode;
     runNowAnchorRef?: React.RefObject<View | null>;
-    /** The save line under the header's actions: what Run review opens below, so it never covers it. */
+    /** The header's save line (leading the actions on wide pages): what Run review opens below, so it never covers it. */
     runNowPlacementRef?: React.RefObject<View | null>;
     testRunAnchorRef?: React.RefObject<View | null>;
     onSave?: () => void;
@@ -473,7 +476,7 @@ function WorkflowEditorPageTabs(props: Readonly<{
     phone: boolean;
     onSelect: (id: string) => void;
     history: WorkflowEditorHistoryControls | undefined;
-    onMark: boolean;
+    onTitleEdge: boolean;
     testIDPrefix: string;
 }>): React.ReactElement | null {
     const navigationShown = useWorkflowPageNavigationShown(props.navigation, props.phone);
@@ -482,7 +485,7 @@ function WorkflowEditorPageTabs(props: Readonly<{
     const historyShown = !props.phone && props.history !== undefined && (labels.undoLabel !== null || labels.redoLabel !== null);
     if (!navigationShown && !historyShown) return null;
     return (
-        <View testID={`${props.testIDPrefix}-page-tabs`} style={[styles.pageTabs, styles.pageTabsRow, props.onMark ? styles.pageTabsOnMark : null]}>
+        <View testID={`${props.testIDPrefix}-page-tabs`} style={[styles.pageTabs, styles.pageTabsRow, props.onTitleEdge ? styles.pageTabsOnTitle : null]}>
             {/* The tab bar spans what it is given (its More needs the room), so it takes the row's remainder and the
                 pair keeps the row's end, on the cards' edge, instead of being pushed past it (WF-ACCEPT-1118B item 3). */}
             <View style={styles.pageTabsNavigation}>
@@ -1484,6 +1487,10 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         <WorkflowEditorValidationPublisher draftStore={draftStore} readValidation={readValidation} onValidationChange={props.onValidationChange} />
     );
     const nameEditable = props.showNameField !== false && documentEditable;
+    // The save line (or, without one, what to fix). Run review opens below it, so it never covers it.
+    const headerStatus = (saveStatusNode ?? validityNode) === null ? null : (
+        <View ref={props.runNowPlacementRef} collapsable={false}>{saveStatusNode ?? validityNode}</View>
+    );
     const identity = (
         <WorkflowEditorIdentity
             draftStore={draftStore}
@@ -1500,12 +1507,12 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 // 11-15 H2): the name and its summary keep the full width and the controls the page still draws (a
                 // built-in's Duplicate and session chooser) wrap beneath them, as the run page does.
                 ...(compactLayout ? {} : { actionsLayout: 'inline' as const }),
-                // The save line is the actions' own row, so its changing words never reflow the name
-                // (DESIGN-9 N52). A page without a save line (a built-in's Duplicate) still says what to fix.
-                // On a phone the actions live in the navigation bar, so the line sits beside the name (owner 25).
-                ...(!hasPageCommands ? {} : { status: (saveStatusNode ?? validityNode) === null ? null : (
-                    <View ref={props.runNowPlacementRef} collapsable={false}>{saveStatusNode ?? validityNode}</View>
-                ) }),
+                // Wide, the save line leads the actions on the title's row (lab 1116b: "Unsaved changes · Save", then
+                // Edit with an agent), so the header ends with its words and the view bar follows at the lab's
+                // rhythm (WF-ACCEPT-1119 item 3). The row is right-aligned: a changing status moves only its own
+                // start. On a phone the actions live in the navigation bar, so the line sits beside the name
+                // (owner 25). A page without a save line (a built-in's Duplicate) still says what to fix.
+                ...(!hasPageCommands || !compactLayout ? {} : { status: headerStatus }),
                 alwaysShowTitle: true,
                 // Beside a companion the header is measured against the main column it shares (F5):
                 // the name keeps one line, as the chips keep one row.
@@ -1523,6 +1530,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     <View style={styles.headerActionRow}>{menu}{phonePageControls}</View>
                 )) : (
                     <View style={styles.headerActionRow}>
+                        {headerStatus}
                         {/* Edit with an agent is the labelled secondary (lab editor-E1); beside an open pane it
                             keeps its place as its icon. */}
                         {props.onEditWithAgent === undefined ? null : headerCompact ? (
@@ -1611,8 +1619,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         return (
             <View testID={testIDPrefix} style={{ gap: theme.space.s16 }}>
                 {props.showNameField === false && props.onBackToRun === undefined ? null : identity}
-                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{firstCards}</WorkflowDocumentGridContext.Provider>
-                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>{blockList}</WorkflowDocumentGridContext.Provider>
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'phone' : 'wide'}>{firstCards}</WorkflowDocumentGridContext.Provider>
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'phone' : 'wide'}>{blockList}</WorkflowDocumentGridContext.Provider>
                 {historyActions}
                 {settingsPopoverNode}
                 {validationPublisher}
@@ -1643,7 +1651,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             {props.reviewNotice}
             {/* Steps | Flow, with Undo and Redo at the row's end (lab round 1115 r16). */}
             <WorkflowEditorPageTabs navigation={navigation} phone={phoneNavigation} onSelect={selectNavigation}
-                history={props.history} onMark={!compactLayout} testIDPrefix={testIDPrefix} />
+                history={props.history} onTitleEdge={!compactLayout} testIDPrefix={testIDPrefix} />
             <View
                 testID={`${testIDPrefix}-steps-presentation`}
                 style={[styles.document, compactLayout ? null : styles.documentUnderTitle, stepsHidden ? { display: 'none' } : null]}
@@ -1653,15 +1661,15 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     pointerEvents: 'none' as const,
                 } : {})}
             >
-                {/* A phone's document has no header mark to hang under: its numbers take the mark's place. */}
-                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'compact' : 'wide'}>
+                {/* A phone's document has no header mark to hang under: its numbers and marks take the mark's place. */}
+                <WorkflowDocumentGridContext.Provider value={compactLayout ? 'phone' : 'wide'}>
                     {firstCards}
                     {blockList}
                 </WorkflowDocumentGridContext.Provider>
             </View>
             {settingsPopoverNode}
-            {props.view === 'flow' ? <View style={[styles.document, compactLayout ? null : styles.flowUnderTitle]}>{flowContent}</View> : null}
-            {sentenceContent === null ? null : <View style={[styles.document, compactLayout ? null : styles.documentUnderTitle]}>{sentenceContent}</View>}
+            {props.view === 'flow' ? <View style={[styles.document, compactLayout ? null : styles.onTitleEdge]}>{flowContent}</View> : null}
+            {sentenceContent === null ? null : <View style={[styles.document, compactLayout ? null : styles.onTitleEdge]}>{sentenceContent}</View>}
             </View>
         </KeyboardAwareScrollView>
     );

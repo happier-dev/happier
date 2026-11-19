@@ -73,7 +73,7 @@ export function WorkflowKindCard(props: Readonly<{
     // Phones recompose (DESIGN.md): beside a first card's title and sentence only the disclosure caret
     // stays; its wider action ("Workflow settings") moves beneath rather than squeezing the title to an
     // ellipsis (MOBILE-FIX H6). A step card's short "Open ›" keeps its place.
-    const compactGrid = React.useContext(WorkflowDocumentGridContext) === 'compact';
+    const compactGrid = React.useContext(WorkflowDocumentGridContext) !== 'wide';
     // A card whose wide action can move beneath keeps one stacked header at every width, so crossing the
     // breakpoint only moves the action. The stack is a column, never a wrapped row: iOS measured the
     // wrapped multi-line sentence short and clipped the action under the card edge (QA-WAVE-1115).

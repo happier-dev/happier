@@ -245,7 +245,7 @@ function WorkflowStepWorkspaceChip(
     : buildWorkflowStepWorkspace({ draft, step, write: (next) => latestChange.current(next) }), [draft, open, step]);
   const picks = draft !== undefined && place?.target != null && isWorkflowProjectTarget(place.target);
   return (
-    <View ref={anchorRef} collapsable={false}>
+    <View ref={anchorRef} collapsable={false} style={workflowEditorStyles.stepChipAnchor}>
       <SelectionListFilterChip
         filter={{
           id: props.change.id,
@@ -281,7 +281,7 @@ function WorkflowStepOptionChangeChip(
 ): React.ReactElement {
   const anchorRef = React.useRef<View>(null);
   return (
-    <View ref={anchorRef} collapsable={false}>
+    <View ref={anchorRef} collapsable={false} style={workflowEditorStyles.stepChipAnchor}>
       <SelectionListFilterChip
         filter={{
           id: props.change.id,
