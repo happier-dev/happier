@@ -1,6 +1,6 @@
 import {
   type ConversationIngressAutomationEventCandidateV1,
-  admitConversationProviderAutomationEventV1,
+  parseConversationProviderAutomationEventObservationV1,
   type ConversationProviderAutomationEventAdmitResultV1,
   type ConversationNormalizedIngressV1,
 } from '@happier-dev/channels-protocol/v1';
@@ -8,6 +8,7 @@ import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-s
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
+  admitCheckpointedPluginEventObservationV1,
   createPluginEventAutomationSetupResultV1JsonSchema,
   projectPluginEventSourceConnectionStatusV1,
   PluginEventAutomationSetupResultV1Schema,
@@ -207,7 +208,8 @@ export async function admitTelegramAutomationEvent(
   context: PluginInvocationContext,
 ): Promise<ConversationProviderAutomationEventAdmitResultV1> {
   assertTelegramChannelsCoreCaller(context);
-  return admitConversationProviderAutomationEventV1(input, context, 'checkpointedPull');
+  const disposition = await admitCheckpointedPluginEventObservationV1(parseConversationProviderAutomationEventObservationV1(input), context);
+  return { kind: disposition.kind };
 }
 
 export function throwTelegramAutomationSetupInvalid(): never {

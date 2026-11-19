@@ -1,12 +1,16 @@
 import {
-  admitConversationProviderAutomationEventV1, assertConversationChannelsCoreCallerV1,
+  parseConversationProviderAutomationEventObservationV1, assertConversationChannelsCoreCallerV1,
   CONVERSATION_CORE_PLUGIN_ID_V1, CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   ConversationProviderConnectionsSnapshotV1Schema, hasCurrentConversationProviderConnectionV1,
   type ConversationProviderAutomationEventAdmitResultV1,
 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
-import { createPluginEventAutomationSetupResultV1JsonSchema, type PluginEventAutomationSetupResultV1 } from '@happier-dev/plugin-sdk/events';
+import {
+  admitSessionSocketPluginEventObservationV1,
+  createPluginEventAutomationSetupResultV1JsonSchema,
+  type PluginEventAutomationSetupResultV1,
+} from '@happier-dev/plugin-sdk/events';
 import { defineProtocolObject, defineProtocolString, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { materializeExactSlackCredentials } from './slackActions.js';
@@ -89,5 +93,6 @@ export async function setupSlackAutomationMessageSource(input: unknown, context:
 
 export async function admitSlackAutomationEvent(input: unknown, context: PluginInvocationContext): Promise<ConversationProviderAutomationEventAdmitResultV1> {
   assertConversationChannelsCoreCallerV1(context, { code: 'slack_channels_core_caller_required', message: 'Slack provider operations require the Channels core caller.' });
-  return admitConversationProviderAutomationEventV1(input, context, 'socket');
+  const disposition = await admitSessionSocketPluginEventObservationV1(parseConversationProviderAutomationEventObservationV1(input), context);
+  return { kind: disposition.kind };
 }

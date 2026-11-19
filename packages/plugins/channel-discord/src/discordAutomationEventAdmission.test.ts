@@ -142,11 +142,6 @@ describe('Discord Automation Event admission bridge', () => {
               triggerRevision: 3,
               sourceSelectorId: '5a1b6d0e-1c4a-4d2b-9f77-2a0c4e6b8d92',
             }),
-            sourceDefinition({ sourceContractVersion: 2 }),
-            sourceDefinition({ sourceInstanceId: 'discord:application:123:channel:5555' }),
-            sourceDefinition({
-              eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
-            }),
           ],
           nextCursor: null,
         };
@@ -170,7 +165,14 @@ describe('Discord Automation Event admission bridge', () => {
     const outcome = await admitDiscordAutomationEvent(admissionInput(), createContext(execute));
 
     expect(admitted).toHaveLength(1);
-    expect(listed).toEqual([{ transport: { kind: 'socket' } }]);
+    expect(listed).toEqual([{
+      transport: { kind: 'socket' },
+      source: {
+        eventRef: EVENT_REF,
+        sourceInstanceId: admissionInput().candidate.sourceInstanceId,
+        sourceContractVersion: admissionInput().candidate.sourceContractVersion,
+      },
+    }]);
     expect(admitted[0]).toEqual({
       eventRef: EVENT_REF,
       occurrenceId: 'discord:message:9001',
@@ -229,7 +231,7 @@ describe('Discord Automation Event admission bridge', () => {
   it('settles safely without an admission when no current source matches the frozen candidate', async () => {
     const execute = vi.fn(async (actionId: string) => {
       if (actionId === 'automation.event.sources.list') {
-        return { kind: 'page', revision: '7', definitions: [sourceDefinition({ sourceContractVersion: 2 })], nextCursor: null };
+        return { kind: 'page', revision: '7', definitions: [], nextCursor: null };
       }
       if (actionId === 'automation.event.source.status.report') return {};
       throw new Error(`unexpected ${actionId}`);

@@ -248,7 +248,7 @@ describe('Telegram Automation Event source', () => {
   it('settles safely without an admission when no current source matches the frozen candidate', async () => {
     const execute = vi.fn(async (actionId: string) => {
       if (actionId === 'automation.event.sources.list') {
-        return { kind: 'page', definitions: [armedDefinition('-999')], nextCursor: null, revision: '7' };
+        return { kind: 'page', definitions: [], nextCursor: null, revision: '7' };
       }
       if (actionId === 'automation.event.source.status.report') return {};
       throw new Error(`unexpected ${actionId}`);

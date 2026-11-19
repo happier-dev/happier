@@ -798,12 +798,12 @@ cursors, epochs and unresolved effects.
 
 ## Cancellation, currentness, and lifecycle
 
-In 0.3 development source, provider Event admission uses the shared
-`admitConversationProviderAutomationEventV1` bridge after the provider's existing
-Channels caller check. It passes a frozen Channels obligation to the SDK Event
-admission owner and returns the closed Channels settlement result. Discord and
-Slack select `socket`, while Telegram selects `checkpointedPull`; the bridge adds
-no observer, retry loop, checkpoint, or persisted state.
+In 0.3 development source, the provider checks the Channels caller and uses
+`parseConversationProviderAutomationEventObservationV1` to read the frozen
+observation from the Action input. Discord and Slack submit it through the SDK's
+session-socket admission function. Telegram uses checkpointed-pull admission.
+The provider returns the SDK's settlement kind through the closed Channels
+result schema. Channels retains retry and checkpoint custody.
 
 Use the invocation `AbortSignal` for every network, credential, and provider
 operation. Re-check current Account/connection/binding/plugin generation before

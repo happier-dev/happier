@@ -135,8 +135,8 @@ export {
     ConversationProviderAutomationEventAdmitInputV1Schema,
     ConversationProviderAutomationEventAdmitResultV1JsonSchema,
     ConversationProviderAutomationEventAdmitResultV1Schema,
+    parseConversationProviderAutomationEventObservationV1,
 } from './automationEvents.js';
-export { admitConversationProviderAutomationEventV1 } from './automationEventAdmission.js';
 export type {
     ConversationProviderAutomationEventAdmitInputV1,
     ConversationProviderAutomationEventAdmitResultV1,

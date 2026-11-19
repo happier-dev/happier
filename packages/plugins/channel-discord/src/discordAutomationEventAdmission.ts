@@ -1,8 +1,9 @@
 import {
-  admitConversationProviderAutomationEventV1,
+  parseConversationProviderAutomationEventObservationV1,
   type ConversationProviderAutomationEventAdmitResultV1,
 } from '@happier-dev/channels-protocol/v1';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { admitSessionSocketPluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 
 import { assertDiscordChannelsCoreCaller } from './discordActions.js';
 
@@ -20,5 +21,6 @@ export async function admitDiscordAutomationEvent(
   context: PluginInvocationContext,
 ): Promise<ConversationProviderAutomationEventAdmitResultV1> {
   assertDiscordChannelsCoreCaller(context);
-  return admitConversationProviderAutomationEventV1(input, context, 'socket');
+  const disposition = await admitSessionSocketPluginEventObservationV1(parseConversationProviderAutomationEventObservationV1(input), context);
+  return { kind: disposition.kind };
 }

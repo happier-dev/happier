@@ -97,7 +97,6 @@ describe('Channels V1 provider barrel', () => {
             'ConversationSessionStatusInputV1Schema',
             'NOTIFICATION_DESTINATION_INPUT_TYPE_V1',
             'NotificationDestinationSelectionV1Schema',
-            'admitConversationProviderAutomationEventV1',
             'areConversationEndpointIdentitiesEqual',
             'assertConversationChannelsCoreCallerV1',
             'classifyConversationProviderMaterializationFailureV1',
@@ -108,6 +107,7 @@ describe('Channels V1 provider barrel', () => {
             'getConversationAttachmentIdRepresentationsV1',
             'hasCanonicalConversationResolutionCandidateOrderV1',
             'hasCurrentConversationProviderConnectionV1',
+            'parseConversationProviderAutomationEventObservationV1',
             'readConversationAttachmentIdV1',
             'rethrowConversationProviderLifecycleFailureV1',
         ]);

@@ -65,6 +65,25 @@ export type ConversationProviderAutomationEventAdmitInputV1 = ReturnType<
 export const ConversationProviderAutomationEventAdmitInputV1JsonSchema: PluginJsonSchema =
     /* @__PURE__ */ (() => ConversationProviderAutomationEventAdmitInputV1Schema.jsonSchema)();
 
+type ConversationProviderAutomationEventObservationV1 =
+    ConversationProviderAutomationEventAdmitInputV1['candidate']
+    & Pick<ConversationProviderAutomationEventAdmitInputV1,
+        'occurrenceId' | 'occurredAt' | 'observationReceivedAt' | 'observedDelta'>;
+
+/** Project the provider Action input to the observation admitted by its transport. */
+export function parseConversationProviderAutomationEventObservationV1(
+    input: unknown,
+): ConversationProviderAutomationEventObservationV1 {
+    const request = ConversationProviderAutomationEventAdmitInputV1Schema.parse(input);
+    return {
+        ...request.candidate,
+        occurrenceId: request.occurrenceId,
+        occurredAt: request.occurredAt,
+        observationReceivedAt: request.observationReceivedAt,
+        observedDelta: request.observedDelta,
+    };
+}
+
 /** @internal Relative-only bounded settlement returned to Channels' checkpoint owner. */
 export const ConversationProviderAutomationEventAdmitResultV1ProtocolSchema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('checkpointSafe') }, { policy: 'closed' }),
