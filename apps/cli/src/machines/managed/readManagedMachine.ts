@@ -8,17 +8,17 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import type { StoredCredentials } from '@/persistence';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createManagedPresetHydrator } from './presetHydration';
+import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { machinePresetActionEndpointPathV1, type MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 
-export type ReadManagedMachineInput = Readonly<{
+type ManagedAccountRead = Readonly<{
   credentials?: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
   authorization?: ExternalActionExecutionAuthorizationV1; effectActionId?: string;
-}> & ManagedMachineActionInputV1<'machines.managed.get'>;
+  homeId: string;
+}>;
+export type ReadManagedMachineInput = ManagedAccountRead & ManagedMachineActionInputV1<'machines.managed.get'>;
 
-/** Ordinary Account read: child consumers do not need controller custody or reachability. */
-export async function readManagedMachineRead(input: ReadManagedMachineInput): Promise<ReturnType<typeof ManagedGetOutputV1Schema.parse>> {
-  const path = managedMachineActionEndpointPathV1('machines.managed.get');
-  const { credentials: _credentials, serverHttpBaseUrl: _url, signal: _signal,
-    authorization: _authorization, effectActionId: _effect, ...body } = input;
+async function readManagedAccountResource(input: ManagedAccountRead, path: string, body: unknown): Promise<unknown> {
   const http = input.authorization?.requesterHttpProjection;
   const requesterHeaders = http && http.serverIdentityId === input.homeId && await http.isCurrent()
     ? await http.createRequestHeaders({ effectActionId: input.effectActionId ?? input.authorization!.binding.actionId,
@@ -37,7 +37,23 @@ export async function readManagedMachineRead(input: ReadManagedMachineInput): Pr
     throw Object.assign(new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed'),
       { status: response.status });
   }
-  return ManagedGetOutputV1Schema.parse(response.data);
+  return response.data;
+}
+
+/** Ordinary Account read: child consumers do not need controller custody or reachability. */
+export async function readManagedMachineRead(input: ReadManagedMachineInput): Promise<ReturnType<typeof ManagedGetOutputV1Schema.parse>> {
+  const { credentials: _credentials, serverHttpBaseUrl: _url, signal: _signal,
+    authorization: _authorization, effectActionId: _effect, ...body } = input;
+  return ManagedGetOutputV1Schema.parse(await readManagedAccountResource(input,
+    managedMachineActionEndpointPathV1('machines.managed.get'), body));
+}
+
+/** Preset placement uses the same requester-owned Account read boundary. */
+export async function readManagedMachinePreset(input: ManagedAccountRead & MachinePresetActionInputV1<'machines.presets.get'>): Promise<ManagedMachinePresetV1> {
+  const result = ManagedMachinePresetGetResultV1Schema.parse(await readManagedAccountResource(input,
+    machinePresetActionEndpointPathV1('machines.presets.get'), { homeId: input.homeId, id: input.id }));
+  if (result.kind !== 'found') throw new ManagedMachineControllerError(result.code);
+  return result.preset;
 }
 
 /** Structural consumers receive no private preset facts from the public read union. */

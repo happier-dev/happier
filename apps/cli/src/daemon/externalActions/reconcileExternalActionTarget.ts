@@ -12,6 +12,9 @@ import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentActionIdV1 } fr
 import { readDeploymentExecutionMachineOperandV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isManagedAccountNativeControlInvocationV1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import { resolveCliMachinePresetArchiveExecutionTarget } from '@/machines/managed/accountPresetArchive';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
+import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import type { StoredCredentials } from '@/persistence';
 
 /**
@@ -25,7 +28,7 @@ const NESTED_SESSION_SELECTOR_ACTION_IDS = new Set<ActionId>([
   'session.continue_with_replay',
 ]);
 
-/** Retained controls use the row's controller; controllerless provisioners stay Account-owned. */
+/** Retained controls and image cleanup select their existing native executor. */
 export async function resolveManagedControlControllerTarget(input: Readonly<{
   actionId: string;
   rawInput: unknown;
@@ -34,6 +37,12 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
   authorization?: ExternalActionExecutionAuthorizationV1;
   signal?: AbortSignal;
 }>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
+  if (input.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1) {
+    const parsed = MachinePresetActionInputSchemasV1[MACHINE_PRESET_ARCHIVE_ACTION_ID_V1].safeParse(input.rawInput);
+    return parsed.success ? await resolveCliMachinePresetArchiveExecutionTarget(parsed.data, {
+      credentials: input.credentials, serverUrl: input.serverHttpBaseUrl, authorization: input.authorization, signal: input.signal,
+    }) : null;
+  }
   if (!isManagedRetainedControlInvocation(input.actionId, input.rawInput)) return null;
   const parsed = ManagedMachineActionInputSchemasV1[input.actionId].safeParse(input.rawInput);
   if (!parsed.success) return null;

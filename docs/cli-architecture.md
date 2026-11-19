@@ -3607,7 +3607,9 @@ text identifies the host and its requester-visible custodian name, falling back
 to their IDs; private host metadata and credentials are excluded.
 
 The private prepared binding retains the original Prepare host for Machine-native
-image cleanup. Missing legacy placement or a different executing host returns
+image cleanup. Archive places its whole root on that host so its reviewed native
+children keep their in-process custody. Metadata-only Archive and Account-target
+cloud image cleanup remain Account-placed. Missing legacy placement or a different executing host returns
 `controller_unavailable` while retaining the image and preset for recovery.
 CLI, agent, Account and UI Archive entry points consume the Common preparation
 owner's cleanup-only settlement. A settled cold preparation needs no provider

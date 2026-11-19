@@ -1,9 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import type { readCurrentAccountMachinePreparationCleanupHost } from '@/api/machine/resolveCurrentAccountMachineTarget';
+import { readCurrentAccountMachinePreparationCleanupHost } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedMachinePresetGetResultV1Schema, PresetMutationResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { openManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import type { ManagedMachinePresetPreparedV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
+import type { MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachineProvisionerPreparationInspectResultV1Schema, MachineProvisionerPreparationDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { ManagedMachineControllerError, settleManagedMachinePresetPreparationOperationV1,
@@ -12,6 +15,49 @@ import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/ac
 import type { StoredCredentials } from '@/persistence';
 import { createCliManagedAccountNativeInvocationForLaunch } from './accountNative';
 import { createManagedPresetHydrator } from './presetHydration';
+import { readManagedMachinePreset } from './readManagedMachine';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+
+type ArchiveAccount = Readonly<{ credentials: StoredCredentials; serverUrl: string }>;
+
+async function readArchivePreparationProvider(launch: ManagedMachinePresetPreparedV1['binding']['configuration']['launch'],
+    host: ArchiveAccount, signal?: AbortSignal) {
+    const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: launch.provider.pluginId,
+        credentials: host.credentials, serverUrl: host.serverUrl, signal });
+    if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+    const provisioner = MachineProvisionerContributionV1Schema.safeParse(selected.manifest.contributes.machineProvisioners
+        .find(candidate => candidate.id === launch.provider.localId));
+    if (!provisioner.success || provisioner.data.schemaVersion !== launch.schemaVersion || !provisioner.data.preparation) {
+        throw new ManagedMachineControllerError('provider_unavailable');
+    }
+    const destroyId = provisioner.data.preparation.actions.destroy;
+    const destroy = selected.manifest.contributes.actions.find(action => action.id === destroyId);
+    if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
+    return { selected, provisioner: provisioner.data, destroy };
+}
+
+/** Keep Archive and its private native children together on the original image host. */
+export async function resolveCliMachinePresetArchiveExecutionTarget(input: MachinePresetActionInputV1<'machines.presets.archive'>,
+    host: ArchiveAccount & Readonly<{ authorization?: ExternalActionExecutionAuthorizationV1; signal?: AbortSignal }>):
+    Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
+    const preset = await readManagedMachinePreset({ ...input, credentials: host.credentials, serverHttpBaseUrl: host.serverUrl,
+        authorization: host.authorization, signal: host.signal });
+    if (preset.revision !== input.expectedRevision) return null;
+    const accountId = readAccountIdFromToken(host.credentials.token);
+    if (!accountId) throw new ManagedMachineControllerError('credential_unavailable');
+    const content = await createManagedPresetHydrator(host).openRecipientProjection({ presetId: preset.id,
+        mode: preset.contentEncryptionMode, projection: projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: accountId }),
+        signal: host.signal });
+    const prepared = content.prepared;
+    if (!prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) return null;
+    const { destroy } = await readArchivePreparationProvider(prepared.binding.configuration.launch, host, host.signal);
+    const machineId = prepared.binding.machineId;
+    if (destroy.execution?.target === 'account' || !machineId) return null;
+    const cleanupHost = await readCurrentAccountMachinePreparationCleanupHost({ machineId, serverHttpBaseUrl: host.serverUrl,
+        ...(host.authorization ? { authorization: host.authorization } : { token: host.credentials.token }), signal: host.signal });
+    // Permanent host loss remains the existing metadata Archive with manual cleanup diagnostics.
+    return cleanupHost.unavailable ? null : { kind: 'machine', machineId };
+}
 
 /** Archive spends its admitted parent through retained native cleanup and the final row CAS. */
 export async function executeCliMachinePresetArchive(request: Parameters<NonNullable<ActionExecutorDeps['machinePresetArchive']>>[0],
@@ -43,22 +89,12 @@ export async function executeCliMachinePresetArchive(request: Parameters<NonNull
             let cleanupUnavailable: Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable'];
             if (managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) {
                 const launch = prepared.binding.configuration.launch;
-                const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: launch.provider.pluginId,
-                    credentials: host.credentials, serverUrl: host.serverUrl, signal });
-                if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
-                const provisioner = MachineProvisionerContributionV1Schema.safeParse(selected.manifest.contributes.machineProvisioners
-                    .find(candidate => candidate.id === launch.provider.localId));
-                if (!provisioner.success || provisioner.data.schemaVersion !== launch.schemaVersion || !provisioner.data.preparation) {
-                    throw new ManagedMachineControllerError('provider_unavailable');
-                }
-                const destroyId = provisioner.data.preparation.actions.destroy;
-                const destroy = selected.manifest.contributes.actions.find(action => action.id === destroyId);
-                if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
+                const { selected, provisioner, destroy } = await readArchivePreparationProvider(launch, host, signal);
                 const cleanupHost = destroy.execution?.target !== 'account' && prepared.binding.machineId
                     ? await host.readPreparationCleanupHost?.({ machineId: prepared.binding.machineId, context, signal }) : undefined;
                 cleanupUnavailable = cleanupHost?.unavailable;
                 if (!cleanupUnavailable) invoke = createCliManagedAccountNativeInvocationForLaunch({ launch,
-                    credentialConfigurations: prepared.binding.credentialConfigurations, provisioner: provisioner.data,
+                    credentialConfigurations: prepared.binding.credentialConfigurations, provisioner,
                     originalMachineId: prepared.binding.machineId, originalHost: cleanupHost?.host,
                     executingMachineId: host.executingMachineId,
                     selected, context, signal, requestId: context.actionRequestId ?? prepared.operationId });
