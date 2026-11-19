@@ -323,6 +323,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     // Why this preset can't create here is said once, by the line above the page; Create one then waits for it.
     const configurationUnavailable = configuration.unavailable;
     const cannotCreateHere = Boolean(catalog.error) || configurationUnavailable;
+    // That line is the page's one cause: Managed from and the receipt inherit it rather than restating it.
+    const causeShown = !archived && cannotCreateHere;
     // Archive is below the fold; reveal its existing feedback inside the page scroller.
     const notice = <RowArrivalReveal testID="machine-preset.feedback-reveal"
         active={revealArchiveFeedback.current && (approval.approvalPending || (!mutating && Boolean(conflict || mutationError || refusal)))}>
@@ -388,7 +390,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         presetPolicy: { ...(visiblePreset.retention ? { retention: visiblePreset.retention } : {}),
             ...(visiblePreset.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: visiblePreset.wakeOnAcceptedMessage } : {}) },
         caption: t('managedMachines.receipt.eachOne', { revision: visiblePreset.revision }),
-        mark: presentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.receipt) });
+        mark: presentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.receipt), ...(causeShown ? { headroomUnreadable: true } : {}) });
     // "Hetzner server": the provider and what it creates, from the provisioner's own declaration.
     const what = presentation.title && presentation.kindTitle
         ? t('managedMachines.detail.kindFact', { provider: presentation.title, kind: presentation.kindTitle })
@@ -428,7 +430,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } } }),
         // Its row names the controller; the description says only why it matters, and an online controller needs none.
         controller: { description: pooled ? t('machinePresets.controllerPoolHelp')
-            : controller && presenceOf(controller).status === 'online' ? undefined : t('managedMachines.controller.requiredUnnamed'),
+            : causeShown || controller && presenceOf(controller).status === 'online' ? undefined : t('managedMachines.controller.requiredUnnamed'),
             row: pooled ? { title: controllerName, ...(poolName ? { subtitle: t('machinePresets.controllerPoolAny') } : {}),
                 leading: <Icon name="stack" color={theme.colors.text.secondary} /> } : controllerChoices.length ? {
                 title: t('machinePresets.controllerRow'),
@@ -446,7 +448,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             // state, by the name the preset saved when it has one, never a placeholder without presence (TH D7, D-K).
             } : { title: knownControllerName ?? t('machinePresets.controllerNotShared'),
                 ...(controller ? { subtitle: presenceLabel(controller) }
-                    : machines ? { subtitle: t('machinePresets.controllerStatusNotShared') } : {}) } },
+                    : machines && !causeShown ? { subtitle: t('machinePresets.controllerStatusNotShared') } : {}) } },
         // Under "Made from this preset" a row is the machine, who made it and its state (lab m-presets); an
         // older revision says so, since edits apply only to machines made after them.
         machines: detail.history.map(row => ({ id: row.managedId, title: row.title,
@@ -458,8 +460,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         receipt: { ...receipt, costPlacement: 'fact',
             ...(canManage ? { secondary: [{ label: t('machinePresets.editChoices'), testID: 'machine-preset.edit', onPress: () => openConfiguration(true), disabled: busy }],
                 secondaryNote: t('machinePresets.futureOnly') } : {}) },
-        ...(!sessionSandbox && canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled && !cannotCreateHere
-            ? { onCreateOne: () => openConfiguration(false) } : {}),
+        // Create one stays the page's primary while the line above says why it can't create here yet.
+        ...(!sessionSandbox && canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled
+            ? { onCreateOne: () => openConfiguration(false), ...(cannotCreateHere ? { createOneDisabled: true } : {}) } : {}),
         // Archive attempts to delete the image it keeps ready; its retained report says when cleanup is needed.
         ...(visiblePreset.preparation?.enabled || visiblePreset.prepared !== undefined
             ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),

@@ -174,10 +174,6 @@ export const MachineSetupSection = React.memo(
     return (
       <>
       {/* The one ordered item list (S60-U3b): shown by kind in apply order, every edit writes the same array; saving stays inert. */}
-      {groups.length === 0 && addAction ? (
-        <ItemGroup testID={`${props.testID}.items.empty`} title={t('machinePresets.setup.itemsTitle')}
-          description={t('machinePresets.setup.itemsEmpty')} action={addAction} surface="none">{null}</ItemGroup>
-      ) : null}
       {groups.map((group, groupIndex) => (
         <ItemGroup key={group.kind} testID={`${props.testID}.items.${group.kind}`}
           title={t(MACHINE_SETUP_ITEM_GROUP_TITLE[group.kind])}
@@ -225,9 +221,12 @@ export const MachineSetupSection = React.memo(
       ))}
       {props.editable ? <MachineSetupRecipeInputs setup={setup} projection={projection} scope={props.scope}
         onChange={props.onChange} testID={`${props.testID}.recipe-inputs`} /> : null}
+      {/* With no items yet, this is the one "Sets it up" section: its Add items leads, and tools and script follow. */}
       <ItemGroup
-        title={t('machinePresets.setup.title')}
+        testID={groups.length === 0 ? `${props.testID}.items.empty` : undefined}
+        title={t(groups.length === 0 ? 'machinePresets.setup.itemsTitle' : 'machinePresets.setup.title')}
         description={t('machinePresets.setup.description')}
+        action={groups.length === 0 ? addAction : undefined}
       >
         <SegmentedChoiceItem
           testIDPrefix={`${props.testID}.toolchain`}

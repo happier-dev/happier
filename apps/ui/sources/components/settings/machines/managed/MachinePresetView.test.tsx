@@ -1796,8 +1796,11 @@ describe('reachable preset detail', () => {
       ).not.toBeNull(),
     );
     await flushHookEffects();
-    // A form that cannot succeed is never offered: the line above says why, and its Retry is the way on.
-    expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    // A form that cannot succeed is never opened: Create one stays as the page's primary, disabled, and the line
+    // under the header says why, with Retry as the way on.
+    const unavailableModel = screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
+    expect(screen.findByTestId('machine-preset.detail.createOne')).not.toBeNull();
+    expect(unavailableModel.createOneDisabled).toBe(true);
     // The same holds when the provisioner list itself can't be read.
     await screen.unmount();
     harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
@@ -1811,8 +1814,39 @@ describe('reachable preset detail', () => {
       expect(listFailed.findByTestId('machine-preset.provider-error')).not.toBeNull(),
     );
     await flushHookEffects();
-    expect(listFailed.findByTestId('machine-preset.detail.createOne')).toBeNull();
+    expect((listFailed.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel).createOneDisabled).toBe(true);
     await listFailed.unmount();
+  });
+  it('says why it cannot create once: Managed from and a local receipt inherit the line above quietly', async () => {
+    const serverId = await seed();
+    const scopeId = await seedConfiguration(serverId, false, { billing: { location: 'local', stoppedBilling: 'not-billed' } });
+    harness.answer(serverId, '/v2/account/settings', {
+      body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 },
+    });
+    harness.answer(serverId, 'POST /v1/actions/machines.provisioners.options', {
+      status: 503,
+      body: { code: 'controller_unavailable' },
+    });
+    const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId="preset" />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.configuration-unavailable'),
+      screen.getTextContent()).not.toBeNull());
+    // The controller then goes offline: its row states that fact, but no "needs to be online" sentence repeats the cause.
+    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, [createMachineFixture({
+      id: preset.controller.machineId, installationId: preset.controller.installationId,
+      activeAt: Date.now(), presenceProtocolVersion: 1,
+    })]);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const machine = storage.getState().machineListByServerId[scopeId]?.find(entry => entry.id === preset.controller.machineId);
+    if (!machine) throw new Error('Expected the seeded preset controller machine');
+    await act(async () => publishMachineActivityForTest([machine], { active: false, activeAt: Date.now() }));
+    const model = () => screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
+    await waitForHomeGovernance(() => expect(model().controller?.row.subtitle).toBe(t('status.offline')));
+    expect(screen.findByTestId('machine-preset.configuration-unavailable')).not.toBeNull();
+    expect(model().controller?.description).toBeUndefined();
+    const receipt = screen.tree.findByType(MachineConfigurationReceipt).props.model;
+    expect(receipt.cost).toMatchObject({ kind: 'local' });
+    expect(receipt.cost.note).toBeUndefined();
+    await screen.unmount();
   });
   it('keeps sealed delegated details neutral and enables creation without a readiness projection', async () => {
     const serverId = await seed(true, true);

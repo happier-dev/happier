@@ -97,6 +97,8 @@ export type ManagedConfigurationReceiptInput = Readonly<{
      * current facts can't be read, and always labelled as last saved, never as current state.
      */
     lastSaved?: Pick<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>, 'size' | 'image'>;
+    /** The page already says the managing computer can't be read: the cost doesn't repeat it as unchecked headroom. */
+    headroomUnreadable?: boolean;
 }>;
 /** Account-default sign-in is display data, independent of reviewed native launch facts. */
 export function managedAgentSignInReceiptFacts(agentSignIn: ManagedConfigurationReceiptInput['agentSignIn']): ManagedReceiptModel['facts'] {
@@ -242,7 +244,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
             // An unnamed controller is "the computer that manages it" in the cost's sentences, never "Unknown".
             : cost.kind === 'local' ? describeLocalCost({ computer: input.pooledController ? input.pooledController.sentenceName
                 : input.controllerName === null ? null : input.controllerName ?? t('managedMachines.receipt.managingComputer'), size,
-                resources: input.created ? undefined : facts?.localResources, omitHeadroom: input.created === true || !!input.pooledController })
+                resources: input.created ? undefined : facts?.localResources, omitHeadroom: input.created === true || !!input.pooledController || input.headroomUnreadable === true })
                 // Without any billing fact no one can be named as the biller (a local VM is billed by no one).
                 : cost };
 }

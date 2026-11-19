@@ -89,6 +89,8 @@ export type MachinePresetDetailModel = Readonly<{
   /** What archiving leaves in place; defaults to the Machines made from it. */
   archiveHelp?: string;
   onCreateOne?: () => void;
+  /** Create one stays the page's primary while it can't create here; the page's one notice says why. */
+  createOneDisabled?: boolean;
   onMore?: () => void;
   onArchive?: () => void;
   archivePending?: boolean;
@@ -135,13 +137,16 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
       compact={props.compact}
       notice={model.notice}
       receipt={model.receipt}
-      // A phone reads what the preset sets up first (lab `pp/editor`), the launch after; the archive row always ends the page.
-      compactReceipt="last"
+      // A preset is its launch: a phone opens with the receipt, then what it sets up (lab m-presets-Ap); the archive
+      // row always ends the page.
+      compactReceipt="first"
       closing={closing}
       header={{
         title: model.name,
         description: model.description,
         leading: model.mark,
+        // A phone hangs only the title beside the mark; the purpose and facts start on the content edge.
+        ...(props.compact ? { markSpan: 'title' as const } : {}),
         meta: model.meta,
         // Create one is the page's primary: a phone keeps it in the navigation header, never in "More actions".
         ...(model.onCreateOne ? { primaryAction: {
@@ -149,6 +154,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           icon: 'plus' as const,
           presentation: 'secondary' as const,
           onPress: model.onCreateOne,
+          disabled: model.createOneDisabled === true,
           testID: `${props.testID}.createOne`,
         } } : {}),
         actions: model.onMore ? (

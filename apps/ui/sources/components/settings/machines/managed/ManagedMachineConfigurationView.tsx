@@ -1278,7 +1278,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // Unpriced, the bar's value stays short; the sentence belongs to the receipt. No price yet is no value, not a placeholder.
     const summaryCost = receipt.cost && receipt.cost.kind !== 'unpriced' ? presentManagedCost(receipt.cost) : null;
     const summaryValue = summaryCost?.value ?? '';
-    return <ManagedMachineConfigurator title={pageTitle} description={props.presetOnly ? t('machinePresets.futureOnly')
+    // A saved preset's editor says edits reach only new machines; a new draft says what a preset is for.
+    return <ManagedMachineConfigurator title={pageTitle} description={props.presetOnly ? t(props.presetId ? 'machinePresets.futureOnly' : 'machinePresets.empty')
         // A preset fixes the launch: the page says whose choices these are instead of asking to pick them.
         : presetLocked && preset ? t('managedMachines.config.presetDescription', { preset: preset.name })
         : compact ? undefined : t(hasDimensionChoices ? 'managedMachines.config.description' : 'managedMachines.config.descriptionForm')} mark={mark}
