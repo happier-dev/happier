@@ -1,11 +1,16 @@
 import * as React from 'react';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { NotificationConfigurationActionOutputSchemas } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
 
 import {
     isPermissionGranted,
 } from '@/activity/notifications/channels/tauriNotificationPlugin';
-import { NotificationConfigurationActionOutputSchemas } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { Modal } from '@/modal';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { t } from '@/text';
 
 export type TauriNotificationPermissionDiagnosticsStatus =
     | 'checking'
@@ -18,7 +23,7 @@ export function useTauriNotificationPermissionDiagnostics(enabled: boolean): Rea
     requestPermission: () => Promise<void>;
     approval: ReturnType<typeof useMountedActionExecution>['approval'];
 }> {
-    const execution = useMountedActionExecution(useActiveServerAccountScope());
+    const { execute, isCurrent, ready, approval, binding } = useMountedActionExecution(useActiveServerAccountScope());
     const [status, setStatus] = React.useState<TauriNotificationPermissionDiagnosticsStatus>(
         enabled ? 'checking' : 'notGranted',
     );
@@ -50,7 +55,7 @@ export function useTauriNotificationPermissionDiagnostics(enabled: boolean): Rea
         return () => {
             cancelled = true;
         };
-    }, [enabled]);
+    }, [binding, enabled]);
 
     const requestDesktopPermission = React.useCallback(async () => {
         if (!enabled) {
@@ -58,21 +63,31 @@ export function useTauriNotificationPermissionDiagnostics(enabled: boolean): Rea
             return;
         }
 
+        if (!ready || status === 'checking') return;
+
+        const actionId = 'notifications.desktop.permission.request';
         setStatus('checking');
         try {
-            const result = await execution.execute('notifications.desktop.permission.request', {});
-            if (!result.ok) throw new Error(result.errorCode);
-            if (execution.isCurrent()) setStatus(NotificationConfigurationActionOutputSchemas['notifications.desktop.permission.request'].parse(result.result).status);
+            const result = await execute(actionId, {});
+            if (!isCurrent()) return;
+            if (!result.ok) {
+                setStatus(status);
+                if (result.errorCode === 'cancelled' || isActionApprovalDeclinedErrorCode(result.errorCode)) return;
+                if (presentActionTurnedOffNoticeIfOff(result, actionId)) return;
+                Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(
+                    result, t('settingsNotifications.desktop.permission.errorSubtitle'),
+                ));
+                return;
+            }
+            setStatus(NotificationConfigurationActionOutputSchemas[actionId].parse(result.result).status);
         } catch {
-            setStatus('error');
-            return;
+            if (isCurrent()) setStatus('error');
         }
-
-    }, [enabled, execution.execute, execution.isCurrent]);
+    }, [enabled, execute, isCurrent, ready, status]);
 
     return {
         status,
         requestPermission: requestDesktopPermission,
-        approval: execution.approval,
+        approval,
     };
 }

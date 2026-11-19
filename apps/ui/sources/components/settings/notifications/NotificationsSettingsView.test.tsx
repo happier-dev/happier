@@ -655,20 +655,38 @@ describe('NotificationsSettingsView', () => {
         }
     });
 
-    it('requests Tauri notification permission from the desktop diagnostics row', async () => {
+    it.each(['allowed', 'off'] as const)('requests Tauri notification permission from the desktop diagnostics row (%s)', async policy => {
         platformState.os = 'web';
         tauriDesktopState.value = true;
-        tauriIsPermissionGrantedMock.mockResolvedValue(false);
-        tauriRequestPermissionMock.mockResolvedValue('granted');
+        let granted = false;
+        tauriIsPermissionGrantedMock.mockImplementation(async () => granted);
+        tauriRequestPermissionMock.mockImplementation(async () => {
+            granted = true;
+            return 'granted';
+        });
+        modalConfirmMock.mockResolvedValue(true);
+        if (policy === 'off') disabledNotificationAction = 'notifications.desktop.permission.request';
 
         const screen = await openNotificationsScreen();
-        await act(async () => {});
+        const permissionRow = 'settings-notifications-desktop-permission';
+        await vi.waitFor(() => expect(requireRow(screen, permissionRow).props.subtitle).toBe(
+            'settingsNotifications.desktop.permission.notGrantedSubtitle',
+        ));
 
-        await act(async () => {
-            screen.pressRow('settings-notifications-desktop-permission');
-        });
+        await act(async () => { screen.pressRow(permissionRow); });
 
-        expect(tauriRequestPermissionMock).toHaveBeenCalledTimes(1);
+        if (policy === 'off') {
+            await vi.waitFor(() => expect(modalAlertMock).toHaveBeenCalledWith(
+                'actionConfirmations.turnedOffTitle', 'actionConfirmations.turnedOffMessage', expect.any(Array),
+            ));
+            expect(tauriRequestPermissionMock).not.toHaveBeenCalled();
+            expect(requireRow(screen, permissionRow).props.subtitle).toBe('settingsNotifications.desktop.permission.notGrantedSubtitle');
+        } else {
+            await vi.waitFor(() => expect(requireRow(screen, permissionRow).props.subtitle).toBe(
+                'settingsNotifications.desktop.permission.grantedSubtitle',
+            ));
+            expect(tauriRequestPermissionMock).toHaveBeenCalledTimes(1);
+        }
     });
 
     it('marks the Happier sound preset selected for the implicit default policy', async () => {
