@@ -146,6 +146,7 @@ export function useMachineSetup(
     plan: MachineSetupPlanResultV1;
     sourcePresentations: readonly MachineSetupSourcePresentationV1[];
     checkedAt: number;
+    checkedAfterOperationId: string | null;
   }> | null>(null);
   const [checking, setChecking] = React.useState(false);
   const [failure, setFailure] = React.useState<MachineSetupFailure | null>(
@@ -165,6 +166,19 @@ export function useMachineSetup(
   const retainedOperation = useMachineSetupActionOperation(binding ? { serverId, machineId, accountId: binding.accountId } : null);
   const currentAccepted = accepted?.scopeKey === scopeKey ? accepted : null;
   const operationId = currentAccepted ? currentAccepted.operationId : retainedOperation?.snapshot.operationId ?? null;
+  const operation = useActionOperation({
+    serverId,
+    operationId: operationId ?? '',
+  }, { machineId, actionId: currentAccepted?.actionId ?? retainedOperation?.snapshot.actionId ?? '', lifetime: binding });
+  // The combined root owns settlement; its child owns native rows and output.
+  const retainedResult = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].safeParse(operation?.snapshot.result);
+  const runId = currentAccepted?.runId ?? (retainedResult.success ? retainedResult.data.runId : undefined);
+  const nativeOperation = useMachineSetupRunActionOperation(runId && binding ? {
+    serverId, accountId: binding.accountId, machineId, runId,
+  } : null);
+  const progressOperation = runId ? nativeOperation : operation;
+  const checkedAfterOperationId = operationId !== null && operation !== null && isActionOperationTerminal(operation.snapshot.state)
+    ? operationId : null;
   const plan = current?.key === scopeKey ? current.plan : null;
   const sourcePresentations = React.useMemo(() => {
     if (!current || current.key !== scopeKey) return null;
@@ -188,17 +202,22 @@ export function useMachineSetup(
         : null,
     [binding, serverId],
   );
-  const readCurrent = React.useRef<Promise<void> | null>(null);
+  const readCurrent = React.useRef<Readonly<{ scopeKey: string; checkedAfterOperationId: string | null; promise: Promise<void> }> | null>(null);
   const check = React.useCallback((): Promise<void> => {
     const ctx = context();
     if (!binding?.isCurrent() || !ctx || !homeId) return Promise.resolve();
-    if (readCurrent.current) return readCurrent.current;
+    const reading = readCurrent.current;
+    if (reading) return reading.scopeKey === scopeKey && reading.checkedAfterOperationId === checkedAfterOperationId
+      ? reading.promise
+      // A pre-settlement read cannot establish a post-run observation. Join it,
+      // then let this same owner read once for the newly settled operation.
+      : reading.promise.then(() => check());
     setChecking(true);
     const promise = (async () => {
       try {
         const result = await execute(
           'machines.setup.plan',
-          { homeId, machineId },
+          { homeId, machineId, mode: 'check' },
           ctx,
         );
         if (!binding.isCurrent()) return;
@@ -230,6 +249,7 @@ export function useMachineSetup(
           plan: parsed.data,
           sourcePresentations: presentations,
           checkedAt: Date.now(),
+          checkedAfterOperationId,
         });
         setFailure((previous) =>
           previous?.during === 'check' ? null : previous,
@@ -244,11 +264,12 @@ export function useMachineSetup(
         setChecking(false);
       }
     })();
-    readCurrent.current = promise;
+    readCurrent.current = { scopeKey, checkedAfterOperationId, promise };
     return promise;
-  }, [binding, context, homeId, machineId, scopeKey, serverId]);
+  }, [binding, context, homeId, machineId, scopeKey, serverId, checkedAfterOperationId]);
 
-  // Opening the tab (or the Machine coming back) is the demand for a check; publications never start one.
+  // Opening, reconnecting, or settling the displayed setup operation demands
+  // one check. Other publications do not start reads.
   const demanded =
     input.active && input.online !== false && input.canCheck && !!binding && !!homeId;
   React.useEffect(() => {
@@ -448,33 +469,13 @@ export function useMachineSetup(
     setFailure((previous) => (previous?.during === 'check' ? previous : null));
   }, []);
 
-  // The Apply this tab started is shown as its own operation rows; once it settles, the setup is read again.
-  const operation = useActionOperation({
-    serverId,
-    operationId: operationId ?? '',
-  }, { machineId, actionId: currentAccepted?.actionId ?? retainedOperation?.snapshot.actionId ?? '', lifetime: binding });
-  // The combined root remains the lifecycle owner. Native rows, questions and
-  // private output follow its admitted child instead of being copied to it.
-  const retainedResult = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].safeParse(operation?.snapshot.result);
-  const runId = currentAccepted?.runId ?? (retainedResult.success ? retainedResult.data.runId : undefined);
-  const nativeOperation = useMachineSetupRunActionOperation(runId && binding ? {
-    serverId, accountId: binding.accountId, machineId, runId,
-  } : null);
-  const progressOperation = runId ? nativeOperation : operation;
-  const settled =
-    operationId !== null &&
-    operation !== null &&
-    isActionOperationTerminal(operation.snapshot.state);
-  React.useEffect(() => {
-    if (settled && demanded) void check();
-  }, [settled, demanded, check]);
-
   return {
     observation,
     presetUpdates,
     plan,
     sourcePresentations,
     checkedAt: current?.key === scopeKey ? current.checkedAt : null,
+    checkedAfterOperationId: current?.key === scopeKey ? current.checkedAfterOperationId : null,
     checking,
     failure,
     review,

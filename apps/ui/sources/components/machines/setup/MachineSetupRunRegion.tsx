@@ -122,7 +122,8 @@ export function MachineSetupRunProgress(
   if (steps && domainRef?.kind === 'machineSetup' && progressOperation) {
     return (
       <MachineSetupRunRegion serverId={props.serverId} operation={setup.operation} progressOperation={progressOperation}
-        steps={steps} machineName={props.machineName} onRetry={props.onRetry} />
+        steps={steps} machineName={props.machineName} onRetry={props.onRetry}
+        checkedAfter={setup.checkedAfterOperationId === operationId} />
     );
   }
   return (
@@ -155,6 +156,8 @@ export function MachineSetupRunRegion(
     steps: MachineSetupStepChecklist;
     machineName: string;
     onRetry: (() => void) | null;
+    /** The setup read owner completed a check after this run settled. */
+    checkedAfter?: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -190,7 +193,9 @@ export function MachineSetupRunRegion(
     ? t('machinePresets.setup.tab.presetIsOn', { preset: finishedPreset.name, revision: finishedPreset.revision, machine: props.machineName })
     : null;
   const finishedLine = finishedTitle && typeof finished?.settledAt === 'number'
-    ? t('machinePresets.setup.tab.finishedAt', { time: formatHappierAsOfTime(finished.settledAt, Date.now(), getPreferredLanguage()) })
+    ? t(props.checkedAfter ? 'machinePresets.setup.tab.finishedAndChecked' : 'machinePresets.setup.tab.finishedAt', {
+        time: formatHappierAsOfTime(finished.settledAt, Date.now(), getPreferredLanguage()),
+      })
     : null;
   // The step that asks: the one waiting on the person, else the one running when the question came.
   const asking = sudoPrompt

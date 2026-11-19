@@ -754,6 +754,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Остановлено на шаге ${current} из ${total} на ${machine}`,
                 presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset}, ревизия ${revision}, установлен на ${machine}`,
                 finishedAt: ({ time }: { time: string }) => `Завершено в ${time}`,
+                finishedAndChecked: ({ time }: { time: string }) => `Завершено в ${time} · проверено после завершения`,
                 readOnly: "Вы можете использовать эту машину. Настройку меняют её владелец и те, кто ею управляет.",
                 reviewTitle: "Проверьте изменения",
                 reviewRemove: "Проверьте удаление",

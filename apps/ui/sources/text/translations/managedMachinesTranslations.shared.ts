@@ -759,6 +759,7 @@ export const managedMachinesEn = {
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Stopped at step ${current} of ${total} on ${machine}`,
                 presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset} revision ${revision} is on ${machine}`,
                 finishedAt: ({ time }: { time: string }) => `Finished ${time}`,
+                finishedAndChecked: ({ time }: { time: string }) => `Finished ${time} · checked after`,
                 readOnly: "You can use this machine. Its owner and people who manage it change its setup.",
                 offline: ({ machine }: { machine: string }) => `${machine} is offline. Its setup can be checked once it’s back.`,
                 reviewTitle: "Review changes",

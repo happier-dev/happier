@@ -84,7 +84,7 @@ function finishedRun(
 }
 
 describe('Machine Setup run region (lab L7-done)', () => {
-  it('heads a finished run with what is now on the Machine and when it finished', async () => {
+  it.each([false, true])('heads a finished run with its preset and only reports a completed post-run check (%s)', async checkedAfter => {
     const { operation, steps } = finishedRun({
       id: 'acme',
       revision: 7,
@@ -98,6 +98,7 @@ describe('Machine Setup run region (lab L7-done)', () => {
         steps={steps}
         machineName="devbox"
         onRetry={null}
+        checkedAfter={checkedAfter}
       />,
     );
     const titled = screen.tree.findAll(
@@ -111,7 +112,7 @@ describe('Machine Setup run region (lab L7-done)', () => {
     );
     expect(titled.length).toBeGreaterThan(0);
     expect(titled[0]!.props.subtitle).toBe(
-      t('machinePresets.setup.tab.finishedAt', {
+      t(checkedAfter ? 'machinePresets.setup.tab.finishedAndChecked' : 'machinePresets.setup.tab.finishedAt', {
         time: formatHappierAsOfTime(
           SETTLED_AT,
           Date.now(),

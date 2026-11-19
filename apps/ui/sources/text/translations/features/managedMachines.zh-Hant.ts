@@ -754,6 +754,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `在 ${machine} 上第 ${current}/${total} 步停止`,
                 presetIsOn: ({ preset, revision, machine }: { preset: string; revision: number; machine: string }) => `${preset} 修訂版 ${revision} 已在 ${machine} 上`,
                 finishedAt: ({ time }: { time: string }) => `${time} 完成`,
+                finishedAndChecked: ({ time }: { time: string }) => `${time} 完成 · 完成後已檢查`,
                 readOnly: "你可以使用此機器。其設定由擁有者和管理者變更。",
                 reviewTitle: "檢視變更",
                 reviewRemove: "檢視移除",

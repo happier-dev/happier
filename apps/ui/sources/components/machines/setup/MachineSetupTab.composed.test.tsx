@@ -664,9 +664,15 @@ describe('Machine → Setup tab (P-M1)', () => {
     const scripts = [{ body: 'printf FIRST', affects: 'none' as const }, { body: 'printf SECOND', affects: 'none' as const }];
     const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, sources: [{ kind: 'direct', setup: { scripts } }],
       exclusions: [], support: [], recipePlans: [] });
-    harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    let holdPlan: Promise<void> | null = null;
+    let refusePlans = false;
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
-      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true, result: plan } } };
+      const refused = refusePlans;
+      await holdPlan;
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: refused
+        ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }
+        : { ok: true, result: plan } } };
     } });
     const [{ actionOperationStore }, { createSetupOperationSnapshot }, { createWorkflowRunSummaryFixture }] = await Promise.all([
       import('@/sync/domains/actionOperations/actionOperationStore'),
@@ -694,7 +700,8 @@ describe('Machine → Setup tab (P-M1)', () => {
               authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } },
           execute: async context => {
             if (!context.operationAcceptance || !context.operationOwnerUpdate) throw new Error('Native owner not admitted');
-            const snapshot = createSetupOperationSnapshot({ kind: 'machineSetup', serverId: 'srv_build', machineId: 'devbox' },
+            const snapshot = createSetupOperationSnapshot({ kind: 'machineSetup', serverId: 'srv_build', machineId: 'devbox',
+              preset: { id: 'build', revision: 2, name: 'Build box' } },
               [], context.operationOwnerUpdate.update, scripts);
             const nativeResult = { operationId: context.operationAcceptance.operationId, terminalId: 'native-output' };
             context.operationAcceptance.accept(nativeResult);
@@ -777,12 +784,15 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect(hook.getCurrent().operationId).toBe(rootId));
     expect(hook.getCurrent().progressOperation?.snapshot.domainRef).toMatchObject({ kind: 'machineSetup',
       steps: [{ state: 'running' }, { state: 'pending' }] });
-    const [{ MachineSetupTab }, { AccountNoticeInvestigationBoundary }] = await Promise.all([
+    const [{ MachineSetupTab }, { AccountNoticeInvestigationBoundary }, { ItemList }] = await Promise.all([
       import('./MachineSetupTab'), import('@/hooks/inbox/AccountNoticeInvestigationProvider'),
+      import('@/components/ui/lists/ItemList'),
     ]);
     const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
-      <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
-        params={{ id: 'setup' }} setParams={() => {}} />
+      <ItemList>
+        <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+          params={{ id: 'setup' }} setParams={() => {}} />
+      </ItemList>
     </AccountNoticeInvestigationBoundary>);
     onTestFinished(() => screen.unmount());
     const { t } = await import('@/text');
@@ -807,8 +817,46 @@ describe('Machine → Setup tab (P-M1)', () => {
       expect(screen.findByTestId('machine-setup-apply')).toBeNull();
     }
     expect(hook.getCurrent().operation?.snapshot.state).toBe('running');
+    // A read that started before settlement cannot produce the post-run check fact.
+    let releasePlan!: () => void;
+    holdPlan = new Promise<void>(resolve => { releasePlan = resolve; });
+    onTestFinished(() => releasePlan());
+    const plansBefore = harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan').length;
+    let checking!: Promise<void>;
+    await act(async () => { checking = hook.getCurrent().check(); });
+    await waitForHomeGovernance(() => expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan'))
+      .toHaveLength(plansBefore + 1));
+    // Both mounted consumers must see the refusal when their post-run read starts.
+    // The already-started read captured success before this boundary changed.
+    refusePlans = outcome === 'succeeded';
     await act(async () => { finishRoot(); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().operation?.snapshot.state).toBe(outcome));
+    expect(hook.getCurrent().checkedAfterOperationId).toBeNull();
+    holdPlan = null;
+    await act(async () => { releasePlan(); await checking; });
+    if (outcome === 'succeeded') {
+      await waitForHomeGovernance(() => expect(hook.getCurrent().failure?.during).toBe('check'));
+      expect(hook.getCurrent().checkedAfterOperationId).toBeNull();
+      const [{ formatHappierAsOfTime }, { getPreferredLanguage }] = await Promise.all([
+        import('@happier-dev/plugin-ui/presentation'), import('@/text'),
+      ]);
+      expect(runLine(t('machinePresets.setup.tab.finishedAt', {
+        time: formatHappierAsOfTime(hook.getCurrent().progressOperation!.snapshot.settledAt!, Date.now(), getPreferredLanguage()),
+      }))).toBe(true);
+      refusePlans = false;
+      await act(async () => { await hook.getCurrent().check(); });
+      await screen.pressByTestIdAsync('machine-setup-check-again');
+    }
+    await waitForHomeGovernance(() => expect(hook.getCurrent().checkedAfterOperationId).toBe(rootId));
+    if (outcome === 'succeeded') {
+      const [{ formatHappierAsOfTime }, { getPreferredLanguage }] = await Promise.all([
+        import('@happier-dev/plugin-ui/presentation'), import('@/text'),
+      ]);
+      const settledAt = hook.getCurrent().progressOperation!.snapshot.settledAt!;
+      await waitForHomeGovernance(() => expect(runLine(t('machinePresets.setup.tab.finishedAndChecked', {
+        time: formatHappierAsOfTime(settledAt, Date.now(), getPreferredLanguage()),
+      }))).toBe(true));
+    }
     if (outcome === 'failed') {
       await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-stopped.action')).not.toBeNull());
     }
@@ -1276,7 +1324,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect(pressable('machine-setup-source-again:account:build')).toBeDefined());
     sourceBuildAgainVisible = true;
     expect(harness.requests.filter(request => request.path === '/v1/machines/presets/list')).toHaveLength(1);
-    expect(plans).toEqual([{ homeId: 'srv_build', machineId: 'devbox' }]);
+    expect(plans).toEqual([{ homeId: 'srv_build', machineId: 'devbox', mode: 'check' }]);
     expect(frontDoorReads().length).toBeGreaterThan(0);
     // Review changes → Build box's changed setup reviews in place under the name its row shows; nothing runs before Apply.
     phase = 'review Build box in place';
@@ -1302,13 +1350,14 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect(mounted.findByTestId('actions.confirmation-review.decision-approve')).toBeNull();
     expect(mounted.tree.findAll(node => typeof node.props?.diagnosticCode === 'string')).toEqual([]);
     expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.apply')).toHaveLength(1);
-    // The open check, then the candidate's effects at Review and once more by the receiver at Apply: the tab's
-    // already-held Plan is the baseline, so Review changes runs no second plain check.
+    // Review uses the held baseline; Apply prepares its effects once. A single
+    // plain check after settlement establishes the finished run's observation.
     const candidatePreset = { presetId: 'build', presetRevision: 2 };
     expect(plans).toEqual([
-      { homeId: 'srv_build', machineId: 'devbox' },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: proposedSources(), exclusions: [] },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
     ]);
     const artifacts = harness.artifacts(home);
     expect(artifacts.list()).toHaveLength(0);
@@ -1318,11 +1367,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     const operationId = received.items[0]!.operationId;
     expect(await operations.handlers.getV2({ operationId, waitForTerminal: true }))
       .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
-    // The review becomes the Apply's own operation, in place; nothing else is planned or applied.
+    // The review becomes the Apply's own operation, followed by its read-only check.
     phase = 'operation rows in place';
     await waitForHomeGovernance(() => expect(mounted.findByTestId('machine-setup-operation')).not.toBeNull());
     expect(mounted.findByTestId('machine-setup-review')).toBeNull();
-    expect(plans).toHaveLength(3);
+    expect(plans).toHaveLength(4);
     expect(applied).toHaveLength(1);
     expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
     await mounted.unmount();
