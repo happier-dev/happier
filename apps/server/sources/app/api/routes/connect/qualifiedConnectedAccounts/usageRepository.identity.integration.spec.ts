@@ -12,7 +12,8 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { sealProviderAccountUsageSnapshot, openSealedProviderAccountUsageSnapshot } from "@happier-dev/protocol/connect/accountUsage";
-import { ConnectedServiceQuotaSnapshotV1Schema } from "@happier-dev/protocol";
+import { buildQualifiedPluginContributionKey, ConnectedServiceQuotaSnapshotV1Schema } from "@happier-dev/protocol";
+import { buildQualifiedConnectedAccountLocalSubjectId } from "@happier-dev/protocol/connect/qualified-connected-account-persistence";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import {
     createLightSqliteHarness,
@@ -285,6 +286,38 @@ describe("qualified Connected Account usage stored identity", () => {
             source: { ref, bindingKind: 'account' }, fetchedAt: Date.now(), planLabel: 'legacy account scope' });
         await expect(writeQualifiedProviderAccountUsageRecord(write)).rejects.toMatchObject({ kind: 'mismatch' });
         expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toBeNull();
+    });
+
+    it('links identity-free usage only to the organization stored on an account that names only its organization', async () => {
+        // A Vercel team token reports its team but no provider user (deploy auto-mode F-PLAN-LIVE).
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const ref = { service, accountId: 'organization-only' };
+        const credential = await mutateQualifiedConnectedServiceCredential({ accountId: account.id, ref,
+            expectedCredentialRevision: null, authenticationModeId: 'api-key',
+            content: { t: 'plain', v: { token: 'team-token' } },
+            metadata: { scopes: [], providerIdentity: { accountId: null, organizationId: 'team-a' } },
+        });
+        if (credential.status !== 'written') throw new Error('Expected credential create');
+        const localKey = createProviderAccountUsageRecordKey({ providerId: buildQualifiedPluginContributionKey(service),
+            accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(ref), subjectKind: 'unknown' });
+        const write = (recordKey: typeof localKey, planLabel: string) => {
+            const snapshot = createUsageSnapshot({ fetchedAt: Date.now(), recordKey, planLabel });
+            return writeQualifiedProviderAccountUsageRecord({ accountId: account.id, source: { ref, bindingKind: 'account' },
+                expectedCredentialRevision: credential.credentialRevision, expectedConfigurationRevision: null,
+                recordId: snapshot.recordId, recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+                fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+        };
+        // Another team's, an unscoped, or a provider user's record is never this connection's (the server's stored team decides).
+        for (const recordKey of [{ ...localKey, quotaScope: 'organization' as const, quotaScopeId: 'team-b' }, localKey]) {
+            await expect(write(recordKey, 'Other')).resolves.toMatchObject({ sourceOutcome: { status: 'skipped', reason: 'ownership_unproven' } });
+        }
+        await expect(write({ ...localKey, subjectKind: 'account', accountSubjectId: 'provider-user',
+            quotaScope: 'organization', quotaScopeId: 'team-a' }, 'Other')).resolves.toMatchObject({ sourceOutcome: { status: 'skipped' } });
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toBeNull();
+        const teamKey = { ...localKey, quotaScope: 'organization' as const, quotaScopeId: 'team-a' };
+        await expect(write(teamKey, 'Pro')).resolves.toMatchObject({ sourceOutcome: { status: 'linked' } });
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref }))
+            .toMatchObject({ snapshot: { planLabel: 'Pro', recordKey: { quotaScopeId: 'team-a' } } });
     });
 
     it.each(['org-b', undefined] as const)('unlinks all usage aliases when the same provider user changes organization context to %s', async organizationId => {

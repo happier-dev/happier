@@ -27,6 +27,7 @@ import {
 } from './connectedServiceSchemas.js';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from './connectedServiceBindings.js';
 import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import { isQualifiedConnectedAccountLocalSubjectId } from './qualifiedConnectedAccountPersistence.js';
 import {
     ProviderAccountUsageConfidenceV1Schema,
     ProviderAccountUsageRecordIdSchema,
@@ -82,6 +83,18 @@ export function isProviderAccountUsageIdentityMatch(
     const observedOrganization = 'quotaScope' in observed
         ? observed.quotaScope === 'organization'
         : Boolean(observed.providerOrganizationId);
+    // An account that names only its organization (a Vercel team token) owns identity-free usage scoped to exactly
+    // that organization: never a provider account's usage, and never another organization's.
+    if (current && !current.providerAccountId && current.providerOrganizationId
+        && usageIdentity?.requiredContext !== 'organization') {
+        const identityFree = 'quotaScope' in observed
+            ? observed.subjectKind === 'unknown'
+            : observed.activeAccountId === undefined || isQualifiedConnectedAccountLocalSubjectId(observed.activeAccountId);
+        const observedOrganizationId = 'quotaScope' in observed
+            ? observed.quotaScope === 'organization' ? observed.quotaScopeId ?? null : null
+            : observed.providerOrganizationId ?? null;
+        return identityFree && observedOrganizationId === current.providerOrganizationId;
+    }
     if (usageIdentity?.requiredContext === 'organization' || observedOrganization || current?.providerOrganizationId) {
         return isProviderAccountUsageOrganizationContextMatch(observed, current);
     }

@@ -75,6 +75,16 @@ export function buildQualifiedConnectedAccountLocalSubjectId(ref: QualifiedConne
   return JSON.stringify([ref.service.pluginId, ref.service.localId, ref.accountId]);
 }
 
+/** Whether a usage subject is a connected Account's own local subject rather than a provider account id. */
+export function isQualifiedConnectedAccountLocalSubjectId(subjectId: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(subjectId);
+    return Array.isArray(parsed) && parsed.length === 3 && parsed.every(part => typeof part === 'string' && part.length > 0);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The one equality for a qualified connected-account ref.
  *

@@ -175,6 +175,22 @@ describe('provider account usage protocol', () => {
         expect(match({ ...quota, providerOrganizationId: undefined }, current, { providerId: 'claude' })).toBe(false);
     });
 
+    it('admits only identity-free usage of its own organization for an account that names only its organization', () => {
+        // A Vercel team token reports its team but no provider user (deploy auto-mode F-PLAN-LIVE).
+        const match = requireExport('isProviderAccountUsageIdentityMatch', isFunction);
+        const current = { providerAccountId: null, providerOrganizationId: 'team-a' };
+        const local = JSON.stringify(['example.vercel', 'account', 'team-connection']);
+        const key = { providerId: 'vercel', accountSubjectId: local, subjectKind: 'unknown', quotaScope: 'organization', quotaScopeId: 'team-a' };
+        const quota = { providerId: 'vercel', activeAccountId: local, providerOrganizationId: 'team-a' };
+        for (const observed of [key, quota]) expect(match(observed, current, { providerId: 'vercel' })).toBe(true);
+        expect(match({ ...key, quotaScopeId: 'team-b' }, current)).toBe(false);
+        expect(match({ ...quota, providerOrganizationId: 'team-b' }, current)).toBe(false);
+        expect(match({ ...key, quotaScope: 'account', quotaScopeId: undefined }, current)).toBe(false);
+        expect(match({ ...key, subjectKind: 'account', accountSubjectId: 'user-a' }, current)).toBe(false);
+        expect(match({ ...quota, activeAccountId: 'user-a' }, current)).toBe(false);
+        expect(match(key, current, { requiredContext: 'organization' })).toBe(false);
+    });
+
     it('matches both PAU keys and quota projections only to the exact current account and organization', () => {
         const match = requireExport('isProviderAccountUsageOrganizationContextMatch', isFunction);
         const current = { providerAccountId: 'user-a', providerOrganizationId: 'org-a' };

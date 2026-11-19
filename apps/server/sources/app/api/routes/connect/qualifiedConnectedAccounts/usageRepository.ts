@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { buildConnectedServicesAccountChangeV1, buildProviderAccountUsageRefreshChangeV1 } from '@happier-dev/protocol/changes';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/app/changes/markAccountChanged';
 
-import { isProviderAccountUsageOrganizationContextMatch } from '@happier-dev/protocol/connect/accountUsage';
+import { isProviderAccountUsageIdentityMatch, isProviderAccountUsageOrganizationContextMatch } from '@happier-dev/protocol/connect/accountUsage';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, ProviderAccountUsageRecordKeyV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { buildQualifiedConnectedAccountLocalSubjectId, QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4, type QualifiedConnectedServiceUsageSourceResolutionV4, type QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -430,11 +430,19 @@ function assertQualifiedUsageOwnership(params: Readonly<{
     recordQuotaScopeId: string | null;
 }>): void {
     // An identity-free provider sample belongs only to this exact connected Account.
-    // It proves no provider-global or organization ownership and cannot be shared.
-    if (params.providerAccountId === null && params.providerOrganizationId === null
-        && params.recordSubjectKind === 'unknown' && params.recordQuotaScope === 'account'
-        && params.recordQuotaScopeId === null
-        && params.recordAccountSubjectId === buildQualifiedConnectedAccountLocalSubjectId(params.ref)) return;
+    // It proves no provider-global ownership and cannot be shared. Its organization
+    // scope, if any, must be the one stored on this Account's own credential; the
+    // protocol identity match decides that (an account naming only its organization,
+    // such as a Vercel team token, owns identity-free usage of exactly that team).
+    if (params.providerAccountId === null && params.recordSubjectKind === 'unknown'
+        && (params.recordQuotaScope === 'account' ? params.recordQuotaScopeId === null : params.recordQuotaScope === 'organization')
+        && params.recordAccountSubjectId === buildQualifiedConnectedAccountLocalSubjectId(params.ref)
+        && isProviderAccountUsageIdentityMatch({
+            accountSubjectId: params.recordAccountSubjectId,
+            subjectKind: 'unknown',
+            quotaScope: ProviderAccountUsageRecordKeyV1Schema.shape.quotaScope.parse(params.recordQuotaScope),
+            ...(params.recordQuotaScopeId ? { quotaScopeId: params.recordQuotaScopeId } : {}),
+        }, { providerAccountId: null, providerOrganizationId: params.providerOrganizationId })) return;
     if (
         params.providerAccountId === null
         || params.recordSubjectKind !== "account"

@@ -16,6 +16,7 @@ import { admitRequesterSessionBootstrap } from '../../sessionEncryption/requeste
 import { createCliNotificationChannelStore } from '@/settings/notifications/notificationChannelStore';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sealNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -322,6 +323,84 @@ it.each([
   await coordinator.tickOnce();
   expect(writeProviderAccountUsage).toHaveBeenCalledTimes(3);
   expect(await readFile(fixture.marker, 'utf8')).toBe('work\nwork\n');
+});
+
+it('keeps account-bearing usage keys and never shares one key across organizations or with a provider account', () => {
+  const ref = { service: { pluginId: 'example.keys', localId: 'account' }, accountId: 'connection' };
+  const providerId = 'example.keys/account';
+  const key = (providerIdentity: QualifiedConnectedAccountProfileV4['providerIdentity'], providerOrganizationId?: string) =>
+    buildProviderAccountUsageIdentityFromQualifiedAccount({ ref, providerIdentity, providerOrganizationId });
+  // Persisted keys of account-bearing connections are unchanged.
+  expect(key({ accountId: 'user-a' }).recordKey).toEqual({ providerId, accountSubjectId: 'user-a', subjectKind: 'account', quotaScope: 'account' });
+  expect(key({ accountId: 'user-a', organizationId: 'org-a' }, 'org-a').recordKey).toEqual({ providerId, accountSubjectId: 'user-a',
+    subjectKind: 'account', quotaScope: 'organization', quotaScopeId: 'org-a' });
+  expect(key({ accountId: 'user-a', organizationId: 'org-a' }).recordKey).toEqual({ providerId, accountSubjectId: 'user-a', subjectKind: 'account', quotaScope: 'account' });
+  expect(key(undefined).recordKey).toEqual({ providerId, accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(ref), subjectKind: 'unknown', quotaScope: 'account' });
+  // An organization-only connection keys to its own stored team, never a probe's, and never to a provider account's key.
+  const teamA = key({ accountId: null, organizationId: 'team-a' }, 'team-b');
+  expect(teamA.recordKey).toEqual({ providerId, accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(ref), subjectKind: 'unknown',
+    quotaScope: 'organization', quotaScopeId: 'team-a' });
+  const ids = [teamA, key({ accountId: null, organizationId: 'team-b' }), key({ accountId: 'user-a', organizationId: 'team-a' }, 'team-a'), key(undefined)]
+    .map(identity => identity.recordId);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+it('keeps a just-added account that names only its organization on one identity-free team record and reads it once', async () => {
+  // Deploy auto-mode F-PLAN-LIVE: a Vercel team token reports its team and no provider user.
+  const now = 1_000_000;
+  const profile: QualifiedConnectedAccountProfileV4 = {
+    ref: { service: { pluginId: 'example.organization-only', localId: 'account' }, accountId: 'team-connection' },
+    status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+    credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
+    providerIdentity: { accountId: null, organizationId: 'team-a' }, displayName: 'Team', scopes: [],
+  };
+  const fixture = await createQualifiedQuotaRuntimeFixture(profile, now);
+  let stored: ProviderAccountUsageSnapshotV1 | null = null;
+  // Home persistence is the boundary; plugin admission, record identity and cadence stay real.
+  const writeProviderAccountUsage = vi.fn(async (params: Readonly<{ token: string; write: unknown }>) => {
+    const write = QualifiedProviderAccountUsageWriteV4Schema.parse(params.write);
+    if (!write.snapshot) throw new Error('Expected plain fixture content');
+    stored = write.snapshot;
+    return { success: true as const };
+  });
+  const coordinator = new ConnectedServiceQuotasCoordinator({
+    api: { getAccountEncryptionMode: async () => 'plain', getConnectedServiceQuotaSnapshotSealed: async () => null,
+      getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
+    credentials: fixture.credentials, quotaFetchers: [], now: () => now,
+    randomBytes: length => new Uint8Array(length),
+    qualifiedConnectedAccountRuntime: {
+      resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
+      resolveUsageIdentity: fixture.resolveUsageIdentity,
+      listScheduledAccounts: async () => [profile], listGroupQuotaTargets: async () => [],
+      readQuota: async () => stored ? {
+        ref: profile.ref,
+        sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' as const }, recordId: stored.recordId,
+          providerAccountId: null, fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs },
+        content: { t: 'plain' as const, v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot: stored, ref: profile.ref }) },
+        metadata: { fetchedAt: stored.fetchedAtMs, staleAfterMs: stored.staleAfterMs,
+          status: stored.state === 'not_loaded' ? 'unavailable' as const : 'ok' as const },
+      } : null,
+      writeProviderAccountUsage,
+    },
+  });
+  onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
+  await coordinator.tickOnce();
+  const recordKeys = writeProviderAccountUsage.mock.calls.map(([params]) =>
+    QualifiedProviderAccountUsageWriteV4Schema.parse(params.write).recordKey);
+  // Source initialization and the first acquisition address one identity-free record Home can link.
+  expect(recordKeys.length).toBeGreaterThan(0);
+  for (const recordKey of recordKeys) expect(recordKey).toEqual({
+    providerId: buildQualifiedPluginContributionKey(profile.ref.service),
+    accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(profile.ref), subjectKind: 'unknown',
+    quotaScope: 'organization', quotaScopeId: 'team-a',
+  });
+  expect(await readFile(fixture.marker, 'utf8')).toBe('team-connection\n');
+  const writes = writeProviderAccountUsage.mock.calls.length;
+  coordinator.invalidateInventory();
+  await coordinator.tickOnce();
+  // The stored observation is admitted back: no second acquisition and no re-initialization over it.
+  expect(await readFile(fixture.marker, 'utf8')).toBe('team-connection\n');
+  expect(writeProviderAccountUsage).toHaveBeenCalledTimes(writes);
 });
 
 it.each(['usable', 'partial_usable', 'partial_active', 'partial_unknown', 'no_usable', 'all_deferred', 'soft_usable', 'soft_partial_active'] as const)('PORT-PS-AB selects across eleven members with per-member probe deferral (%s)', async scenario => {

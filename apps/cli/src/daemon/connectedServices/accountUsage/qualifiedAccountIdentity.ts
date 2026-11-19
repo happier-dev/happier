@@ -18,7 +18,13 @@ export function buildProviderAccountUsageIdentityFromQualifiedAccount(input: Rea
     const providerId = input.usageIdentity?.providerId ?? buildQualifiedPluginContributionKey(input.ref.service);
     const providerAccountId = input.providerIdentity?.accountId?.trim() ?? '';
     const accountSubjectId = providerAccountId || buildQualifiedConnectedAccountLocalSubjectId(input.ref);
-    const providerOrganizationId = input.providerOrganizationId?.trim();
+    // A provider account keeps its observed organization scope. An account naming only its organization (a Vercel team
+    // token) keys identity-free usage to the organization stored on that account, whatever one probe reported, so its
+    // source initialization and every acquisition share one record per team; Home's ownership check
+    // (protocol isProviderAccountUsageIdentityMatch) admits exactly that organization.
+    const providerOrganizationId = providerAccountId
+        ? input.providerOrganizationId?.trim()
+        : input.providerIdentity?.organizationId?.trim();
     const recordKey: ProviderAccountUsageRecordKeyV1 = {
         providerId, accountSubjectId,
         subjectKind: providerAccountId ? 'account' : 'unknown',
