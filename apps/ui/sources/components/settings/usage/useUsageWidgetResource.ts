@@ -94,6 +94,10 @@ export function useUsageWidgetResource(input: Readonly<{
     }, [context, presented]);
     React.useLayoutEffect(() => {
         if (!entry || !input.retainPendingDemand || !presented) return;
+        // Retain cold or pending demand until it settles. A settled static
+        // subscription starts a read before the live watch can reuse admission.
+        const snapshot = entry.getSnapshot();
+        if (snapshot.value !== undefined && snapshot.pending === 'idle') return;
         let retired = false;
         let unsubscribe = () => {};
         const key = input.plan.batchKey;

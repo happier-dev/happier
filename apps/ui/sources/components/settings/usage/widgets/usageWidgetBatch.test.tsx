@@ -9,7 +9,7 @@ import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryBatchRes
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
-import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { serveAccountHomes, createServedHomeAccountToken } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -48,6 +48,9 @@ import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/compon
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+
+// Real Socket.IO serialization with the canonical cold external transport.
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 const accounting: UsageAnalyticsQueryResponse = {
   v: 1,
@@ -114,6 +117,58 @@ describe('Usage page batch', () => {
     // Measurement only: the real evaluator still owns every finding and decision.
     const coachEvaluations = vi.spyOn(await import('@happier-dev/protocol/usage/coach/evaluateUsageCoach'), 'evaluateUsageCoach');
     const allowanceEvaluations = vi.spyOn(await import('@/sync/api/account/apiProviderAccountUsage'), 'getProviderAccountUsageQuota');
+    const pageAggregations = vi.spyOn(await import('@happier-dev/protocol/usage/resolveUsagePageAggregation'), 'resolveUsagePageAggregation');
+    const howYouWorkProjections = vi.spyOn(await import('@happier-dev/protocol/usage/resolveUsageHowYouWork'), 'resolveUsageHowYouWork');
+    let countWarmAcquisitions = false;
+    let warmReadmissions = 0;
+    const warmAcquisitionStates = new Set<string>();
+    const resourceOwner = await import('@/sync/api/account/usageQueryResource');
+    const getStore = resourceOwner.getUsageQueryResourceStore;
+    type Store = ReturnType<typeof getStore>;
+    type Entry = ReturnType<Store['getEntry']>;
+    const observedStores = new WeakMap<Store, Store>();
+    const observedEntries = new WeakMap<Entry, Entry>();
+    const previousPending = new WeakMap<Entry['getSnapshot'], ReturnType<Entry['getSnapshot']>['pending']>();
+    const observeMethod = <T extends object>(owner: T, method: keyof T, observed: T[keyof T]): T => {
+      const methods = new Map<PropertyKey, unknown>();
+      return new Proxy({ ...owner }, { get(_target, property) {
+        if (property === method) return observed;
+        const value: unknown = Reflect.get(owner, property, owner);
+        if (typeof value !== 'function') return value;
+        if (!methods.has(property)) methods.set(property, value.bind(owner));
+        return methods.get(property);
+      } });
+    };
+    // Observe consumers' actual snapshots without acquiring or subscribing to
+    // extra demand. Keep the real store, entry methods and facade identities.
+    vi.spyOn(resourceOwner, 'getUsageQueryResourceStore').mockImplementation((...args) => {
+      const owner = getStore(...args);
+      let observed = observedStores.get(owner);
+      if (!observed) {
+        const getEntry: Store['getEntry'] = (...entryArgs) => {
+          const entry = owner.getEntry(...entryArgs);
+          let facade = observedEntries.get(entry);
+          if (!facade) {
+            const getSnapshot: Entry['getSnapshot'] = () => {
+              const snapshot = entry.getSnapshot();
+              const previous = previousPending.get(entry.getSnapshot);
+              previousPending.set(entry.getSnapshot, snapshot.pending);
+              if (countWarmAcquisitions && snapshot.pending !== 'idle') {
+                warmAcquisitionStates.add(snapshot.pending);
+                if (previous === undefined || previous === 'idle') warmReadmissions++;
+              }
+              return snapshot;
+            };
+            facade = observeMethod(entry, 'getSnapshot', getSnapshot);
+            observedEntries.set(entry, facade);
+          }
+          return facade;
+        };
+        observed = observeMethod(owner, 'getEntry', getEntry);
+        observedStores.set(owner, observed);
+      }
+      return observed;
+    });
     let observeAdmission = false;
     let activityIssued = false;
     let inputsBeforeActivity = 0;
@@ -136,6 +191,9 @@ describe('Usage page batch', () => {
     let revision = 1;
     let agentTimeMs = 300;
     let denySession = false;
+    let deniedSessionReads = 0;
+    let failSessionRead = false;
+    let failedSessionReads = 0;
     let coachPreferenceReadsOnSwitch = 0;
     let quotaReadsOnSwitch = 0;
     let quotaReads = 0;
@@ -216,8 +274,18 @@ describe('Usage page batch', () => {
           ];
           return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['switch-denied', 'switch-session'] })),
             results: rows.filter(row => !input.requests[0]?.sessionIds || input.requests[0].sessionIds.includes(row.sessionId))
-                .map(row => denySession && row.sessionId === 'switch-session'
-                  ? { sessionId: row.sessionId, detail: { status: 403, body: { error: 'forbidden' } } } : row) });
+                .map(row => {
+                  if (row.sessionId !== 'switch-session') return row;
+                  if (denySession) {
+                    deniedSessionReads++;
+                    return { sessionId: row.sessionId, detail: { status: 403, body: { error: 'forbidden' } } };
+                  }
+                  if (failSessionRead) {
+                    failedSessionReads++;
+                    return { sessionId: row.sessionId, detail: { status: 503, body: { error: 'unavailable' } } };
+                  }
+                  return row;
+                }) });
         }
         return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
       } });
@@ -241,6 +309,15 @@ describe('Usage page batch', () => {
       useUsageWidgetBatchCostBasis();
       return null;
     }
+    let countWarmPublications = false;
+    const warmBatchPublications = new Set<ReturnType<typeof useUsageWidgetBatchSlices>>();
+    function WarmBatchPublicationProbe() {
+      const slices = useUsageWidgetBatchSlices();
+      // Count admitted displayed batches, not the temporary empty collection
+      // while frames register. The normal slice selector retains equal output.
+      if (countWarmPublications && slices.length > 0) warmBatchPublications.add(slices);
+      return null;
+    }
     const rendersByWidget = new Map<string, number>();
     const phasesByWidget = new Map<string, unknown[]>();
     const renderCountsSince = (previous: ReadonlyMap<string, number>) => Object.fromEntries([...rendersByWidget]
@@ -259,26 +336,28 @@ describe('Usage page batch', () => {
       React.useEffect(() => () => { models.delete(props.id); }, [props.id]);
       return null;
     }
-    const page = (presetId: 'coach' | 'how-you-work', layoutReady = true) => {
+    const page = (presetId: 'coach' | 'how-you-work', layoutReady = true, sources: readonly string[] = scope.sources) => {
       const widgets = flattenWidgetLayoutWidgetsV1(WidgetLayoutItemsV1Schema.parse(presets.find(preset => preset.id === presetId)!.items));
       return <InjectedAuthProvider credentials={credentials}>
-      <UsageWidgetBatchProvider clauses={clauses} enabled={layoutReady}
+      <UsageWidgetBatchProvider clauses={sources === scope.sources ? clauses
+        : readUsageWidgetQueryOverrides(normalizeUsageQuery({ ...clauses, sources: [...sources] }))} enabled={layoutReady}
         inventoryQuery={layoutReady ? normalizeUsageQuery({ period: { relative: '90days' } }) : undefined}
         queryWidgetIds={layoutReady ? widgets.map(row => row.instance.id) : undefined}>
         <CostChoiceProbe />
+        <WarmBatchPublicationProbe />
         {layoutReady && widgets.map(row => {
           if (row.instance.definition.kind !== 'builtin') throw new Error('Usage presets require builtin widgets');
           return <WidgetFrameInstanceIdContext.Provider key={row.instance.id} value={row.instance.id}><Probe id={row.instance.id}
             widgetId={row.instance.definition.id as Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>}
             input={{ ...scope, period: { relative: '90days' }, ...Object.fromEntries(Object.entries(row.instance.bindings)
-              .flatMap(([key, binding]) => binding.kind === 'value' ? [[key, binding.value]] : [])) }} /></WidgetFrameInstanceIdContext.Provider>;
+              .flatMap(([key, binding]) => binding.kind === 'value' ? [[key, binding.value]] : [])), sources: [...sources] }} /></WidgetFrameInstanceIdContext.Provider>;
         })}
       </UsageWidgetBatchProvider></InjectedAuthProvider>;
     };
     const screen = await renderScreen(page('coach'));
     const settle = async (count: number) => {
       await expect.poll(async () => { await flushHookEffects({ cycles: 4 });
-        return models.size === count && [...models.values()].every(model => model.slice && !model.pending);
+        return models.size === count && [...models.values()].every(model => model.slice && !model.pending && !model.refreshing);
       }).toBe(true);
     };
     const reads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query'
@@ -343,8 +422,36 @@ describe('Usage page batch', () => {
       const revisitWidgetRenders = new Map(rendersByWidget);
       await screen.update(page('coach'));
       await settle(1);
+      // The warm return owns this measurement; Coach's mounting and settlement
+      // cannot consume How you work's projection or per-consumer render budget.
+      const warmWidgetRenders = new Map(rendersByWidget);
+      const warmWidgetPhaseStarts = new Map([...phasesByWidget].map(([id, phases]) => [id, phases.length]));
+      pageAggregations.mockClear();
+      howYouWorkProjections.mockClear();
+      warmBatchPublications.clear();
+      countWarmPublications = true;
+      countWarmAcquisitions = true;
       await screen.update(page('how-you-work'));
       await settle(8);
+      await flushHookEffects({ cycles: 4 });
+      countWarmPublications = false;
+      countWarmAcquisitions = false;
+      const warmRendersByWidget = renderCountsSince(warmWidgetRenders);
+      const warmCounts = { readmissions: warmReadmissions, acquisitionStates: [...warmAcquisitionStates],
+        pageAggregations: pageAggregations.mock.calls.length,
+        howYouWorkProjections: howYouWorkProjections.mock.calls.length,
+        batchPublications: warmBatchPublications.size,
+        phasesByWidget: Object.fromEntries([...models.keys()].map(id => [id, phasesByWidget.get(id)?.slice(warmWidgetPhaseStarts.get(id) ?? 0)])),
+        rendersByWidget: Object.fromEntries([...models.keys()].map(id => [id, warmRendersByWidget[id] ?? 0])) };
+      console.info('USAGE-HOW-WARM-COUNTS', JSON.stringify(warmCounts));
+      expect.soft(warmCounts.readmissions, 'a settled warm return admits no new Resource read').toBe(0);
+      expect.soft(warmCounts.acquisitionStates, 'a settled warm return never republishes an acquisition phase').toEqual([]);
+      expect.soft(warmCounts.pageAggregations, 'a settled warm return performs zero canonical page projections').toBe(0);
+      expect.soft(warmCounts.howYouWorkProjections, 'a settled warm return performs zero private How you work projections').toBe(0);
+      expect.soft(warmCounts.batchPublications, 'a settled warm return publishes one admitted displayed batch identity').toBe(1);
+      // Two executions: layout-effect demand registration, then retained content. A third is redundant.
+      for (const [id, count] of Object.entries(warmCounts.rendersByWidget))
+        expect.soft(count, `${id}: a settled warm return executes only registration then content`).toBeLessThanOrEqual(2);
       expect(reads() - admittedReads, 'a settled view switch admits no new accounting or private evidence reads').toBe(0);
       expect.soft(visits, 'revisiting admitted cohorts does not walk their compact evidence rows').toBe(0);
       expect(openings.mock.calls.length - admittedOpenings).toBe(0);
@@ -411,11 +518,300 @@ describe('Usage page batch', () => {
         'a new refusal replaces the previously complete aggregate rather than disclosing retained facts').toBe(true);
       for (const id of models.keys())
         expect(rendersByWidget.get(id)! - (beforeRefusal.get(id) ?? 0), `${id}: changed evidence availability reaches its frame`).toBeGreaterThan(0);
+      expect(deniedSessionReads, 'the actual evidence transport returned a lasting 403').toBeGreaterThan(0);
+      await act(async () => {
+        storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
+          seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1,
+          access: createSessionAccessFixture('view', { readTranscript: false }) })]);
+      });
+      await settle(8);
+      expect([...models.values()].every(model => model.slice?.howYouWork?.intervals == null)).toBe(true);
+      const beforeAccessRestored = evidenceReads();
+      denySession = false;
+      await act(async () => {
+        // The same Session sequence becomes readable through its real access
+        // descriptor. Recovery must not depend on manual Refresh or new data.
+        storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
+          seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1,
+          access: createSessionAccessFixture('owner') })]);
+      });
+      await expect.poll(() => [...models.values()].some(model => model.slice?.howYouWork?.intervals?.agentTimeMs === 600)).toBe(true);
+      await settle(8);
+      expect(evidenceReads(), 'restored access readmits the refused private source without Refresh').toBeGreaterThan(beforeAccessRestored);
+
+      failSessionRead = true;
+      revision++;
+      agentTimeMs = 800;
+      await act(async () => {
+        storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
+          seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
+        await [...models.values()][0]!.refresh();
+      });
+      await settle(8);
+      expect(failedSessionReads, 'the actual evidence transport returned a retryable 503').toBeGreaterThan(0);
+      expect([...models.values()].some(model => model.slice?.howYouWork?.intervals?.agentTimeMs === 800)).toBe(false);
+      await screen.update(page('coach'));
+      await settle(1);
+      failSessionRead = false;
+      const beforeTransportRecovered = evidenceReads();
+      // Neither Session basis nor accounting changes after the failed read.
+      // A retryable source must recover on reopen, unlike a lasting refusal.
+      await screen.update(page('how-you-work'));
+      await expect.poll(() => [...models.values()].some(model => model.slice?.howYouWork?.intervals?.agentTimeMs === 800)).toBe(true);
+      await settle(8);
+      expect(evidenceReads(), 'a warm reopen retries the failed private transport').toBeGreaterThan(beforeTransportRecovered);
+      const beforeSourceChange = reads();
+      await screen.update(page('how-you-work', true, ['provider']));
+      await settle(8);
+      expect(reads(), 'a deliberate Source change admits the newly selected accounting basis').toBeGreaterThan(beforeSourceChange);
+      expect([...models.values()].every(model => model.slice?.requestedQuery.sources.includes('provider'))).toBe(true);
     } finally {
       await screen.unmount();
       storage.setState(state => ({ settings: { ...state.settings, usageNightHoursV1: originalNightHours } }));
     }
   });
+  it('readmits a mounted private widget on its recipient-private envelope wake without a Session-list delta or Refresh', async () => {
+    const [{ Encryption }, { encodeBase64 }, { sealEncryptedDataKeyEnvelopeV1 },
+      { createAccountEncryptionCurrentnessFixtureForCredentials }, { createUsageSessionFactRecordsV1 },
+      { UsageParallelWidget }, { IntervalTimeline }, { captureAccountEncryptionCurrentness },
+      { publishHomeAccountChangeWake }] = await Promise.all([
+      import('@/sync/encryption/encryption'), import('@/encryption/base64'),
+      import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'),
+      import('@/dev/testkit/fixtures/accountEncryptionCurrentness'), import('@happier-dev/protocol/usage/usageWorkEvidence'),
+      import('./UsageParallelWidget'), import('@happier-dev/plugin-ui/presentation'),
+      import('@/sync/api/account/apiAccountEncryptionMode'), import('@/sync/runtime/orchestration/homeAccountChange'),
+    ]);
+    const nowMs = Date.UTC(2026, 10, 7, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const id = 'mounted-key-recipient';
+    const secret = new Uint8Array(32).fill(7);
+    const sessionKey = new Uint8Array(32).fill(9);
+    const encryption = await Encryption.create(secret);
+    await encryption.initializeSessions(new Map([[id, sessionKey]]));
+    const sessionEncryption = encryption.getSessionEncryption(id)!;
+    const sealedEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey,
+      recipientPublicKey: encryption.contentDataKey, randomBytes: length => new Uint8Array(length).fill(3) }), 'base64');
+    const facts = createUsageSessionFactRecordsV1({ id, seq: 1, metadataVersion: 1, agentStateVersion: 1,
+      metadata: null, agentState: null }, { status: 'partial', acceptedInputs: [], phaseEvents: [],
+      facts: [{ workId: JSON.stringify([id, 'turn']), evidenceId: 'turn', agentId: 'codex', machineId: null,
+        kind: 'busy', startMs: nowMs - 900, endMs: nowMs - 600 }] });
+    const encryptedFacts = new Map(await Promise.all(facts.map(async fact => [fact.kind, await sessionEncryption.encryptRaw(fact)] as const)));
+    const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
+    let envelope: string | null = null;
+    let evidenceReads = 0;
+    const access = { v: 1 as const, level: 'view' as const, sources: [{ kind: 'direct' as const, shareId: 'recipient-share' }],
+      capabilities: createSessionAccessFixture('view').capabilities };
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-mounted-key-recovery.test', accountId: 'account-a',
+      credentials, accountMode: 'e2ee', encryptionCurrentness: () => ({
+        ...createAccountEncryptionCurrentnessFixtureForCredentials(credentials), version: 1,
+      }) }], route: request => {
+      if (request.path === '/v2/usage/query') return Response.json(accounting);
+      if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+        evidenceReads++;
+        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        return Response.json(UsageSessionEvidenceResponseSchema.parse({
+          requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+          results: [{ sessionId: id, workFacts: { session: { id, seq: 1, createdAt: nowMs - 1000, updatedAt: nowMs - 100,
+            active: false, metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 0,
+            encryptionMode: 'e2ee', dataEncryptionKey: envelope, viewerRole: 'recipient', access },
+            records: (input.workFactKinds ?? ['work']).map(kind => ({ kind, content: { t: 'encrypted', c: encryptedFacts.get(kind)! } })) } }],
+        }));
+      }
+      return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+    } });
+    const server = home.homes.a!;
+    const accountScope = { serverId: server.id, accountId: 'account-a' };
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    storage.setState({ profileScope: accountScope, settingsScope: accountScope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs }, session: id, style: 'timeline' };
+    let observed: UsageWidgetBodyModel | undefined;
+    function PrivateWidget() {
+      const { model, query } = useUsageWidgetModel(input, 'usage_parallel');
+      observed = model;
+      return model.slice && query ? <UsageParallelWidget id="usage_parallel" model={model} slice={model.slice} query={query}
+        serverId={server.id} testID="key-recovery" presentation={{ style: 'timeline' }} /> : null;
+    }
+    const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={clauses}><PrivateWidget /></UsageWidgetBatchProvider>
+    </InjectedAuthProvider>);
+    const accountCurrentness = captureAccountEncryptionCurrentness(server.id);
+    try {
+      await expect.poll(() => observed?.slice !== null && observed?.pending === false).toBe(true);
+      expect(observed?.slice?.sources).toContainEqual(expect.objectContaining({ errorCode: 'encrypted_access_pending' }));
+      expect(observed?.slice?.howYouWork?.intervals).toBeNull();
+      expect(screen.findAllByType(IntervalTimeline)).toHaveLength(0);
+      const beforeMaterial = evidenceReads;
+      const beforeSessions = storage.getState().sessions;
+      const beforeListDelta = storage.getState().sessionListRenderableDelta;
+      await act(async () => {
+        // writeSessionDataKeyEnvelopeInTx marks only this recipient's Session
+        // changed. Its Account wake precedes any Session-list/detail hydration.
+        envelope = sealedEnvelope;
+        publishHomeAccountChangeWake(server.id, { t: 'account-change',
+          changeKinds: ['session'], entityIds: [id] }, 'socket');
+      });
+      await expect.poll(() => observed?.slice?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+      await expect.poll(() => observed?.pending).toBe(false);
+      expect(evidenceReads).toBeGreaterThan(beforeMaterial);
+      expect(storage.getState().sessions, 'key recovery needs no Session-list/detail publication').toBe(beforeSessions);
+      expect(storage.getState().sessionListRenderableDelta).toBe(beforeListDelta);
+      expect(accountCurrentness.isCurrent(), 'the envelope write changes no Account mode or content key').toBe(true);
+      expect(screen.findAllByType(IntervalTimeline).length, 'the mounted private widget renders the decrypted witnessed interval').toBeGreaterThan(0);
+      expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'key-recovery.peak')?.props.value).toBe(1);
+      console.info('USAGE-KEY-ENVELOPE-WAKE', JSON.stringify({ evidenceReadmissions: evidenceReads - beforeMaterial,
+        sessionListDeltaChanged: storage.getState().sessionListRenderableDelta !== beforeListDelta,
+        accountCurrentnessChanged: !accountCurrentness.isCurrent(), agentTimeMs: observed?.slice?.howYouWork?.intervals?.agentTimeMs }));
+    } finally { accountCurrentness.dispose(); await screen.unmount(); }
+  });
+
+  it('recovers a mounted Capacity quota after an HTTP failure on warm reopen without Refresh', async () => {
+    const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+    const nowMs = Date.UTC(2026, 10, 7, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'mounted-quota' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: nowMs, fetchedAtMs: nowMs,
+      staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'window', label: 'Window', used: 40, limit: 100, usedPct: 40, utilizationPct: 40,
+        unit: 'count', status: 'ok', resetAtMs: nowMs + 3_600_000, resetsAt: nowMs + 3_600_000, windowDurationMs: 18_000_000 }] });
+    let unavailable = true;
+    let recordReads = 0;
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-mounted-quota-recovery.test', accountId: 'account-a',
+      profile: { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] } }],
+      route: request => {
+        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+          features: { connectedServices: { enabled: true, quotas: { enabled: true } } },
+        }));
+        if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({ source,
+          recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: nowMs, staleAfterMs: 600_000 });
+        if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
+          recordReads++;
+          return unavailable ? Response.json({ error: 'unavailable' }, { status: 503 })
+            : Response.json({ content: { t: 'plain', v: record }, metadata: { fetchedAt: nowMs, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+        }
+        return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+      } });
+    const server = home.homes.a!;
+    const accountScope = { serverId: server.id, accountId: 'account-a' };
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+    storage.setState({ profileScope: accountScope, settingsScope: accountScope,
+      profile: AccountProfileSchema.parse({ id: 'account-a', connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual',
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] }) });
+    await getServerFeaturesSnapshot({ serverId: server.id, force: true });
+    let observed: UsageWidgetBodyModel | undefined;
+    function Capacity() {
+      const { model, query } = useUsageWidgetModel(scope, 'usage_capacity');
+      observed = model;
+      return model.slice && query ? <UsageCapacityWidget id="usage_capacity" model={model} slice={model.slice} query={query}
+        serverId={server.id} testID="quota-recovery" /> : null;
+    }
+    const page = (visible: boolean) => <InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={clauses}>{visible ? <Capacity /> : null}</UsageWidgetBatchProvider>
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(page(true));
+    try {
+      await expect.poll(() => recordReads > 0 && observed?.slice != null && observed.pending === false).toBe(true);
+      expect(observed?.slice?.quota?.some(read => read.current != null) ?? false).toBe(false);
+      expect(observed?.slice?.sources.some(state => (state.source === 'quota' || state.source.startsWith('quota:')) && state.status === 'error')).toBe(true);
+      await screen.update(page(false));
+      await flushHookEffects({ cycles: 4 });
+      const beforeRecovery = recordReads;
+      unavailable = false;
+      await screen.update(page(true));
+      await expect.poll(() => observed?.slice?.quota?.[0]?.current).toEqual(record);
+      await expect.poll(() => observed?.pending).toBe(false);
+      expect(recordReads).toBeGreaterThan(beforeRecovery);
+      expect(screen.findHostByTestId('quota-recovery.capacity')).not.toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
+  it('recovers mounted Work witnesses after a daemon failure and authenticated Machine recovery without Refresh', async () => {
+    const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
+      { publishMachineInventoryForTest }, { clearMachineRequestReachabilityForMachine },
+      { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema }, { RetryableServerResponseError },
+      { UsageOutcomesWidget }, { UsageOutcomesBody }] = await Promise.all([
+      import('@/dev/testkit/harness/sessionActionRpcBoundary'), import('@/dev/testkit/fixtures/machineFixtures'),
+      import('@/dev/testkit/harness/machinePresence'), import('@/sync/domains/machines/reachability/machineReachability'),
+      import('@happier-dev/protocol/scm'), import('@/sync/runtime/connectivity/transientConnectivityErrors'),
+      import('./UsageOutcomesWidget'), import('@happier-dev/plugin-ui/presentation'),
+    ]);
+    const nowMs = Date.UTC(2026, 10, 7, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    let daemonAvailable = false;
+    let daemonReads = 0;
+    const id = 'mounted-work-session';
+    const machineId = 'mounted-work-machine';
+    const witness = { sessionId: id, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
+        url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
+    // The external daemon acknowledgement is the boundary; authority, Machine
+    // routing, SCM parsing, Work collection and aggregation all remain real.
+    installSessionActionRpcBoundary(request => {
+      daemonReads++;
+      if (!daemonAvailable) throw new RetryableServerResponseError(503, 'Unavailable');
+      const input = ScmWorkEvidenceReadRequestSchema.parse(request.params);
+      return ScmWorkEvidenceReadResponseSchema.parse({ sessions: input.sessions.map(session => ({
+        sessionId: session.sessionId, status: 'partial', evidence: [witness], branchEvidence: [],
+      })) });
+    });
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-mounted-work-recovery.test', accountId: 'account-a' }],
+      route: request => {
+        if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: [{ id: 'work-cost',
+          observedAtMs: nowMs - 500, sessionId: id, turnId: 'turn', agentId: null, modelId: null, machineId: null,
+          projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost }] });
+        return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
+          ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+      } });
+    const server = home.homes.a!;
+    const accountScope = { serverId: server.id, accountId: 'account-a' };
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+    storage.setState({ profileScope: accountScope, settingsScope: accountScope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    storage.getState().applySessions([createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id, active: true,
+      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    const machine = createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a', machine: { activeAt: nowMs, presenceProtocolVersion: 1 } });
+    await publishMachineInventoryForTest(accountScope, [machine]);
+    const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs } };
+    let observed: UsageWidgetBodyModel | undefined;
+    function Work() {
+      const { model, query } = useUsageWidgetModel(input, 'usage_outcomes');
+      observed = model;
+      return model.slice && query ? <UsageOutcomesWidget id="usage_outcomes" model={model} slice={model.slice} query={query}
+        serverId={server.id} testID="work-recovery" /> : null;
+    }
+    const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={clauses}><Work /></UsageWidgetBatchProvider>
+    </InjectedAuthProvider>);
+    try {
+      await expect.poll(() => daemonReads > 0 && observed?.slice != null && observed.pending === false).toBe(true);
+      expect(observed?.slice?.sources).toContainEqual(expect.objectContaining({ source: 'work', errorCode: 'work_evidence_failed' }));
+      expect(observed?.slice?.work?.outcomes ?? []).toHaveLength(0);
+      const beforeRecovery = daemonReads;
+      const accountingReads = home.requests.filter(request => request.path === '/v2/usage/query').length;
+      await act(async () => {
+        daemonAvailable = true;
+        // This is the existing authenticated reconnect ingress. It retires the
+        // failed request fact and publishes fresh presence to its Work consumer.
+        await publishMachineInventoryForTest(accountScope, [machine]);
+        clearMachineRequestReachabilityForMachine(accountScope, machineId);
+      });
+      await expect.poll(() => observed?.slice?.work?.outcomes.length).toBe(1);
+      await expect.poll(() => observed?.pending).toBe(false);
+      expect(daemonReads).toBeGreaterThan(beforeRecovery);
+      expect(home.requests.filter(request => request.path === '/v2/usage/query')).toHaveLength(accountingReads);
+      expect(screen.findAllByType(UsageOutcomesBody)).toHaveLength(1);
+    } finally { await screen.unmount(); }
+  });
+
   it('offers cost modes from the first available accounting query and keeps that query through a pending period', async () => {
     const firstRead = createDeferred<void>();
     const nextPeriod = createDeferred<void>();

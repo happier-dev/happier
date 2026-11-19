@@ -2234,11 +2234,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const keepContent = (content: ResourceContent, value: UsageQueryBatchResult): ResourceContent => {
                     // Keep the read's initial clock basis: a held read that
                     // crosses a quota boundary cannot renew its old derivation.
-                    // Failed or incomplete sources keep their existing reopen
-                    // recovery; only a settled admission can skip reacquisition.
+                    // Lasting coverage refusals settle this input basis too.
+                    // Its existing invalidation still observes changed access,
+                    // keys and Session facts; retryable failures recover on reopen.
                     const reusable = settledRead && value.results.every(slice => !slice.pending
-                        && slice.sources.every(source => source.status !== 'error' && source.status !== 'pending'
-                            && (!source.errorCode || source.status === 'unsupported') && !source.updateRequired));
+                        && slice.sources.every(source => source.status !== 'pending'
+                            && (source.status === 'unsupported' || (source.errorCode
+                                ? !readUsageHistoryFailure({ errorCode: source.errorCode }).retryable
+                                : source.status !== 'error' && !source.updateRequired))));
                     const intervals = settledRead ? [...new Set(value.results.flatMap(slice => slice.quota ?? []))]
                         .map(read => readQuotaInterval(read, nowMs)) : [];
                     const intersect = (pick: (interval: NonNullable<ReturnType<typeof readQuotaInterval>>) => Readonly<{ fromMs: number; untilMs: number }>) => ({
