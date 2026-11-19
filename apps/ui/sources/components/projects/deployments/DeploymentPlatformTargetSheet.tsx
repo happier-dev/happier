@@ -16,6 +16,7 @@ import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRu
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { DeploymentSourceMethodV1Schema, type DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -679,7 +680,15 @@ export function DeploymentPlatformTargetEditor(
                 value={mode} disabled={busy !== null || reviewingCreate}
                 options={[{ id: 'existing', label: t('projects.deployments.platformLink.modeExisting') },
                   { id: 'create', label: t('projects.deployments.platformLink.modeCreate') }]}
-                onChange={(next) => { setMode(next); setAccount(null); resetValues(next === 'create' ? target.create?.fields ?? null : null); setCursors({}); resetFrom(); }}
+                onChange={(next) => {
+                  const nextForm = next === 'create' ? target.create : target;
+                  setMode(next);
+                  if (account && nextForm && buildQualifiedPluginContributionKey(account.service)
+                    !== buildQualifiedPluginContributionKey(nextForm.service)) setAccount(null);
+                  resetValues(next === 'create' ? nextForm?.fields ?? null : null);
+                  setCursors({});
+                  resetFrom();
+                }}
               /> : null}
               {create && !reviewingCreate ? <Item title={t('projects.deployments.platformLink.createConsequences')} showChevron={false} /> : null}
               {props.onPrepared ? null : <DropdownMenu

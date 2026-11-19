@@ -124,10 +124,13 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
       initialTargetKey: `${pluginId}/beta` }));
     const mode = () => screen.root.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(mode()).toBeDefined(); });
+    const chooser = () => screen.root.findByType(ConnectedAccountPurposeTargetChooser);
+    const selection = { kind: 'account', account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } } as const;
+    expect(mode()!.props.value).toBe('existing');
+    await act(async () => chooser().props.onChange(selection, null));
     await act(async () => mode()!.props.onChange('create'));
+    expect(chooser().props.value).toEqual(selection);
     expect(screen.root.findAllByType(SegmentedChoiceItem).some(node => node.props.testID === 'project-deployments.platform.sourceMethod')).toBe(false);
-    await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account',
-      account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } }, null));
     const patch = async (value: Record<string, unknown>) => act(async () => screen.root.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
     await patch({ providerAccountId: 'organization' });
     await patch({ resourceName: 'new-project' });
