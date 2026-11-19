@@ -108,6 +108,7 @@ import {
 import { emitPendingChanged } from "@/app/session/pending/publishPendingMutation";
 import { readSessionMachineBindingStateInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
+import { hasManagedWakeForPendingReplayInTx } from '@/app/machines/managed/managedWakePlacement';
 import { ManagedMachineError } from '@/app/machines/managed/managedRows';
 import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { SessionMessageReplyAdmissionV1Schema, SessionMessageReplyProgressV1Schema,
@@ -649,6 +650,7 @@ export type EnqueuePendingMessageResult =
         recipientCursors: RecipientCursor[];
         meaningfulActivityAt?: Date;
         activationTarget?: PendingActivationTarget;
+        managedActivationLocalId?: string;
       }
     | {
         ok: true;
@@ -887,6 +889,10 @@ async function enqueuePendingMessageWithAdmission(
                     pendingBlockedCount: true,
                     pendingVersion: true,
                     runtimeMachineTarget: true,
+                    pendingActivationStatus: true,
+                    pendingActivationRequestId: true,
+                    pendingActivationRequestedAt: true,
+                    pendingActivationManagedTarget: true,
                 },
             });
             if (!session) return { ok: false, error: "session-not-found" } as const;
@@ -964,6 +970,8 @@ async function enqueuePendingMessageWithAdmission(
                 ? { ok: true, access: admission.access } as const
                 : await assertSessionOwnerInTx({ tx, accountId: actorUserId, sessionId });
             if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
+            const acknowledgesManagedActivation = admission.kind === 'account'
+                && access.access.level === 'owner' && targetExecutionRunId === null;
             let inputAdmissionReceipt = admission.kind === "account"
                 ? SessionInputAdmissionReceiptV1Schema.parse({
                     ...buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: access.access,
@@ -1388,6 +1396,8 @@ async function enqueuePendingMessageWithAdmission(
                         },
                     });
                 }
+                const hasManagedActivation = acknowledgesManagedActivation
+                    && await hasManagedWakeForPendingReplayInTx(tx, { ...session, id: sessionId }, existing);
                 return {
                     ok: true,
                     didWrite: false,
@@ -1397,6 +1407,7 @@ async function enqueuePendingMessageWithAdmission(
                     pendingVersion: session.pendingVersion ?? 0,
                     badgeAttentionChanged: false,
                     recipientCursors: [],
+                    ...(hasManagedActivation ? { managedActivationLocalId: localId } : {}),
                 };
             }
 
@@ -1687,6 +1698,8 @@ async function enqueuePendingMessageWithAdmission(
                 recipientCursors,
                 meaningfulActivityAt,
                 ...(activationTarget ? { activationTarget } : {}),
+                ...(acknowledgesManagedActivation && activationTarget?.managedControllerPublication
+                    ? { managedActivationLocalId: activationTarget.requestId } : {}),
             };
         }), admission.kind === "machine"
             ? admission.targetMachineId

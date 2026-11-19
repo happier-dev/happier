@@ -45,18 +45,44 @@ export function readStoredPendingManagedWakeTarget(session: Pick<ManagedWakeSess
     return stored.data;
 }
 
+type PendingManagedWakeInput = Pick<SessionPendingMessage,
+    'status' | 'messageRole' | 'authorAccountId' | 'deliveryState' | 'providerAction' | 'inputAdmissionReceipt'>;
+
+function readQueuedManagedWakeInputTarget(session: ManagedWakeSession, pending: PendingManagedWakeInput | undefined, target: ManagedWakeTargetV1) {
+    if (session.archivedAt !== null
+        || pending?.status !== 'queued' || pending.deliveryState !== null || pending.providerAction !== null) return undefined;
+    const receipt = readPendingSessionInputAdmission({ sessionId: session.id, accountId: session.accountId, pending });
+    return receipt?.admittedTarget?.machineId === target.enrolledMachineId
+        ? receipt.admittedTarget : undefined;
+}
+
 /** Shared pending-origin proof for publication, recovery and the effect's currentness assertion. */
 export function readPendingManagedWakeInputTarget(session: ManagedWakeSession,
-    pending: Pick<SessionPendingMessage, 'status' | 'messageRole' | 'authorAccountId' | 'deliveryState' | 'providerAction' | 'inputAdmissionReceipt'> | undefined,
-    target: ManagedWakeTargetV1) {
+    pending: PendingManagedWakeInput | undefined, target: ManagedWakeTargetV1) {
     const retained = readStoredPendingManagedWakeTarget(session);
-    if (!retained || session.archivedAt !== null || target.origin.kind !== 'session-input'
-        || !sameManagedInput({ homeId: retained.homeId, managedId: retained.managedId,
+    if (!retained || target.origin.kind !== 'session-input' || !sameManagedInput(
+        { homeId: retained.homeId, managedId: retained.managedId,
             enrolledMachineId: retained.enrolledMachineId, origin: retained.origin },
-        { homeId: target.homeId, managedId: target.managedId, enrolledMachineId: target.enrolledMachineId, origin: target.origin })) return undefined;
-    const receipt = pending ? readPendingSessionInputAdmission({ sessionId: session.id, accountId: session.accountId, pending }) : undefined;
-    return pending?.status === 'queued' && pending.messageRole === 'user' && pending.deliveryState === null && pending.providerAction === null
-        && receipt?.admittedTarget?.machineId === target.enrolledMachineId ? receipt.admittedTarget : undefined;
+        { homeId: target.homeId, managedId: target.managedId, enrolledMachineId: target.enrolledMachineId, origin: target.origin },
+    )) return undefined;
+    return readQueuedManagedWakeInputTarget(session, pending, target);
+}
+
+/** A newer origin can wake the same Session for other queued inputs at its exact admitted placement. */
+export async function hasManagedWakeForPendingReplayInTx(tx: Tx, session: ManagedWakeSession,
+    pending: PendingManagedWakeInput & { localId: string }): Promise<boolean> {
+    const retainedLocalId = session.pendingActivationRequestId;
+    const target = readStoredPendingManagedWakeTarget(session);
+    if (!retainedLocalId || !target) return false;
+    const replayTarget = readQueuedManagedWakeInputTarget(session, pending, target);
+    if (!replayTarget) return false;
+    if (retainedLocalId === pending.localId) return true;
+
+    const origin = await tx.sessionPendingMessage.findUnique({
+        where: { sessionId_localId: { sessionId: session.id, localId: retainedLocalId }, targetExecutionRunId: null },
+        select: { status: true, messageRole: true, authorAccountId: true, deliveryState: true, providerAction: true, inputAdmissionReceipt: true },
+    });
+    return sameManagedInput(replayTarget, readQueuedManagedWakeInputTarget(session, origin ?? undefined, target));
 }
 
 /** Pending recovery and the census consume the same exact binding and receipt owners. */

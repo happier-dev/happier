@@ -1104,6 +1104,14 @@ export async function discardPendingQueueV2Messages(params: {
     return discarded;
 }
 
+type PendingQueueEnqueueHttpResult = Readonly<{
+    didWrite: boolean | null;
+    terminal: boolean;
+    suppressed: boolean;
+    acceptedLocalId?: string;
+    managedActivationLocalId?: string;
+}>;
+
 export async function enqueuePendingQueueV2MessageViaHttp(params: {
     token: string;
     sessionId: string;
@@ -1111,7 +1119,7 @@ export async function enqueuePendingQueueV2MessageViaHttp(params: {
     timeoutMs?: number;
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
-}): Promise<Readonly<{ didWrite: boolean | null; terminal: boolean; suppressed: boolean; acceptedLocalId?: string }>> {
+}): Promise<PendingQueueEnqueueHttpResult> {
     return postPendingQueueMessageViaHttp({
         ...params,
         path: `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
@@ -1126,7 +1134,7 @@ export async function enqueuePendingExecutionRunMessageViaHttp(params: {
     timeoutMs?: number;
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
-}): Promise<Readonly<{ didWrite: boolean | null; terminal: boolean; suppressed: boolean; acceptedLocalId?: string }>> {
+}): Promise<PendingQueueEnqueueHttpResult> {
     const recipient = ParticipantExecutionRunRecipientRoutingIdentityV1Schema.parse(params.recipient);
     return postPendingQueueMessageViaHttp({
         ...params,
@@ -1142,7 +1150,7 @@ async function postPendingQueueMessageViaHttp(params: {
     timeoutMs?: number;
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
-}): Promise<Readonly<{ didWrite: boolean | null; terminal: boolean; suppressed: boolean; acceptedLocalId?: string }>> {
+}): Promise<PendingQueueEnqueueHttpResult> {
     const serverUrl = resolveServerHttpBaseUrl();
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({
         method: 'POST', path: params.path, body: params.body,
@@ -1173,13 +1181,18 @@ async function postPendingQueueMessageViaHttp(params: {
     const acceptedLocalId = data && typeof data === 'object' && 'message' in data
         && data.message && typeof data.message === 'object' && 'localId' in data.message
         ? readPendingLocalId(data.message.localId) : null;
+    const managedActivationLocalId = data && typeof data === 'object' && 'managedActivationLocalId' in data
+        ? readPendingLocalId(data.managedActivationLocalId) : null;
+    const terminal = data !== null && typeof data === 'object' && 'terminal' in data && data.terminal === true;
+    const suppressed = data !== null && typeof data === 'object' && 'suppressed' in data && data.suppressed === true;
     return {
         didWrite: data && typeof data === 'object' && typeof (data as { didWrite?: unknown }).didWrite === 'boolean'
             ? (data as { didWrite: boolean }).didWrite
             : null,
-        terminal: data && typeof data === 'object' && (data as { terminal?: unknown }).terminal === true,
-        suppressed: data && typeof data === 'object' && (data as { suppressed?: unknown }).suppressed === true,
+        terminal,
+        suppressed,
         ...(acceptedLocalId ? { acceptedLocalId } : {}),
+        ...(!terminal && !suppressed && managedActivationLocalId === params.body.localId ? { managedActivationLocalId } : {}),
     };
 }
 

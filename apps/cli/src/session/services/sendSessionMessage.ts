@@ -2170,7 +2170,8 @@ export async function sendSessionMessage(
     return { ok: true, sessionId, localId, waited: false, admissionResult, receiverDelivery };
   }
 
-  if (shouldResumeInactiveSession) {
+  // Home owns an acknowledged managed wake. A person-Stop hold still needs explicit Resume authority.
+  if (shouldResumeInactiveSession && (crossesStopHold || enqueueResult.managedActivationLocalId === undefined)) {
     const resumeResult = await requestInactiveSessionResume({
       credentials: params.credentials,
       sessionId,

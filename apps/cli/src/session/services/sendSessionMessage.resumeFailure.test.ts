@@ -113,9 +113,12 @@ describe('a message send after Stop', () => {
   };
   const transport = () => vi.fn(async (_method: string, _request: unknown) => ({ type: 'success', sessionId }));
 
-  it.each(['account', 'cli', 'present_user', 'automation'] as const)('%s send resumes through the Resume authority, once', async source => {
+  it.each(['account', 'managed_account', 'cli', 'present_user', 'automation'] as const)('%s send resumes through the Resume authority, once', async source => {
     const stop = heldStop();
     const machineResumeTransport = transport();
+    if (source === 'managed_account') {
+      http.post.mockResolvedValueOnce({ status: 200, data: { didWrite: true, managedActivationLocalId: 'send-1' } });
+    }
     expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
       idOrPrefix: sessionId, message: 'Pick this back up', localId: 'send-1', wait: false, timeoutMs: 1000,
       explicitMessageSend: true, machineResumeTransport,
@@ -327,6 +330,48 @@ it('keeps an accepted returned answer pending when its exact Machine cannot resu
     receiverResumeFailure: { ok: false, code: 'resume_failed' },
   });
 });
+
+it.each([
+  { description: 'fresh activation', didWrite: true, exactActivation: true },
+  { description: 'retained activation', didWrite: false, exactActivation: true },
+  { description: 'another input owns the activation', didWrite: true, exactActivation: false },
+])('leaves the exact managed input with Home only when ACK matches ($description)', async ({ didWrite, exactActivation }) => {
+  const localId = 'managed-input';
+  const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', session: 'paired-terminal' })).toString('base64url')}.signature`;
+  let delivery: 'queued' | 'blocked' = 'queued';
+  http.post.mockImplementation(async (url: string) => {
+    if (url.endsWith('/pending')) return { status: 200, data: {
+      didWrite, pending: { localId, status: delivery }, managedActivationLocalId: exactActivation ? localId : 'different-input',
+    } };
+    if (url.endsWith('/delivery/block')) {
+      delivery = 'blocked';
+      return { status: 200, data: { ok: true } };
+    }
+    throw new Error(`Unexpected HTTP request: ${url}`);
+  });
+  const machineResumeTransport = vi.fn(async () => ({ errorCode: 'RPC_FORBIDDEN', error: 'Forbidden' }));
+  const result = await sendSessionMessage({
+    credentials: { token, encryption: null }, idOrPrefix: sessionId, message: 'continue', localId,
+    explicitMessageSend: true, wait: false, replyIntent: { mode: 'wait' }, timeoutMs: 1000,
+    machineResumeTransport,
+    incomingResumeOptions: { modelSelection: { v: 2, updatedAt: 300, ref: {
+      source: 'team_resource', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-model',
+      resourceId: 'shared-model', teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered',
+    } } },
+  });
+  if (!exactActivation) {
+    expect(result).toMatchObject({ ok: false, code: 'authority_unavailable', admissionResult: { status: 'accepted', localId } });
+    expect(delivery).toBe('blocked');
+    expect(machineResumeTransport).toHaveBeenCalledWith(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, expect.anything(), expect.anything());
+    return;
+  }
+  expect(result).toMatchObject({ ok: true, localId, admissionResult: {
+    status: didWrite ? 'accepted' : 'alreadyAccepted', localId,
+  } });
+  expect(delivery).toBe('queued');
+  expect(machineResumeTransport).not.toHaveBeenCalled();
+});
+
 it.each([
   { description: 'unclaimed input', settlementReply: null },
   { description: 'runner-owned input', settlementReply: { status: 409, error: 'delivery-settlement-conflict' } },

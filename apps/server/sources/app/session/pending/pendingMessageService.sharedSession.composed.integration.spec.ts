@@ -7375,6 +7375,82 @@ describe("pendingMessageService (shared sessions)", () => {
             .toMatchObject({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
     });
 
+    it('acknowledges only the exact managed activation owned by Home on Pending enqueue and replay', async () => {
+        const { owner, session, controller, guest } = await createManagedPendingFixture();
+        const localId = 'accepted-managed-input';
+        const requestedAction = { v: 1, kind: 'send_now' } as const;
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const send = async (inputId: string, machineId = guest.id, action: { v: 1; kind: 'send_now' | 'enqueue' } = requestedAction,
+                sessionId = session.id) => {
+                const result = await app.inject({ method: 'POST', url: `/v2/sessions/${sessionId}/pending`,
+                    headers: { 'x-test-user-id': owner.id }, payload: { localId: inputId, targetMachineId: machineId,
+                        messageRole: 'user', requestedAction: action, ciphertext: 'original-input' } });
+                expect(result.statusCode, result.body).toBe(200);
+                return result.json();
+            };
+            expect(await send(localId)).toMatchObject({ didWrite: true, managedActivationLocalId: localId });
+            const first = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(first).toMatchObject({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
+            expect(await send(localId)).toMatchObject({ didWrite: false, managedActivationLocalId: localId });
+            const replayed = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(replayed.pendingActivationRequestedAt).toEqual(first.pendingActivationRequestedAt);
+            expect(await send('another-input', guest.id, { v: 1, kind: 'enqueue' })).not.toHaveProperty('managedActivationLocalId');
+
+            const presence = createSessionPublisherPresence();
+            const binding = { accountId: owner.id, machineId: guest.id, sessionId: session.id };
+            const registered = await presence.registerPublisher({ socket: {}, binding,
+                completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+            if (registered.status !== 'registered') throw new Error('Expected current publisher');
+            expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id,
+                publisherAuthority: { ...binding, committedFence: registered.committedFence } }))
+                .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
+            const providerOwned = await send(localId);
+            expect(providerOwned).not.toHaveProperty('managedActivationLocalId');
+            expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
+                publisherAuthority: { ...binding, committedFence: registered.committedFence } }))
+                .toMatchObject({ ok: true, didResolve: true });
+            const terminal = await send(localId);
+            expect(terminal).toMatchObject({ didWrite: false, terminal: true });
+            expect(terminal).not.toHaveProperty('managedActivationLocalId');
+
+            await db.machine.update({ where: { id: controller.id }, data: {
+                operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+                operationProtocolCapabilitiesRevision: 1,
+            } });
+            const localSession = await createSession(owner.id);
+            await db.accessKey.create({ data: { accountId: owner.id, machineId: controller.id, sessionId: localSession.id, data: 'encrypted' } });
+            expect(await send('local-input', controller.id, requestedAction, localSession.id)).not.toHaveProperty('managedActivationLocalId');
+        });
+    });
+
+    it('acknowledges a replay covered by a newer managed activation for the same admitted target', async () => {
+        const { owner, session, controller, guest } = await createManagedPendingFixture();
+        await db.machine.update({ where: { id: controller.id }, data: {
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: controller.id, sessionId: session.id, data: 'encrypted' } });
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const send = async (localId: string, targetMachineId = guest.id) => {
+                const response = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/pending`,
+                    headers: { 'x-test-user-id': owner.id }, payload: { localId, targetMachineId, messageRole: 'user',
+                        requestedAction: { v: 1, kind: 'send_now' }, ciphertext: 'original-input' } });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json();
+            };
+            await send('local-input', controller.id);
+            expect(await send('first-managed-input')).toMatchObject({ didWrite: true, managedActivationLocalId: 'first-managed-input' });
+            expect(await send('second-managed-input')).toMatchObject({ didWrite: true, managedActivationLocalId: 'second-managed-input' });
+            const activation = { pendingActivationRequestId: true, pendingActivationRequestedAt: true, pendingActivationManagedTarget: true } as const;
+            const beforeReplay = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: activation });
+            expect(beforeReplay.pendingActivationRequestId).toBe('second-managed-input');
+
+            expect(await send('first-managed-input')).toMatchObject({ didWrite: false, managedActivationLocalId: 'first-managed-input' });
+            expect(await send('local-input', controller.id)).not.toHaveProperty('managedActivationLocalId');
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: activation })).toEqual(beforeReplay);
+        });
+    });
+
     it("retains only the protected accepted target for managed wake and clears it on confirmed withdrawal", async () => {
         const { owner, session, homeId, controller, guest, managed } = await createManagedPendingFixture();
         const localId = `protected-wake-${randomUUID()}`;

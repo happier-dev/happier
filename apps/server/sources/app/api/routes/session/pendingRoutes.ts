@@ -472,7 +472,10 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                         terminal: true as const,
                         message: serializePendingMaterializedMessage(res.message),
                     }
-                    : { pending: toPendingJson(res.pending) }),
+                    : {
+                        pending: toPendingJson(res.pending),
+                        ...(res.managedActivationLocalId ? { managedActivationLocalId: res.managedActivationLocalId } : {}),
+                    }),
                 ...(res.terminal === true
                     ? { requestedAction: res.message.requestedAction }
                     : res.pending.requestedAction
