@@ -1,11 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type {
-  ReviewReviewerSelectionV1,
-  ReviewStepV1,
+import {
+  ReviewStepV1Schema,
+  type ReviewReviewerSelectionV1,
+  type ReviewStepV1,
 } from '@happier-dev/protocol/reviews/reviewStart';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
@@ -135,6 +138,12 @@ export function ReviewStartSteps(props: ReviewStartStepsProps) {
     setOpen((current) => new Set([...current, index]));
     setAdded((current) => new Set([...current, index]));
   }, [onStepsChange]);
+  const commands = useCurrentUiContextLocalCommands(props.disabled ? [] : [{
+    key: 'review.start.steps.add',
+    title: t('reviewWalkthrough.start.addStep'),
+    description: 'review.start.steps.add — Add a step that checks the previous findings.',
+    invoke: addStep,
+  }], { unbound: 'local' });
 
   return (
     <View testID="review-start-steps">
@@ -159,7 +168,7 @@ export function ReviewStartSteps(props: ReviewStartStepsProps) {
         icon={<Icon name="plus" size={ICON_SIZE.sm} />}
         title={t('reviewWalkthrough.start.addStep')}
         subtitle={t('reviewWalkthrough.start.addStepLine', { n: steps.length })}
-        onPress={addStep}
+        onPress={() => { void commands.invoke('review.start.steps.add'); }}
         disabled={props.disabled}
         showChevron={false}
       />
@@ -243,6 +252,45 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
     },
     [index, onRemove, onUpdate],
   );
+  const commandPrefix = `review.start.step.${index}`;
+  const commands = useCurrentUiContextLocalCommands(props.disabled ? [] : [
+    {
+      key: `${commandPrefix}.focus`,
+      title: t('reviewWalkthrough.start.focus'),
+      description: `${commandPrefix}.focus — Set this step's Focus with {value: string}.`,
+      invoke: input => {
+        if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+        const instructions = input.value;
+        onUpdate(index, current => ({ ...current, instructions }));
+      },
+    },
+    ...(index > 0 ? [{
+      key: `${commandPrefix}.kind`,
+      title: t('reviewWalkthrough.start.stepOptions', { n: index + 1 }),
+      description: `${commandPrefix}.kind — Choose this step's kind with {value: "review" | "verify"}.`,
+      invoke: (input: PluginUiJsonValueV1 | undefined) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+        const kind = ReviewStepV1Schema.shape.kind.safeParse(input.value);
+        if (!kind.success) return false;
+        onMenu(kind.data);
+      },
+    }, {
+      key: `${commandPrefix}.remove`,
+      title: t('reviewWalkthrough.start.removeStep'),
+      description: `${commandPrefix}.remove — Remove this step.`,
+      invoke: () => onMenu('remove'),
+    }] : []),
+    ...(props.transcriptAvailable && engines.length > 0 ? [{
+      key: `${commandPrefix}.transcript`,
+      title: t('reviewWalkthrough.start.includeTranscript'),
+      description: `${commandPrefix}.transcript — Include the Session transcript with {value: boolean}.`,
+      invoke: (input: PluginUiJsonValueV1 | undefined) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'boolean') return false;
+        const include = input.value;
+        onUpdate(index, current => ({ ...current, reviewers: current.reviewers.map(reviewer => withTranscript(reviewer, include)) }));
+      },
+    }] : []),
+  ], { unbound: 'local' });
   const onExpandedChange = React.useCallback(
     (next: boolean) => onToggle(index, next),
     [index, onToggle],
@@ -320,7 +368,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
           open={menuOpen}
           onOpenChange={setMenuOpen}
           items={menuItems}
-          onSelect={onMenu}
+          onSelect={id => { void commands.invoke(`${commandPrefix}.${id === 'remove' ? 'remove' : 'kind'}`, { value: id }); }}
           popoverAnchorRef={menuAnchor}
           placement="bottom"
           popoverAnchorAlign="end"
@@ -373,9 +421,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
         <FieldTextInput
           testID={`${testID}:focus`}
           value={step.instructions}
-          onChangeText={(text) =>
-            onUpdate(index, (current) => ({ ...current, instructions: text }))
-          }
+          onChangeText={value => { void commands.invoke(`${commandPrefix}.focus`, { value }); }}
           placeholder={t(
             verifies
               ? 'reviewWalkthrough.start.focusVerifyPlaceholder'
@@ -392,28 +438,14 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
           subtitle={t('reviewWalkthrough.start.includeTranscriptLine')}
           accessibilityRole="switch"
           accessibilityChecked={transcriptOn}
-          onPress={() =>
-            onUpdate(index, (current) => ({
-              ...current,
-              reviewers: current.reviewers.map((reviewer) =>
-                withTranscript(reviewer, !transcriptOn),
-              ),
-            }))
-          }
+          onPress={() => { void commands.invoke(`${commandPrefix}.transcript`, { value: !transcriptOn }); }}
           disabled={props.disabled}
           showChevron={false}
           rightElement={
             <Switch
               value={transcriptOn}
               disabled={props.disabled}
-              onValueChange={(include) =>
-                onUpdate(index, (current) => ({
-                  ...current,
-                  reviewers: current.reviewers.map((reviewer) =>
-                    withTranscript(reviewer, include),
-                  ),
-                }))
-              }
+              onValueChange={value => { void commands.invoke(`${commandPrefix}.transcript`, { value }); }}
             />
           }
         />

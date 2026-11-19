@@ -11,6 +11,7 @@ import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import {
   DEFAULT_REVIEW_LIST_FILTER_V1,
+  ReviewListFilterV1Schema,
   reviewListFilterFieldsV1,
   type ReviewListFilterV1,
 } from '@happier-dev/protocol/reviews/reviewListFilterV1';
@@ -21,6 +22,7 @@ import type {
 import type { ResourceSpaceMembershipMutationV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { COLLECTION_SPACE_KIND_PRESENTATION } from '@/components/settings/session/collectionSpaceKindPresentation';
 import { projectActionOutcome } from '@/components/sessions/shell/dropPreview/sessionListActionOutcome';
 import {
@@ -134,6 +136,23 @@ export function useReviewsCollectionView(focused: boolean) {
   const list = useReviewList(request);
   // Search is this page's presentation over loaded rows, so it never waits on saved spaces to load.
   const [searchQuery, setSearchQuery] = React.useState('');
+  useCurrentUiContextLocalCommands(focused ? [{
+    key: 'reviews.query',
+    title: t('common.search'),
+    description: 'reviews.query — Search the loaded Review rows with {value: string}.',
+    invoke: input => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+      setSearchQuery(input.value);
+    },
+  }, {
+    key: 'reviews.view',
+    title: t('sessionsList.filterButton'),
+    description: 'reviews.view — Replace this Review collection view with a ReviewListFilterV1 object.',
+    invoke: input => {
+      const filters = ReviewListFilterV1Schema.safeParse(input);
+      return filters.success && binding.setFilters(filters.data);
+    },
+  }] : []);
   const needle = searchQuery.trim().toLowerCase();
   const items = React.useMemo(() => {
     const loaded = list.items ?? null;

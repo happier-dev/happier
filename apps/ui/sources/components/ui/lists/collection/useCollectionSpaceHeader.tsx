@@ -26,6 +26,7 @@ import { collectionSpaceSettingRefs } from '@/components/settings/session/collec
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import {
   collectionConditionValueWords,
@@ -143,13 +144,12 @@ export function useCollectionSpaceHeader<
   const setFilters = view.setFilters;
   const select = React.useCallback(
     (spaceId: string) => {
-      if (!view.spacesEnabled) return;
+      if (!view.spacesEnabled) return false;
       if (spaceId === view.selectedSpaceId) {
         // Choosing the space you are in returns to it, dropping conditions added on top.
-        if (savedFilter !== null) setFilters(savedFilter);
-        return;
+        return savedFilter !== null && setFilters(savedFilter);
       }
-      void selectSpace(spaceId);
+      return selectSpace(spaceId);
     },
     [savedFilter, selectSpace, setFilters, view.selectedSpaceId, view.spacesEnabled],
   );
@@ -170,6 +170,16 @@ export function useCollectionSpaceHeader<
     selectOrdinal,
     openFilter: conditions.openEditor,
   });
+  useCurrentUiContextLocalCommands(input.keyboardEnabled && view.spacesEnabled && view.spacesReady ? [{
+    key: `collection.${input.entityKind}.space.select`,
+    title: t('sessionsList.spacesTitle'),
+    description: `collection.${input.entityKind}.space.select — Select a visible space with {spaceId: string}.`,
+    invoke: value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.spaceId !== 'string') return false;
+      const space = view.spaces.find(space => space.id === value.spaceId);
+      return space !== undefined && select(space.id);
+    },
+  }] : []);
   useCollectionFilterSettingsCommand({
     entityKind: input.entityKind,
     accountScope: view.spaceSettingsScope,

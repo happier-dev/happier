@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
@@ -50,6 +51,25 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
     [],
   );
   const cost = props.cost;
+  const commands = useCurrentUiContextLocalCommands(props.disabled ? [] : [{
+    key: 'review.start.then',
+    title: t('reviewWalkthrough.start.then'),
+    description: 'review.start.then — Choose what follows the Review with {value: "report" | "fix"}.',
+    invoke: input => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+      const option = thenOptions.find(option => option.id === input.value);
+      if (!option) return false;
+      props.onThenChange(option.id);
+    },
+  }, {
+    key: 'review.start.walkthrough',
+    title: t('reviewWalkthrough.start.walkMeThrough'),
+    description: 'review.start.walkthrough — Request a walkthrough with {value: boolean}.',
+    invoke: input => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'boolean') return false;
+      props.onWalkthroughChange(input.value);
+    },
+  }], { unbound: 'local' });
   return (
     <View testID="review-start-options">
       <SegmentedChoiceItem
@@ -63,7 +83,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
         accessibilityLabel={t('reviewWalkthrough.start.then')}
         options={thenOptions}
         value={props.then}
-        onChange={props.onThenChange}
+        onChange={value => { void commands.invoke('review.start.then', { value }); }}
         disabled={props.disabled}
         compact
       />
@@ -78,13 +98,13 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
         subtitle={t('reviewWalkthrough.start.walkMeThroughLine')}
         accessibilityRole="switch"
         accessibilityChecked={props.walkthrough}
-        onPress={() => props.onWalkthroughChange(!props.walkthrough)}
+        onPress={() => { void commands.invoke('review.start.walkthrough', { value: !props.walkthrough }); }}
         disabled={props.disabled}
         showChevron={false}
         rightElement={
           <Switch
             value={props.walkthrough}
-            onValueChange={props.onWalkthroughChange}
+            onValueChange={value => { void commands.invoke('review.start.walkthrough', { value }); }}
             disabled={props.disabled}
           />
         }
