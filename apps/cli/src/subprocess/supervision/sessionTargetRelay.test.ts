@@ -10,7 +10,7 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import { captureAgentNativeLaunchAuthorityForHost, createStablePluginExecService, installManagedProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
+import { captureAgentNativeLaunchAuthorityForHost, createStablePluginExecService, installManagedProcessCustodyForHost, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createTerminalRuntimeProcessService } from '@/agent/runtime/session/terminal/launchProcess';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
@@ -30,6 +30,7 @@ import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpB
 import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
 import { createCodexSharedAppServer } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/sharedServer';
 import { createCodexNativeAppServerRuntimeHost } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/native';
+import { deliverSessionTargetLaunch } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import type { AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { SESSION_HOLDER_ADOPT_ENV_KEY, resolveAgentSessionHolderLaunch, type SessionHolderChild } from './sessionHolder';
@@ -72,17 +73,21 @@ createInterface({ input: process.stdin }).on('line', line => {
 });
 `;
 
-function shellOperations(channels: ChildProcess[]): SessionTargetOperations {
+function shellOperations(channels: ChildProcess[], targetEnvironment?: NodeJS.ProcessEnv): SessionTargetOperations {
     return {
         exec: (command, signal) => new Promise((resolve, reject) => {
-            const child = spawn('sh', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'], signal });
+            const child = spawn('sh', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'], signal,
+                ...(targetEnvironment ? { env: { ...process.env, ...targetEnvironment } } : {}) });
             let stdout = '';
+            let stderr = '';
             child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+            child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
             child.once('error', reject);
-            child.once('close', status => resolve({ status: status ?? 1, stdout, stderr: '' }));
+            child.once('close', status => resolve({ status: status ?? 1, stdout, stderr }));
         }),
         openChannel: (argv, signal) => {
-            const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+            const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'],
+                ...(targetEnvironment ? { env: { ...process.env, ...targetEnvironment } } : {}) });
             channels.push(child);
             signal.addEventListener('abort', () => child.kill('SIGKILL'), { once: true });
             const channel = Duplex.from({ readable: child.stdout!, writable: child.stdin! });
@@ -108,14 +113,29 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
     it('uses Codex stdio in the placed target when a host native socket cannot reach it', async () => {
         const session = new AbortController();
         const channels: ChildProcess[] = [];
-        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+        // The target's ambient credential must stay unset when the selected Provider clears it.
+        const operations = shellOperations(channels, { CODEX_API_KEY: 'synthetic-target-ambient' });
+        const { socketPath } = await serveSessionTargetRelay({ operations, lifetime: session.signal,
             readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'codex.sock') });
+        const hostRoot = join(directory, 'codex-host');
         const targetRoot = join(directory, 'codex-workspace');
-        await mkdir(targetRoot);
+        await Promise.all([mkdir(hostRoot), mkdir(targetRoot)]);
+        const selectedProviderEnvironmentKeys = ['HAPPIER_CODEX_PROVIDER_API_KEY', 'CODEX_API_KEY'];
+        const launch = await deliverSessionTargetLaunch({
+            target: { ...operations, id: 'managed:codex', holderPath: holderExecutable!,
+                helperPath: resolveProcessCustodySupportExecutable()!, home: directory,
+                platform: { os: 'linux', arch: process.arch === 'arm64' ? 'arm64' : 'x64', home: directory },
+                putFile: async (path, bytes) => { await writeFile(path, bytes); },
+                agentEnvironment: { HAPPIER_TEST_AGENT_HOME: '/target/codex-home', CODEX_API_KEY: 'synthetic-stale-default' } },
+            sessionKey: 'codex-provider', runnerEnvironment: { HAPPIER_CODEX_PROVIDER_API_KEY: 'synthetic-selected-provider' },
+            providerEnvironmentKeys: selectedProviderEnvironmentKeys,
+            materializedRoot: null, requestAuthMaterializedRoot: null, agent: null, agentCommand: null,
+            workspace: { hostRoot, targetRoot }, onSessionEnd() {},
+        });
         sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
             id: 'managed:codex', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
-            launch: { executables: { [process.execPath]: process.execPath }, env: { HAPPIER_TEST_AGENT_HOME: '/target/codex-home' },
-                workspace: { hostRoot: directory, targetRoot } } });
+            launch: { ...launch, executables: { [process.execPath]: process.execPath } } });
+        expect(JSON.stringify(launch)).not.toContain('synthetic-selected-provider');
         // The native Codex process is the boundary fixture; placement, Exec,
         // transport selection and JSON-RPC initialization all remain real.
         const agent = String.raw`
@@ -126,15 +146,22 @@ createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   if (request.id === undefined) return;
   const result = request.method === 'initialize' ? { userAgent: 'happier_cli/0.162.1 (fixture)' }
-    : { cwd: process.cwd(), home: process.env.HAPPIER_TEST_AGENT_HOME, args: process.argv.slice(1) };
+    : { cwd: process.cwd(), home: process.env.HAPPIER_TEST_AGENT_HOME, args: process.argv.slice(1),
+        selectedProviderPresent: process.env.HAPPIER_CODEX_PROVIDER_API_KEY === 'synthetic-selected-provider',
+        clearedProviderAbsent: process.env.CODEX_API_KEY === undefined,
+        unrelatedHostSecretAbsent: process.env.HAPPIER_TEST_HOST_ONLY === undefined };
   process.stdout.write(JSON.stringify({ id: request.id, result }) + '\n');
 });`;
         const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
-            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => hostRoot,
+            environment: { HAPPIER_TEST_HOST_ONLY: 'synthetic-host-only' },
+            // This synthetic target admission requests no additional Project isolation.
+            prepareAgentNativeLaunch: async () => undefined,
             systemTools: { resolve: async request => ({ grantId: 'codex-target-fixture', toolId: request.toolId,
                 displayName: 'Codex native fixture', source: 'system', executablePath: process.execPath,
                 launch: { kind: 'binary', executablePath: process.execPath, args: ['-e', agent, '--'] } }) } });
-        const processEnv = { CODEX_HOME: directory, CODEX_SQLITE_HOME: directory };
+        const processEnv = { CODEX_HOME: directory, CODEX_SQLITE_HOME: directory,
+            HAPPIER_CODEX_PROVIDER_API_KEY: 'synthetic-selected-provider' };
         let shared: Awaited<ReturnType<typeof createCodexSharedAppServer>> = null;
         let client: Awaited<ReturnType<ReturnType<typeof createCodexNativeAppServerRuntimeHost>['createClient']>> | undefined;
         try {
@@ -142,12 +169,13 @@ createInterface({ input: process.stdin }).on('line', line => {
             expect(shared).toBeNull();
             // Only createClient is used from this boundary's otherwise unavailable host services.
             const context = { signal: session.signal, services: { ...createUnavailablePluginServices(), exec, logger: { debug() {} } },
-                session: { id: 'placed-codex', services: {} } } as unknown as AgentSessionRuntimeContext;
+                session: { id: 'placed-codex', services: { nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec) } } } as unknown as AgentSessionRuntimeContext;
             const host = createCodexNativeAppServerRuntimeHost({ request: { sessionId: 'placed-codex' } as AgentSessionOpenRequest,
                 context, processEnv, sharedAppServer: shared });
-            client = await host.createClient({ cwd: directory, processEnv, configOverrides: [], disableUserMcpServers: true });
+            client = await host.createClient({ cwd: hostRoot, processEnv, configOverrides: [], disableUserMcpServers: true });
             await expect(client.request('fixture/observe', {})).resolves.toMatchObject({
                 cwd: targetRoot, home: '/target/codex-home', args: expect.arrayContaining(['app-server', '--listen', 'stdio://']),
+                selectedProviderPresent: true, clearedProviderAbsent: true, unrelatedHostSecretAbsent: true,
             });
         } finally {
             await client?.dispose();
