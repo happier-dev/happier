@@ -7,6 +7,8 @@ import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/server
 import type { SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
+import type { SessionMessageToolOutputAvailability } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+
 export type ToolCall = {
     // Provider-side identifier for this tool call (e.g. ACP callId, Claude tool_use id).
     // Optional for backward compatibility with older sessions and unit tests.
@@ -21,6 +23,7 @@ export type ToolCall = {
     completedAt: number | null;
     description: string | null;
     result?: any;
+    toolOutputAvailability?: SessionMessageToolOutputAvailability;
     permission?: {
         nativeChoices?: NativePermissionChoicesV1;
         /** The offered choice that was applied; its label is read from `nativeChoices`. */

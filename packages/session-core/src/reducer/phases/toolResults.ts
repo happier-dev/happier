@@ -4,17 +4,19 @@ import { applyToolResultUpdateToReducerMessage } from '../helpers/applyToolResul
 import { bufferOrphanToolResult } from '../helpers/orphanToolResults.js';
 import type { ToolResultUpdate } from '../helpers/toolResultUpdateTypes.js';
 
-function toToolResultUpdate(c: Readonly<{
+export function toToolResultUpdate(c: Readonly<{
     tool_use_id: string;
     content: unknown;
     is_error: boolean;
     permissions?: ToolResultUpdate['permissions'];
-}>): ToolResultUpdate {
+}>, source: Pick<TracedMessage, 'seq' | 'toolOutputAvailability'>): ToolResultUpdate {
     return {
         tool_use_id: c.tool_use_id,
         content: c.content,
         is_error: c.is_error,
         ...(c.permissions ? { permissions: c.permissions } : {}),
+        ...(source.seq !== undefined && source.seq > 0 ? { seq: source.seq } : {}),
+        ...(source.toolOutputAvailability ? { toolOutputAvailability: source.toolOutputAvailability } : {}),
     };
 }
 
@@ -71,7 +73,7 @@ export function runToolResultsPhase(params: Readonly<{
                     const sidechain = mainMessageId ? null : resolveSidechainToolMessage(state, c.tool_use_id);
                     const messageId = mainMessageId ?? sidechain?.messageId;
                     if (!messageId) {
-                        const toolResult = toToolResultUpdate(c);
+                        const toolResult = toToolResultUpdate(c, msg);
                         bufferOrphanToolResult({
                             state,
                             toolUseId: c.tool_use_id,
@@ -89,7 +91,7 @@ export function runToolResultsPhase(params: Readonly<{
                     if (!message || !message.tool) {
                         continue;
                     }
-                    const toolResult = toToolResultUpdate(c);
+                    const toolResult = toToolResultUpdate(c, msg);
                     applyToolResultUpdateToReducerMessage({
                         message,
                         messageId,

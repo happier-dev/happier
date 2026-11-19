@@ -206,6 +206,7 @@ export type ReducerMessage = {
     peer?: TranscriptPeerSenderV1;
     event: AgentEvent | null;
     tool: ToolCall | null;
+    toolResultSeq?: number;
     meta?: MessageMeta;
     structuredPresentation?: MessageStructuredPresentationV1;
 } & TranscriptObservationMetadata & TranscriptAccountActorMetadata;

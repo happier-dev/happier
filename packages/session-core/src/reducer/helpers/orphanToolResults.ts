@@ -58,9 +58,11 @@ export function bufferOrphanToolResult(params: Readonly<{
   const bucket = state.orphanToolResults.get(toolUseId) ?? { updatedAt: now, results: [] };
   bucket.updatedAt = now;
 
-  const alreadyBuffered = bucket.results.some((existing) => existing.key === result.key);
-  if (!alreadyBuffered) {
+  const existingIndex = bucket.results.findIndex((existing) => existing.key === result.key);
+  if (existingIndex === -1) {
     bucket.results.push(result);
+  } else if (result.toolResult.toolOutputAvailability?.status === 'expired') {
+    bucket.results[existingIndex] = result;
   }
 
   if (bucket.results.length > MAX_ORPHAN_TOOL_RESULTS_PER_TOOL) {

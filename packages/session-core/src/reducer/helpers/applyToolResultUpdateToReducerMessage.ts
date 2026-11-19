@@ -33,6 +33,14 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     }
   }
 
+  const availability = toolResult.toolOutputAvailability;
+  const expired = availability?.status === 'expired';
+  const resultSeq = toolResult.seq;
+  const previousSeq = message.toolResultSeq;
+  if (message.tool.toolOutputAvailability?.status === 'expired' &&
+    (resultSeq === undefined || previousSeq === undefined || resultSeq <= previousSeq)) return;
+  if (expired && resultSeq !== undefined && previousSeq !== undefined && resultSeq < previousSeq) return;
+
   const isApprovedPlaceholder =
     message.tool.state === 'completed' &&
     message.tool.result === 'Approved' &&
@@ -56,7 +64,8 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     message.tool.state !== 'running' &&
     !isApprovedPlaceholder &&
     !isRuntimeTerminalResult &&
-    !supersedesAsyncAgentLaunch
+    !supersedesAsyncAgentLaunch &&
+    !expired
   ) {
     return;
   }
@@ -81,10 +90,12 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
   }
 
   message.tool.state = toolResult.is_error ? 'error' : 'completed';
-  message.tool.result = mergeExistingStdStreamsIntoFinalResultIfMissing(
-    message.tool.result,
-    toolResult.content
-  );
+  message.tool.result = availability
+    ? toolResult.content
+    : mergeExistingStdStreamsIntoFinalResultIfMissing(message.tool.result, toolResult.content);
+  if (resultSeq !== undefined) message.toolResultSeq = resultSeq;
+  if (availability) message.tool.toolOutputAvailability = availability;
+  else delete message.tool.toolOutputAvailability;
   message.tool.completedAt = resultCreatedAt;
 
   if (toolResult.permissions) {

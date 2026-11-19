@@ -196,6 +196,67 @@ describe('reducer runtime tool snapshots', () => {
     expect(state.toolIdToMessageId.size).toBe(1);
   });
 
+  it('replaces previously loaded output when the same completed result expires', () => {
+    const state = createReducer();
+    reducer(state, [toolMessage({ id: 'terminal', input: { command: 'example' } })], null);
+    const result = {
+      id: 'result', seq: 2, localId: 'result-local', createdAt: 1_200,
+      role: 'agent', isSidechain: false,
+      content: [{
+        type: 'tool-result', tool_use_id: 'call-1', is_error: true,
+        uuid: 'result-block', parentUUID: null, content: { stdout: 'fixture', exitCode: 1 },
+      }],
+      toolOutputAvailability: { status: 'available' },
+    } as const;
+    reducer(state, [{ ...result, content: [...result.content] }], null);
+    const expired = {
+      ...result,
+      content: [{ ...result.content[0], content: { exitCode: 1 } }],
+      toolOutputAvailability: { status: 'expired', days: 30 } as const,
+    };
+    const update = reducer(state, [expired], null);
+    const card = update.messages.find(message => message.kind === 'tool-call');
+    expect(card?.tool).toMatchObject({
+      input: { command: 'example' }, state: 'error', completedAt: 1_200,
+      toolOutputAvailability: { status: 'expired', days: 30 },
+    });
+    expect(card?.tool.result).toEqual({ exitCode: 1 });
+    expect(reducer(state, [expired], null).messages).toEqual([]);
+
+    const fresh = {
+      ...result, id: 'fresh-result', seq: 3, localId: 'fresh-result-local', createdAt: 1_300,
+      content: [{ ...result.content[0], uuid: 'fresh-result-block', content: { exitCode: 0 }, is_error: false }],
+      meta: { source: 'runtime', runtimeEventKind: 'tool-result' },
+    } satisfies NormalizedMessage;
+    expect(reducer(state, [fresh], null).messages.find(message => message.kind === 'tool-call')?.tool)
+      .toMatchObject({ state: 'completed', result: { exitCode: 0 }, toolOutputAvailability: { status: 'available' } });
+    expect(reducer(state, [expired], null).messages).toEqual([]);
+
+  });
+
+  it('keeps the expired observation when a tool result page precedes its call', () => {
+    const state = createReducer();
+    const result = {
+      id: 'result', seq: 2, localId: 'result-local', createdAt: 1_200,
+      role: 'agent', isSidechain: false,
+      content: [{
+        type: 'tool-result', tool_use_id: 'call-1', is_error: false,
+        uuid: 'result-block', parentUUID: null, content: { stdout: 'old body', exitCode: 0 },
+      }],
+      toolOutputAvailability: { status: 'available' },
+    } satisfies NormalizedMessage;
+    reducer(state, [result], null);
+    reducer(state, [{
+      ...result,
+      content: [{ ...result.content[0], content: { exitCode: 0 } }],
+      toolOutputAvailability: { status: 'expired', days: 30 },
+    }], null);
+    const card = reducer(state, [toolMessage({ id: 'terminal', input: { command: 'example' } })], null)
+      .messages.find(message => message.kind === 'tool-call');
+    expect(card?.tool).toMatchObject({ toolOutputAvailability: { status: 'expired', days: 30 }, state: 'completed' });
+    expect(card?.tool.result).toEqual({ exitCode: 0 });
+  });
+
   it('continues ignoring duplicate terminal results outside the explicit runtime revision contract', () => {
     const state = createReducer();
     reducer(state, [toolMessage({ id: 'terminal', input: { path: 'README.md' } })], null);

@@ -257,9 +257,12 @@ function getProcessedKey(message: NormalizedMessage): string {
         return 'v0';
     })();
 
+    // A retention pass changes the row observation without changing its sealed shell or sequence.
+    const availability = message.toolOutputAvailability;
+    const outputRevision = availability?.status === 'expired' ? `:output-expired:${availability.days}` : '';
     return uuid
-        ? `agent:${message.id}:${type}:${uuid}:${streamFingerprint}`
-        : `agent:${message.id}:${type}:${streamFingerprint}`;
+        ? `agent:${message.id}:${type}:${uuid}:${streamFingerprint}${outputRevision}`
+        : `agent:${message.id}:${type}:${streamFingerprint}${outputRevision}`;
 }
 
 // Extract parent UUID from the first content item of an agent message

@@ -9,7 +9,7 @@ import { upsertStreamSegmentSnapshotMessage } from "../helpers/upsertStreamSegme
 import { restoreSubagentToolFromSyntheticInterruption } from "../helpers/subagentInterruption.js";
 import { normalizeTranscriptSeq } from "../../messages/transcriptOrdering.js";
 import { drainAndApplyOrphanToolResultsToMessage } from "../helpers/drainAndApplyOrphanToolResultsToMessage.js";
-import { resolveSidechainParentMessageId, resolveSidechainPermissionMirror, resolveSidechainToolMessage } from "./toolResults.js";
+import { toToolResultUpdate, resolveSidechainParentMessageId, resolveSidechainPermissionMirror, resolveSidechainToolMessage } from "./toolResults.js";
 import { canExtendSidechainMessage, findSidechainMergeTarget, insertSidechainMessageInChronology } from "../helpers/sidechainChronology.js";
 
 export function runSidechainsPhase(params: Readonly<{
@@ -294,12 +294,7 @@ export function runSidechainsPhase(params: Readonly<{
                     state.sidechainToolIdToMessageId.set(c.id, mid);
                 } else if (c.type === 'tool-result') {
                     // Apply the scoped child result and its permission-only mirror.
-                    const toolResult = {
-                        tool_use_id: c.tool_use_id,
-                        content: c.content,
-                        is_error: c.is_error,
-                        ...(c.permissions ? { permissions: c.permissions } : {}),
-                    };
+                    const toolResult = toToolResultUpdate(c, msg);
 
                     // Update the sidechain tool message
                     const sidechainMessageId = resolveSidechainToolMessage(state, c.tool_use_id, sidechainId)?.messageId;

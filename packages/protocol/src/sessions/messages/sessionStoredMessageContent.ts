@@ -40,6 +40,13 @@ export const SessionStoredMessageContentSchema = lazyZodSchema(() => (<I extends
   return value;
 }), SessionStoredMessageContentEnvelopeSchema));
 
+export const SessionMessageToolOutputAvailabilitySchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('available') }),
+  z.strictObject({ status: z.literal('expired'), days: z.number().check(z.int(), z.minimum(1)) }),
+]));
+
+export type SessionMessageToolOutputAvailability = z.infer<typeof SessionMessageToolOutputAvailabilitySchema>;
+
 export type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 export type SessionStoredMessageContentEnvelope = z.infer<
   typeof SessionStoredMessageContentEnvelopeSchema

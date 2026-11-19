@@ -1,3 +1,5 @@
+import type { SessionMessageToolOutputAvailability } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+
 export type ToolResultPermissionsUpdate = {
   date: number;
   result: 'approved' | 'denied' | 'canceled';
@@ -16,5 +18,7 @@ export type ToolResultUpdate = {
   content: unknown;
   is_error: boolean;
   permissions?: ToolResultPermissionsUpdate;
+  seq?: number;
+  toolOutputAvailability?: SessionMessageToolOutputAvailability;
 };
 
