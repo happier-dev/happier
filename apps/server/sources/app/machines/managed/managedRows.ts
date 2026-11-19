@@ -560,14 +560,19 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
     const machine = await tx.machine.findUnique({ where: { id: input.machineId } }).then(decodeMachineStoredContent);
     if (!machine?.installationId || classifyMachineAvailabilityState(machine) !== 'available'
         || !isMachineOperationSupportedForRequester({ ...input.operation, machine })) return null;
+    if (!await hasCurrentMachineWorkspaceSyncStorageInTx(tx, input)) return null;
+    return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
+}
+
+/** An installed workspace endpoint retains its own storage, including a live managed enrollment when present. */
+export async function hasCurrentMachineWorkspaceSyncStorageInTx(tx: Tx,
+    input: Readonly<{ accountServerId: string; machineId: string }>,
+): Promise<boolean> {
     const enrollment = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
-    if (!enrollment) return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
+    if (!enrollment) return true;
     // A stale enrollment is not an ordinary-Machine fallback.
     const row = await readCurrentMachineManagedEnrollmentInTx(tx, input.machineId);
-    if (!row || row.homeId !== input.accountServerId) return null;
-    const resource = readCurrentStoredManagedResource(row);
-    if (!resource) return null;
-    return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
+    return row?.homeId === input.accountServerId && Boolean(readCurrentStoredManagedResource(row));
 }
 
 /** Physical workspace routing consumes the retained enrollment/controller fact, never Machine metadata. */

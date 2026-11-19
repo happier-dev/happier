@@ -7580,16 +7580,87 @@ describe("external Action execution authorization", () => {
             await db.machine.update({ where: { id: target.id }, data: { installationId: target.installationId } });
             await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
                 principal: { kind: 'account', accountId: fixture.account.id } }));
-            expect((await verify()).statusCode).toBe(403);
+            // The installed TARGET can still prepare the writer's public key for
+            // its retained job. Home must refuse a fresh seed at socket admission.
+            expect((await verify()).statusCode).toBe(200);
             await call();
             expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
             await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
                 principal: { kind: 'account', accountId: fixture.account.id }, level: 'admin' }));
             await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
-            expect((await verify()).statusCode).toBe(403);
+            expect((await verify()).statusCode).toBe(200);
             await call();
             expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
             expect(effect).toHaveBeenCalledTimes(acceptedDeliveries);
+        } finally { await app.close(); }
+    });
+
+    it('retains installed target key custody for a Project seed after its requester loses access', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const source = fixture.machine;
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const targetKey = tweetnacl.sign.keyPair();
+        const target = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id, active: true,
+            metadata: source.metadata, dataEncryptionKey: source.dataEncryptionKey, ...machineOperationSupportForTest(),
+            installationId: crypto.randomUUID(), installationPublicKey: targetKey.publicKey } });
+        const requester = { kind: 'account' as const, accountId: fixture.account.id };
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id,
+            principal: requester, level: 'view' }));
+        const targetAdmission = await resolveMachineAdmission({ actorAccountId: requester.accountId, machineId: target.id, requiredRole: 'use' });
+        if (targetAdmission.kind !== 'admitted') throw new Error('Project target must be admitted');
+        const { kind: _targetKind, ...targetContext } = targetAdmission;
+        const homeId = await getOrCreateServerIdentityId();
+        const actionId = 'projects.open';
+        const input = OpenProjectInputV1Schema.parse({ serverId: homeId, machineId: target.id,
+            source: { kind: 'workspace', workspaceId: 'project-source', checkout: {
+                serverId: homeId, workspaceId: 'project-source', machineId: source.id, rootPath: '/source' } },
+            materialization: { kind: 'sync', targetPath: '/copy', workspaceAction: createFixtureCopyOnceWorkspaceAction() } });
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(),
+            target: { kind: 'machine', machineId: target.id }, input });
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const token = await auth.createToken(requester.accountId, undefined, { kind: 'account', authority: 'present_user' });
+            const targetToken = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
+            const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            if (!root.binding.workspaceSyncAdmission) throw new Error('Home must issue the original SOURCE admission');
+            const context = root.binding.workspaceSyncAdmission.source;
+            const sourceContext = { machineAdmission: context, callerAuthority: 'present_user' as const };
+            const sourceWriterTarget = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+                source: { v: 1, phase: 'prepare', operationId: crypto.randomUUID(), accountServerId: homeId,
+                    sourceMachineId: source.id, sourceRootPath: '/source', sourceContext, originalActionEnvelope: envelope },
+                sourceWriter: { machineId: source.id, installationId: source.installationId },
+                target: { v: 1, phase: 'prepare', operationId: crypto.randomUUID(), accountServerId: homeId,
+                    targetMachineId: target.id, targetRootPath: '/copy' } });
+            const routing = { v: 1 as const, sourceWriterTarget, target: { ...sourceWriterTarget.target,
+                targetContext: { ...sourceContext, machineAdmission: targetContext } } };
+            const seedMethod = `${source.id}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`;
+            const sourceMethod = `${source.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+            const signed = { authorizationToken: root.token, effectActionId: actionId, target: root.binding.target,
+                installationId: targetContext.installationId, method: sourceMethod, requestId: crypto.randomUUID(),
+                params: input, workspaceSyncSourceRouting: sourceWriterTarget.source };
+            const verifyKey = (sourcePrivateKey = targetKey.secretKey) => {
+                const rpcAdmission = { context, method: seedMethod, workspaceSyncSeedRouting: routing, callerInputAuthorization: root,
+                    workspaceSyncSourceExecution: { method: sourceMethod, requestId: signed.requestId, params: input,
+                        externalActionExecution: { v: 1 as const, authorization: root, effectActionId: actionId, target: root.binding.target,
+                            installationId: targetContext.installationId,
+                            machineSignature: signExternalActionMachineRpcRequestV1({ ...signed, privateKey: sourcePrivateKey }) } } };
+                const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: target.id,
+                    accountId: custodian.id, installationId: targetContext.installationId, rpcAdmission });
+                return app.inject({ method: 'POST', url: `/v1/machines/${target.id}/admission/verify`,
+                    headers: { authorization: `Bearer ${targetToken}`, ...currentAccountStoredContentCompatibilityHeaders },
+                    payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey: targetKey.secretKey }) } });
+            };
+            for (const currentShare of [true, false]) {
+                if (!currentShare) await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id, principal: requester }));
+                const result = await verifyKey();
+                expect(result.statusCode, result.body).toBe(200);
+                expect(result.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: source.id,
+                    installationId: source.installationId, installationPublicKey: Buffer.from(fixture.keyPair.publicKey).toString('base64url') } });
+            }
+            expect((await verifyKey(fixture.keyPair.secretKey)).statusCode).toBe(403);
         } finally { await app.close(); }
     });
 

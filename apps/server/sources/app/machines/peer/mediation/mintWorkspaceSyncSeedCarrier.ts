@@ -2,19 +2,16 @@ import type { WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { resolvePeerRouteFeatureId } from '@happier-dev/protocol/machines/peer/mediation/routeFeature';
 
-import type { readCurrentWorkspaceSyncSeedAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
+import type { WorkspaceSyncSeedAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { isServerFeatureEnabledForRequest, readHomeEffectiveEnv } from '@/app/features/catalog/serverFeatureGate';
 import { readAvailableMachineIrohEndpointAuthority } from '@/app/machines/machineStateGuards';
 import { mintDirectRouteGrantV2, resolvePeerMediationGrantSigningConfig } from './mintDirectRouteGrantV1';
 
-type SeedAdmission = NonNullable<Awaited<ReturnType<typeof readCurrentWorkspaceSyncSeedAuthorization>>>;
-
 /** The admitted seed owns filesystem authority. This grant opens its existing transfer carrier. */
 export async function mintWorkspaceSyncSeedCarrier(
-    { writer, physicalTarget }: SeedAdmission,
-    ephemeralPublicKeyBase64Url: string,
+    { writer, physicalTarget, carrierPublicKey }: WorkspaceSyncSeedAdmission,
 ): Promise<WorkspaceSyncSeedCarrierV1 | undefined> {
-    if (writer.machineId === physicalTarget.machineId) return undefined;
+    if (!carrierPublicKey || writer.machineId === physicalTarget.machineId) return undefined;
     const flowKind = 'bounded_transfer';
     const routeKind = 'iroh_peer';
     const env = await readHomeEffectiveEnv();
@@ -41,7 +38,7 @@ export async function mintWorkspaceSyncSeedCarrier(
             initiator: { kind: 'machine', machineId: physicalTarget.machineId, endpointId: target.endpointId },
             target: { machineId: writer.machineId, endpointId: endpoint.endpointId },
         },
-        ephemeralPublicKeyBase64Url,
+        ephemeralPublicKeyBase64Url: carrierPublicKey,
         nowMs,
         ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.finiteTransferCarrier,
         serverGateEnabled: true,

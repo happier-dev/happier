@@ -12,11 +12,12 @@ import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSync
     readCurrentWorkspaceSyncCopyRetirementAuthorization,
     verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
     hasCurrentExternalActionSessionSource, readCurrentWorkspaceSyncSeedAuthorization, verifyExternalActionMachineRpcExecution,
+    verifyWorkspaceSyncSeedKeyCustody,
     resolveReceivingMachineRpcAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { buildMachineAdmissionFactsSelect, resolveMachineAdmission, resolveMachineAdmissionFromFactsInTx, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
-import { readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
+import { hasCurrentMachineWorkspaceSyncStorageInTx, readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
@@ -141,24 +142,37 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || !verifyMachineInstallationProof({ payload: { version: 1, machineId: signer.id, installationId: signer.installationId,
                     accountId: request.userId, rpcAdmission: { context, method, workspaceSyncSeedRouting, callerInputAuthorization, workspaceSyncSourceExecution } },
                     proof, publicKey: encodeBase64(signer.installationPublicKey, 'base64url') })) return reply.code(403).send({ error: 'access_denied' });
-            const admitted = await readCurrentWorkspaceSyncSeedAuthorization(callerInputAuthorization, workspaceSyncSeedRouting,
-                workspaceSyncSourceExecution, app.resolveCurrentSessionMachine);
-            const route = admitted?.physicalTarget;
-            if (!admitted || !route || method !== `${admitted.writer.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
-                || (signer.id === admitted.writer.machineId ? signer.installationId !== admitted.writer.installationId
-                    : signer.id !== route.machineId || signer.installationId !== route.installationId)) {
+            const { sourceWriter } = workspaceSyncSeedRouting.sourceWriterTarget;
+            const callerIsTarget = signer.id === workspaceSyncSeedRouting.target.targetMachineId && signer.id !== sourceWriter.machineId;
+            let receivingMachineAdmission;
+            if (callerIsTarget) {
+                if (!await verifyWorkspaceSyncSeedKeyCustody({ authorization: callerInputAuthorization,
+                    routing: workspaceSyncSeedRouting, sourceExecution: workspaceSyncSourceExecution, method,
+                    signer: { machineId: signer.id, installationId: signer.installationId, custodianAccountId: signer.accountId } })
+                    || !await hasCurrentMachineWorkspaceSyncStorageInTx(db, { accountServerId: workspaceSyncSeedRouting.target.accountServerId,
+                        machineId: signer.id })) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+            } else {
+                // Direct receiver ingress still has to admit the execution itself.
+                if (signer.id !== sourceWriter.machineId || signer.installationId !== sourceWriter.installationId
+                    || method !== `${sourceWriter.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                const admitted = await readCurrentWorkspaceSyncSeedAuthorization(callerInputAuthorization, workspaceSyncSeedRouting,
+                    workspaceSyncSourceExecution, app.resolveCurrentSessionMachine);
+                if (!admitted) return reply.code(403).send({ error: 'access_denied' });
+                receivingMachineAdmission = await resolveReceivingMachineRpcAdmission({
+                    actorAccountId: admitted.verified.binding.accountId, rpcMethod: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+                    receiver: admitted.writer, admitted: admitted.receivingMachineAdmission ?? context,
+                });
+            }
+            const destination = callerIsTarget
+                ? await db.machine.findUnique({ where: { id: sourceWriter.machineId } }).then(decodeMachineStoredContent) : signer;
+            if (!destination?.installationPublicKey || destination.installationId !== sourceWriter.installationId
+                || classifyMachineAvailabilityState(destination) !== 'available') {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const destination = await db.machine.findUnique({ where: { id: admitted.writer.machineId } }).then(decodeMachineStoredContent);
-            if (!destination?.installationPublicKey || destination.installationId !== admitted.writer.installationId
-                || classifyMachineAvailabilityState(destination) !== 'available'
-                || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
-                return reply.code(403).send({ error: 'access_denied' });
-            }
-            const receivingMachineAdmission = signer.id === destination.id ? await resolveReceivingMachineRpcAdmission({
-                actorAccountId: admitted.verified.binding.accountId, rpcMethod: method.slice(method.indexOf(':') + 1),
-                receiver: { machineId: destination.id, installationId: destination.installationId },
-                admitted: admitted.receivingMachineAdmission }) : null;
             return reply.send({ v: 1, ok: true, ...(receivingMachineAdmission ? { receivingMachineAdmission } : {}),
                 destinationInstallation: { machineId: destination.id,
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });

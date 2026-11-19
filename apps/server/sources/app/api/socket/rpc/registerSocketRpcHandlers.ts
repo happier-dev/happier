@@ -100,7 +100,7 @@ import {
 } from "@/app/session/follow/sessionFollowEdgeService";
 import { verifyExternalActionMachineRpcExecution, hasCurrentExternalActionSessionSource,
     readCurrentWorkspaceSyncHandoffWriterTarget, verifyWorkspaceSyncProjectSourceAuthorization,
-    readCurrentWorkspaceSyncSeedAuthorization, resolveReceivingMachineRpcAdmission } from "@/app/auth/externalActionExecutionAuthorization";
+    resolveReceivingMachineRpcAdmission } from "@/app/auth/externalActionExecutionAuthorization";
 import {
     readMaterializedRunnerMachineRoutingBinding,
     verifyCurrentMaterializedRunnerPrincipal,
@@ -1412,8 +1412,15 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 && params.userId === workspaceSyncSourceWriterTargetRouting.source.sourceContext.machineAdmission.custodianAccountId
                 && readMachineScopedSocketMachineId(params.socket) === workspaceSyncSourceWriterTargetRouting.sourceWriter.machineId
                 && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) === workspaceSyncSourceWriterTargetRouting.sourceWriter.installationId);
-            const verifiedSeedSender = Boolean(verifiedExternalAction && workspaceSyncSeedRouting
-                && params.userId === workspaceSyncSeedRouting.target.targetContext.machineAdmission.custodianAccountId);
+            const seedAdmission = verifiedExternalAction?.workspaceSyncSeedAdmission;
+            const seedTarget = seedAdmission?.physicalTarget;
+            const seedSocketData = seedTarget ? readSocketData(params.socket) : null;
+            const verifiedSeedSender = Boolean(seedTarget && seedSocketData && params.userId === seedTarget.custodianAccountId
+                && readMachineScopedSocketMachineId(params.socket) === seedTarget.machineId
+                && readVerifiedMachineSocketInstallationIdFromSocketData(seedSocketData) === seedTarget.installationId
+                && params.socket.connected === true && (seedSocketData.authTokenKind === 'account' || seedSocketData.authTokenKind === 'terminal')
+                && seedSocketData.ephemeralRunnerAdmission == null && seedSocketData.apiTokenPrincipal == null
+                && await hasCurrentSocketCredential(params.userId, params.socket));
             const archiveSigner = verifiedExternalAction?.deploymentChildSigner;
             const archiveSocketData = archiveSigner ? readSocketData(params.socket) : null;
             // The installed receiver dials over its custodian's user-scoped RPC socket (callExactMachineRpc).
@@ -1958,34 +1965,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 }
             }
             let mintSeedCarrier: (() => ReturnType<typeof mintWorkspaceSyncSeedCarrier>) | undefined;
-            if (workspaceSyncSeedRouting && machinePrefix) {
-                const routing = workspaceSyncSeedRouting;
-                const readCurrent = async () => {
-                    const socketData = readSocketData(params.socket);
-                    if (!externalActionExecution?.success || !verifiedExternalAction || params.socket.connected !== true
-                        || (socketData.authTokenKind !== 'account' && socketData.authTokenKind !== 'terminal')
-                        || socketData.ephemeralRunnerAdmission != null || socketData.apiTokenPrincipal != null
-                        || !await hasCurrentSocketCredential(params.userId, params.socket)) return null;
-                    const current = await readCurrentWorkspaceSyncSeedAuthorization(externalActionExecution.data.authorization, routing,
-                        retainedProjectSourceExecution,
-                        input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.sessionPublisherPresence, ...input }));
-                    const targetRoute = current?.physicalTarget;
-                    if (!current || !targetRoute || machinePrefix !== current.writer.machineId
-                        || params.userId !== targetRoute.custodianAccountId
-                        || readMachineScopedSocketMachineId(params.socket) !== targetRoute.machineId
-                        || readVerifiedMachineSocketInstallationIdFromSocketData(socketData) !== targetRoute.installationId) return null;
-                    return current;
-                };
-                const admitted = await readCurrent();
-                if (!admitted) { callback?.(buildForbiddenRpcResponse()); return; }
-                machineAdmission = routing.sourceWriterTarget.source.sourceContext.machineAdmission;
-                receivingMachineAdmission = await resolveReceivingMachineRpcAdmission({
-                    actorAccountId: admitted.verified.binding.accountId, rpcMethod: method.slice(method.indexOf(':') + 1),
-                    receiver: admitted.writer, admitted: admitted.receivingMachineAdmission });
-                if (routing.carrierPublicKey) {
-                    const publicKey = routing.carrierPublicKey;
-                    mintSeedCarrier = () => mintWorkspaceSyncSeedCarrier(admitted, publicKey);
-                }
+            if (workspaceSyncSeedRouting) {
+                if (!seedAdmission || !verifiedSeedSender) { callback?.(buildForbiddenRpcResponse()); return; }
+                const admitted = seedAdmission;
+                machineAdmission = admitted.sourceMachineAdmission;
+                receivingMachineAdmission = admitted.receivingMachineAdmission;
+                if (admitted.carrierPublicKey) mintSeedCarrier = () => mintWorkspaceSyncSeedCarrier(admitted);
                 sessionWriteTargetUserId = admitted.writer.custodianAccountId;
                 const matches = (target: SocketDataCarrier) => readMachineScopedSocketMachineId(target) === admitted.writer.machineId
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.writer.installationId;
