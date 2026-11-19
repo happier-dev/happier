@@ -24,6 +24,8 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     canCreate: boolean;
     /** Receives the add menu's opener, so the phone bar's "+" opens the same menu as this "+". */
     addOpenerRef?: React.MutableRefObject<(() => void) | null>;
+    /** The phone's floating "+" opens the add menu, so the head draws no second "+". */
+    barOwnsAdd?: boolean;
 }>) {
     const router = useRouter();
     const openAgent = useWorkflowAgentAuthoring();
@@ -135,7 +137,8 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                     matchTriggerWidth={false}
                     maxWidthCap={320}
                     popoverPortalWebTarget="body"
-                    trigger={({ toggle }) => (
+                    // On a phone the floating bar's "+" is the one way to add (scene 8 phone, fix 8): the menu keeps a bare anchor.
+                    trigger={({ toggle }) => props.barOwnsAdd ? <View testID="workflows-column:add" collapsable={false} /> : (
                         <IconButton
                             testID="workflows-column:add"
                             iconName="plus"

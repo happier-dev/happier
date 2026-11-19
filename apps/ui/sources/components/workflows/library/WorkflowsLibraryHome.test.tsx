@@ -1294,7 +1294,9 @@ describe('workflow library page anatomy', () => {
         const { getBuiltinWorkflowCatalogV1} = await import('@happier-dev/protocol/workflows/builtins/catalog');
         const { countWorkflowStepsV1 } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
         const planEntry = getBuiltinWorkflowCatalogV1().find((entry) => entry.id === 'builtin:plan-with-a-panel')!;
-        expect(planCopy).toContain(t('workflows.examples.stepCount', { count: countWorkflowStepsV1(planEntry.definition.blocks) }));
+        // The lab's Built-in row (scene 8, fix 4): what it does under its name, and its own Start.
+        expect(planCopy).toContain(t(planEntry.descriptionKey as never));
+        expect(screen.findByTestId('workflow-builtins:builtin:plan-with-a-panel:start')).not.toBeNull();
         const marks = (id: string) => screen.findAll((node) => node.props.testID === `workflow-builtins:${id}`)[0]
             ?.findAll((node) => typeof node.props.name === 'string').map((node) => node.props.name) ?? [];
         expect(marks('builtin:plan-with-a-panel')).toContain('list-checks');

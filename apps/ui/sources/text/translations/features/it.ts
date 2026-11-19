@@ -19355,6 +19355,8 @@ const it: WorkflowsDestinationTranslations = {
     },
     allRuns: 'Tutte le esecuzioni',
     lastRun: ({ age }) => `ultima esecuzione ${age}`,
+    lastRunStandalone: ({ age }) => `Ultima esecuzione ${age}`,
+    neverRan: 'Mai eseguito',
     strip: {
         label: ({ count, parts }) => `${count === 1 ? 'Ultima esecuzione' : `Ultime ${count} esecuzioni`}: ${parts}`,
         labelPlain: ({ count }) => (count === 1 ? 'Ultima esecuzione' : `Ultime ${count} esecuzioni`),

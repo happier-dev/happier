@@ -18849,6 +18849,8 @@ const de: WorkflowsDestinationTranslations = {
     },
     allRuns: 'Alle Läufe',
     lastRun: ({ age }) => `zuletzt gelaufen ${age}`,
+    lastRunStandalone: ({ age }) => `Zuletzt gelaufen ${age}`,
+    neverRan: 'Noch nie gelaufen',
     strip: {
         label: ({ count, parts }) => `${count === 1 ? 'Letzter Lauf' : `Letzte ${count} Läufe`}: ${parts}`,
         labelPlain: ({ count }) => (count === 1 ? 'Letzter Lauf' : `Letzte ${count} Läufe`),

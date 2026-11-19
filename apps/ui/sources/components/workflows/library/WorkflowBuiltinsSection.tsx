@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
-import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     HostCollection as Collection,
@@ -60,18 +59,21 @@ export function WorkflowBuiltinsSection(props: Readonly<{ isVisible?: (id: strin
         openKey: null,
         onOpenChange: open,
     });
+    // The lab's Built-in section (scene 8, UI refinements ruling 18:23Z fix 4): its title and description on the page,
+    // then compact two-column catalog rows (mark, name, what it does) each ending in "Start", never a second sheet.
     const anatomy = React.useMemo((): CollectionAnatomy<BuiltinRow> => ({
+        rowRole: 'catalogRow',
         glyph: (row) => <WorkflowBuiltinMark icon={row.entry.icon} />,
         loadingGlyph: false,
         title: builtinTitle,
-        where: (row) => [
-            t('workflows.examples.stepCount', { count: countWorkflowStepsV1(row.entry.definition.blocks) }),
-            tLoose(row.entry.descriptionKey),
-        ].join(' · '),
+        description: (row) => tLoose(row.entry.descriptionKey),
+        action: (row) => <RoundButton testID={`workflow-builtins:${row.entry.id}:start`} size="small" display="inverted"
+            title={t('workflows.start.start')}
+            onPress={() => router.push({ pathname: '/workflows/[id]', params: { id: row.entry.id, intent: 'run' } } as never)} />,
         accessibilityLabel: builtinTitle,
         testID: (row) => `workflow-builtins:${row.entry.id}`,
         columnTitles: { title: t('workflows.page.blocks.builtin') },
-    }), []);
+    }), [router]);
     if (rows.length === 0) return null;
     // Its own block and scope, as the examples' cards have: a Collection root fills its parent (flex 1, clipped), so
     // as a bare sibling of the library's Collection the two split the page column and the library's rows were cut short.

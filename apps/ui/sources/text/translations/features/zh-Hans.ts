@@ -19229,6 +19229,8 @@ const zhHans: WorkflowsDestinationTranslations = {
     },
     allRuns: '全部运行',
     lastRun: ({ age }) => `上次运行 ${age}`,
+    lastRunStandalone: ({ age }) => `上次运行 ${age}`,
+    neverRan: '从未运行',
     strip: {
         label: ({ count, parts }) => `最近 ${count} 次运行：${parts}`,
         labelPlain: ({ count }) => `最近 ${count} 次运行`,

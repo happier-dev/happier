@@ -19412,6 +19412,8 @@ const fr: WorkflowsDestinationTranslations = {
     },
     allRuns: 'Toutes les exécutions',
     lastRun: ({ age }) => `dernière exécution ${age}`,
+    lastRunStandalone: ({ age }) => `Dernière exécution ${age}`,
+    neverRan: 'Jamais exécuté',
     strip: {
         label: ({ count, parts }) => `${count === 1 ? 'Dernière exécution' : `${count} dernières exécutions`} : ${parts}`,
         labelPlain: ({ count }) => (count === 1 ? 'Dernière exécution' : `${count} dernières exécutions`),

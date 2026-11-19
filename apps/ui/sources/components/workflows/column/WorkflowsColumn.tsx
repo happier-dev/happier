@@ -42,6 +42,7 @@ const EMPTY_PLUGIN_DETAILS: readonly Readonly<{ id: string; title: string }>[] =
 import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
 import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import type { WorkflowLibraryItem } from '../library/workflowLibraryCells';
+import { groupWorkflowRowsByProject } from '../library/workflowLibraryProjectGroups';
 import { WorkflowsPhonePage, type WorkflowsColumnView } from './WorkflowsPhonePage';
 import { WorkflowsColumnCreationRefContext, WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
@@ -276,7 +277,7 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
             <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
                 <ItemList presentation="grouped" style={styles.definitionsList}>
                     <WorkflowColumnRowDisplayContext.Provider value={rowDisplay}>
-                        <WorkflowsColumnDefinitions libraryView={libraryView} />
+                        <WorkflowsColumnDefinitions libraryView={libraryView} groupBy={display.groupBy} />
                     </WorkflowColumnRowDisplayContext.Provider>
                 </ItemList>
             </RetainedPanelSurface>
@@ -295,6 +296,8 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
 
 const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinitions(props: Readonly<{
     libraryView: WorkflowLibraryViewController;
+    /** The kind's one Group by, shared with the page (scene 8 D3). */
+    groupBy: 'source' | 'project';
 }>) {
     const router = useRouter();
     const pathname = usePathname();
@@ -315,18 +318,68 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     // Shared and plugin workflows are rows of the same projection the page reads, so every row draws the same facts.
     const { rows } = props.libraryView;
     const split = React.useMemo(() => ({
-        sharedWithYou: rows.filter((row): row is SharedLibraryRow => row.group === 'sharedWithYou' && isVisible(row.key)),
+        sharedWithYou: rows.filter((row): row is SharedLibraryRow => row.group === 'sharedWithYou' && isVisible(row.key) && sectionOf(row) === null),
         fromPlugins: rows.filter((row): row is PluginLibraryRow => row.group === 'fromPlugins' && isVisible(row.key)),
-    }), [isVisible, rows]);
-    const empty = visibleLibraryRows.length === 0;
+    }), [isVisible, rows, sectionOf]);
+    const sectioned = React.useMemo(() => workflowSections.sections.flatMap(section => {
+        const members = rows.filter((row): row is DefinitionLibraryRow => 'definition' in row && isVisible(row.key)
+            && sectionOf(row) === section.address.sectionId);
+        return members.length ? [{ key: section.address.sectionId, title: resolveSessionSectionDisplayTitle(section.display), rows: members }] : [];
+    }), [isVisible, rows, sectionOf, workflowSections.sections]);
+    const empty = visibleLibraryRows.length === 0 && sectioned.length === 0;
+    // Group by Project reads the page's one project axis over the rows the shipped groups would list (scene 8 D3).
+    const projectGroups = React.useMemo(() => props.groupBy !== 'project' ? null
+        : groupWorkflowRowsByProject<WorkflowLibraryItem>([...visibleLibraryRows, ...split.sharedWithYou, ...split.fromPlugins],
+            props.libraryView.projectsByWorkflow),
+    [props.groupBy, props.libraryView.projectsByWorkflow, split, visibleLibraryRows]);
     const firstLoad = empty && (library.status === 'loading' || accountWorkflows.status === 'loading');
     const libraryFailed = empty && !firstLoad && library.status === 'failed' && !homeUnavailable;
     // The Account half failed while saved workflows show: said once, under the rows, so they never move.
     const accountFailed = accountWorkflows.status === 'failed' && !libraryFailed && !homeUnavailable;
     return <>
         {homeUnavailable ? <View style={styles.freshness}><HomeReachabilityGate variant="line">{null}</HomeReachabilityGate></View> : null}
+        {sectioned.map((section, sectionIndex) => <React.Fragment key={section.key}>
+            <CollectionListGroupLabel testID={`workflows-column:group:section:${section.key}`} title={section.title}
+                count={section.rows.length} first={sectionIndex === 0} />
+            {section.rows.map((row, index) => <CollectionRowOrder key={row.key} followed={index < section.rows.length - 1}
+                precedesSelected={section.rows[index + 1]?.key === selectedDefinitionId}>
+                <ColumnRowWindow id={row.key} index={index} pinned={selectedDefinitionId === row.key}>
+                    <ColumnDefinitionRow row={row} selected={selectedDefinitionId === row.key} href={row.openTarget.href} onOpen={openHref} />
+                </ColumnRowWindow>
+            </CollectionRowOrder>)}
+        </React.Fragment>)}
+        {projectGroups !== null && projectGroups.length > 0 ? <>
+            {projectGroups.map((group, groupIndex) => <React.Fragment key={group.key}>
+                <CollectionListGroupLabel testID={`workflows-column:group:project:${group.key}`} title={group.title}
+                    count={group.rows.length} first={sectioned.length === 0 && groupIndex === 0} />
+                {group.rows.map((row, index) => <CollectionRowOrder key={row.key} followed={index < group.rows.length - 1}
+                    precedesSelected={projectRowSelected(group.rows[index + 1], selectedDefinitionId, params.trigger)}>
+                    <ColumnRowWindow id={row.key} index={index} pinned={projectRowSelected(row, selectedDefinitionId, params.trigger)}>
+                        {row.group === 'fromPlugins' ? (
+                            <WorkflowColumnRow row={row} title={row.plugin.title} fallbackLine={row.plugin.description ?? null}
+                                href={`/workflows/${encodeURIComponent(row.key)}`} testID={`workflows-column:plugin:${row.key}`}
+                                selected={selectedDefinitionId === row.key}
+                                onPress={() => router.push(`/workflows/${encodeURIComponent(row.key)}` as never)} />
+                        ) : 'definition' in row ? (
+                            <ColumnDefinitionRow row={row} selected={selectedDefinitionId === row.definition.definitionId}
+                                href={row.openTarget.href} onOpen={openHref} />
+                        ) : (
+                            <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
+                        )}
+                    </ColumnRowWindow>
+                </CollectionRowOrder>)}
+            </React.Fragment>)}
+            <WorkflowLibraryFreshness library={library} hasRows />
+            {accountFailed ? <View style={styles.stale}>
+                <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
+                    reason={t('workflows.triggers.section.accountLoadFailed')}
+                    action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: accountWorkflows.retry }} />
+            </View> : null}
+            {accountEditor.popover}
+            <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} isVisible={isVisible} />
+        </> : <>
         <CollectionListGroupLabel testID="workflows-column:group:library" title={t('workflows.destination.sections.library')}
-            {...(visibleLibraryRows.length > 0 ? { count: visibleLibraryRows.length } : {})} first />
+            {...(visibleLibraryRows.length > 0 ? { count: visibleLibraryRows.length } : {})} first={sectioned.length === 0} />
         {firstLoad ? <CollectionSkeletonRows count={3} /> : null}
         {libraryFailed ? <View style={collectionListStyles.stateLine}><SurfaceStateCard testID="workflows-column:library:failed" size="line" kind="error"
             title={t('workflows.loadFailedTitle')} reason={t('workflows.loadFailedBody')} action={{ label: t('workflows.retry'), onPress: library.retry, testID: 'workflows-column:library:failed:retry' }}
@@ -381,6 +434,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                     onPress={() => router.push(`/workflows/${encodeURIComponent(row.key)}` as never)} />
             </ColumnRowWindow></CollectionRowOrder>)}
         </> : null}
+        </>}
     </>;
 });
 
@@ -513,6 +567,12 @@ const WorkflowsColumnRunsPage = React.memo(function WorkflowsColumnRunsPage(prop
         </ItemList>
     </>;
 });
+
+/** Whether a row of a project group is the open one: a plugin workflow by its key, the others as Library rows. */
+function projectRowSelected(row: WorkflowLibraryItem | undefined, selectedDefinitionId: string | null, trigger: unknown): boolean {
+    if (row === undefined) return false;
+    return row.group === 'fromPlugins' ? selectedDefinitionId === row.key : libraryRowSelected(row, selectedDefinitionId, trigger);
+}
 
 /** Whether a Library row is the open one: its definition's page, or the account workflow a deep link opened. */
 function libraryRowSelected(

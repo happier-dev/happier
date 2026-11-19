@@ -65,6 +65,11 @@ export type WorkflowLibraryRowFacts = Readonly<{
 
 const EMPTY_AGENTS: readonly PluginContributionIdentityV1[] = Object.freeze([]);
 const EMPTY_STEPS: readonly string[] = Object.freeze([]);
+const NO_RUNS = Object.freeze({ recent: [], needsYouCount: 0, needsYouRunId: null });
+/** A row whose history isn't read still draws the strip's eight empty places (one empty form, never a dash). */
+export function readWorkflowRowStrip(facts: WorkflowLibraryRowFacts): WorkflowRunStrip {
+  return facts.strip ?? projectWorkflowRunStrip(NO_RUNS);
+}
 /** A trigger as the list facts carry it: the trigger owner's summary source and whether it is on. */
 export type WorkflowTriggerFact = TriggerSummarySource & Readonly<{ enabled?: boolean }>;
 
@@ -305,7 +310,6 @@ export function buildWorkflowLibraryFields(
       title: t('workflows.destination.columns.steps'),
       minWidth: 44,
       priority: 2,
-      align: 'end',
       render: (row) => readFacts(row).stepCount,
     },
     {
@@ -324,10 +328,9 @@ export function buildWorkflowLibraryFields(
       minWidth: 76,
       priority: 5,
       render: (row) => {
-        const strip = readFacts(row).strip;
-        return strip === null ? null : (
+        return (
           <WorkflowRunStripView
-            strip={strip}
+            strip={readWorkflowRowStrip(readFacts(row))}
             testID={`workflows-home:row:${row.key}:strip`}
           />
         );
@@ -398,13 +401,16 @@ export function buildWorkflowLibraryCard(
             <WorkflowMarks layout="row" marks={readWorkflowLibraryRowMarks(facts, row)} />
           ) : null}
           <View style={styles.cardFootSpacer} />
-          {lastRun === null ? null : (
+          {/* "Last run 2h ago", or "Never ran" once the history is read and empty (scene 8 card, fix 7). */}
+          {lastRun === null && facts.strip === null ? null : (
             <Text variant="meta" numberOfLines={1} style={styles.cardFootText}>
-              {t('workflows.destination.lastRun', { age: lastRun })}
+              {lastRun === null
+                ? t('workflows.destination.neverRan')
+                : t('workflows.destination.lastRunStandalone', { age: lastRun })}
             </Text>
           )}
-          {facts.strip === null || !details.recentRuns ? null : (
-            <WorkflowRunStripView strip={facts.strip} />
+          {!details.recentRuns ? null : (
+            <WorkflowRunStripView strip={readWorkflowRowStrip(facts)} />
           )}
         </View>
       );
@@ -419,12 +425,15 @@ const styles = StyleSheet.create((theme) => ({
   statePress: {
     alignSelf: 'flex-end',
   },
+  // The card's foot spans the card: marks at its start, "Last run …" and the strip at its end (fix 7).
   cardFoot: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s10,
     minWidth: 0,
     alignSelf: 'stretch',
+    flexGrow: 1,
+    width: '100%',
   },
   cardFootSpacer: {
     flex: 1,

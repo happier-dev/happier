@@ -19289,6 +19289,8 @@ const ja: WorkflowsDestinationTranslations = {
     },
     allRuns: 'すべての実行',
     lastRun: ({ age }) => `最終実行 ${age}`,
+    lastRunStandalone: ({ age }) => `最終実行 ${age}`,
+    neverRan: '未実行',
     strip: {
         label: ({ count, parts }) => `直近 ${count} 件の実行: ${parts}`,
         labelPlain: ({ count }) => `直近 ${count} 件の実行`,

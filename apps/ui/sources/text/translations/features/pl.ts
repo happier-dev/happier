@@ -19379,6 +19379,8 @@ const pl: WorkflowsDestinationTranslations = {
     },
     allRuns: 'Wszystkie uruchomienia',
     lastRun: ({ age }) => `ostatnio ${age}`,
+    lastRunStandalone: ({ age }) => `Ostatnio ${age}`,
+    neverRan: 'Jeszcze nie uruchomiono',
     strip: {
         label: ({ count, parts }) => `Ostatnie uruchomienia (${count}): ${parts}`,
         labelPlain: ({ count }) => `Ostatnie uruchomienia (${count})`,

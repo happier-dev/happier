@@ -68,7 +68,6 @@ export const WorkflowSentencePreview = React.memo(
                       size="compact"
                       icon={group.glyph}
                       label={readWhenChipLabel(group.title, when)}
-                      struck={trigger.enabled === false}
                     />
                   </View>
                 </WorkflowSentenceUnit>

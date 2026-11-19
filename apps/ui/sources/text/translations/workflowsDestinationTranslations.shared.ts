@@ -27,6 +27,8 @@ export const en = {
         noWorkflow: 'No saved workflow', unknownDate: 'Unknown date', searchRuns: 'Search runs',
         starter: { user: 'User', agent: 'Agent', trigger: 'Trigger' } },
     lastRun: ({ age }: { age: string }) => `last run ${age}`,
+    lastRunStandalone: ({ age }: { age: string }) => `Last run ${age}`,
+    neverRan: 'Never ran',
     strip: {
         label: ({ count, parts }: { count: number; parts: string }) => `Last ${count === 1 ? 'run' : `${count} runs`}: ${parts}`,
         labelPlain: ({ count }: { count: number }) => `Last ${count === 1 ? 'run' : `${count} runs`}`,

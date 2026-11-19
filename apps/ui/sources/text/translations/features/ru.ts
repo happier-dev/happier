@@ -19380,6 +19380,8 @@ const ru: WorkflowsDestinationTranslations = {
     },
     allRuns: 'Все запуски',
     lastRun: ({ age }) => `последний запуск ${age}`,
+    lastRunStandalone: ({ age }) => `Последний запуск ${age}`,
+    neverRan: 'Ещё не запускался',
     strip: {
         label: ({ count, parts }) => `Последние запуски (${count}): ${parts}`,
         labelPlain: ({ count }) => `Последние запуски (${count})`,

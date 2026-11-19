@@ -506,6 +506,29 @@ describe('WorkflowsColumn', () => {
         }
         expect(screen.findHostByTestId('workflows-column:library:readable')).not.toBeNull();
     });
+    it('groups its rows by Project when the page does: one Group by per kind (scene 8 D3)', async () => {
+        answerLists();
+        const answer = executeMock.getMockImplementation()!;
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => actionId === 'workflow.definition.list'
+            ? Promise.resolve({ ok: true, result: { definitions: [
+                { kind: 'workflow-definition.v1', definitionId: 'own', metadata: { title: 'Own recipe' }, revision: { headerVersion: 1, bodyVersion: 1 },
+                    contentStatus: 'available', stepCount: 1, ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null },
+                { kind: 'workflow-definition.v1', definitionId: 'shared', metadata: { title: 'Shared recipe' }, revision: { headerVersion: 1, bodyVersion: 1 },
+                    contentStatus: 'available', stepCount: 1, ownerAccountId: 'other-account', access: 'view', triggers: [], nextRunAt: null },
+            ] } satisfies WorkflowDefinitionListResultV1 }) : answer(actionId, input));
+        const { settings } = storage.getState();
+        storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: { ...settings.collectionDisplayPreferencesV1,
+            workflow: { ...settings.collectionDisplayPreferencesV1.workflow, groupBy: 'project' } } } });
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findHostByTestId('workflows-column:library:own')).not.toBeNull();
+        });
+        // Neither row has a project placement, so both stand under "No project" instead of Library and Shared with you.
+        expect(screen.findAll(node => node.props?.testID === 'workflows-column:group:project:noProject' && 'count' in node.props)[0]?.props.count).toBe(2);
+        expect({ library: screen.findByTestId('workflows-column:group:library'), shared: screen.findByTestId('workflows-column:group:sharedWithYou') })
+            .toEqual({ library: null, shared: null });
+    });
     it('keeps the Library index alive from the shared run summaries: needs you and running speak, every row keeps its strip', async () => {
         answerLists();
         const answer = executeMock.getMockImplementation()!;
@@ -674,6 +697,10 @@ describe('WorkflowsColumn', () => {
         const http = boundary!;
         setRuntimeFetch(async (url, init) => {
             const target = new URL(String(url));
+        // One cause, one message: the column says what the library home says, from the same copy.
+        const failedText = screen.getTextContent();
+        expect(failedText).toContain('workflows.loadFailedTitle');
+        expect(failedText).toContain('workflows.loadFailedBody');
             if (target.pathname === '/v1/artifacts' && (target.searchParams.get('kind') === 'other'
                 || target.searchParams.get('kinds')?.includes('workflow-definition.v1'))) {
                 artifactRequests.push(target.href);
@@ -697,10 +724,6 @@ describe('WorkflowsColumn', () => {
             };
             expect(observation.retry, JSON.stringify(observation)).toBe(true);
         });
-        // One cause, one message: the column says what the library home says, from the same copy.
-        const failedText = screen.getTextContent();
-        expect(failedText).toContain('workflows.loadFailedTitle');
-        expect(failedText).toContain('workflows.loadFailedBody');
         const target = () => screen.tree.findHostByTestId('workflows-column:library:failed:retry')!;
         // A line recovery paints no ring of its own: the keyboard ring is the shared document ring
         // (theme.css `:where(:focus-visible)`), which only shows while the host neither suppresses the

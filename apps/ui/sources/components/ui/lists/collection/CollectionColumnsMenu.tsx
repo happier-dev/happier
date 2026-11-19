@@ -147,6 +147,8 @@ export function CollectionColumnsMenuTrigger(
     trigger?: 'icon' | 'labelled';
     /** The bare trigger's glyph: the page head's "⋯" by default; a column's View menu uses its sliders. */
     iconName?: 'dots-three' | 'sliders-horizontal';
+    /** A phone shows the body as the shared bottom sheet (a View sheet of switches), not an anchored menu. */
+    phoneSheet?: boolean;
   }>,
 ) {
   const [open, setOpen] = React.useState(props.initiallyOpen === true);
@@ -190,6 +192,7 @@ export function CollectionColumnsMenuTrigger(
           gap={6}
           onRequestClose={() => setOpen(false)}
           backdrop={{ enabled: false }}
+          {...(props.phoneSheet ? { phonePresentation: 'sheet' as const } : {})}
           portal={TRAILING_EDGE_PORTAL}
           accessibilityLabel={label}
         >

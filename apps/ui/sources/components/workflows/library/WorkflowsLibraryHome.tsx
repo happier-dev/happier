@@ -59,11 +59,12 @@ import {
 } from './workflowLibraryReads';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
-import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, resolveWorkflowRowDetails,
+import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowRowStrip, resolveWorkflowRowDetails,
     WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
-import { WorkflowsViewGroupBy, WorkflowsViewLines, WorkflowsViewNewSection, WorkflowsViewRowDetails } from './WorkflowsViewMenu';
+import { WorkflowsViewGroupBy, WorkflowsViewNewSection, WorkflowsViewRowDetails } from './WorkflowsViewMenu';
 import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
+import { workflowLibraryProjectAxis } from './workflowLibraryProjectGroups';
 import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
@@ -195,12 +196,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const projects = libraryView.projectsByWorkflow;
     const { workflowSections } = libraryView;
     const groups = React.useMemo(() => {
-        const noProject = { key: 'noProject', title: t('workflows.destination.sections.noProject') };
-        const byProject = new Map([...projects.values()].map(project => [project.key, project]));
-        const source = display.groupBy === 'source' ? LIBRARY_GROUPS : {
-            axis: [...byProject.values()].sort((left, right) => left.title.localeCompare(right.title)).concat(noProject),
-            groupOf: (row: LibraryRow) => projects.get(row.key)?.key ?? noProject.key,
-        };
+        const source = display.groupBy === 'source' ? LIBRARY_GROUPS : workflowLibraryProjectAxis(projects);
         if (!workflowSections.sections.length) return source;
         const sectionGroups = new Map(workflowSections.sections.map(section => [section.address.sectionId, {
             key: `section:${section.address.sectionId}`, title: resolveSessionSectionDisplayTitle(section.display),
@@ -308,8 +304,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             {phone ? null : search}
             {phone ? <View style={styles.spaceStripInline}>{spaceHeader.strip}</View> : <View style={styles.controlLineGrow} />}
             {spaceHeader.filterButton}
-            {/* Scene 8's one View menu: Group by, Lines (rows and cards), "Columns" in the table or "Row details" for
-                rows and cards (owner 2026-11-19), then New section. */}
+            {/* Scene 8's one View menu: Group by, then "Columns" in the table or "Row details" for cards (Lines are for lists: the phone's sheet;
+                owner 2026-11-19), then New section. */}
             {display.presentation === 'table' ? <CollectionColumnsMenuButton
                 testID="workflows-home:view"
                 trigger="labelled"
@@ -321,7 +317,6 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                 afterColumns={newSectionOption}
             /> : <CollectionColumnsMenuTrigger testID="workflows-home:view" trigger="labelled" label={t('workflows.destination.columns.view')}>
                 {groupOptions}
-                <WorkflowsViewLines lines={display.lines} onChange={display.setLines} testIDPrefix="workflows-home:view:lines" />
                 <WorkflowsViewRowDetails details={display.details} onChange={display.setDetail} pluginDetails={pluginDetails}
                     testIDPrefix="workflows-home:view:detail" />
                 {newSectionOption}
@@ -517,7 +512,7 @@ function useLibraryAnatomy(
         // itself never draws a list fact, and a card draws the strip in its own foot).
         ...(presentation === 'grid' ? {} : {
             listFact: (row: LibraryRow) => {
-                const strip = rowDetails.recentRuns ? readFacts(row).strip : null;
+                const strip = rowDetails.recentRuns ? readWorkflowRowStrip(readFacts(row)) : null;
                 return strip === null ? null : <WorkflowRunStripView testID={`workflows-home:row:${row.key}:strip`} strip={strip} />;
             },
         }),
