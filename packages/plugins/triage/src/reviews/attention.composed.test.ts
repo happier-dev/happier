@@ -4,7 +4,7 @@ import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
 import { TriageReadAttentionInputV1Schema, TriageReadAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_ACCOUNT_ACTIONS } from '../accountDefinition.js';
 import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
-import { REVIEW_CONTRIBUTION_V1 } from './contribution.js';
+import { createReviewSourceContributionV1 } from './contribution.js';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 // Keep the registered source's real declaration and Action handler, without
@@ -12,7 +12,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 let kit: PluginTestkit;
 const source = definePlugin({ id: 'happier.triage', version: '0.0.0',
 contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
-contributesTo: { 'happier.triage': { sources: { reviews: REVIEW_CONTRIBUTION_V1 } } },
+contributesTo: { 'happier.triage': { sources: { reviews: createReviewSourceContributionV1() } } },
 actions: { ...Object.fromEntries(
   Object.entries(TRIAGE_ACCOUNT_ACTIONS).filter(([id]) => id.startsWith('internal/reviews/')),
 ), 'test-read': { title: 'Read admitted Review attention', surfaces: ['cli'], dangerLevel: 'safe',

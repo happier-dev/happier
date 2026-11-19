@@ -180,8 +180,8 @@ import {
 } from './ui/list/entryDragDropProtocol.js';
 
 import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS } from './targetedContributions.js';
-import { INTERNAL_TASK_ACTIONS_V1, INTERNAL_TASK_CONTRIBUTION_V1 } from './internalTasks/contribution.js';
-import { REVIEW_ACTIONS_V1, REVIEW_CONTRIBUTION_V1 } from './reviews/contribution.js';
+import { createInternalTaskSourceContributionV1, INTERNAL_TASK_ACTIONS_V1 } from './internalTasks/contribution.js';
+import { createReviewSourceContributionV1, REVIEW_ACTIONS_V1 } from './reviews/contribution.js';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 
 export { TRIAGE_DISPLAY_NAME };
@@ -278,7 +278,7 @@ function createTriagePlugin(): TriagePlugin {
     notifications: { 'source-attention': { kind: 'plugin', title: 'Source attention', eventIds: [] } },
     backgroundServices: [{ declaration: { id: 'attention', title: 'Triage source attention' }, runner: runTriageAttention }],
     contributesTo: {
-      'happier.triage': { sources: { internal: INTERNAL_TASK_CONTRIBUTION_V1, reviews: REVIEW_CONTRIBUTION_V1 } },
+      'happier.triage': { sources: { internal: createInternalTaskSourceContributionV1(), reviews: createReviewSourceContributionV1() } },
       'happier.channels': { [SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_ID_V1]: {
         'session-pull-request-companion': SessionPullRequestLinkCompletionsContributionProtocolV1.contribute({
           descriptor: {}, operations: { complete: SessionPullRequestLinkCompletionsContributionProtocolV1.operations.complete.bind(

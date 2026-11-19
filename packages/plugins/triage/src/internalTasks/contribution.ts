@@ -1,5 +1,5 @@
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../accountExecution.js';
-import { TriageSourceDescriptorV1Schema, TriageSourcesContributionProtocolV1, TriageSourceAdministrationActionResultV1Schema, TRIAGE_NATIVE_INVESTIGATION_KINDS_V1 } from '@happier-dev/triage-protocol/v1';
+import { type TriageSourceDescriptorV1, TriageSourcesContributionProtocolV1, TriageSourceAdministrationActionResultV1Schema, TRIAGE_NATIVE_INVESTIGATION_KINDS_V1 } from '@happier-dev/triage-protocol/v1';
 import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
   INTERNAL_TASK_DRAFT_V1, INTERNAL_TASK_STATES_V1, internalTaskStateV1,
@@ -22,7 +22,7 @@ const INTERNAL_TASK_READ_SESSION_LINKS_ACTION_ID_V1 = 'internal/tasks/read-sessi
 const protocol = TriageSourcesContributionProtocolV1;
 const fields = INTERNAL_TASK_EDIT_FIELDS_V1;
 const statuses = INTERNAL_TASK_STATES_V1.map(id => ({ id, label: internalTaskStateV1(id).nativeLabel, state: internalTaskStateV1(id) }));
-export const INTERNAL_TASK_DESCRIPTOR_V1 = TriageSourceDescriptorV1Schema.parse({
+export const INTERNAL_TASK_DESCRIPTOR_V1: TriageSourceDescriptorV1 = {
   v: 1, purpose: 'tasks', displayName: INTERNAL_TASK_SOURCE_LABEL_V1, settingsPageId: 'internal-tasks',
   accountDataInstance: INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1,
   kinds: [{ id: 'task', workflowSubject: 'issue', displayName: 'Task', pluralDisplayName: 'Tasks', task: true,
@@ -31,7 +31,7 @@ export const INTERNAL_TASK_DESCRIPTOR_V1 = TriageSourceDescriptorV1Schema.parse(
       transitions: statuses } }, ...TRIAGE_NATIVE_INVESTIGATION_KINDS_V1],
   sortFields: INTERNAL_TASK_SORT_FIELDS_V1,
   sessionRelations: { kindIds: ['task'] },
-});
+};
 const surfaces = ['plugin', 'ui', 'agent', 'mcp', 'cli'] as const;
 const write = { surfaces, placementBindings: [], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
   dangerLevel: 'safe' } as const;
@@ -128,13 +128,15 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
     inputSchema: protocol.operations.readSessionLinks.declaration.input.schema, resultSchema: protocol.operations.readSessionLinks.declaration.resultSchema, run: readInternalTaskSessionLinks },
 };
 
-export const INTERNAL_TASK_CONTRIBUTION_V1 = protocol.contribute({ descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
-  operations: {
-    listInstances: protocol.operations.listInstances.bind(INTERNAL_TASK_LIST_INSTANCES_ACTION_ID_V1),
-    scan: protocol.operations.scan.bind(INTERNAL_TASK_SCAN_ACTION_ID_V1), get: protocol.operations.get.bind(INTERNAL_TASK_GET_ACTION_ID_V1),
-    create: protocol.operations.create.bind(INTERNAL_TASK_CREATE_ACTION_ID_V1), edit: protocol.operations.edit.bind(INTERNAL_TASK_EDIT_ACTION_ID_V1),
-    transition: protocol.operations.transition.bind(INTERNAL_TASK_TRANSITION_ACTION_ID_V1),
-    linkSession: protocol.operations.linkSession.bind(INTERNAL_TASK_LINK_SESSION_ACTION_ID_V1),
-    readSessionLinks: protocol.operations.readSessionLinks.bind(INTERNAL_TASK_READ_SESSION_LINKS_ACTION_ID_V1),
-  }, surfaces: { detail: { renderer: 'internal-task-detail' } },
-});
+export function createInternalTaskSourceContributionV1() {
+  return protocol.contribute({ descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
+    operations: {
+      listInstances: protocol.operations.listInstances.bind(INTERNAL_TASK_LIST_INSTANCES_ACTION_ID_V1),
+      scan: protocol.operations.scan.bind(INTERNAL_TASK_SCAN_ACTION_ID_V1), get: protocol.operations.get.bind(INTERNAL_TASK_GET_ACTION_ID_V1),
+      create: protocol.operations.create.bind(INTERNAL_TASK_CREATE_ACTION_ID_V1), edit: protocol.operations.edit.bind(INTERNAL_TASK_EDIT_ACTION_ID_V1),
+      transition: protocol.operations.transition.bind(INTERNAL_TASK_TRANSITION_ACTION_ID_V1),
+      linkSession: protocol.operations.linkSession.bind(INTERNAL_TASK_LINK_SESSION_ACTION_ID_V1),
+      readSessionLinks: protocol.operations.readSessionLinks.bind(INTERNAL_TASK_READ_SESSION_LINKS_ACTION_ID_V1),
+    }, surfaces: { detail: { renderer: 'internal-task-detail' } },
+  });
+}

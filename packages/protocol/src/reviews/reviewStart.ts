@@ -56,7 +56,6 @@ export type ReviewEngineInput = z.infer<typeof ReviewEngineInputSchema>;
 
 export const ReviewEngineInputsSchema = lazyZodSchema(() => z._default(z.record(ReviewEngineIdSchema, ReviewEngineInputSchema), {}));
 export type ReviewEngineInputs = z.infer<typeof ReviewEngineInputsSchema>;
-const DEFAULT_REVIEW_ENGINE_INPUTS: ReviewEngineInputs = ReviewEngineInputsSchema.parse({});
 
 export const REVIEW_SCM_SCOPE_INPUT_KEY = 'scmReviewScope';
 
@@ -190,7 +189,7 @@ export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
     // flow should stay narrowly scoped unless the user explicitly broadens it.
     changeType: z._default(ReviewChangeTypeSchema, 'uncommitted'),
     base: z._default(ReviewBaseSchema, { kind: 'none' }),
-    engines: z.prefault(ReviewEngineInputsSchema, DEFAULT_REVIEW_ENGINE_INPUTS),
+    engines: z.prefault(ReviewEngineInputsSchema, {}),
     scmReviewScope: zMini.optional(ReviewScmScopeV1Schema),
     // A selected pull request is scoped by its own strict sibling key, never by
     // widening the worktree scope above: `ReviewProfile` re-derives that one on
