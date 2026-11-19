@@ -4,8 +4,8 @@ import { z } from "zod/mini";
 import type { Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { asServerProtocolZod } from "@/app/api/utils/protocolComposableZodAdapter";
-import { listAuthoringMemoryInTx, mutateAuthoringMemoryInTx, readAuthoringMemoryInTx } from "@/app/kv/authoringMemoryStorage";
-import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { listAuthoringMemoryInTx, mutateAuthoringMemory, readAuthoringMemoryInTx } from "@/app/kv/authoringMemoryStorage";
+import { inReadSnapshot } from "@/storage/inTx";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 
 const AuthoringMemoryRouteParamsSchema = z.strictObject({ key: asServerProtocolZod(AuthoringMemoryKeyV1Schema) });
@@ -62,10 +62,10 @@ export function registerAuthoringMemoryRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         try {
-            const result = await inTx(tx => mutateAuthoringMemoryInTx(tx, {
+            const result = await mutateAuthoringMemory({
                 accountId: request.userId, key: request.params.key,
                 expectedRevision: request.body.expectedRevision, envelope: request.body.content,
-            }));
+            });
             if (result.status === "updated" || result.status === "conflict") return reply.send(result);
             return reply.code(503).send(unavailable());
         } catch (error) {

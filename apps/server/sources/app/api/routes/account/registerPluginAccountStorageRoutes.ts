@@ -3,13 +3,13 @@ import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { z } from "zod/mini";
 
 import {
-    mutatePluginAccountStorageInTx,
+    mutatePluginAccountStorage,
     readPluginAccountStorageInTx,
 } from "@/app/kv/pluginAccountStorage";
 import { readAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { asServerProtocolZod } from "@/app/api/utils/protocolComposableZodAdapter";
-import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { inReadSnapshot } from "@/storage/inTx";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 
 import { type Fastify } from "../../types";
@@ -100,12 +100,12 @@ export function registerPluginAccountStorageRoutes(app: Fastify): void {
             return reply.code(503).send(unavailable());
         }
         try {
-            const result = await inTx(async (tx) => await mutatePluginAccountStorageInTx(tx, {
+            const result = await mutatePluginAccountStorage({
                 accountId: request.userId,
                 pluginId: request.params.pluginId,
                 expectedRevision: request.body.expectedRevision,
                 envelope: request.body.content,
-            }));
+            });
             if (result.status === "updated" || result.status === "conflict") {
                 return reply.send({ status: result.status, revision: result.revision });
             }

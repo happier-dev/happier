@@ -5,13 +5,15 @@ import { currentAccountStoredContentCompatibilityHeaders } from '@/app/api/testk
 import { TransactionDeadlineExceededError } from '@/storage/transactionErrors';
 import { captureAccountStoredContentCompatibilityForHttpRequest } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { UserKvMutationConflictError } from '@/app/kv/kvMutate';
+import { buildAuthoringMemoryPhysicalKey, buildPluginAccountStoragePhysicalKey, buildPluginDeclarativeSettingsPhysicalKey } from '@/app/kv/accountScopedKv';
 
-const database = vi.hoisted(() => ({ transaction: vi.fn() }));
+const database = vi.hoisted(() => ({ transaction: vi.fn(), findUnique: vi.fn() }));
 
 // Only the database boundary fails; transaction classification and route projection stay real.
 vi.mock('@/storage/db', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/storage/db')>(),
-    db: { $transaction: database.transaction },
+    db: { $transaction: database.transaction, userKVStore: { findUnique: database.findUnique } },
 }));
 
 import { kvRoutes } from './kvRoutes';
@@ -42,6 +44,42 @@ const routes = [
     method: 'GET' | 'POST'; path: string; register: typeof kvRoutes;
     body?: object; unavailable: object; internal: object;
 }>;
+
+describe.each([
+    { register: registerPluginAccountStorageRoutes, path: '/v1/account/plugin-storage/example.tasks',
+        key: buildPluginAccountStoragePhysicalKey('example.tasks') },
+    { register: registerPluginAccountSettingsRoutes, path: '/v1/account/plugin-settings/example.tasks',
+        key: buildPluginDeclarativeSettingsPhysicalKey('example.tasks') },
+    { register: registerAuthoringMemoryRoutes, path: `${AUTHORING_MEMORY_ROUTE_V1}/recentMachinePaths`,
+        key: buildAuthoringMemoryPhysicalKey('recentMachinePaths') },
+])('$path late compare-and-set conflict', route => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        database.transaction.mockReset();
+        database.findUnique.mockReset();
+    });
+
+    it('returns the winning revision after the losing transaction rolls back', async () => {
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
+        // The database transaction port returns the real CAS owner's rollback;
+        // conflict classification and the post-rollback row read stay real.
+        database.transaction.mockRejectedValue(new UserKvMutationConflictError('account', route.key));
+        database.findUnique.mockResolvedValue({ version: 8, value: null });
+        const app = createAuthenticatedTestApp();
+        route.register(app);
+        try {
+            const response = await app.inject({
+                method: 'POST', url: route.path,
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, 'x-test-user-id': 'account' },
+                payload: { expectedRevision: 7, content: null },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ status: 'conflict', revision: 8 });
+        } finally {
+            await app.close();
+        }
+    });
+});
 
 describe.each(routes)('$method $path transaction recovery', (route) => {
     afterEach(() => { vi.unstubAllEnvs(); database.transaction.mockReset(); });
