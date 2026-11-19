@@ -1,4 +1,4 @@
-import { assertWorkspaceSyncSeedExportSucceeded } from '@/workspaces/sync/workspaceSyncSeedTransfer';
+import { assertWorkspaceSyncSeedExportSucceeded, prepareSignedWorkspaceSyncSeed, type CallWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -551,9 +551,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     callWorkspaceProjectSource?(request: Readonly<{ machineId: string; operationId: string; sourceWorkspace: WorkspaceRefV1;
       request: OpenProjectInputV1; credentials: StoredCredentials }>, context: RpcHandlerContext): Promise<ProjectOpenSyncMaterializationResultV1>;
     /** Current installed physical TARGET socket, never the borrower's Parent Account transport. */
-    callWorkspaceSeedExport?: (descriptor: Readonly<{ machineId: string;
-      request: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncSeedExportPrepareV1;
-      signal?: AbortSignal }>, context: RpcHandlerContext) => Promise<unknown>;
+    callWorkspaceSeedExport?: CallWorkspaceSyncSeedExport;
     /** The actual installed target admission owner, never a count-derived projection. */
     readProjectWorkerDependencies?: (workspaceRefId: string, relationshipId?: string) => readonly ProjectWorkerDependencyV1[];
     openMachineCarrierTunnel?: WorkspaceSyncMachineTunnelOpen;
@@ -904,79 +902,84 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             const seedActionId = request.context?.callerInputAuthorization?.binding.actionId;
             const seedContext = (seedActionId === 'projects.open' || isWorkspaceSyncRelationshipWriteActionId(seedActionId ?? ''))
               && request.context?.workspaceSyncSourceWriterTargetRouting !== undefined ? request.context : undefined;
-            const prepare = seedContext
+            const { result: preparedRaw, tunnel: issuedTunnel } = seedContext
               ? input.callWorkspaceSeedExport
-                ? input.callWorkspaceSeedExport({ machineId: request.sourceMachineId, request: seedRequest,
-                    ...(request.signal ? { signal: request.signal } : {}) }, seedContext)
-                : Promise.reject(compositionError('workspace_sync_update_required', 'The installed SOURCE seed transport is unavailable'))
-              : factories.callMachineRpc({
-                credentials: input.credentials,
-                machineId: request.sourceMachineId,
-                method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
-                request: seedRequest,
-                timeoutMs: null,
-                ...(request.signal ? { signal: request.signal } : {}),
-              });
-            const preparedRaw = await prepare;
-            assertWorkspaceSyncSeedExportSucceeded(preparedRaw);
-            if (!preparedRaw || typeof preparedRaw !== 'object' || (preparedRaw as { success?: unknown }).success !== true) {
-              throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
-            }
-            const prepared = preparedRaw as Readonly<Record<string, unknown>>;
-            if (typeof prepared.transferId !== 'string' || prepared.transferId !== request.operationId
-              || typeof prepared.sizeBytes !== 'number' || !Number.isSafeInteger(prepared.sizeBytes) || prepared.sizeBytes < 1
-              || typeof prepared.manifestHash !== 'string' || !Array.isArray(prepared.endpointCandidates)) {
-              throw compositionError('target_bootstrap_offline', 'Workspace sync source seed response is invalid');
-            }
-            const sourceCandidates = prepared.endpointCandidates.map((candidate) => TransferEndpointCandidateSchema.parse(candidate));
-            const sourceCandidate = sourceCandidates[0];
-            if (!sourceCandidate) {
-              throw compositionError('target_bootstrap_offline', 'Workspace sync source seed has no finite transfer endpoint');
-            }
-            return await factories.materializeSeedExport({
-              operationId: request.operationId,
-              targetPath: request.canonicalRoot,
-              ...(request.signal ? { signal: request.signal } : {}),
-              materializationReceiptPath: request.materializationReceiptPath,
-              originalTargetExists: request.originalTargetExists,
-              targetFence: request.targetFence,
-              requestPayload: async ({ transferId, destinationPath, expectedSizeBytes, expectedManifestHash }) => {
-                const sizeBytes = transferId === request.operationId ? prepared.sizeBytes as number : expectedSizeBytes;
-                const manifestHash = transferId === request.operationId ? prepared.manifestHash as string : expectedManifestHash;
-                if (typeof sizeBytes !== 'number' || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !manifestHash) {
-                  throw compositionError('target_bootstrap_offline', 'Workspace sync seed payload commitment is invalid');
-                }
-                const tunnel = await input.openMachineCarrierTunnel!({
-                  sourceMachineId: input.localMachineId,
-                  targetMachineId: request.sourceMachineId,
-                  flow: 'file_transfer',
+                ? await prepareSignedWorkspaceSyncSeed({ sourceMachineId: request.sourceMachineId,
+                    request: seedRequest, context: seedContext,
+                    callExport: input.callWorkspaceSeedExport, openTunnel: input.openMachineCarrierTunnel,
+                    ...(request.signal ? { signal: request.signal } : {}) })
+                : await Promise.reject(compositionError('workspace_sync_update_required', 'The installed SOURCE seed transport is unavailable'))
+              : { result: await factories.callMachineRpc({
+                  credentials: input.credentials,
+                  machineId: request.sourceMachineId,
+                  method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+                  request: seedRequest,
+                  timeoutMs: null,
                   ...(request.signal ? { signal: request.signal } : {}),
-                });
-                try {
-                  const url = new URL(sourceCandidate.url);
-                  url.protocol = 'http:';
-                  url.hostname = '127.0.0.1';
-                  url.port = String(tunnel.localPort);
-                  url.pathname = buildDirectPeerTransferEndpointPath(transferId);
-                  const endpointCandidates: readonly TransferEndpointCandidate[] = [{
-                    ...sourceCandidate,
-                    kind: 'http' as const,
-                    url: url.toString(),
-                  }];
-                  await input.requestDirectTransferPayloadFile!({
-                    transferId,
-                    endpointCandidates,
-                    destinationPath,
-                    expectedSizeBytes: sizeBytes,
-                    expectedManifestHash: manifestHash,
+                }), tunnel: undefined };
+            try {
+              assertWorkspaceSyncSeedExportSucceeded(preparedRaw);
+              if (!preparedRaw || typeof preparedRaw !== 'object' || (preparedRaw as { success?: unknown }).success !== true) {
+                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
+              }
+              const prepared = preparedRaw as Readonly<Record<string, unknown>>;
+              if (typeof prepared.transferId !== 'string' || prepared.transferId !== request.operationId
+                || typeof prepared.sizeBytes !== 'number' || !Number.isSafeInteger(prepared.sizeBytes) || prepared.sizeBytes < 1
+                || typeof prepared.manifestHash !== 'string' || !Array.isArray(prepared.endpointCandidates)) {
+                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed response is invalid');
+              }
+              const sourceCandidates = prepared.endpointCandidates.map((candidate) => TransferEndpointCandidateSchema.parse(candidate));
+              const sourceCandidate = sourceCandidates[0];
+              if (!sourceCandidate) {
+                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed has no finite transfer endpoint');
+              }
+              return await factories.materializeSeedExport({
+                operationId: request.operationId,
+                targetPath: request.canonicalRoot,
+                ...(request.signal ? { signal: request.signal } : {}),
+                materializationReceiptPath: request.materializationReceiptPath,
+                originalTargetExists: request.originalTargetExists,
+                targetFence: request.targetFence,
+                requestPayload: async ({ transferId, destinationPath, expectedSizeBytes, expectedManifestHash }) => {
+                  const sizeBytes = transferId === request.operationId ? prepared.sizeBytes as number : expectedSizeBytes;
+                  const manifestHash = transferId === request.operationId ? prepared.manifestHash as string : expectedManifestHash;
+                  if (typeof sizeBytes !== 'number' || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !manifestHash) {
+                    throw compositionError('target_bootstrap_offline', 'Workspace sync seed payload commitment is invalid');
+                  }
+                  const tunnel = issuedTunnel ?? await input.openMachineCarrierTunnel!({
+                    sourceMachineId: input.localMachineId,
+                    targetMachineId: request.sourceMachineId,
+                    flow: 'file_transfer',
                     ...(request.signal ? { signal: request.signal } : {}),
                   });
-                } finally {
-                  await tunnel.close();
-                }
-              },
-              materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace,
-            });
+                  try {
+                    const url = new URL(sourceCandidate.url);
+                    url.protocol = 'http:';
+                    url.hostname = '127.0.0.1';
+                    url.port = String(tunnel.localPort);
+                    url.pathname = buildDirectPeerTransferEndpointPath(transferId);
+                    const endpointCandidates: readonly TransferEndpointCandidate[] = [{
+                      ...sourceCandidate,
+                      kind: 'http' as const,
+                      url: url.toString(),
+                    }];
+                    await input.requestDirectTransferPayloadFile!({
+                      transferId,
+                      endpointCandidates,
+                      destinationPath,
+                      expectedSizeBytes: sizeBytes,
+                      expectedManifestHash: manifestHash,
+                      ...(request.signal ? { signal: request.signal } : {}),
+                    });
+                  } finally {
+                    if (!issuedTunnel) await tunnel.close();
+                  }
+                },
+                materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace,
+              });
+            } finally {
+              await issuedTunnel?.close();
+            }
           },
         }
         : {}),

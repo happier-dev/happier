@@ -85,28 +85,24 @@ export function createWorkspaceMachineCarrierTunnelOpen(input: Readonly<{
       throw machineCarrierUnavailableError();
     }
     request.signal?.throwIfAborted();
-    const target = await runStage('target_read', async () => {
-      const targetRead = request.signal
-        ? input.readTargetMachine(request.targetMachineId, request.signal)
-        : input.readTargetMachine(request.targetMachineId);
-      return await awaitMachineCarrierControlPlane(targetRead, request.signal);
-    });
-    const targetEndpoint = readMachineIrohEndpointAuthorityV1({
-      capabilities: target?.operationProtocolCapabilities,
-      revision: target?.operationProtocolCapabilitiesRevision,
-    });
-    if (!target || target.id !== request.targetMachineId || !targetEndpoint) {
-      throw machineCarrierUnavailableError();
-    }
-
-    const proofHandle = createEphemeralPeerRouteProofHandleV2({
-      randomBytes: (length) => new Uint8Array(randomBytes(length)),
-    });
-    try {
+    const resolveOrdinaryCarrier = async (publicKey: string) => {
+      const target = await runStage('target_read', async () => {
+        const targetRead = request.signal
+          ? input.readTargetMachine(request.targetMachineId, request.signal)
+          : input.readTargetMachine(request.targetMachineId);
+        return await awaitMachineCarrierControlPlane(targetRead, request.signal);
+      });
+      const targetEndpoint = readMachineIrohEndpointAuthorityV1({
+        capabilities: target?.operationProtocolCapabilities,
+        revision: target?.operationProtocolCapabilitiesRevision,
+      });
+      if (!target || target.id !== request.targetMachineId || !targetEndpoint) {
+        throw machineCarrierUnavailableError();
+      }
       const grantRequest = DirectRouteGrantRequestV2Schema.parse({
         v: 2,
         kind: 'ephemeral_ed25519',
-        ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
+        ephemeralPublicKeyBase64Url: publicKey,
         machineId: request.targetMachineId,
         flowKind: request.flow === 'file_transfer' ? 'bounded_transfer' : 'machine_rpc',
         routeKind: 'iroh_peer',
@@ -143,8 +139,6 @@ export function createWorkspaceMachineCarrierTunnelOpen(input: Readonly<{
           : input.mintGrant(grantRequest);
         return SignedDirectRouteGrantV2Schema.parse(await awaitMachineCarrierControlPlane(grantRequestResult, request.signal));
       });
-      const proof = proofHandle.sign(grant);
-      request.signal?.throwIfAborted();
       const current = await runStage('endpoint_revalidation', async () => {
         const currentRead = request.signal
           ? input.readTargetMachine(request.targetMachineId, request.signal)
@@ -164,10 +158,27 @@ export function createWorkspaceMachineCarrierTunnelOpen(input: Readonly<{
       }
       const { revision: _revision, ...currentDescriptor } = currentEndpoint;
       const endpoint = IrohEndpointDescriptorV1Schema.parse(currentDescriptor);
-
+      return { endpoint, grant };
+    };
+    const admittedSeed = request.flow === 'file_transfer' ? request.admittedSeed : undefined;
+    const proofHandle = createEphemeralPeerRouteProofHandleV2({
+      randomBytes: (length) => new Uint8Array(randomBytes(length)),
+    });
+    try {
+      const carrier = admittedSeed
+        ? await admittedSeed.prepare(proofHandle.publicKeyBase64Url)
+        : await resolveOrdinaryCarrier(proofHandle.publicKeyBase64Url);
+      if (!carrier || carrier.grant.payload.machineId !== request.targetMachineId
+        || carrier.grant.payload.iroh?.target.endpointId !== carrier.endpoint.endpointId) {
+        throw machineCarrierUnavailableError();
+      }
+      const { grant, endpoint } = carrier;
+      const accountId = admittedSeed ? grant.payload.accountId : input.accountId;
+      const proof = proofHandle.sign(grant);
+      request.signal?.throwIfAborted();
       const handshake = IrohMachineHandshakeV1Schema.parse({
         v: 1,
-        accountId: input.accountId,
+        accountId,
         initiator: grant.payload.iroh?.initiator,
         target: grant.payload.iroh?.target,
         ...(request.flow === 'file_transfer'
@@ -178,7 +189,7 @@ export function createWorkspaceMachineCarrierTunnelOpen(input: Readonly<{
       });
       const verified = verifyMachineCarrierHandshakeV1({
         handshake,
-        accountId: input.accountId,
+        accountId,
         machineId: input.localMachineId,
         localEndpointId: input.runtime.endpoint.endpointId,
         role: 'initiator',

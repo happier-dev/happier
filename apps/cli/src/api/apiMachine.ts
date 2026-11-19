@@ -125,7 +125,8 @@ import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError } from '@ha
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
-import { isWorkspaceSyncSourceWriterCleanupPhaseV1 } from '@happier-dev/protocol/socketRpc';
+import { isWorkspaceSyncSourceWriterCleanupPhaseV1, WorkspaceSyncSeedCarrierV1Schema,
+    type WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncCommittedCopyPreviewResultV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyInspectV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -4652,6 +4653,7 @@ export class ApiMachineClient {
     async callWorkspaceSyncSeedExport(input: Readonly<{
         machineId: string;
         request: WorkspaceSyncSeedExportPrepareV1;
+        carrier?: Readonly<{ publicKey: string; onGranted: (carrier: WorkspaceSyncSeedCarrierV1) => void }>;
         credentials: StoredCredentials;
         context: RpcActionExecutorContext;
         signal?: AbortSignal;
@@ -4672,7 +4674,8 @@ export class ApiMachineClient {
         return await this.callWorkspaceSyncPhysicalMachineRpc({ ...input, request,
             method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
             originalMachineId: b.source.sourceMachineId, accountServerId: b.source.accountServerId,
-            requireCurrentAdmission: true, routing: { workspaceSyncSeedRouting } });
+            requireCurrentAdmission: true, routing: { workspaceSyncSeedRouting },
+            ...(input.carrier ? { seedCarrier: input.carrier } : {}) });
     }
 
     private async callWorkspaceSyncPhysicalMachineRpc(input: Readonly<{
@@ -4687,6 +4690,7 @@ export class ApiMachineClient {
         signedEffectActionId?: string;
         physicalEndpoint?: MachineInstallationPublicIdentityV1;
         physicalEndpointInstallationId?: string;
+        seedCarrier?: Readonly<{ publicKey: string; onGranted: (carrier: WorkspaceSyncSeedCarrierV1) => void }>;
         routing: Readonly<{ workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1 }>
             | Readonly<{ workspaceSyncSeedRouting: WorkspaceSyncSeedRoutingV1 }>
             | Readonly<{ workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1 }>
@@ -4794,13 +4798,20 @@ export class ApiMachineClient {
                 || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
             return readMachineActionRpcResult(await callSocketRpc({ socket, target: { kind: 'machine', id: input.machineId }, method: input.method,
                 params: input.request, content: createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: seedRouting }),
-                workspaceSyncSeedRouting: seedRouting, ...(packet ? { workspaceSyncSourceExecution: packet } : {}), timeoutMs: null,
+                workspaceSyncSeedRouting: input.seedCarrier ? { ...seedRouting, carrierPublicKey: input.seedCarrier.publicKey } : seedRouting,
+                ...(packet ? { workspaceSyncSourceExecution: packet } : {}), timeoutMs: null,
+                ...(input.seedCarrier ? { onResponse: (ack: unknown) => {
+                    if (!ack || typeof ack !== 'object' || !('workspaceSyncSeedCarrier' in ack)) return;
+                    const parsed = WorkspaceSyncSeedCarrierV1Schema.safeParse(ack.workspaceSyncSeedCarrier);
+                    if (parsed.success) input.seedCarrier?.onGranted(parsed.data);
+                } } : {}),
                 createExternalActionExecution: wire => {
                     const execution = createExternalActionMachineRpcExecution({ context: { ...input.context,
                         externalActionExecutionAuthorization: signedAuthorization, externalActionTarget: signedAuthorization.binding.target },
                         effectActionId: signedAuthorization.binding.actionId, installationId: installation.installationId,
                         method: wire.method, requestId: wire.requestId, params: wire.params,
-                        workspaceSyncSeedRouting: seedRouting, privateKey: installation.privateKey });
+                        workspaceSyncSeedRouting: input.seedCarrier ? { ...seedRouting, carrierPublicKey: input.seedCarrier.publicKey } : seedRouting,
+                        privateKey: installation.privateKey });
                     if (!execution) throw unavailable();
                     return execution;
                 }, ...(input.signal ? { signal: input.signal } : {}) }));

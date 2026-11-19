@@ -9,6 +9,7 @@ import { AuthorizedPeerEndpointRouteKindV1Schema } from './routeKind.js';
 import { decodeCanonicalBase64UrlFixedLength } from './strictBase64Url.js';
 import { IrohEndpointIdV1Schema } from '../../../connectivity/iroh/endpointDescriptorV1.js';
 
+export const PeerRouteEphemeralPublicKeyV2Schema = lazyZodSchema(() => fixedBase64UrlSchema(32));
 export const PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2 = 'ephemeral_ed25519' as const;
 
 /** Machine/1 purposes bound to the existing grant flow and scope below. */
@@ -200,7 +201,7 @@ export const DirectRouteGrantPayloadV2Schema = lazyZodSchema(() => z.strictObjec
     endpointFingerprint: z.optional(z.string().check(z.minLength(1))),
     iroh: z.optional(IrohPeerRouteBindingV2Schema),
     proofKind: z.literal(PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2),
-    ephemeralPublicKeyBase64Url: fixedBase64UrlSchema(32),
+    ephemeralPublicKeyBase64Url: PeerRouteEphemeralPublicKeyV2Schema,
   }).check(z.superRefine((payload, ctx) => {
     if (payload.scope.kind !== payload.flowKind) {
       ctx.addIssue({
@@ -242,7 +243,7 @@ export const SignedDirectRouteGrantV2Schema = lazyZodSchema(() => z.strictObject
 export const DirectRouteGrantRequestV2Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(2),
     kind: z.literal(PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2),
-    ephemeralPublicKeyBase64Url: fixedBase64UrlSchema(32),
+    ephemeralPublicKeyBase64Url: PeerRouteEphemeralPublicKeyV2Schema,
     machineId: z.string().check(z.minLength(1)),
     flowKind: PeerFlowKindV1Schema,
     routeKind: AuthorizedPeerEndpointRouteKindV1Schema,

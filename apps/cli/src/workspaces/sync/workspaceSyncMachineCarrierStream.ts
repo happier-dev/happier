@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { connect, type Socket } from 'node:net';
+import type { WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
 
 type WorkspaceSyncMachineTunnelTarget = Readonly<{
   sourceMachineId: string;
@@ -10,6 +11,9 @@ type WorkspaceSyncMachineTunnelTarget = Readonly<{
 export type WorkspaceSyncMachineTunnelOpenInput =
   | (WorkspaceSyncMachineTunnelTarget & Readonly<{
       flow: 'file_transfer';
+      admittedSeed?: Readonly<{
+        prepare: (publicKey: string) => Promise<WorkspaceSyncSeedCarrierV1 | undefined>;
+      }>;
     }>)
   | (WorkspaceSyncMachineTunnelTarget & Readonly<{
       flow: 'workspace_sync';

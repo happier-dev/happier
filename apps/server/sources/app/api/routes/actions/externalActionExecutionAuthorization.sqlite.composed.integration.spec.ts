@@ -13,6 +13,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Server as SocketServer } from 'socket.io';
 import { io as connectSocket } from 'socket.io-client';
+import { createIrohNodeNativeModule } from '@happier-dev/iroh-native/node';
+import { WorkspaceSyncSeedCarrierV1Schema, type WorkspaceSyncSeedRoutingV1 } from '@happier-dev/protocol/socketRpc';
+import { resolveServerFeaturesForGating } from '@/app/features/catalog/serverFeatureGate';
+import { createWorkspaceMachineCarrierTunnelOpen } from '../../../../../../cli/src/daemon/peer/iroh/workspaceMachineCarrierTunnelOpen';
+import { createDaemonMachineIrohRuntime } from '../../../../../../cli/src/daemon/peer/iroh/daemonMachineIrohRuntime';
+import { prepareSignedWorkspaceSyncSeed } from '../../../../../../cli/src/workspaces/sync/workspaceSyncSeedTransfer';
 import type { FastifyRequest, InjectOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import tweetnacl from "tweetnacl";
@@ -1716,6 +1722,7 @@ describe("external Action execution authorization", () => {
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
                 HAPPIER_FEATURE_SESSIONS_FILTERED_LISTING__ENABLED: "1",
                 HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: "1",
+                HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: "true",
             },
         });
         await expect(initializeSessionSystemRecordsProtocolV1Activation(db)).resolves.toBe(true);
@@ -7301,12 +7308,14 @@ describe("external Action execution authorization", () => {
         const source = fixture.machine;
         const targetCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const targetKey = tweetnacl.sign.keyPair();
-        const capabilities = { requesterExecutionIsolation: { protocolVersions: [1] } };
-        await db.machine.update({ where: { id: source.id }, data: { operationProtocolCapabilities: capabilities,
+        const capabilities = (key: Uint8Array) => ({ requesterExecutionIsolation: { protocolVersions: [1] },
+            irohMachineEndpoint: { protocolVersions: [1], endpointId: Buffer.from(key).toString('hex'),
+                directAddresses: ['127.0.0.1:7777'] } });
+        await db.machine.update({ where: { id: source.id }, data: { operationProtocolCapabilities: capabilities(fixture.keyPair.publicKey),
             operationProtocolCapabilitiesRevision: 1 } });
         const target = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: targetCustodian.id, active: true,
             metadata: source.metadata, dataEncryptionKey: source.dataEncryptionKey, installationId: crypto.randomUUID(),
-            installationPublicKey: new Uint8Array(targetKey.publicKey), operationProtocolCapabilities: capabilities,
+            installationPublicKey: new Uint8Array(targetKey.publicKey), operationProtocolCapabilities: capabilities(targetKey.publicKey),
             operationProtocolCapabilitiesRevision: 1 } });
         await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
             principal: { kind: 'account', accountId: fixture.account.id }, level: 'admin' }));
@@ -7411,7 +7420,7 @@ describe("external Action execution authorization", () => {
                 // A source Machine the requester cannot use is never admitted as SOURCE.
                 const foreign = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: targetCustodian.id, active: true,
                     metadata: source.metadata, dataEncryptionKey: source.dataEncryptionKey, installationId: crypto.randomUUID(),
-                    installationPublicKey: new Uint8Array(targetKey.publicKey), operationProtocolCapabilities: capabilities,
+                    installationPublicKey: new Uint8Array(targetKey.publicKey), operationProtocolCapabilities: capabilities(targetKey.publicKey),
                     operationProtocolCapabilitiesRevision: 1 } });
                 const foreignOpen = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.open'),
                     headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id, envelope:
@@ -7461,13 +7470,13 @@ describe("external Action execution authorization", () => {
             registerSocketRpcHandlers({ userId: targetCustodian.id, socket: socket as unknown as Socket, io });
             const callback = vi.fn();
             const transportRequestId = crypto.randomUUID();
-            const call = (selectedRouting = routing, privateKey = targetKey.secretKey) => {
+            const call = (selectedRouting: WorkspaceSyncSeedRoutingV1 = routing, privateKey = targetKey.secretKey, transmittedRouting = selectedRouting) => {
                 const signed = { authorizationToken: root.token, effectActionId: actionId, target: root.binding.target,
                     installationId: target.installationId!, method, requestId: transportRequestId, params, workspaceSyncSeedRouting: selectedRouting };
                 const externalActionExecution = { v: 1 as const, authorization: root, effectActionId: actionId, target: root.binding.target,
                     installationId: target.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ ...signed, privateKey }) };
                 return getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, requestId: transportRequestId, params,
-                    workspaceSyncSeedRouting: selectedRouting, externalActionExecution }, callback);
+                    workspaceSyncSeedRouting: transmittedRouting, externalActionExecution }, callback);
             };
             await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, requestId: crypto.randomUUID(), params }, callback);
             expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
@@ -7479,6 +7488,70 @@ describe("external Action execution authorization", () => {
             expect(Reflect.get(forwarded, 'workspaceSyncSeedRouting')).toEqual(routing);
             expectForwardedSeedRoot(forwarded, root);
             expect(Reflect.has(forwarded, 'workspaceSyncSourceExecution')).toBe(false);
+            if (actionId === 'workspace.sync.relationship.create' && credentialKind === 'account' && version === 1) {
+                const sourceEndpointId = Buffer.from(fixture.keyPair.publicKey).toString('hex');
+                const targetEndpointId = Buffer.from(targetKey.publicKey).toString('hex');
+                const unexpected = async (): Promise<never> => { throw new Error('Unexpected native Iroh operation'); };
+                const endpointStatus = { endpointHandle: 'seed-target', endpointId: targetEndpointId,
+                    relayMode: 'disabled', relayPolicy: 'disabled', relayUrls: [], directAddresses: [], capProfile: 'machineBulk', active: true };
+                const dial = vi.fn(async () => JSON.stringify({ ok: true, result: {
+                    machineTunnelId: 'seed-carrier', endpointHandle: 'seed-target', localPort: 48123, connectionActive: true,
+                    remoteEndpointId: sourceEndpointId, observedPath: 'direct', startedAtMs: 1, lastErrorCode: null,
+                } }));
+                const iroh = await createDaemonMachineIrohRuntime({ happyHomeDir: harness.baseDir, identity: 'ephemeral',
+                    relayConfig: { relayPolicy: 'disabled', relayUrls: [] }, native: createIrohNodeNativeModule({
+                        getAvailability: () => ({ available: true, os: 'linux', arch: 'x64', engine: 'fixture', surface: [] }),
+                        createEndpoint: async () => JSON.stringify({ ok: true, result: endpointStatus }),
+                        getEndpointStatus: async () => JSON.stringify({ ok: true, result: endpointStatus }),
+                        startMachineTunnel: dial, stopMachineTunnel: async () => JSON.stringify({ ok: true, result: null }),
+                        shutdownEndpoint: async () => JSON.stringify({ ok: true, result: null }),
+                        startHomeAcceptor: unexpected, stopHomeAcceptor: unexpected, ensureHomeTunnel: unexpected,
+                        releaseHomeTunnel: unexpected, getTunnelStatus: unexpected, startMachineAcceptor: unexpected,
+                        stopMachineAcceptor: unexpected, getMachineAcceptorStatus: unexpected,
+                        startMachineHttpTunnel: unexpected, getMachineTunnelStatus: unexpected,
+                    }) });
+                if (!iroh.available) throw new Error('Expected a usable native carrier fixture');
+                try {
+                    const open = createWorkspaceMachineCarrierTunnelOpen({ accountId: targetCustodian.id, localMachineId: target.id,
+                        runtime: iroh, resolveTrustRoots: () => resolveServerFeaturesForGating(harness.envBase)
+                            .capabilities.machines.peerMediation.grantSigningKeys,
+                        readTargetMachine: async () => { throw new Error('TARGET has no reverse Machine view'); },
+                        mintGrant: async () => { throw new Error('The generic route cannot mint across custodians'); },
+                    });
+                    const seed = { success: true, transferId: params.operationId };
+                    effect.mockResolvedValueOnce(seed);
+                    const prepared = await prepareSignedWorkspaceSyncSeed({ sourceMachineId: source.id, request: params,
+                        context: { signal: new AbortController().signal, workspaceSyncSourceWriterTargetRouting: sourceWriterTarget,
+                            workspaceSyncTargetRouting: routing.target, callerInputAuthorization: root },
+                        openTunnel: open,
+                        callExport: async ({ carrier: expectedCarrier }) => {
+                            if (!expectedCarrier) throw new Error('Cross-custodian seed must use the admitted carrier');
+                            const carrierRouting = { ...routing, carrierPublicKey: expectedCarrier.publicKey };
+                            callback.mockClear();
+                            await call(carrierRouting);
+                            expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: true, result: seed }));
+                            const carrier = WorkspaceSyncSeedCarrierV1Schema.parse(callback.mock.lastCall?.[0]?.workspaceSyncSeedCarrier);
+                            expect(carrier.grant.payload).toMatchObject({ accountId: fixture.account.id,
+                                ephemeralPublicKeyBase64Url: expectedCarrier.publicKey, scope: { kind: 'bounded_transfer', mode: 'carrier' },
+                                iroh: { initiator: { machineId: target.id, endpointId: targetEndpointId },
+                                    target: { machineId: source.id, endpointId: sourceEndpointId }, operationKind: 'finite_transfer' } });
+                            expect(effect.mock.lastCall?.[1]).toMatchObject({ workspaceSyncSeedRouting: routing });
+                            expect(Reflect.get(effect.mock.lastCall?.[1] as object, 'workspaceSyncSeedRouting')).not.toHaveProperty('carrierPublicKey');
+                            callback.mockClear();
+                            await call(carrierRouting, targetKey.secretKey, {
+                                ...routing, carrierPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url'),
+                            });
+                            expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
+                            expectedCarrier.onGranted(carrier);
+                            return seed;
+                        },
+                    });
+                    expect(prepared).toMatchObject({ result: seed, tunnel: { localPort: 48123, observedPath: 'direct' } });
+                    await prepared.tunnel?.close();
+                    expect(dial).toHaveBeenCalledTimes(1);
+                } finally { await iroh.shutdown(); }
+            }
+            const acceptedDeliveries = effect.mock.calls.length;
             for (const receiver of [false, true]) {
                 const admitted = await verify(receiver);
                 expect(admitted.statusCode, admitted.body).toBe(200);
@@ -7515,7 +7588,7 @@ describe("external Action execution authorization", () => {
             expect((await verify()).statusCode).toBe(403);
             await call();
             expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
-            expect(effect).toHaveBeenCalledTimes(1);
+            expect(effect).toHaveBeenCalledTimes(acceptedDeliveries);
         } finally { await app.close(); }
     });
 

@@ -78,6 +78,7 @@ import {
 
 import { observeRpcCall, recordRpcCallFailure, recordRpcRegistration, recordRpcUnregistration } from "@/app/monitoring/metrics/index";
 import { classifyMachineAvailabilityState, readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { mintWorkspaceSyncSeedCarrier } from '@/app/machines/peer/mediation/mintWorkspaceSyncSeedCarrier';
 import { resolveSessionAccessForOperation, type SessionAccessOperationDecision } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
 import { isCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
@@ -1950,6 +1951,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     return;
                 }
             }
+            let mintSeedCarrier: (() => ReturnType<typeof mintWorkspaceSyncSeedCarrier>) | undefined;
             if (workspaceSyncSeedRouting && machinePrefix) {
                 const routing = workspaceSyncSeedRouting;
                 const readCurrent = async () => {
@@ -1974,6 +1976,10 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 receivingMachineAdmission = await resolveReceivingMachineRpcAdmission({
                     actorAccountId: admitted.verified.binding.accountId, rpcMethod: method.slice(method.indexOf(':') + 1),
                     receiver: admitted.writer, admitted: admitted.receivingMachineAdmission });
+                if (routing.carrierPublicKey) {
+                    const publicKey = routing.carrierPublicKey;
+                    mintSeedCarrier = () => mintWorkspaceSyncSeedCarrier(admitted, publicKey);
+                }
                 sessionWriteTargetUserId = admitted.writer.custodianAccountId;
                 const matches = (target: SocketDataCarrier) => readMachineScopedSocketMachineId(target) === admitted.writer.machineId
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.writer.installationId;
@@ -2357,7 +2363,10 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(projectSourceExecution?.success ? { workspaceSyncSourceExecution: projectSourceExecution.data } : {}),
                 ...(retainedProjectSourceExecution ? { workspaceSyncSourceExecution: retainedProjectSourceExecution } : {}),
                 ...(moveChildExecution ? { workspaceSyncSourceExecution: moveChildExecution } : {}),
-                ...(workspaceSyncSeedRouting ? { workspaceSyncSeedRouting } : {}),
+                ...(workspaceSyncSeedRouting ? { workspaceSyncSeedRouting: {
+                    v: workspaceSyncSeedRouting.v, sourceWriterTarget: workspaceSyncSeedRouting.sourceWriterTarget,
+                    target: workspaceSyncSeedRouting.target,
+                } } : {}),
                 ...(originalActionEnvelope ? { originalActionEnvelope } : {}),
                 ...(workspaceSyncContext ? {
                     callerAuthority: sessionActionOrigin ? 'account_automation' as const : workspaceSyncContext.callerAuthority,
@@ -2495,8 +2504,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     }
                 }
             }
-            callback?.(forwarded.ok && "transportAcknowledgement" in forwarded
-                ? { ok: true, result: forwarded.result }
+            const workspaceSyncSeedCarrier = forwarded.ok ? await mintSeedCarrier?.() : undefined;
+            callback?.(forwarded.ok && ("transportAcknowledgement" in forwarded || workspaceSyncSeedCarrier)
+                ? { ok: true, result: forwarded.result, ...(workspaceSyncSeedCarrier ? { workspaceSyncSeedCarrier } : {}) }
                 : forwarded);
         } catch (error) {
             if (method) {

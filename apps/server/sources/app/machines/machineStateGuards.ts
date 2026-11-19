@@ -39,6 +39,7 @@ export async function readMachineAvailabilityState(params: Readonly<{
 export async function readAvailableMachineIrohEndpointAuthority(params: Readonly<{
     accountId: string;
     machineId: string;
+    installationId?: string;
     requiredCapability?: MachineOperationProtocolCapabilityNameV1;
 }>): Promise<MachineIrohEndpointAuthorityV1 | null> {
     return readCurrentMachineIrohEndpointAuthority(params);
@@ -54,10 +55,15 @@ export async function readAvailableMachineIrohTransportEndpointAuthority(params:
 async function readCurrentMachineIrohEndpointAuthority(params: Readonly<{
     accountId?: string;
     machineId: string;
+    installationId?: string;
     requiredCapability?: MachineOperationProtocolCapabilityNameV1;
 }>): Promise<MachineIrohEndpointAuthorityV1 | null> {
     const machine = await db.machine.findFirst({
-        where: { ...(params.accountId === undefined ? {} : { accountId: params.accountId }), id: params.machineId },
+        where: {
+            id: params.machineId,
+            ...(params.accountId === undefined ? {} : { accountId: params.accountId }),
+            ...(params.installationId === undefined ? {} : { installationId: params.installationId }),
+        },
         select: {
             revokedAt: true,
             replacedByMachineId: true,

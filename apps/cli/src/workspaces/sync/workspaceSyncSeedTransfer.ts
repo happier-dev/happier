@@ -1,3 +1,8 @@
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
+import type { WorkspaceSyncSeedExportPrepareV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { FiniteTransferMachineTunnel, WorkspaceSyncMachineTunnelOpen } from './workspaceSyncMachineCarrierStream';
+
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
@@ -89,6 +94,51 @@ export function assertWorkspaceSyncSeedExportSucceeded(response: unknown): void 
     errorCode: readActionErrorCodeV1(response) ?? 'action_failed',
     failureCause: projectActionFailureCauseV1(response, 'workspace.seed.export', { allowUnknownErrorCode: true }),
   });
+}
+
+export type CallWorkspaceSyncSeedExport = (descriptor: Readonly<{
+  machineId: string;
+  request: WorkspaceSyncSeedExportPrepareV1;
+  signal?: AbortSignal;
+  carrier?: Readonly<{ publicKey: string; onGranted: (carrier: WorkspaceSyncSeedCarrierV1) => void }>;
+}>, context: RpcHandlerContext) => Promise<unknown>;
+
+/** The installed TARGET uses its admitted SOURCE export to open the reverse carrier. */
+export async function prepareSignedWorkspaceSyncSeed(input: Readonly<{
+  sourceMachineId: string;
+  request: WorkspaceSyncSeedExportPrepareV1;
+  context: RpcHandlerContext;
+  callExport: CallWorkspaceSyncSeedExport;
+  openTunnel: WorkspaceSyncMachineTunnelOpen | undefined;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ result: unknown; tunnel?: FiniteTransferMachineTunnel }>> {
+  const descriptor = { machineId: input.sourceMachineId, request: input.request,
+    ...(input.signal ? { signal: input.signal } : {}) };
+  const source = input.context.workspaceSyncSourceWriterTargetRouting;
+  const target = input.context.workspaceSyncTargetRouting;
+  if (input.sourceMachineId === input.request.targetMachineId || !source || !target
+    || (source.sourceWriter.machineId === source.source.sourceMachineId
+      && source.source.sourceContext.machineAdmission.custodianAccountId === target.targetContext.machineAdmission.custodianAccountId)) {
+    return { result: await input.callExport(descriptor, input.context) };
+  }
+  if (!input.openTunnel) throw Object.assign(new Error('Workspace seed carrier is unavailable'), { code: 'peer_unavailable' });
+  let result: unknown;
+  const tunnel = await input.openTunnel({
+    flow: 'file_transfer',
+    sourceMachineId: input.request.targetMachineId,
+    targetMachineId: input.sourceMachineId,
+    ...(input.signal ? { signal: input.signal } : {}),
+    admittedSeed: { prepare: async publicKey => {
+      let grant: WorkspaceSyncSeedCarrierV1 | undefined;
+      result = await input.callExport({ ...descriptor, carrier: { publicKey, onGranted: value => { grant = value; } } }, input.context);
+      assertWorkspaceSyncSeedExportSucceeded(result);
+      if (!result || typeof result !== 'object' || !('transferId' in result) || result.transferId !== input.request.operationId) {
+        throw Object.assign(new Error('Workspace seed export does not match the admitted operation'), { code: 'peer_unavailable' });
+      }
+      return grant;
+    } },
+  });
+  return { result, tunnel };
 }
 
 function blobTransferId(operationId: string, digest: string): string {

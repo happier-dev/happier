@@ -1,6 +1,8 @@
 import * as zMini from '../zodRuntimePolicy.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
+import { SignedDirectRouteGrantV2Schema, PeerRouteEphemeralPublicKeyV2Schema } from '../machines/peer/mediation/directRouteGrantV2.js';
 import {
   SessionPermissionDecisionActorV1Schema,
   type SessionPermissionDecisionActorV1,
@@ -326,6 +328,7 @@ export const WorkspaceSyncSeedRoutingV1Schema = lazyZodSchema(() => z.strictObje
   v: z.literal(1),
   sourceWriterTarget: WorkspaceSyncSourceWriterTargetRoutingV1Schema,
   target: WorkspaceSyncTargetRoutingV1Schema,
+  carrierPublicKey: z.optional(PeerRouteEphemeralPublicKeyV2Schema),
 }).check(z.superRefine((routing, ctx) => {
   const sourceContext = routing.sourceWriterTarget.source.sourceContext;
   const { targetContext, ...phase } = routing.target;
@@ -341,6 +344,12 @@ export const WorkspaceSyncSeedRoutingV1Schema = lazyZodSchema(() => z.strictObje
   }
 })));
 export type WorkspaceSyncSeedRoutingV1 = Readonly<z.infer<typeof WorkspaceSyncSeedRoutingV1Schema>>;
+
+export const WorkspaceSyncSeedCarrierV1Schema = lazyZodSchema(() => z.strictObject({
+  endpoint: IrohEndpointDescriptorV1Schema,
+  grant: SignedDirectRouteGrantV2Schema,
+}));
+export type WorkspaceSyncSeedCarrierV1 = Readonly<z.infer<typeof WorkspaceSyncSeedCarrierV1Schema>>;
 
 export type SocketRpcRequestPayload = Readonly<{
   method: string;

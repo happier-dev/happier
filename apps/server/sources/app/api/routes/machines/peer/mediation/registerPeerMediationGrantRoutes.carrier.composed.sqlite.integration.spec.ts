@@ -35,6 +35,7 @@ describe('Home route issuance consumed by the production workspace carrier', () 
 
     it.each([
         { flow: 'file_transfer', sharedTarget: false },
+        { flow: 'file_transfer', sharedTarget: true },
         { flow: 'workspace_sync', sharedTarget: false },
         { flow: 'workspace_sync', sharedTarget: true },
     ] as const)('uses the default Home signer for $flow (shared target: $sharedTarget) and preserves a route refusal before native dial', async ({ flow, sharedTarget }) => {
@@ -109,6 +110,15 @@ describe('Home route issuance consumed by the production workspace carrier', () 
                 ? open({ flow, sourceMachineId: source.id, targetMachineId: target.id })
                 : open({ flow, operationId, sourceMachineId: source.id, targetMachineId: target.id });
             await runWithServerHttpBaseUrl(origin, async () => {
+                if (flow === 'file_transfer' && sharedTarget) {
+                    // A Sync destination currently requests its source seed with this generic carrier.
+                    // An admitted share does not authorize this route to the transfer listener.
+                    await expect(openRequestedTunnel()).rejects.toMatchObject({
+                        code: 'peer_unavailable', reasonCode: 'route_unavailable',
+                    });
+                    expect(nativeDials).toBe(0);
+                    return;
+                }
                 const tunnel = await openRequestedTunnel().catch((error: unknown) => {
                     // A failed HTTP fixture must not print its generated bearer.
                     if (axios.isAxiosError(error)) throw new Error(`Composed grant request failed with HTTP ${error.response?.status ?? 'transport'}`);

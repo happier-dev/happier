@@ -1,4 +1,4 @@
-import { assertWorkspaceSyncSeedExportSucceeded } from '@/workspaces/sync/workspaceSyncSeedTransfer';
+import { assertWorkspaceSyncSeedExportSucceeded, prepareSignedWorkspaceSyncSeed } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
@@ -32,35 +32,48 @@ export function createPrivateWorkspaceSyncSourceSeedPreparation(request: Readonl
     const openCarrier = dependencies.openMachineCarrierTunnel;
     const context = request.getTargetPhaseContext();
     if ((seed.sourceMachineId !== request.targetMachineId && !openCarrier) || !context || !dependencies.callWorkspaceSeedExport) throw unavailable();
-    const raw = await dependencies.callWorkspaceSeedExport({ machineId: seed.sourceMachineId,
+    const { result: raw, tunnel: issuedTunnel } = await prepareSignedWorkspaceSyncSeed({
+      sourceMachineId: seed.sourceMachineId,
       request: { t: 'workspace_sync_seed_v1', operationId: seed.operationId, sourceWorkspaceRefId: seed.sourceWorkspaceRefId,
         targetMachineId: request.targetMachineId, contentPolicy: seed.contentPolicy,
         ...(seed.exclusionCandidates ? { exclusionCandidates: seed.exclusionCandidates } : {}) },
-      ...(seed.signal ? { signal: seed.signal } : {}) }, context);
-    assertWorkspaceSyncSeedExportSucceeded(raw);
-    if (!raw || typeof raw !== 'object' || !('success' in raw) || raw.success !== true
-      || !('transferId' in raw) || raw.transferId !== seed.operationId || !('sizeBytes' in raw)
-      || typeof raw.sizeBytes !== 'number' || !Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0
-      || !('manifestHash' in raw) || typeof raw.manifestHash !== 'string'
-      || !('endpointCandidates' in raw) || !Array.isArray(raw.endpointCandidates)) throw unavailable();
-    const source = raw.endpointCandidates.map(candidate => TransferEndpointCandidateSchema.parse(candidate))[0];
-    if (!source) throw unavailable();
-    return {
-      transferId: seed.operationId, sizeBytes: raw.sizeBytes, manifestHash: raw.manifestHash,
-      openPayload: async payload => {
-        const tunnel = seed.sourceMachineId === request.targetMachineId ? null : await openCarrier!({ sourceMachineId: request.targetMachineId,
-          targetMachineId: seed.sourceMachineId, flow: 'file_transfer', ...(payload.signal ? { signal: payload.signal } : {}) });
-        const url = new URL(source.url);
-        url.protocol = 'http:'; url.hostname = '127.0.0.1';
-        if (tunnel) url.port = String(tunnel.localPort);
-        url.pathname = buildDirectPeerTransferEndpointPath(payload.transferId);
-        return { endpointCandidates: [{ ...source, kind: 'http' as const, url: url.toString() }], dispose: async () => { await tunnel?.close(); } };
-      },
-      dispose: async () => {
-        await dependencies.callMachineRpc({ credentials: request.credentials, machineId: seed.sourceMachineId,
-          method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE, request: { transferId: seed.operationId }, timeoutMs: null });
-      },
-    };
+      context, callExport: dependencies.callWorkspaceSeedExport, openTunnel: openCarrier,
+      ...(seed.signal ? { signal: seed.signal } : {}),
+    });
+    try {
+      assertWorkspaceSyncSeedExportSucceeded(raw);
+      if (!raw || typeof raw !== 'object' || !('success' in raw) || raw.success !== true
+        || !('transferId' in raw) || raw.transferId !== seed.operationId || !('sizeBytes' in raw)
+        || typeof raw.sizeBytes !== 'number' || !Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0
+        || !('manifestHash' in raw) || typeof raw.manifestHash !== 'string'
+        || !('endpointCandidates' in raw) || !Array.isArray(raw.endpointCandidates)) throw unavailable();
+      const source = raw.endpointCandidates.map(candidate => TransferEndpointCandidateSchema.parse(candidate))[0];
+      if (!source) throw unavailable();
+      return {
+        transferId: seed.operationId, sizeBytes: raw.sizeBytes, manifestHash: raw.manifestHash,
+        openPayload: async payload => {
+          const tunnel = issuedTunnel ?? (seed.sourceMachineId === request.targetMachineId ? null : await openCarrier!({ sourceMachineId: request.targetMachineId,
+            targetMachineId: seed.sourceMachineId, flow: 'file_transfer', ...(payload.signal ? { signal: payload.signal } : {}) }));
+          const url = new URL(source.url);
+          url.protocol = 'http:'; url.hostname = '127.0.0.1';
+          if (tunnel) url.port = String(tunnel.localPort);
+          url.pathname = buildDirectPeerTransferEndpointPath(payload.transferId);
+          return { endpointCandidates: [{ ...source, kind: 'http' as const, url: url.toString() }], dispose: async () => { if (!issuedTunnel) await tunnel?.close(); } };
+        },
+        dispose: async () => {
+          if (issuedTunnel) {
+            // SOURCE retains and expires this publication with its existing bounded export lifecycle.
+            await issuedTunnel.close();
+            return;
+        }
+          await dependencies.callMachineRpc({ credentials: request.credentials, machineId: seed.sourceMachineId,
+            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE, request: { transferId: seed.operationId }, timeoutMs: null });
+        },
+      };
+    } catch (error) {
+      await issuedTunnel?.close();
+      throw error;
+    }
   };
 }
 

@@ -1321,6 +1321,19 @@ frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no peer-mediation
 contracts under `packages/protocol/src/machines/peer/mediation`.
 
 
+## Cross-custodian Workspace Sync seed (unreleased 0.3)
+
+An installed destination can include an ephemeral public key in its signed seed
+request. Home uses the admitted SOURCE writer and physical TARGET to issue the
+existing finite-transfer carrier in the socket acknowledgement. The SOURCE export
+still seals its manifest and blob capability to the destination. The seed routing
+delivered to the SOURCE keeps its existing wire shape.
+
+The destination and Home must both support the optional signed field to transfer
+a seed across custodians. An older Home refuses that field. An older destination
+still uses its ordinary Account carrier and can receive `peer_unavailable`.
+Same-Machine copies and ordinary Account carriers keep their existing envelopes.
+
 ## Database copy and reference components (unreleased 0.3)
 
 Workbench target descriptors optionally carry `endpointLabel`, projected by the connection
