@@ -297,7 +297,10 @@ describe('Session launch cause transport', () => {
     expect(normalizeSpawnSessionErrorDetail(response.errorDetail)).toEqual(failure.errorDetail);
     expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
       errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
-    }))).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: providerError.retryable, providerError });
+    }))).toMatchObject({
+      type: 'error', code: 'spawn_failed', retryable: providerError.retryable,
+      providerError, launchError: { kind: 'launch_error', code },
+    });
     expect(SpawnSessionControlErrorResponseSchema.safeParse({
       ...response,
       errorDetail: { ...failure.errorDetail, secret: 'must-not-cross-control-transport' },

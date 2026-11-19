@@ -229,23 +229,25 @@ describe('section 7.5 recovery projection', () => {
     });
   });
 
-  it('retains the Provider model-selection refusal through target resume', async () => {
-    const failure = buildProviderSpawnErrorResult(createProviderErrorV1('model_selection_required'));
-    const harness = createTransitionDepsHarness({
-      findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
-        fromAgentId: 'claude', toAgentId: 'codex',
-      })) as never,
-      requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
-        machineRpcTransport: async () => failure,
-      }),
-    });
-    harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
+  it.each(['model_selection_required', 'provider_endpoint_rate_limited'] as const)(
+    'retains the Provider %s refusal through target resume', async code => {
+      const failure = buildProviderSpawnErrorResult(createProviderErrorV1(code,
+        code === 'provider_endpoint_rate_limited' ? { retryAfterMs: 3000 } : undefined));
+      const harness = createTransitionDepsHarness({
+        findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
+          fromAgentId: 'claude', toAgentId: 'codex',
+        })) as never,
+        requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
+          machineRpcTransport: async () => failure,
+        }),
+      });
+      harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
 
-    expect(await runTransition(harness)).toMatchObject({
-      type: 'partially_applied', applied: 'current_view_committed', code: 'target_start_failed',
-      errorDetail: { kind: 'launch_error', code: 'model_selection_required' },
+      expect(await runTransition(harness)).toMatchObject({
+        type: 'partially_applied', applied: 'current_view_committed', code: 'target_start_failed',
+        errorDetail: { kind: 'launch_error', code },
+      });
     });
-  });
 
   it('preserves resume-unreachable recovery through the transition result schema', async () => {
     const spawnFailure = buildSpawnResumeUnreachableErrorResult(new ConnectedServiceSpawnResumeUnreachableError({

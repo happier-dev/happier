@@ -53,12 +53,14 @@ export function projectSessionSpawnFailure(input: Readonly<{
       } } : {}),
     };
   }
-  const detail = SessionSpawnLaunchErrorV1Schema.safeParse(input.errorDetail);
   const nativeFailure = normalizeSpawnSessionErrorDetail(input.errorDetail);
   if (nativeFailure?.kind === 'provider_error') {
-    return { type: 'error', code: 'spawn_failed', retryable: nativeFailure.providerError.retryable,
-      providerError: nativeFailure.providerError };
+    const { providerError } = nativeFailure;
+    return { type: 'error', code: 'spawn_failed', retryable: providerError.retryable,
+      providerError,
+      launchError: { kind: 'launch_error', code: providerError.code, message: providerError.code } };
   }
+  const detail = SessionSpawnLaunchErrorV1Schema.safeParse(input.errorDetail);
   const nativeCode = nativeFailure?.kind === 'spawn_failure' ? nativeFailure.errno : undefined;
   let spawnFailure: SpawnFailureV1 | undefined;
   if (nativeFailure?.kind === 'spawn_failure') {
