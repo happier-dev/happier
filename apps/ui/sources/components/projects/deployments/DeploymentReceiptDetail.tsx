@@ -21,7 +21,7 @@ import {
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { DeploymentNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
-import { declaredSubjectAgentActions, InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
+import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
@@ -184,13 +184,6 @@ export const DeploymentReceiptDetail = React.memo(
     const investigation = useInvestigateFailure(investigateSubject, investigationOptions);
     const investigationOwner = useAccountNoticeInvestigation();
     const showInvestigationOutcome = investigation.showOutcome;
-    const fallbackInvestigate = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [{
-      label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
-    }], []);
-    // Until the catalog answers, the default Investigate and this receipt's own records stand in, waiting: the row they
-    // settle into is the row drawn at first paint, so nothing arrives later and pushes the page (VISUAL-136 D1).
-    const waitingAgentActions = React.useMemo((): readonly InvestigationAgentActionButtonModel[] => [...fallbackInvestigate,
-      ...declaredSubjectAgentActions('deploymentReceipt')], [fallbackInvestigate]);
     const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome, investigationOptions);
     const outcomeInput = React.useMemo(() => persistedInvestigation && investigateSubject ? {
       subject: investigateSubject,
@@ -324,23 +317,16 @@ export const DeploymentReceiptDetail = React.memo(
       health: environmentValue?.healthAggregate,
       state: deployment.state,
     });
-    // The shared agent-action control (DEPLOY-COMPOSE R4) for each of the person's records: its face launches in the
-    // record's own mode, the chevron offers the other. The catalog also supplies the reason and retry when it cannot answer.
-    // Until it first answers, the receipt's known records wait in their settled place beside the banner's own buttons.
-    const agentActionsPending = investigation.actions === undefined;
     // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.
     // Without one, Investigate leads and Deploy again stays quiet (K12-6).
     const recoveryLeads = rollbackTarget !== null || retryRollbackTo !== null;
     const investigateEmphasis = recoveryLeads ? 'secondary' : 'primary';
     // A narrow banner stacks its ways forward; the split controls stack with them at the same width.
-    const investigateControl = ({ stacked }: Readonly<{ stacked: boolean }>) => agentActionsPending ? (
-      <InvestigationAgentActionButtons actions={waitingAgentActions} pending={false} waiting compact={phone || stacked} emphasis={investigateEmphasis}
-        onLaunch={() => {}} />
-    ) : (
+    const investigateControl = ({ stacked }: Readonly<{ stacked: boolean }>) => (
       <InvestigationAgentActionButtons
-        actions={investigation.actions ?? fallbackInvestigate}
+        actions={investigation.actions ?? []}
         pending={investigation.pending}
-        unavailable={investigation.catalogOutcome}
+        catalogOutcome={investigation.catalogOutcome}
         onRetry={investigation.retryCatalog}
         compact={phone || stacked}
         emphasis={investigateEmphasis}

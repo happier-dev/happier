@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { declaredSubjectAgentActions, InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
+import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
@@ -34,16 +34,14 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
     ...(props.controllerMachineId ? { externalActionTarget: { kind: 'machine' as const, machineId: props.controllerMachineId } } : {}),
   }), [props.controllerMachineId]);
   const investigation = useInvestigateFailure(subject, options);
-  // Until the catalog answers, the Environment's declared records wait in their settled place (DEPLOY-ACCEPT-143 A6).
-  const waiting = investigation.actions === undefined;
-  const actions = waiting ? declaredSubjectAgentActions('deploymentEnvironment') : investigation.actions ?? [];
+  const actions = investigation.actions ?? [];
   // Healthy with nothing to offer stays silent; a refused catalog keeps the section to say what it needs.
   if (!props.preparation && actions.length === 0 && !investigation.showOutcome && !investigation.catalogOutcome) return null;
   const content = (
     <View style={styles.actions}>
       {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare"
         emphasis={actions.length === 0 ? props.emphasis : 'secondary'} /> : null}
-      <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} unavailable={investigation.catalogOutcome} onRetry={investigation.retryCatalog} waiting={waiting} compact={props.compact}
+      <InvestigationAgentActionButtons actions={actions} pending={investigation.pending} catalogOutcome={investigation.catalogOutcome} onRetry={investigation.retryCatalog} compact={props.compact}
         emphasis={props.emphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
       {investigation.showOutcome && investigation.outcome ? (

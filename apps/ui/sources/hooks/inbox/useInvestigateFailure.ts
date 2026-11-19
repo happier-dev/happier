@@ -5,11 +5,14 @@ import {
     type BoundHealthNoticeInvestigation,
 } from '@/components/inbox/detail/healthNoticeInvestigation';
 import { failureInvestigationSubjectKey, type FailureInvestigationSubject,
-    type FailureInvestigationExecutionOptions } from './accountNoticeInvestigation';
+    type FailureAgentActionsReadResult, type FailureInvestigationExecutionOptions } from './accountNoticeInvestigation';
 import { useAccountNoticeInvestigation } from './AccountNoticeInvestigationProvider';
 import { useMachinePresenceSummaries, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 const MACHINE_UNREACHABLE = { kind: 'unavailable', code: 'machine_unreachable' } as const;
+const CATALOG_LOADING = { kind: 'loading' } as const;
+const NO_CONFIGURED_ACTIONS = { kind: 'unavailable', code: 'no_agent_actions' } as const;
+export type FailureAgentCatalogOutcome = typeof CATALOG_LOADING | Extract<FailureAgentActionsReadResult, { kind: 'unavailable' }>;
 const sameReachability = (left: readonly MachinePresenceSummary[], right: readonly MachinePresenceSummary[]) =>
     left[0]?.reachability === right[0]?.reachability;
 
@@ -46,10 +49,12 @@ export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInv
     const catalog = catalogMachineUnreachable ? MACHINE_UNREACHABLE : answer;
     const catalogRefused = catalog != null && 'kind' in catalog;
     const actions = catalogRefused ? null : catalog;
-    // A refused catalog read is the controls' availability (InvestigationAgentActionButtons `unavailable`, or the
-    // page's default record standing pressable); only a launch the person pressed has an outcome banner
-    // (PAGE-ACCEPT-176 R3-D1: nothing was pressed, so nothing "failed").
-    const catalogOutcome = catalogRefused ? catalog : null;
+    // Catalog availability belongs to the read. A launch the person presses has its own outcome below.
+    const catalogOutcome: FailureAgentCatalogOutcome | null = catalogRefused ? catalog
+        : !options?.agentActions || !investigation ? null
+        : actions === undefined ? CATALOG_LOADING
+        : options.agentActions === 'withDefault' && (actions === null || actions.length === 0) ? NO_CONFIGURED_ACTIONS
+        : null;
     const retryCatalog = React.useCallback(() => { setCatalogAttempt(value => value + 1); }, []);
     const outcome = intent.outcome;
     const placementUnresolved = intent.outcome?.kind === 'placement_choice_required';
@@ -64,6 +69,5 @@ export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInv
     }, [placementUnresolved, launch]);
     const showOutcome = outcome !== null
         && (!placementUnresolved || openedComposerForPlacement.current && !intent.pending);
-    return { ...intent, actions, catalogOutcome,
-        retryCatalog: catalogMachineUnreachable ? undefined : retryCatalog, outcome, showOutcome };
+    return { ...intent, actions, catalogOutcome, retryCatalog, outcome, showOutcome };
 }

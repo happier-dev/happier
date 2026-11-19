@@ -23,6 +23,7 @@ import type { DeploymentReadLogs } from './useDeploymentStepLog';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
 vi.mock('@legendapp/list/react-native', async () =>
@@ -69,13 +70,18 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const contributedFailureRead = vi.hoisted(() => ({ answer: null as (() => Promise<ActionExecuteResult>) | null }));
 // Adapt Metro's synchronous loading boundary; the Action executor remains real.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
   const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
   const { createTriageFailureFrontDoorForTest } = await import('@/dev/testkit/harness/triageFailureActionBoundary');
   const adapted = { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
-  return { ...original, createFrontDoorActionExecute: createTriageFailureFrontDoorForTest(adapted) };
+  return { ...original, createFrontDoorActionExecute: createTriageFailureFrontDoorForTest(adapted, {
+    invoke: request => request.action.localId === 'actions/read-v1' && contributedFailureRead.answer
+      ? contributedFailureRead.answer()
+      : adapted.createFrontDoorActionExecute()('action.invoke', { action: request.action, input: request.input }, request.context),
+  }) };
 });
 
 const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
@@ -670,9 +676,8 @@ describe('Project deployments page', () => {
         review={noReview} onOpenReceipt={() => {}} />);
       const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
       await waitForHomeGovernance(() => {
-        const declared = screen!.findAllByType(AgentActionButton);
-        expect(declared.length).toBeGreaterThan(0);
-        expect(declared.every(button => button.props.disabled === true)).toBe(true);
+        expect(screen!.findByTestId('investigation.agentActions.loading-action')).not.toBeNull();
+        expect(screen!.findAllByType(AgentActionButton)).toHaveLength(0);
       });
       await act(async () => catalogAnswer.resolve());
       await waitForHomeGovernance(async () => {
@@ -3256,6 +3261,8 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       try {
         await waitForContent(overview, 'investigation.agentActions.unavailable');
         expect(overview.getTextContent()).toContain(t('inbox.work.healthNotice.agentActionsNeedMachine'));
+        expect(overview.findByTestId('investigation.agentActions.unavailable-action')?.props.accessibilityLabel)
+          .toBe(t('common.retry'));
       } finally { await overview.unmount(); }
       const failed = await renderScreen(<DeploymentReceiptDetail controller={controller}
         environmentId={detail.environment.id} deploymentId={receipt.deployment.id} environmentName={detail.content.name} demand={shown}
@@ -3265,6 +3272,10 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
         await waitForContent(failed, 'investigation.agentActions.unavailable');
         expect(failed.getTextContent()).toContain(t('inbox.work.healthNotice.agentActionsNeedMachine'));
         expect(failed.findByTestId('project-deployments.receipt.investigate')).toBeNull();
+        const retry = 'investigation.agentActions.unavailable-action';
+        expect(failed.findByTestId(retry)?.props.accessibilityLabel).toBe(t('common.retry'));
+        await failed.pressByTestIdAsync(retry);
+        expect(failed.getTextContent()).toContain(t('inbox.work.healthNotice.agentActionsNeedMachine'));
         await act(async () => {
           await publishMachineInventoryForTest(scope, [createMachineFixture({ id: machineId, active: true, activeAt: Date.now() })]);
         });
@@ -3274,6 +3285,83 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
         });
       } finally { await failed.unmount(); }
     } finally {
+      controller.retire();
+      runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+    }
+  });
+
+  it.each([
+    { page: 'Receipt', state: 'loading', reason: 'agentActionsLoading' },
+    { page: 'Receipt', state: 'plugin_action_generation_retired', reason: 'agentActionsUnavailable' },
+    { page: 'Receipt', state: 'agent_unavailable', reason: 'agentActionsNeedAgent' },
+    { page: 'Receipt', state: 'empty', reason: 'agentActionsNotConfigured' },
+    { page: 'Environment', state: 'loading', reason: 'agentActionsLoading' },
+    { page: 'Environment', state: 'contributed_action_unavailable', reason: 'agentActionsUnavailable' },
+  ] as const)('$page shows a quiet agent catalog $state reason with Retry', async ({ page, state, reason }) => {
+    const { createDeferred } = await import('@/dev/testkit');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { TRIAGE_FAILURE_TEST_BINDING } = await import('@/dev/testkit/harness/triageFailureActionBoundary');
+    const { createPluginPagePlacementFixture } = await import('@/dev/testkit/fixtures/pluginPageProjectionFixture');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+    const { t } = await import('@/text');
+    const previousRuntime = runtime.getAppliedActiveServerSnapshot();
+    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+    const base = environmentDetailForHome();
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }) });
+    const { controller, detail } = controllerFor({ detail: base, receipt });
+    const machineId = detail.environment.controllerMachineId;
+    const placement = createPluginPagePlacementFixture({ pluginId: TRIAGE_FAILURE_TEST_BINDING.pluginId, localId: 'triage', title: 'Triage', targetKind: 'app' });
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => ({ ...EMPTY_PLUGIN_UI_PROJECTION,
+      surfacePlacementsById: { [placement.id]: { ...placement, failureActions: { action: TRIAGE_FAILURE_TEST_BINDING.action } } } }));
+    const heldRead = createDeferred<ActionExecuteResult>();
+    const available: ActionExecuteResult = { ok: true, result: { v: 1, kind: 'choices', defaultActionId: 'investigate',
+      actions: [{ label: 'Investigate', forSubject: true, selection: { configuredActionId: 'investigate',
+        sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } }] } };
+    let reads = 0;
+    let retry = false;
+    contributedFailureRead.answer = async () => {
+      reads++;
+      if (retry) return available;
+      if (state === 'loading') return heldRead.promise;
+      if (state === 'empty') return { ok: true, result: { v: 1, kind: 'choices', defaultActionId: null, actions: [] } };
+      return { ok: false, errorCode: state, error: state };
+    };
+    runtime.publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      await publishMachineInventoryForTest(scope, [createMachineFixture({ id: machineId, active: true, activeAt: Date.now() })]);
+      screen = page === 'Environment' ? await render(controller, detail) : await renderScreen(<DeploymentReceiptDetail controller={controller}
+        environmentId={detail.environment.id} deploymentId={receipt.deployment.id} environmentName={detail.content.name} demand={shown}
+        accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        rollback={null} cancel={null} linkPath={null} readLogs={null} onBack={() => {}} review={noReview} onOpenReceipt={() => {}} />);
+      const mounted = screen;
+      await waitForContent(mounted, page === 'Receipt' ? 'project-deployments.receipt.outcome.failed' : 'project-deployments.environment.menu');
+      await waitForHomeGovernance(() => expect(reads).toBeGreaterThan(0));
+      const line = `investigation.agentActions.${state === 'loading' ? 'loading' : 'unavailable'}`;
+      await waitForHomeGovernance(() => {
+        expect(mounted.findByTestId(line)).not.toBeNull();
+        expect(mounted.getTextContent()).toContain(t(`inbox.work.healthNotice.${reason}`));
+      });
+      expect(mounted.findByTestId(`${line}-action`)?.props.accessibilityLabel).toBe(t('common.retry'));
+      expect(mounted.findAllByType(AgentActionButton)).toHaveLength(0);
+      expect(mounted.findByTestId('project-deployments.receipt.investigate')).toBeNull();
+      retry = true;
+      await mounted.pressByTestIdAsync(`${line}-action`);
+      await waitForHomeGovernance(() => {
+        expect(mounted.findAllByType(AgentActionButton).map(button => [button.props.title, Boolean(button.props.disabled)]))
+          .toEqual([['Investigate', false]]);
+      });
+      expect(mounted.findByTestId(line)).toBeNull();
+    } finally {
+      heldRead.resolve(available);
+      await screen?.unmount();
+      contributedFailureRead.answer = null;
+      unpublish();
       controller.retire();
       runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
     }

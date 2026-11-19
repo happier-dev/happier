@@ -6,7 +6,6 @@ import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvest
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useInvestigationSessionResult } from '@/hooks/inbox/useInvestigationSessionResult';
 import { OperationsOutcomeGroup } from '@/components/workflows/run/OperationsOutcomeGroup';
-import { t } from '@/text';
 import { InvestigationAgentActionButtons } from './InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from './InvestigationOutcomeBanner';
 
@@ -31,10 +30,9 @@ export function FailureInvestigationActions(props: Readonly<{
         finding: { kind: 'investigate' as const, ...persisted }, produced: persisted.produced,
     } : null, [persisted, props.subject]);
     return <View testID={props.testID}>
-        <InvestigationAgentActionButtons actions={investigation.actions ?? [{
-            label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: false,
-        }]} pending={investigation.pending} waiting={investigation.actions === undefined} compact={props.compact} emphasis={props.emphasis}
-            unavailable={investigation.catalogOutcome} onRetry={investigation.retryCatalog}
+        <InvestigationAgentActionButtons actions={investigation.actions ?? []}
+            pending={investigation.pending} compact={props.compact} emphasis={props.emphasis}
+            catalogOutcome={investigation.catalogOutcome} onRetry={investigation.retryCatalog}
             onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
         {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner
             outcome={investigation.outcome} serverId={props.serverId} testID={props.testID}

@@ -162,9 +162,8 @@ describe('failed deployment migration recovery', () => {
         () => screen.findByTestId('project-deployments.receipt.outcome.failed'), value => value !== null); });
       const offered = () => screen.findAllByType(AgentActionButton);
       if (choice === 'unavailable') {
-        // Before the records answer, the receipt's own agent actions stand in, waiting, where they will settle: no control
-        // arrives later and pushes the row (VISUAL-136 D1).
-        expect(offered().map(button => [button.props.title, button.props.disabled])).toEqual([['Investigate', true], ['Fix this deploy', true]]);
+        expect(screen.findByTestId('investigation.agentActions.loading-action')).not.toBeNull();
+        expect(offered()).toHaveLength(0);
         await act(async () => { answerRecords(); });
         // The receipt offers the person's own records for it, one shared agent-action control each, in their words
         // and launch modes.

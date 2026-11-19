@@ -470,8 +470,7 @@ describe('agent actions before the catalog answers', () => {
     const hook = await renderHook(() => useBoundFailureInvestigation(bound, { agentActions: 'withDefault' }));
     try {
       await act(async () => {});
-      // A page reserves the control's place while this is pending, rather than drawing a stand-in it then replaces.
-      expect(hook.getCurrent().actions).toBeUndefined();
+      expect(hook.getCurrent()).toMatchObject({ actions: undefined, catalogOutcome: { kind: 'loading' }, outcome: null });
       await act(async () => { answer({ ok: false, errorCode: code, error: code }); });
       // Nothing was pressed: the refusal is the controls' quiet availability, never a launch failure banner (PAGE-ACCEPT-176 R3-D1).
       expect(hook.getCurrent()).toMatchObject({ actions: null, showOutcome: false, outcome: null,
@@ -480,14 +479,15 @@ describe('agent actions before the catalog answers', () => {
       const retryCatalog = hook.getCurrent().retryCatalog;
       expect(retryCatalog).toBeTypeOf('function');
       await act(async () => { retryCatalog?.(); });
-      expect(hook.getCurrent()).toMatchObject({ actions: undefined, catalogOutcome: null, outcome: null });
+      expect(hook.getCurrent()).toMatchObject({ actions: undefined, catalogOutcome: { kind: 'loading' }, outcome: null });
       await act(async () => { answer({ ok: true, result: { v: 1, kind: 'choices', defaultActionId: null, actions: [] } }); });
-      expect(hook.getCurrent()).toMatchObject({ actions: [], catalogOutcome: null, outcome: null, showOutcome: false });
+      expect(hook.getCurrent()).toMatchObject({ actions: [],
+        catalogOutcome: { kind: 'unavailable', code: 'no_agent_actions' }, outcome: null, showOutcome: false });
       let launch: Promise<void> | undefined;
       await act(async () => { launch = hook.getCurrent().investigate(); });
       expect(hook.getCurrent()).toMatchObject({ pending: true, outcome: null });
       await act(async () => { answer({ ok: false, errorCode: code, error: code }); await launch; });
-      expect(hook.getCurrent()).toMatchObject({ catalogOutcome: null, pending: false, showOutcome: true,
+      expect(hook.getCurrent()).toMatchObject({ catalogOutcome: { kind: 'unavailable', code: 'no_agent_actions' }, pending: false, showOutcome: true,
         outcome: { kind: 'unavailable', code } });
     } finally { await hook.unmount(); }
   });

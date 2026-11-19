@@ -4373,6 +4373,11 @@ missing Agent facts yield `placement_choice_required` candidates for an inline
 choice; the owner never routes the person to Triage settings. These are
 development-source contracts.
 
+Failed Receipts and Environment Overview show a quiet reason and Retry while
+their agent-action catalog is loading or unavailable. The Account investigation
+owner supplies this state for the current subject and Controller, and Retry
+uses the same catalog acquisition path.
+
 Environment `healthNotices` separately selects authenticated Home/Account C1
 activity through the shell's existing Artifact acquisition. Optional typed
 `environmentHealth` is the producer's condition-at-write aggregate, not a
