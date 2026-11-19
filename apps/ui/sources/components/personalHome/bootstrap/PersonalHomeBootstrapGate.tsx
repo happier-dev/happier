@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
-import Animated from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { playBuild, runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { useAtmosphereMoment } from '@/components/atmosphere/atmosphereMoments';
@@ -10,7 +11,6 @@ import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadin
 import { PersonalHomeSetupBackdrop, PersonalHomeSetupSurface } from '../setup/PersonalHomeSetupSurface';
 import { derivePersonalHomeSetupProgress } from '../setup/personalHomeSetupProgress';
 import { PersonalHomeRecoveryStrip } from './PersonalHomeRecoveryStrip';
-import { usePersonalHomeSetupReveal } from './PersonalHomeSetupReveal';
 import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
 import type {
     PersonalHomeBootstrapOperation,
@@ -42,6 +42,7 @@ export function usePersonalHomeBootReadiness(): PersonalHomeBootReadiness {
 
 type PersonalHomeBootstrapPresentation = Readonly<{
     gating: boolean;
+    firstArrival: boolean;
     setupProps: React.ComponentProps<typeof PersonalHomeSetupSurface>;
     setupSurface?: PersonalHomeBootstrapGateProps['setupSurface'];
 }>;
@@ -59,21 +60,24 @@ export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.R
     const snapshot = presentation?.setupProps.snapshot ?? null;
     const reducedMotion = useReducedMotionPreference();
     const { theme } = useUnistyles();
-    // The frame the user last read: kept while it lifts off the released shell. A frame that only
-    // ever said "checking" is not held, so a fast start shows no setup at all.
-    const [held, setHeld] = React.useState<Readonly<{ snapshot: PersonalHomeBootstrapSnapshot | null; departing: boolean }>>(
-        { snapshot: null, departing: false });
-    if (gating) {
-        const next = snapshot?.phase !== 'checking' ? snapshot : held.snapshot;
-        if (next !== held.snapshot || held.departing) setHeld({ snapshot: next, departing: false });
-    } else if (held.snapshot && !held.departing) {
-        setHeld({ snapshot: held.snapshot, departing: true });
-    }
-    const handleRevealSettled = React.useCallback(() => setHeld({ snapshot: null, departing: false }), []);
-    const departing = !gating && held.departing;
-    const revealStyle = usePersonalHomeSetupReveal(departing, handleRevealSettled);
-
-    const frameSnapshot = gating ? snapshot : departing ? held.snapshot : null;
+    const [held, setHeld] = React.useState(gating ? snapshot : null);
+    if (gating && snapshot !== held) setHeld(snapshot);
+    const frameSnapshot = gating ? snapshot : held;
+    const covered = frameSnapshot !== null;
+    const firstArrivalPlayed = React.useRef(false);
+    React.useLayoutEffect(() => {
+        if (gating || !held) return;
+        const commit = () => setHeld(null);
+        const firstArrival = presentation?.firstArrival === true && !firstArrivalPlayed.current;
+        if (firstArrival) firstArrivalPlayed.current = true;
+        if (firstArrival && held.phase !== 'checking') {
+            runStepMove({ layer: 'personal-home-setup', kind: 'home', commit });
+        } else {
+            // Home is already mounted. Start its build before dropping the held checking layer.
+            if (firstArrival) void playBuild({ layer: 'home', choreography: 'home' });
+            commit();
+        }
+    }, [gating, held, presentation?.firstArrival]);
     const setupProps = presentation && frameSnapshot ? { ...presentation.setupProps, snapshot: frameSnapshot } : null;
     const customSurface = presentation?.setupSurface;
     const setupSurface = setupProps
@@ -101,30 +105,26 @@ export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.R
             <View
                 testID="personal-home-bootstrap-backdrop"
                 style={{ flex: 1 }}
-                pointerEvents={gating ? 'none' : 'auto'}
-                accessibilityElementsHidden={gating}
-                importantForAccessibility={gating ? 'no-hide-descendants' : 'auto'}
-                {...(Platform.OS === 'web' && gating ? { inert: true } : {})}
+                pointerEvents={covered ? 'none' : 'auto'}
+                accessibilityElementsHidden={covered}
+                importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}
+                {...(Platform.OS === 'web' && covered ? { inert: true } : {})}
             >
-                {props.children}
+                <StepMotionLayer layerKey="home" stepKey={covered ? 'preparing' : 'ready'} retainContent warmOnMount={false}
+                    style={{ flex: 1 }}>
+                    {props.children}
+                </StepMotionLayer>
             </View>
             {setupSurface && !customSurface ? (
-                <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, revealStyle]}>
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
                     <PersonalHomeSetupBackdrop />
-                </Animated.View>
+                </View>
             ) : null}
             {moment.layer}
             {setupSurface ? (
-                <Animated.View
-                    // The departing frame never takes input: the shell beneath is already interactive.
-                    testID={departing ? 'personal-home-setup-reveal' : undefined}
-                    pointerEvents={departing ? 'none' : 'auto'}
-                    accessibilityElementsHidden={departing}
-                    importantForAccessibility={departing ? 'no-hide-descendants' : 'auto'}
-                    style={[StyleSheet.absoluteFill, revealStyle]}
-                >
+                <StepMotionLayer layerKey="personal-home-setup" style={StyleSheet.absoluteFill}>
                     {setupSurface}
-                </Animated.View>
+                </StepMotionLayer>
             ) : null}
         </View>,
     )}</>;
@@ -230,6 +230,14 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
     }, [controller.refresh]);
 
     const gating = enabled && controller.snapshot.shouldGateShell;
+    const creatingFirstHome = React.useRef(false);
+    const facts = controller.facts;
+    if (gating && facts && !facts.explicitlySelectedOtherHome && !facts.completedPersonalHomeProfile
+        && !facts.candidateLocalProfile && !facts.relayRuntime?.installed && !facts.relayRuntime?.dataPresent) {
+        creatingFirstHome.current = true;
+    }
+    const firstArrival = enabled && controller.snapshot.homeReady && creatingFirstHome.current
+        && facts?.explicitlySelectedOtherHome !== true;
 
     const factTask = controller.facts?.activeTask ?? null;
     // Keep completed task diagnostics after live work ends, but never revive stale progress
@@ -258,7 +266,7 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
         && controller.snapshot.shouldGateShell === false;
     return (
         <PersonalHomeBootReadinessContext.Provider value={!enabled ? BOOT_BYPASSED : controller.snapshot.homeReady ? BOOT_READY : BOOT_STARTING}>
-            <PersonalHomeBootstrapPresentationContext.Provider value={{ gating, setupProps, setupSurface: props.setupSurface }}>
+            <PersonalHomeBootstrapPresentationContext.Provider value={{ gating, firstArrival, setupProps, setupSurface: props.setupSurface }}>
                 <View style={{ flex: 1 }}>
                     {props.children}
                     {showPostShellPending ? (

@@ -141,17 +141,17 @@ describe('Personal Home shell reveal', () => {
 
         expect(screen.findByTestId('normal-shell')).not.toBeNull();
         expect(screen.findByTestId('ready-home-content')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-setup-reveal')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-setup-reveal')?.props.pointerEvents).toBe('none');
+        expect(screen.findByTestId('personal-home-setup-surface')).toBeNull();
+        expect(screen.findByTestId('personal-home-setup-reveal')).toBeNull();
     });
 
-    it('lifts the frame with the same short cross-fade under reduced motion (plan R-11)', async () => {
+    it('unmounts setup when Home is released with reduced motion', async () => {
         reducedMotionSpy.mockReturnValue(true);
         const screen = await renderBootstrapThroughHomeReady();
 
         expect(screen.findByTestId('normal-shell')).not.toBeNull();
         expect(screen.findByTestId('ready-home-content')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-setup-reveal')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-setup-reveal')?.props.pointerEvents).toBe('none');
+        expect(screen.findByTestId('personal-home-setup-surface')).toBeNull();
+        expect(screen.findByTestId('personal-home-setup-reveal')).toBeNull();
     });
 });
