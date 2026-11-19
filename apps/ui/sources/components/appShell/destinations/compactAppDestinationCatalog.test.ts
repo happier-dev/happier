@@ -6,6 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
+import { createPluginPagePlacementFixture } from '@/dev/testkit/fixtures/pluginPageProjectionFixture';
 import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -397,17 +398,12 @@ const appSidebarTab = Object.freeze({
 
 function createProjectedAppPage(): PluginUiSurfacePlacementProjection {
     return {
+        ...createPluginPagePlacementFixture({ pluginId: 'acme.notes', localId: 'notes', title: 'Notes', targetKind: 'app' }),
         id: 'surfacePlacement:acme.notes:notes',
         pluginId: 'acme.notes',
         occurrenceId: 'acme-notes-occurrence',
         contributionKind: 'surfacePlacement',
         descriptorId: 'notes',
-        binding: {
-            kind: 'destination',
-            destination: { pluginId: 'acme.notes', localId: 'notes' },
-            container: 'appPage',
-            targetKind: 'app',
-        } as PluginUiSurfacePlacementProjection['binding'],
         target: { kind: 'app' },
         renderer: { kind: 'hostedWeb', contributionId: 'notes-renderer' },
         display: { developerFallback: 'Notes', iconToken: 'note' },
