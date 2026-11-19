@@ -296,6 +296,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-3-5-haiku-20241022"
       }
     },
     {
@@ -305,6 +309,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-3-7-sonnet-20250219"
       }
     },
     {
@@ -344,7 +352,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-fable-5"
+      }
     },
     {
       "id": "claude-fable-5-1",
@@ -383,7 +395,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-fable-5-1"
+      }
     },
     {
       "id": "claude-haiku-4-5-20251001",
@@ -392,6 +408,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-haiku-4-5-20251001"
       }
     },
     {
@@ -431,7 +451,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-haiku-5-5"
+      }
     },
     {
       "id": "claude-opus-4-1-20250805",
@@ -440,6 +464,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-4-1-20250805"
       }
     },
     {
@@ -449,6 +477,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-4-20250514"
       }
     },
     {
@@ -458,6 +490,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-4-5-20251101"
       }
     },
     {
@@ -493,7 +529,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-4-6"
+      }
     },
     {
       "id": "claude-opus-4-7",
@@ -532,7 +572,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-4-7"
+      }
     },
     {
       "id": "claude-opus-4-8",
@@ -571,7 +615,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-4-8"
+      }
     },
     {
       "id": "claude-opus-5",
@@ -610,7 +658,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-5"
+      }
     },
     {
       "id": "claude-opus-5-5",
@@ -649,7 +701,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-opus-5-5"
+      }
     },
     {
       "id": "claude-sonnet-4-20250514",
@@ -658,6 +714,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-sonnet-4-20250514"
       }
     },
     {
@@ -667,6 +727,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-sonnet-4-5-20250929"
       }
     },
     {
@@ -702,7 +766,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-sonnet-4-6"
+      }
     },
     {
       "id": "claude-sonnet-5",
@@ -741,7 +809,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-sonnet-5"
+      }
     },
     {
       "id": "claude-sonnet-5-5",
@@ -780,7 +852,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "anthropic",
+        "vendorModelId": "claude-sonnet-5-5"
+      }
     }
   ],
   "codex": [
@@ -817,7 +893,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "codex-auto-review"
+      }
     },
     {
       "id": "gpt-5.6-luna",
@@ -856,7 +936,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-5.6-luna"
+      }
     },
     {
       "id": "gpt-5.6-sol",
@@ -895,7 +979,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-5.6-sol"
+      }
     },
     {
       "id": "gpt-5.6-terra",
@@ -934,7 +1022,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-5.6-terra"
+      }
     },
     {
       "id": "gpt-6-astra",
@@ -973,7 +1065,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-6-astra"
+      }
     },
     {
       "id": "gpt-6-chat-thinking",
@@ -1012,7 +1108,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-6-chat-thinking"
+      }
     },
     {
       "id": "gpt-6-luna",
@@ -1051,7 +1151,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-6-luna"
+      }
     },
     {
       "id": "gpt-6-sol",
@@ -1090,7 +1194,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-6-sol"
+      }
     },
     {
       "id": "gpt-6.1-sol",
@@ -1129,7 +1237,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-6.1-sol"
+      }
     },
     {
       "id": "gpt-6.1-terra",
@@ -1168,7 +1280,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "openai",
+        "vendorModelId": "gpt-6.1-terra"
+      }
     },
     {
       "id": "gpt-image-1.5",
@@ -1242,6 +1358,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-2.5-flash"
       }
     },
     {
@@ -1250,6 +1370,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-2.5-flash-lite"
       }
     },
     {
@@ -1258,6 +1382,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-2.5-pro"
       }
     },
     {
@@ -1292,7 +1420,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3-flash-preview"
+      }
     },
     {
       "id": "gemini-3-pro-image-preview",
@@ -1318,7 +1450,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3-pro-image-preview"
+      }
     },
     {
       "id": "gemini-3-pro-preview",
@@ -1344,7 +1480,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3-pro-preview"
+      }
     },
     {
       "id": "gemini-3.1-flash-image-preview",
@@ -1370,7 +1510,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.1-flash-image-preview"
+      }
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
@@ -1396,7 +1540,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.1-flash-lite-preview"
+      }
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -1426,7 +1574,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.1-pro-preview"
+      }
     },
     {
       "id": "gemini-3.5-flash",
@@ -1460,7 +1612,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.5-flash"
+      }
     },
     {
       "id": "gemini-3.5-flash-lite",
@@ -1494,7 +1650,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.5-flash-lite"
+      }
     },
     {
       "id": "gemini-3.6-flash",
@@ -1528,7 +1688,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.6-flash"
+      }
     },
     {
       "id": "gemini-3.8-flash",
@@ -1559,7 +1723,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-3.8-flash"
+      }
     },
     {
       "id": "gemini-4-argon",
@@ -1590,7 +1758,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "google",
+        "vendorModelId": "gemini-4-argon"
+      }
     }
   ],
   "kimi": [
@@ -1601,6 +1773,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2"
       }
     },
     {
@@ -1628,7 +1804,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2-thinking"
+      }
     },
     {
       "id": "kimi-k2.5",
@@ -1655,7 +1835,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2.5"
+      }
     },
     {
       "id": "kimi-k2.6",
@@ -1682,7 +1866,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2.6"
+      }
     },
     {
       "id": "kimi-k2.7-code",
@@ -1709,7 +1897,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2.7-code"
+      }
     },
     {
       "id": "kimi-k2.7-code-highspeed",
@@ -1736,7 +1928,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2.7-code-highspeed"
+      }
     },
     {
       "id": "kimi-k2.8",
@@ -1767,7 +1963,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2.8"
+      }
     },
     {
       "id": "kimi-k2.8-code",
@@ -1798,7 +1998,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k2.8-code"
+      }
     },
     {
       "id": "kimi-k3",
@@ -1829,7 +2033,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k3"
+      }
     },
     {
       "id": "kimi-k3-256k",
@@ -1860,7 +2068,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k3-256k"
+      }
     },
     {
       "id": "kimi-k3.1-pro",
@@ -1891,7 +2103,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k3.1-pro"
+      }
     },
     {
       "id": "kimi-k3.1-pro-highspeed",
@@ -1922,7 +2138,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "moonshot",
+        "vendorModelId": "kimi-k3.1-pro-highspeed"
+      }
     }
   ],
   "meta": [
@@ -2365,7 +2585,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-3-mini"
+      }
     },
     {
       "id": "grok-3-mini-fast",
@@ -2396,7 +2620,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-3-mini-fast"
+      }
     },
     {
       "id": "grok-4.20-0309-non-reasoning",
@@ -2405,6 +2633,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.20-0309-non-reasoning"
       }
     },
     {
@@ -2414,6 +2646,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.20-0309-reasoning"
       }
     },
     {
@@ -2445,7 +2681,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.20-multi-agent-0309"
+      }
     },
     {
       "id": "grok-4.3",
@@ -2480,7 +2720,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.3"
+      }
     },
     {
       "id": "grok-4.5",
@@ -2511,7 +2755,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.5"
+      }
     },
     {
       "id": "grok-4.6",
@@ -2546,7 +2794,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.6"
+      }
     },
     {
       "id": "grok-4.7",
@@ -2581,7 +2833,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.7"
+      }
     },
     {
       "id": "grok-4.7-build-fast",
@@ -2616,7 +2872,11 @@ export const CLIPROXYAPI_STATIC_MODELS = {
             }
           ]
         }
-      ]
+      ],
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-4.7-build-fast"
+      }
     },
     {
       "id": "grok-build-0.1",
@@ -2625,6 +2885,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-build-0.1"
       }
     },
     {
@@ -2634,6 +2898,10 @@ export const CLIPROXYAPI_STATIC_MODELS = {
       "capabilities": {
         "reasoningControls": "unknown",
         "toolRoundTrips": "unknown"
+      },
+      "upstreamRef": {
+        "vendor": "xai",
+        "vendorModelId": "grok-composer-2.5-fast"
       }
     },
     {

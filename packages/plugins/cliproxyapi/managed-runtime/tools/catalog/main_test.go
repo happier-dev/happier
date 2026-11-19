@@ -37,6 +37,7 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	}
 	var rows map[string][]struct {
 		ID                  string            `json:"id"`
+		UpstreamRef         *modelUpstreamRef `json:"upstreamRef"`
 		ContextWindowTokens int               `json:"contextWindowTokens"`
 		Capabilities        map[string]string `json:"capabilities"`
 		ModelOptions        []struct {
@@ -67,6 +68,34 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 			if model.Capabilities["reasoningControls"] != wantCapability {
 				t.Errorf("%s/%s reasoningControls = %q, want %q for declared effort options", provider, model.ID, model.Capabilities["reasoningControls"], wantCapability)
 			}
+		}
+	}
+	for _, expected := range []struct {
+		family, id, vendor string
+	}{
+		{"claude", "claude-sonnet-4-6", "anthropic"},
+		{"codex", "gpt-6.1-sol", "openai"},
+		{"gemini", "gemini-2.5-flash", "google"},
+		{"kimi", "kimi-k2.8", "moonshot"},
+		{"xai", "grok-4.7", "xai"},
+		{"antigravity", "claude-sonnet-4-6", ""},
+	} {
+		found := false
+		for _, row := range rows[expected.family] {
+			if row.ID != expected.id {
+				continue
+			}
+			found = true
+			var want *modelUpstreamRef
+			if expected.vendor != "" {
+				want = &modelUpstreamRef{Vendor: expected.vendor, VendorModelID: expected.id}
+			}
+			if !reflect.DeepEqual(row.UpstreamRef, want) {
+				t.Errorf("%s/%s upstream identity = %v, want %v", expected.family, row.ID, row.UpstreamRef, want)
+			}
+		}
+		if !found {
+			t.Errorf("missing SDK catalog model %s/%s", expected.family, expected.id)
 		}
 	}
 	images := map[string]bool{

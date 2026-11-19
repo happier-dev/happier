@@ -51,6 +51,7 @@ type optionValue struct {
 
 type sdkModel struct {
 	ID             string `json:"id"`
+	OwnedBy        string `json:"owned_by"`
 	ContextLength  int    `json:"context_length"`
 	ToolRoundTrips string `json:"-"`
 	Thinking       *struct {
@@ -228,6 +229,12 @@ func generateRows(moduleDir string, families []familyRow) (map[string][]model, e
 			row := model{ID: id, Name: id, ContextWindowTokens: entry.ContextLength, Capabilities: map[string]string{
 				"toolRoundTrips": "unknown", "reasoningControls": "unknown",
 			}}
+			// Antigravity is itself a router. Its registry labels identify
+			// Antigravity routes and carry no underlying vendor identity.
+			// Muse supplies the Meta facts in the projection below.
+			if entry.OwnedBy != "" && provider != "antigravity" && provider != "meta" {
+				row.UpstreamRef = &modelUpstreamRef{Vendor: entry.OwnedBy, VendorModelID: id}
+			}
 			if entry.ToolRoundTrips != "" {
 				row.Capabilities["toolRoundTrips"] = entry.ToolRoundTrips
 			}

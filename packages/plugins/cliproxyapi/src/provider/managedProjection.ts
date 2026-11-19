@@ -12,10 +12,10 @@ export const CLIPROXYAPI_MANAGED_HEALTH_IDENTITY = Object.freeze({
 
 // The managed catalog is projected from the pinned CLIProxyAPI SDK registry.
 // Version the adapter as well as the SDK: retain exact Thinking.Levels and
-// unsupported tool-round-trip facts for upstream image builtins. Older cached
-// descriptors must refresh; process restarts and credentials do not change facts.
+// unsupported tool-round-trip facts for upstream image builtins, and preserve
+// declared model identity. Older cached descriptors must refresh.
 export const CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION =
-  `${CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion}:header-facts-families-v6`;
+  `${CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion}:header-facts-families-v7`;
 
 export const CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS = Object.freeze(
   CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.map((family) => Object.freeze({

@@ -3310,6 +3310,12 @@ OpenCode's Muse Account route through CLIProxyAPI. Team shares carry the source
 profile's reference. Contributor variants keep their own upstream IDs because
 the catalog does not establish equivalence to the plain IDs.
 
+The managed CLIProxyAPI fallback catalog carries the upstream vendor and model
+ID declared by its pinned registry for the Claude, Codex, Gemini, Kimi, and
+Grok families. Antigravity rows keep their separate route identities because
+their owner metadata names the gateway. Live model lists carry an upstream
+reference only when the producer supplies one.
+
 New Session favorites use the existing Account preference. Starring a model can
 save its current Thinking level and restore it when the route still supports
 it. Changing Thinking changes the session. Updating the favorite saves the
