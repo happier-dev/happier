@@ -140,6 +140,8 @@ export function SessionModelRunsThrough(
           pick(id);
         }}
         placement="bottom"
+        // The trigger is an icon: the menu takes the menu width, not the button's.
+        matchTriggerWidth={false}
         // Inside the engine popover a screen-local host would paint the menu under it (as the field select does).
         popoverPortalWebTarget="body"
         trigger={({ toggle }) => (
