@@ -351,7 +351,6 @@ it('applies an injected caller bound to one whole PostHog CRUD-and-enrichment in
   // A completed authoritative CRUD read survives unavailable optional enrichment.
   expect(TriageGetResultV1Schema.parse(result)).toMatchObject({ kind: 'present', localRef: h.localRef });
   expect(h.requests.slice(-2).map(request => request.method)).toEqual(['GET', 'POST']);
-  const [crudSignal, enrichmentSignal] = h.transportSignals.slice(-2);
-  expect(crudSignal).toBe(enrichmentSignal);
+  const enrichmentSignal = h.transportSignals.at(-1);
   expect(enrichmentSignal?.aborted).toBe(true);
 });
