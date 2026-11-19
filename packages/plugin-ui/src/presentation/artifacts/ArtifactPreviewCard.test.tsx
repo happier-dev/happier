@@ -119,6 +119,33 @@ describe('HappierArtifactPreviewCard visible structure', () => {
     expect(previewBand().props.importantForAccessibility).toBe('no-hide-descendants');
   });
 
+  it('keeps Board widget rows when the host re-projects the same Board, which fires no new layout', async () => {
+    const board = (): HappierArtifactPreview => ({ kind: 'board', layout: { mode: 'canvas',
+      source: { sections: ['my_machines'], hasFilter: false, pickedCount: 0 },
+      widgets: [
+        { title: 'Fleet', size: 'wide' as const, footprint: { columns: 2, columnSpan: 2, rowSpan: 1 }, position: { x: 0, y: 0 } },
+        { title: 'Usage', size: 'small' as const, footprint: { columns: 2, columnSpan: 1, rowSpan: 1 }, position: { x: 0, y: 1 } },
+      ] } });
+    await act(async () => { tree = create(card(board())); });
+    await layoutBand(127);
+    await layoutRows(16, 35);
+    expect(rows()).toHaveLength(2);
+    // A fresh projection of unchanged content: native layout does not fire again for unchanged geometry.
+    await act(async () => tree.update(card(board())));
+    expect(rows()).toHaveLength(2);
+    expect(JSON.stringify(tree.toJSON())).toContain('Usage');
+  });
+
+  it('never collapses Board widget rows to none while the summary is still unmeasured', async () => {
+    const preview: HappierArtifactPreview = { kind: 'board', layout: { mode: 'canvas',
+      source: { sections: ['my_machines'], hasFilter: false, pickedCount: 0 },
+      widgets: [{ title: 'Fleet', size: 'wide' as const, footprint: { columns: 2, columnSpan: 2, rowSpan: 1 }, position: { x: 0, y: 0 } }] } };
+    await act(async () => { tree = create(card(preview)); });
+    expect(rows()).toHaveLength(1);
+    await layoutBand(127);
+    expect(rows()).toHaveLength(1);
+  });
+
   it('remeasures a replacement structure rather than reusing the previous labels geometry', async () => {
     const preview = { kind: 'workflow', steps: Array.from({ length: 10 }, (_, index) => ({ title: `Before ${index}` })) } as const;
     await act(async () => { tree = create(card(preview)); });

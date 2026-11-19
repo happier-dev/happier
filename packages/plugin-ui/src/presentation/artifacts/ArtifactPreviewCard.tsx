@@ -32,22 +32,22 @@ const PREVIEW_LINES = 7;
 const STRUCTURE_TOP = HAPPIER_PAGE_METRICS.cardPaddingPx;
 const STRUCTURE_GAP = HAPPIER_PAGE_METRICS.rowCompactGapPx;
 
-/** Admit the next row only after the preceding row's actual wrapped/scaled height is known. */
+/**
+ * Admit the next row only after the preceding row's actual wrapped/scaled height is known. Heights are kept
+ * by position across a re-projected structure (a new `rows` identity): native layout fires only when a box
+ * changes, so a mounted row or summary reports its own change, and a newly admitted row reports on mount.
+ */
 function useVisibleStructure(rows: readonly unknown[] | undefined, hasSummary: boolean) {
   const [bandHeight, setBandHeight] = React.useState(0);
-  const [geometry, setGeometry] = React.useState(() => ({ rows, heights: [] as readonly number[], summaryHeight: undefined as number | undefined }));
-  let measured = geometry;
-  if (geometry.rows !== rows) {
-    measured = { rows, heights: [], summaryHeight: undefined };
-    setGeometry(measured);
-  }
+  const [summaryHeight, setSummaryHeight] = React.useState<number | undefined>(undefined);
+  const [heights, setHeights] = React.useState<readonly number[]>([]);
+  const settled = bandHeight > 0 && (!hasSummary || summaryHeight !== undefined);
   let count = 0;
-  let top: number = STRUCTURE_TOP;
-  if (hasSummary) top = measured.summaryHeight === undefined ? bandHeight : top + measured.summaryHeight + STRUCTURE_GAP;
-  // Until the band is measured its first row shows: an unmeasured card is never a white box (a virtualized
-  // grid mounts cards late, and the first paint used to land before the band's layout).
-  while (rows && count < rows.length && (top < bandHeight || (bandHeight === 0 && count === 0))) {
-    const height = measured.heights[count];
+  let top: number = STRUCTURE_TOP + (hasSummary && summaryHeight !== undefined ? summaryHeight + STRUCTURE_GAP : 0);
+  // Until the band and its summary are measured the first row shows: an unmeasured card is never an empty
+  // band (a virtualized grid mounts cards late, and the first paint can land before either layout).
+  while (rows && count < rows.length && (settled ? top < bandHeight : count === 0)) {
+    const height = heights[count];
     count += 1;
     if (height === undefined) break;
     top += height + STRUCTURE_GAP;
@@ -55,17 +55,14 @@ function useVisibleStructure(rows: readonly unknown[] | undefined, hasSummary: b
   return {
     count,
     onBandLayout: (event: LayoutChangeEvent) => setBandHeight(event.nativeEvent.layout.height),
-    onSummaryLayout: (event: LayoutChangeEvent) => {
-      const height = event.nativeEvent.layout.height;
-      setGeometry(previous => previous.rows !== rows || previous.summaryHeight === height ? previous : { ...previous, summaryHeight: height });
-    },
+    onSummaryLayout: (event: LayoutChangeEvent) => setSummaryHeight(event.nativeEvent.layout.height),
     onRowLayout: (index: number, event: LayoutChangeEvent) => {
       const height = event.nativeEvent.layout.height;
-      setGeometry(previous => {
-        if (previous.rows !== rows || previous.heights[index] === height) return previous;
-        const heights = [...previous.heights];
-        heights[index] = height;
-        return { ...previous, heights };
+      setHeights(previous => {
+        if (previous[index] === height) return previous;
+        const next = [...previous];
+        next[index] = height;
+        return next;
       });
     },
   };
@@ -132,8 +129,11 @@ export const HappierArtifactPreviewCard = React.memo(function HappierArtifactPre
       {text(props.boardLabels.sources, { fontSize: 11, color: colors.secondary }, 2)}
     </View> : null}
     {preview.layout.widgets.slice(0, structure.count).map((widget, index) => <View key={index} onLayout={event => structure.onRowLayout(index, event)} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-      <View style={{ width: 16 * widget.footprint.columnSpan, height: 16 * widget.footprint.rowSpan, borderRadius: 5, backgroundColor: colors.paper,
-        boxShadow: `0 0 0 1px ${colors.paperBorder}` }} />
+      {/* The board's full column width leads every row, so wide and small footprints keep one label edge. */}
+      <View style={{ width: 16 * widget.footprint.columns }}>
+        <View style={{ width: 16 * widget.footprint.columnSpan, height: 16 * widget.footprint.rowSpan, borderRadius: 5, backgroundColor: colors.paper,
+          boxShadow: `0 0 0 1px ${colors.paperBorder}` }} />
+      </View>
       {text([widget.title ?? props.boardLabels?.widget, widget.footprint.columnSpan === widget.footprint.columns ? props.boardLabels?.widthTwo : props.boardLabels?.widthOne,
         preview.layout.mode === 'canvas' && widget.position ? `(${widget.position.x}, ${widget.position.y})` : null].filter(Boolean).join(' · '),
         { flexShrink: 1, fontSize: 11, color: colors.secondary }, 2)}
