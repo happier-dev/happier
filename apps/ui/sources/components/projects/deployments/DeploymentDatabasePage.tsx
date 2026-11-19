@@ -399,13 +399,16 @@ export function DeploymentDatabasePage(
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;
   // The data-service read resolves this database's Automation subject once; a binding without one (managed) has no section.
-  const automationSubject = sizes.snapshot.value?.items.find((item) => item.environment.id === detail.environment.id)
-    ?.databaseSubjects?.[props.database];
-  // The facts row under the header (pfc-redesign dDb), led by Last backup; each fact only as its owner reports it.
+  const dataRead = sizes.snapshot;
+  const dataItem = dataRead.value?.items.find((item) => item.environment.id === detail.environment.id);
+  const automationSubject = dataItem?.databaseSubjects?.[props.database];
+  // A settled read failure has the same presentation as an unavailable size measurement in Services.
+  const sizeReadUnavailable = dataRead.status === 'unavailable' || dataRead.value?.coverage === 'partial';
   const measured = database.kind === 'selfHosted'
-    ? sizes.snapshot.value?.items.find((item) => item.environment.id === detail.environment.id)
-      ?.databaseSizes?.find((entry) => entry.service === database.data.service) ?? null
+    ? dataItem?.databaseSizes?.find((entry) => entry.service === database.data.service)?.size
+      ?? (sizeReadUnavailable ? { status: 'unavailable' as const, reason: dataRead.failure?.code ?? 'deployment_content_unavailable' } : null)
     : null;
+  // The facts row under the header (pfc-redesign dDb), led by Last backup; each fact only as its owner reports it.
   // A readback that checked this very backup is said beside it (lab dDb "verified"); an older check is not.
   const verification = ready?.history?.lastVerification;
   const lastVerified = !!lastGood && verification?.backupOperationId === lastGood.operationId && verification.result === 'verified';
@@ -422,7 +425,7 @@ export function DeploymentDatabasePage(
       value: t('projects.deployments.databaseAvailabilityOneServer'),
       detail: t('projects.deployments.databaseAvailabilityNotHighlyAvailable') },
     { key: 'size', label: t('projects.deployments.services.sizeLabel'),
-      value: measured ? describeDatabaseSize(measured.size, 'labelled') : '—' },
+      value: describeDatabaseSize(measured, 'labelled') },
   ] : [];
   // The variables that carry this database to its Environment's apps, by the names its template declares.
   const databaseVariableNames = database.kind === 'selfHosted'

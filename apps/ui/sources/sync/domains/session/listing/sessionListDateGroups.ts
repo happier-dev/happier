@@ -1,5 +1,5 @@
 import { t } from '@/text';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTime, formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 
 export type SessionListDateGroup<T> = Readonly<{
     dateKey: string;
@@ -21,8 +21,7 @@ function countCalendarDaysAgo(timestamp: number, nowMs: number): number {
     return Math.round((today.getTime() - sessionDateOnly.getTime()) / (24 * 60 * 60 * 1000));
 }
 
-function resolveDateGroupTitle(timestamp: number, nowMs: number): string {
-    const diffDays = countCalendarDaysAgo(timestamp, nowMs);
+function dateGroupTitle(diffDays: number): string {
     if (diffDays <= 0) {
         return t('sessionHistory.today');
     }
@@ -39,6 +38,12 @@ function resolveDateGroupTitle(timestamp: number, nowMs: number): string {
 export function formatDayGroupedAgeShort(timestamp: number, nowMs: number): string {
     const diffDays = countCalendarDaysAgo(timestamp, nowMs);
     return diffDays <= 0 ? formatRelativeTimeShort(timestamp, nowMs) : t('time.daysAgoShort', { count: diffDays });
+}
+
+/** A full row age uses the same day as its group, keeping minute and hour precision for today. */
+export function formatDayGroupedAge(timestamp: number, nowMs: number): string {
+    const days = countCalendarDaysAgo(timestamp, nowMs);
+    return days <= 0 ? formatRelativeTime(timestamp, nowMs) : dateGroupTitle(days);
 }
 
 export function buildSessionListDateGroups<T>(params: Readonly<{
@@ -58,7 +63,7 @@ export function buildSessionListDateGroups<T>(params: Readonly<{
         }
         groups.push({
             dateKey,
-            title: resolveDateGroupTitle(timestamp, nowMs),
+            title: dateGroupTitle(countCalendarDaysAgo(timestamp, nowMs)),
             items: [item],
         });
     }

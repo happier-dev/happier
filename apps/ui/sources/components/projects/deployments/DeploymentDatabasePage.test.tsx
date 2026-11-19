@@ -148,6 +148,7 @@ async function renderDatabase(
   input: Readonly<{
     answers?: Answers;
     database?: string;
+    sizeReadUnavailable?: boolean;
     retainedBackup?: boolean;
     noBackup?: boolean;
     /** The Environment's Compose file is stored in Happier (shareable from Settings), not in its repository. */
@@ -596,6 +597,9 @@ async function renderDatabase(
         value: { ok: true, items: [receipt.deployment], nextCursor: null },
       }),
       readReceipt: async () => ({ ok: true, value: receipt }),
+      ...(input.sizeReadUnavailable ? { listDataServicePage: async () => ({
+        ok: false as const, failure: { code: 'deployment_read_failed', retryable: true },
+      }) } : {}),
       ...(publicReadTransport ? { listEnvironments: publicReadTransport.listEnvironments } : {}),
     },
   });
@@ -1422,6 +1426,17 @@ describe('Environment → Data → Add (P10)', () => {
 });
 
 describe('Environment → Data → Database page (P9)', () => {
+  it('shows the size read refusal instead of a dash on the declared database', async () => {
+    const { t } = await import('@/text');
+    const view = await renderDatabase({ sizeReadUnavailable: true });
+    try {
+      await view.settle(`${page}.facts.strip`);
+      const strip = view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0];
+      expect((strip?.props.facts as readonly { key: string; value: string }[]).find(fact => fact.key === 'size')?.value)
+        .toBe(t('projects.deployments.services.sizeCellUnavailable'));
+    } finally { await view.dispose(); }
+  });
+
   it('settles backup facts after Back up now from a real missed-schedule notice', async () => {
     const view = await renderDatabase({ answers: { missedSchedule: true } });
     try {
@@ -1438,7 +1453,7 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
       const { t } = await import('@/text');
       // The facts row under the header leads with the same Last backup (unverified: no detail), then the one-server
-      // availability said once here and not again under Connection; a size the read hasn't reported says "—".
+      // availability said once here and not again under Connection. This fixture has no size transport.
       const strip = view.screen.findAllByProps({ testID: `${page}.facts.strip` })[0];
       expect((strip?.props.facts as readonly { key: string; value: string; detail?: string }[])
         .map(fact => [fact.key, fact.value, fact.detail ?? null])).toEqual([
@@ -1446,7 +1461,7 @@ describe('Environment → Data → Database page (P9)', () => {
         // Kept restore points are the destination's own count for this database's dump source, never counted from History.
         ['restorePoints', '2', null],
         ['availability', t('projects.deployments.databaseAvailabilityOneServer'), t('projects.deployments.databaseAvailabilityNotHighlyAvailable')],
-        ['size', '—', null]]);
+        ['size', t('projects.deployments.services.sizeCellUnavailable'), null]]);
       expect(view.screen.findAllByProps({ testID: `${page}.connection.availability` })).toHaveLength(0);
     } finally { await view.dispose(); }
   });

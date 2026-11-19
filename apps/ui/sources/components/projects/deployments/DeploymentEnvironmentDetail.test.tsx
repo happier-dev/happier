@@ -1602,6 +1602,27 @@ describe('Project deployments page', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
+  it('uses the History day heading for a receipt just across a calendar-day boundary', async () => {
+    const { t } = await import('@/text');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(new Date(2026, 10, 19, 0, 5).getTime());
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+      id: 'previous-week', state: 'succeeded', settledAtMs: new Date(2026, 10, 13, 23, 55).getTime(),
+    }) });
+    const { controller, detail } = controllerFor({ receipt, history: [receipt] });
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        destination={{ tab: 'history', section: null }} review={noReview} onOpenReceipt={() => {}} />);
+      try {
+        const row = 'project-deployments.receipt.row.previous-week';
+        await waitForContent(screen, row);
+        const day = t('sessionHistory.daysAgo', { count: 6 });
+        expect(screen.findByTestId('project-deployments.environment.history.day.2026-11-13')).not.toBeNull();
+        expect(screen.findByTestId(row)?.findAll(node => node.children.includes(day)).length).toBeGreaterThan(0);
+      } finally { await screen.unmount(); }
+    } finally { clock.mockRestore(); await act(async () => { controller.retire(); }); }
+  });
+
   it('reads a Compose file stored as JSON as YAML in the editor, unchanged until someone edits it', async () => {
     const base = environmentDetailForHome();
     const detail = { ...base, content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1,

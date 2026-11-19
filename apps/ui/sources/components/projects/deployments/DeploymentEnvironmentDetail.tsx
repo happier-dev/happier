@@ -40,7 +40,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, type DeploymentOnFailureV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
+import { buildSessionListDateGroups, formatDayGroupedAge } from '@/sync/domains/session/listing/sessionListDateGroups';
 import { useCollectionConditionHeader } from '@/components/ui/lists/collection/useCollectionConditionHeader';
 import {
   createDeploymentHistoryFilterRegistry,
@@ -1668,14 +1668,18 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
     /** Who acted, first on the facts line (dHist KEEP "by"): "by you", a name, an agent or a workflow; never guessed. */
     actor: string | null;
     phone: boolean;
+    /** The shared clock for the row and its History day group. */
+    historyAsOfMs?: number;
     /** Stable from the producer; the row binds its own id. */
     onOpen: (deploymentId: string) => void;
   }>,
 ) {
   const { receipt } = props;
   const duration = deploymentDurationMs(receipt);
-  // The same calendar-day boundary as History's day groups, so a row never disagrees with its heading.
-  const age = formatRelativeTime(deploymentReceiptAtMs(receipt), Date.now());
+  const receiptAtMs = deploymentReceiptAtMs(receipt);
+  const age = props.historyAsOfMs === undefined
+    ? formatRelativeTime(receiptAtMs)
+    : formatDayGroupedAge(receiptAtMs, props.historyAsOfMs);
   // A settled success says nothing; trouble and work in progress lead the facts line in their tone. "Running, not
   // verified" is about what serves now, so only the live row says it; a superseded run reads as the run it was (D17).
   const settledPast = !props.live && receipt.state === 'running_unverified';
@@ -1791,8 +1795,10 @@ function DeploymentHistoryPage(
       : presentation ? deploymentActorLabel(presentation, receipt.actor, props.accountId) : null] as const;
   })), [presentations, props.accountId, receipts]);
   // Newest first, by local day, through the one day-grouping owner the Session lists use.
-  const days = React.useMemo(() => buildSessionListDateGroups({ items: receipts,
-    readMeaningfulActivityAt: deploymentReceiptAtMs }), [receipts]);
+  const { days, nowMs } = React.useMemo(() => {
+    const nowMs = Date.now();
+    return { days: buildSessionListDateGroups({ items: receipts, readMeaningfulActivityAt: deploymentReceiptAtMs, nowMs }), nowMs };
+  }, [receipts]);
   return (
     <>
       {/* The filter line stands on the list's column, the same inset as the day sections below it. */}
@@ -1823,6 +1829,7 @@ function DeploymentHistoryPage(
               receipt={receipt}
               live={receipt.id === props.activeId}
               actor={actorById.get(receipt.id) ?? null}
+              historyAsOfMs={nowMs}
               phone={props.phone}
               onOpen={props.onOpen}
             />

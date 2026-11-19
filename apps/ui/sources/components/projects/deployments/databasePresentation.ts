@@ -19,7 +19,8 @@ export function databaseEngineTitle(data: Readonly<{ engine: string; version?: s
  * The size the owner (DB-SIZE-1113) measured, or why it has none: never a guessed figure. Under a "Size" head or
  * label the reason does not say "Size" again (SERVICES-ACCEPT-1116 F8); on a line of its own it does.
  */
-export function describeDatabaseSize(size: DeploymentDatabaseSizeV1['size'], placement: 'labelled' | 'inline'): string {
+export function describeDatabaseSize(size: DeploymentDatabaseSizeV1['size'] | null, placement: 'labelled' | 'inline'): string {
+  if (size === null) return '—';
   if (size.status === 'available') {
     const parts = formatHappierDataBytesParts(size.bytes, { kind: 'storage' });
     const text = `${parts.value} ${parts.unit}`;
