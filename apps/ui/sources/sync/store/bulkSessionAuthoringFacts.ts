@@ -6,7 +6,7 @@ import { type ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilitie
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { resolveSessionOwnerMetadataViewRead } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { deriveSessionAuthoringSnapshot } from '@/sync/domains/sessionAuthoring/deriveSessionAuthoringSnapshot';
-import { readSessionConfigOptionsState, readSessionModelsState, readSessionModesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import { readSessionConfigOptionsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { resolveSessionConfigOptionOverridesFromMetadata } from '@/sync/domains/sessionControl/configOptionsControl';
 import { parseSessionConfigOptionOverridesState } from '@/sync/domains/sessionControl/schema';
 import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
@@ -21,12 +21,7 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
     const metadata = metadataRead?.kind === 'available' ? metadataRead.metadata : null;
     const snapshot = session ? deriveSessionAuthoringSnapshot({ session }) : null;
     const configOptions = readSessionConfigOptionsState(metadata);
-    const { updatedAt: _configUpdatedAt, ...configOptionsState } = configOptions ?? {};
-    const modes = readSessionModesState(metadata);
     const modeControl = snapshot?.agentId ? computeSessionModePickerControl({ agentId: snapshot.agentId, metadata }) : null;
-    const { updatedAt: _modesUpdatedAt, ...modeState } = modes ?? {};
-    const models = readSessionModelsState(metadata);
-    const { updatedAt: _modelsUpdatedAt, ...modelState } = models ?? {};
     const actionTarget = session ? createSessionActionTarget({ session, serverId: address.serverId, resumeCapabilityOptions: resumeOptions }) : null;
     const machineId = resolveSessionMachineId(metadata);
     // The folder the Session runs in: a Skills/MCP preview is scoped to one Machine and folder.
@@ -60,6 +55,8 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         ...(snapshot?.capabilitySelection ? { capabilitySelection: snapshot.capabilitySelection } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
     } : null;
+    // Hydration publishes changes to these facts. Keep runtime catalog observations
+    // out of the result unless they change a value a bulk consumer reads.
     return {
         address,
         status: reason === null ? 'ready' as const : reason === 'archived' || reason === 'cannot_resume' || reason === 'read_only'
@@ -71,16 +68,12 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         machineId,
         directory,
         modelId: snapshot?.modelId ?? null,
-        modelSelectionRef: snapshot?.modelSelection?.ref ?? null,
         permissionMode: snapshot?.permissionMode ?? null,
         connectedServices: snapshot?.connectedServices ?? null,
         capabilitySelection: snapshot?.capabilitySelection ?? null,
         sessionConfigOptionOverrides,
         values,
         planningTarget,
-        modeState: modes ? modeState : null,
-        configOptionsState: configOptions ? configOptionsState : null,
-        modelState: models ? modelState : null,
     };
 }
 

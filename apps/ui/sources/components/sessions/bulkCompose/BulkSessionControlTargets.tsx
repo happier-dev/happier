@@ -121,7 +121,8 @@ export function useBulkSessionControlTargets(
     return byId.size > 0 ? [...byId.values()] : NO_PLUGIN_CONTROLS;
   }, [machineGroups, machinesByKey]);
 
-  const probes = machineGroups.map(([key, group]) => (
+  // Keep the probe subtree stable when the composer rerenders for recipient labels.
+  const probes = React.useMemo(() => machineGroups.map(([key, group]) => (
     <MachineProbe
       key={key}
       machineKeyValue={key}
@@ -131,7 +132,7 @@ export function useBulkSessionControlTargets(
       reportMachine={reportMachine}
       reportTarget={reportTarget}
     />
-  ));
+  )), [machineGroups, reportMachine, reportTarget]);
   return { targets, leadFacts, pluginProjection, pluginControls, probes };
 }
 
