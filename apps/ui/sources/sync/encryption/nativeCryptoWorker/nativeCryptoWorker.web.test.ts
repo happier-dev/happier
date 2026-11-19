@@ -531,7 +531,8 @@ describe('web crypto worker through Encryption', () => {
         const controller = new AbortController();
         const pending = encryption.decryptEncryptionKey(encrypted, { signal: controller.signal });
         let settled = false;
-        void pending.then(() => { settled = true; });
+        const markSettled = () => { settled = true; };
+        void pending.then(markSettled, markSettled);
         await vi.advanceTimersByTimeAsync(0);
         expect(TestWorker.instances).toHaveLength(1);
         await vi.advanceTimersByTimeAsync(5000);

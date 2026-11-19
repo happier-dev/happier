@@ -175,7 +175,7 @@ describe('native crypto worker fallback reporting', () => {
             referenceRun: async () => ['reference'],
         });
         await runBatchWithDefaults({
-            operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1,
+            operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptSecretboxJson,
             routing: { mode: 'auto', minPayloadBytes: 4096 },
             itemCount: 1,
             payloadBytes: 505,
@@ -195,7 +195,7 @@ describe('native crypto worker fallback reporting', () => {
             totalFallbacks: 0,
             totalRoutingDeclines: 2,
             lastRoutingDeclineReason: 'below_min_payload_bytes',
-            lastRoutingDeclineOperation: NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1,
+            lastRoutingDeclineOperation: NATIVE_CRYPTO_WORKER_OPERATION.decryptSecretboxJson,
             routingDeclineCountsByReason: {
                 routing_disabled: 1,
                 below_min_payload_bytes: 1,
@@ -208,7 +208,7 @@ describe('native crypto worker fallback reporting', () => {
         const capabilityCacheKey = {};
         // Prime the capability the way startup warm-up does on web.
         await runBatchWithDefaults({
-            operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1,
+            operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptSecretboxJson,
             routing: { mode: 'auto', minPayloadBytes: 0 },
             itemCount: 4,
             payloadBytes: 4096,
@@ -221,7 +221,7 @@ describe('native crypto worker fallback reporting', () => {
             referenceRun: async () => ['reference'],
         });
         await runBatchWithDefaults({
-            operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1,
+            operation: NATIVE_CRYPTO_WORKER_OPERATION.decryptSecretboxJson,
             routing: { mode: 'auto', minPayloadBytes: 4096 },
             itemCount: 1,
             payloadBytes: 505,

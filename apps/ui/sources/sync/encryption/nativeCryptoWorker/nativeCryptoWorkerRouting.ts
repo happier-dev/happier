@@ -267,18 +267,18 @@ export async function runNativeCryptoWorkerBatch<T>(
     options: RunNativeCryptoWorkerBatchOptions<T>,
 ): Promise<NativeCryptoWorkerBatchResult<T>> {
     const routing = normalizeNativeCryptoWorkerRouting(options.routing);
-    // Web envelope opening is a measured main-thread bottleneck, including one
-    // envelope. Native bridge amortization floors do not apply.
-    const webEnvelope = Platform.OS === 'web'
-        && options.operation === NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1;
+    // A fixed-size envelope does asymmetric work even for a singleton. Both
+    // the Web Worker and the iOS bridge pay off at one item.
+    const envelope = options.operation === NATIVE_CRYPTO_WORKER_OPERATION.decryptDataKeyEnvelopeV1;
+    const webEnvelope = envelope && Platform.OS === 'web';
     if (isAbortSignalAborted(options.signal)) {
         return { status: 'cancelled', source: 'cancelled', items: [] };
     }
     const declineReason: NativeCryptoWorkerRoutingDeclineReason | null = routing.mode === 'off'
         ? NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.routingDisabled
-        : !webEnvelope && options.itemCount < routing.minBatchSize
+        : !envelope && options.itemCount < routing.minBatchSize
             ? NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.belowMinBatchSize
-            : !webEnvelope && options.payloadBytes < routing.minPayloadBytes
+            : !envelope && options.payloadBytes < routing.minPayloadBytes
                 ? NATIVE_CRYPTO_WORKER_ROUTING_DECLINE_REASON.belowMinPayloadBytes
                 : null;
     if (declineReason !== null) {

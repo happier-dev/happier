@@ -20,6 +20,11 @@ import {
     type NativeCryptoWorkerCapability,
 } from './types';
 
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
+});
+
 const unavailableCapability: NativeCryptoWorkerCapability = {
     available: false,
     failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.missing,
@@ -274,13 +279,52 @@ describe('runNativeCryptoWorkerBatch', () => {
         });
     });
 
-    it('uses reference work for batches below payload threshold', async () => {
+    it('routes a fixed-size iOS envelope even when both generic floors would decline it', async () => {
+        const result = await runNativeCryptoWorkerBatch({
+            operation: 'decryptDataKeyEnvelopeV1',
+            routing: { mode: 'auto', minBatchSize: 2 },
+            itemCount: 1,
+            payloadBytes: 505,
+            probe: async () => ({ ...availableCapability, supportedOperations: ['decryptDataKeyEnvelopeV1'] }),
+            nativeRun: async () => ['opened-by-worker'],
+            referenceRun: async () => ['opened-inline'],
+        });
+
+        expect(result).toEqual({ status: 'ok', source: 'native', items: ['opened-by-worker'] });
+    });
+
+    it('falls back if an admitted iOS envelope runs past the native dispatch deadline', async () => {
+        vi.useFakeTimers();
+        try {
+            const result = runNativeCryptoWorkerBatch({
+                operation: 'decryptDataKeyEnvelopeV1',
+                routing: { mode: 'auto', timeoutMs: 100 },
+                itemCount: 1,
+                payloadBytes: 505,
+                probe: async () => availableCapability,
+                nativeRun: () => createDeferred<readonly string[]>().promise,
+                referenceRun: async () => ['opened-inline'],
+            });
+
+            await vi.advanceTimersByTimeAsync(99);
+            expect(await getPromiseSettlement(result)).toBeNull();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(await getPromiseSettlement(result)).toEqual({
+                status: 'fulfilled',
+                value: { status: 'ok', source: 'reference', items: ['opened-inline'] },
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('uses reference work for JSON batches below payload threshold', async () => {
         const probe = vi.fn(async () => availableCapability);
         const nativeRun = vi.fn(async () => ['native']);
         const referenceRun = vi.fn(async () => ['reference']);
 
         const result = await runNativeCryptoWorkerBatch({
-            operation: 'decryptDataKeyEnvelopeV1',
+            operation: 'decryptSecretboxJson',
             routing: { mode: 'auto', minPayloadBytes: 512 },
             itemCount: 3,
             payloadBytes: 128,

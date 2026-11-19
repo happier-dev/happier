@@ -320,11 +320,7 @@ describe('Encryption native crypto worker routing default', () => {
         expect(batches[0]!.items).toHaveLength(3);
     });
 
-    it('keeps a single data-key envelope on the JS thread: one open is cheaper than one bridge crossing', async () => {
-        // A v1 envelope is 105 bytes (1 version + 32 ephemeral pk + 24 nonce + 32 key
-        // + 16 mac) and the recipient secret is 32 bytes, so a one-item batch estimates
-        // to 505 bridge bytes — under the 512-byte minPayloadBytes floor. The default
-        // must not drag a lone scalar multiplication across the bridge.
+    it('opens a single data-key envelope through the available worker by default', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(12));
         const { worker, batches } = createRecordingCryptoWorker();
         encryption.configureNativeCryptoWorker({ worker });
@@ -333,7 +329,7 @@ describe('Encryption native crypto worker routing default', () => {
         const envelopes = await sealDataKeys(encryption, [dataKey]);
 
         expect(await encryption.decryptEncryptionKeys(envelopes)).toEqual([dataKey]);
-        expect(batches).toHaveLength(0);
+        expect(batches).toHaveLength(1);
     });
 
     it('never merges two instances into one batch, so account A key material cannot reach account B', async () => {

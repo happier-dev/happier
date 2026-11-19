@@ -10,11 +10,8 @@ import {
 } from './sessionDataKeyHydration';
 
 /**
- * Envelope opens must reach the crypto routing layer as ONE batch.
- *
- * Routing declines the native worker below `minPayloadBytes` (512) and below `minBatchSize`, so a
- * per-session call would silently run every curve25519 open on the JS thread even on a build whose
- * native worker is present and healthy. Batching is what makes the native path reachable at all.
+ * Envelope opens reach the crypto routing layer as a single batch to amortize
+ * dispatch overhead while preserving the Session-to-key mapping.
  */
 function createEncryption(
     decryptEncryptionKeys: SessionDataKeyHydrationEncryption['decryptEncryptionKeys'],

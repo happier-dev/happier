@@ -3363,6 +3363,9 @@ owned input buffers and receives transferred key buffers; the Worker wipes
 recipient keys after each request.
 Errors and active caller cancellation terminate the Worker; a later dispatch
 creates its replacement. Cancelling a queued caller leaves active work intact.
+The router admits fixed-size envelope opens to available web and native workers
+even when the batch contains only one envelope. JSON-content operations retain
+their generic payload and batch-size floors.
 Web envelope inventories drain the existing queue without the native bridge's
 aggregate deadline: queue wait, worker script loading and renderer scheduling can
 outlast that budget while every envelope remains valid. Native routing retains its
