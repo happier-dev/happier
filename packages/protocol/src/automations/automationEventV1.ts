@@ -582,10 +582,11 @@ function compileAutomationEventFilterScalarLeafV1(
   }
 }
 
-export function resolveAutomationEventFilterScalarLeafV1(
+/** Static declared properties shared by Event filters and selected Workflow JSON operands. */
+export function resolveAutomationEventPayloadSchemaPathV1(
   payloadSchema: PluginJsonSchemaV2,
   pointer: AutomationJsonPointerV1,
-): AutomationEventFilterScalarLeafResolutionV1 {
+): readonly (readonly PluginJsonSchemaV2[])[] {
   let candidates: readonly AutomationEventFilterSchemaIntersectionV1[] = [
     [payloadSchema],
   ];
@@ -594,8 +595,17 @@ export function resolveAutomationEventFilterScalarLeafV1(
     candidates = candidates.flatMap((candidate) => (
       resolveAutomationEventFilterSchemaSegmentV1(candidate, segment)
     ));
-    if (candidates.length === 0) return { kind: 'notDeclared' };
+    if (candidates.length === 0) return [];
   }
+  return candidates;
+}
+
+export function resolveAutomationEventFilterScalarLeafV1(
+  payloadSchema: PluginJsonSchemaV2,
+  pointer: AutomationJsonPointerV1,
+): AutomationEventFilterScalarLeafResolutionV1 {
+  const candidates = resolveAutomationEventPayloadSchemaPathV1(payloadSchema, pointer);
+  if (candidates.length === 0) return { kind: 'notDeclared' };
   const validators = candidates.flatMap((candidate) => {
     const validator = compileAutomationEventFilterScalarLeafV1(candidate);
     return validator ? [validator] : [];

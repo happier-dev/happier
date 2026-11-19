@@ -1,4 +1,4 @@
-import { resolveAutomationEventFilterScalarLeafV1 } from '../automations/automationEventV1.js';
+import { resolveAutomationEventFilterScalarLeafV1, resolveAutomationEventPayloadSchemaPathV1 } from '../automations/automationEventV1.js';
 import type { WorkflowTriggerEventDeclarationV1 } from './workflowTriggerEventReferenceV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -459,7 +459,7 @@ function validateValueReference(
   reference: WorkflowValueReference,
   path: string,
   blockId: string,
-  options?: Readonly<{ allowOptionalResult?: boolean; allowSessionContext?: boolean; conditionOperand?: boolean }>,
+  options?: Readonly<{ allowOptionalResult?: boolean; allowSessionContext?: boolean; conditionOperand?: boolean; allowStructuredTriggerEvent?: boolean }>,
 ): void {
   if (reference.kind === 'result' && reference.optional === true && !options?.allowOptionalResult) {
     state.issues.push(issue('invalid_reference_scope', path, 'Optional results are only allowed in step input lists.', blockId));
@@ -484,8 +484,11 @@ function validateValueReference(
       } else {
         const pointer = '/' + reference.path.map(segment => String(segment).replace(/~/g, '~0').replace(/\//g, '~1')).join('/');
         if (reference.path.length === 0 || reference.path.some(segment => typeof segment !== 'string')
-          || resolveAutomationEventFilterScalarLeafV1(declared.payloadSchema, pointer).kind !== 'declared') {
-          state.issues.push(issue('invalid_input', path, 'The Event path must select a declared scalar leaf.', blockId));
+          || (options?.allowStructuredTriggerEvent
+            ? resolveAutomationEventPayloadSchemaPathV1(declared.payloadSchema, pointer).length === 0
+            : resolveAutomationEventFilterScalarLeafV1(declared.payloadSchema, pointer).kind !== 'declared')) {
+          state.issues.push(issue('invalid_input', path, options?.allowStructuredTriggerEvent
+            ? 'The Event path must select a declared payload field.' : 'The Event path must select a declared scalar leaf.', blockId));
         }
       }
       return;
@@ -800,7 +803,7 @@ function validateNonAgentLeaf(
       if (reference.kind !== 'origin_session_id') {
         validateValueReference(state, reference,
           joinPath(path, 'input', field, ...(key === null ? [] : [binding.kind === 'object' ? 'fields' : 'items', key])), leaf.id,
-          { allowSessionContext: leaf.kind === 'action' });
+          { allowSessionContext: leaf.kind === 'action', allowStructuredTriggerEvent: leaf.kind === 'action' });
       }
     });
   }

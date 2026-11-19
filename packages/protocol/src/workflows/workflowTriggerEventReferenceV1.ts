@@ -10,6 +10,7 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { readWorkflowValuePathV1, type WorkflowTriggerEventReferenceV1, type WorkflowTriggerEventIdentityV1 } from './workflowReferenceV1.js';
 import type { WorkflowBlock, WorkflowDefinitionV1 } from './workflowV1.js';
 import { rewriteWorkflowBlockReferences } from './workflowDefinitionEditV1.js';
+import { listWorkflowActionFieldReferencesV1 } from './workflowActionTextV1.js';
 
 export const WorkflowTriggerEventDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   event: WorkflowTriggerEventReferenceV1Schema.shape.event,
@@ -46,35 +47,47 @@ export function formatWorkflowTriggerEventIdentityV1(event: WorkflowTriggerEvent
   return 'kind' in event ? `action/${event.phase}` : `${event.pluginId}/${event.localId}`;
 }
 
+/** Reference eligibility follows its authored operand, never the incoming payload's shape. */
+function visitWorkflowTriggerEventReferencesV1(
+  definition: WorkflowDefinitionV1,
+  consume: (reference: WorkflowTriggerEventReferenceV1, allowStructured: boolean) => void,
+): void {
+  const keep = <T>(value: T): T => value;
+  const visit = (block: WorkflowBlock): WorkflowBlock => {
+    const jsonOperands = block.kind === 'action' ? new Set(Object.values(block.input).flatMap(binding =>
+      binding.kind === 'text' ? [] : listWorkflowActionFieldReferencesV1(binding))) : undefined;
+    return rewriteWorkflowBlockReferences(block, {
+      producer: keep, inputName: keep, child: visit,
+      reference: reference => {
+        if (reference.kind === 'trigger_event') consume(reference, jsonOperands?.has(reference) === true);
+        return reference;
+      },
+    });
+  };
+  for (const block of definition.blocks) visit(block);
+}
+
 /** Uses the definition owner's reference map, including nested control-flow operands. */
 export function collectWorkflowTriggerEventReferencesV1(definition: WorkflowDefinitionV1): readonly WorkflowTriggerEventReferenceV1[] {
   const references: WorkflowTriggerEventReferenceV1[] = [];
-  const keep = <T>(value: T): T => value;
-  const visit = (block: WorkflowBlock): WorkflowBlock => rewriteWorkflowBlockReferences(block, {
-    producer: keep, inputName: keep, child: visit,
-    reference: reference => {
-      if (reference.kind === 'trigger_event') references.push(reference);
-      return reference;
-    },
-  });
-  for (const block of definition.blocks) visit(block);
+  visitWorkflowTriggerEventReferencesV1(definition, reference => references.push(reference));
   return references;
 }
 
-/** Copies only demanded scalar leaves into the existing private accepted-snapshot envelope. */
+/** Copies demanded scalars and selected Action JSON subtrees into the private accepted snapshot. */
 export function sealWorkflowTriggerEventValuesV1(
   definitions: Iterable<WorkflowDefinitionV1>, occurrence: WorkflowTriggerEventOccurrenceV1 | undefined,
 ): readonly WorkflowTriggerEventValueV1[] {
   if (!occurrence) return [];
   const values = new Map<string, WorkflowTriggerEventValueV1>();
-  for (const definition of definitions) for (const reference of collectWorkflowTriggerEventReferencesV1(definition)) {
-    if (!sameStrictJsonValue(reference.event, occurrence.event)) continue;
+  for (const definition of definitions) visitWorkflowTriggerEventReferencesV1(definition, (reference, allowStructured) => {
+    if (!sameStrictJsonValue(reference.event, occurrence.event)) return;
     const key = JSON.stringify([reference.event, reference.path]);
-    if (values.has(key)) continue;
+    if (values.has(key)) return;
     const value = readWorkflowValuePathV1(occurrence.payload, reference.path);
-    if (value !== undefined && (value === null || typeof value !== 'object')) {
-      values.set(key, { event: reference.event, path: reference.path, value });
+    if (value !== undefined && (allowStructured || value === null || typeof value !== 'object')) {
+      values.set(key, { event: reference.event, path: reference.path, value: structuredClone(value) });
     }
-  }
+  });
   return [...values.values()];
 }

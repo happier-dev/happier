@@ -4,6 +4,9 @@ import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { materializeWorkflowAcceptedSnapshotV1 } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { createWorkflowActionTriggerEventDeclarationV1, projectWorkflowActionTriggerEventOccurrenceV1, sealWorkflowTriggerEventValuesV1 } from './workflowTriggerEventReferenceV1.js';
 import { WorkflowDefinitionV1Schema } from './workflowV1.js';
+import { formatInlineReferenceTokenV1 } from '../runtime/input/inlineReferenceTokenV1.js';
+import { MENTION_KIND_V1 } from '../runtime/input/mentionRefV1.js';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1 } from './workflowStoredContentV1.js';
 
 const event = { pluginId: 'example.events', localId: 'pull-request' };
 const payloadSchema = { type: 'object', properties: {
@@ -45,8 +48,47 @@ describe('trigger Event value references', () => {
     expect(checked.issues).toContainEqual(expect.objectContaining({ code: 'missing_reference', severity: 'warning' }));
     expect(checked.valid).toBe(true);
   });
-  it.each([['repository'], ['labels']])('rejects a non-scalar path %s', (field) => {
-    expect(validateWorkflowDefinition(definition([field]), { triggerEvents: [{ event, payloadSchema }] }).issues)
+  it.each(['condition', 'text'] as const)('keeps structured Event values out of %s operands', location => {
+    const reference = { kind: 'trigger_event' as const, event, path: ['repository'] };
+    const mention = { kind: MENTION_KIND_V1.workflowInput, ref: 'workflowInput:0', label: 'Repository' };
+    const token = formatInlineReferenceTokenV1(mention);
+    const authored = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [location === 'condition'
+      ? { kind: 'wait', id: 'hold', document: { text: 'Wait', references: [], attachments: [] }, onlyWhen: { kind: 'exists', value: reference } }
+      : { kind: 'action', id: 'message', actionId: 'example.actions/message', input: {
+          text: { kind: 'text', document: { text: token, references: [{ ...mention, token }] }, input: [reference] },
+        } }] });
+    expect(validateWorkflowDefinition(authored, { triggerEvents: [{ event, payloadSchema }] }).issues)
+      .toContainEqual(expect.objectContaining({ code: 'invalid_input' }));
+    expect(sealWorkflowTriggerEventValuesV1([authored], { event, payload: { repository: { name: 'acme/widgets' } } })).toEqual([]);
+  });
+  it('binds an explicitly selected structured Event subtree to Action JSON without sealing sibling payloads', () => {
+    const authored = WorkflowDefinitionV1Schema.parse(definition(['repository']));
+    expect(validateWorkflowDefinition(authored, { triggerEvents: [{ event, payloadSchema }] }).issues
+      .filter(issue => issue.code === 'invalid_input' || issue.code === 'missing_reference')).toEqual([]);
+    const selected = sealWorkflowTriggerEventValuesV1([authored], { event, payload: {
+      repository: { name: 'acme/widgets' }, unreferenced: { secret: 'excluded' },
+    } });
+    expect(selected).toEqual([{ event, path: ['repository'], value: { name: 'acme/widgets' } }]);
+    const binding = { v: 1 as const, purpose: 'accepted_snapshot' as const, accountId: 'owner', runId: 'selected-event' };
+    const acceptedSnapshot = { startedBy: 'trigger' as const, authoredDefinition: authored, definition: authored,
+      triggerEventValues: selected, workDepth: 0, metadata: null, materializedLeaves: [], frozenChildren: {}, inputs: {},
+      machineId: 'machine', executionTarget: { kind: 'session' as const },
+      workspaceTarget: { project: { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' } },
+      source: { kind: 'inline' as const }, origin: { kind: 'direct' as const },
+      authorization: { admittedPermissionCeiling: 'default' as const, principal: { kind: 'host' as const } } };
+    const runDataKey = new Uint8Array(32).fill(7);
+    for (const mode of ['plain', 'e2ee'] as const) {
+      const envelope = sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ binding, acceptedSnapshot,
+        ...(mode === 'plain' ? { mode } : { mode, runDataKey, randomBytes: (length: number) => new Uint8Array(length).fill(9) }) });
+      if (mode === 'e2ee') expect(JSON.stringify(envelope)).not.toContain('acme/widgets');
+      const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode, binding, envelope, runDataKey });
+      expect(opened).toMatchObject({ kind: 'available', content: { triggerEventValues: selected } });
+      expect(JSON.stringify(opened)).not.toContain('excluded');
+    }
+    expect(sealWorkflowTriggerEventValuesV1([authored], { event, payload: { unreferenced: 'excluded' } })).toEqual([]);
+    expect(sealWorkflowTriggerEventValuesV1([authored], { event: { ...event, localId: 'another' },
+      payload: { repository: { name: 'acme/widgets' } } })).toEqual([]);
+    expect(validateWorkflowDefinition(definition(['unreferenced']), { triggerEvents: [{ event, payloadSchema }] }).issues)
       .toContainEqual(expect.objectContaining({ code: 'invalid_input' }));
   });
   it('accepts a declared scalar leaf of a workflow trigger', () => {

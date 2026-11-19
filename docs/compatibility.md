@@ -9702,6 +9702,17 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Workflow Event references may select a declared structured payload
+field for an Action JSON binding. Conditions and text retain scalar-only
+operands. The existing accepted-snapshot JSON value slot and Workflow content
+envelope retain only selected subtrees, so this semantic extension adds no wire
+field, stored format, migration or epoch. Matching development Workflow
+validation and execution readers reload together; earlier development sealers
+did not retain structured values. The inspected `../0.2` frontier
+`e8c78c5bf96b5b2c207d86312f179d43332f45e3` has none of the current Workflow
+Event-reference or Automation Event source paths. No mixed-development adapter
+or rollback contract is added.
+
 Unreleased 0.3 Review engine inventory optionally carries closed `costConsent`
 presentation metadata (`optionKey`, `title`, optional `description`), projected
 from the selected profile's existing boolean option. Absence preserves existing

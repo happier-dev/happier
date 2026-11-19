@@ -6257,9 +6257,14 @@ Failed catalog reads expose Retry in the section and the open Link form. Both
 retry the demanded reads on the mounted Account lifetime; a retained failed
 reader does not prevent a new read after admission or transport recovers.
 
-An Event-triggered Workflow can bind `trigger_event` references to scalar leaves
-of its declared Event payload. Save validates paths with the Event filter's
-scalar-leaf resolver. Create and update may supply `intendedTriggers` for draft
+An Event-triggered Workflow can bind `trigger_event` references to declared
+Event payload fields. In unreleased 0.3, an Action JSON binding may select an
+object or array subtree; conditions, prompt inputs and Action text still select
+scalar leaves. Save uses the Event schema owner's declared-property resolver,
+and the receiving Action's input contract validates the bound JSON. Admission
+copies only referenced scalar values and explicitly selected Action JSON
+subtrees into the existing private accepted Workflow content envelope;
+unreferenced payload siblings stay out of it. Create and update may supply `intendedTriggers` for draft
 membership; otherwise validation uses stored triggers, without changing save
 ordering. A removed Event produces a non-blocking `missing_reference` warning;
 an invalid declared path blocks with `invalid_input`. Copies retain references
