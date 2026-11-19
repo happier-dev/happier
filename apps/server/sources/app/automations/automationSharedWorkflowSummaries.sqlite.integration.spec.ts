@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER,
+    encodePlainArtifactStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
@@ -18,6 +19,8 @@ import { markAutomationChangedTx } from './automationCrudService';
 import { applyAutomationRunTerminalEffectsTx } from './automationRunSucceeded';
 import { encodeAutomationRunCause } from './automationRunCauseCodec';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 
 describe('Team workflow schedule summaries', () => {
     let harness: LightSqliteHarness;
@@ -28,9 +31,16 @@ describe('Team workflow schedule summaries', () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', name: 'Shared check author' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const subject = { kind: 'machine' as const, serverId: await getOrCreateServerIdentityId(), machineId: randomUUID() };
-        await db.machine.create({ data: { id: subject.machineId, accountId: owner.id, metadata: '{}',
-            installationId: randomUUID(), grants: { create: { principalKind: 'account', accountId: viewer.id,
-                accessLevel: 'view', createdByAccountId: owner.id } } } });
+        await db.machine.create({ data: { id: subject.machineId, accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'shared-check-host', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)),
+            installationId: randomUUID() } });
+        const grantMachine = () => inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.id,
+            machineId: subject.machineId, principal: { kind: 'account' as const, accountId: viewer.id }, level: 'view' }));
+        expect(await grantMachine()).toEqual({ kind: 'refused', code: 'principal_ineligible' });
+        await makeShareEligibleForTest(owner.id, viewer.id);
+        expect(await grantMachine()).toMatchObject({ kind: 'saved' });
         const visibleWorkflowId = randomUUID();
         const deniedWorkflowId = randomUUID();
         const visibleTriggerId = randomUUID();
