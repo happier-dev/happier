@@ -737,6 +737,47 @@ it('retains an admitted core-page area through a transient Artifact HTTP failure
     } finally { artifactReadFails = false; await screen.unmount(); }
 });
 
+it.each(['account retirement', 'server deactivation', 'unmount'] as const)('refuses admitted core-page writes from a captured port after %s', async retirement => {
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const snapshot = getActiveServerSnapshot();
+    const input = { serverId: runtime.serverId, pageId: 'usage', area: 'main', context: {}, presets: [
+        { id: 'overview', name: 'Overview', items: [{ kind: 'widget' as const, instance: {
+            v: 1 as const, id: 'displayed', definition: { kind: 'builtin' as const, id: 'project_about' }, bindings: {},
+        } }] },
+    ] };
+    const hook = await renderHook(() => useCorePageWidgetAreaBinding(input));
+    let unmounted = false;
+    try {
+        const port = hook.getCurrent().port!;
+        const target = { surface: hook.getCurrent().surface!, context: input.context };
+        const artifactId = buildWidgetSurfaceArtifactIdV1(target.surface);
+        // This exact admitted outward-write path must work while its owner is mounted and current.
+        await act(async () => {
+            const control = await port.execute({ actionId: 'widgets.item.rename', instanceId: 'displayed', displayName: 'Admitted control' }, undefined, target);
+            expect(control).toMatchObject({ ok: true });
+        });
+        const persisted = artifacts.readPlainBody(artifactId);
+        expect(persisted).not.toBeNull();
+        expect(JSON.parse(persisted!)).toMatchObject({ items: [{ instance: { displayName: 'Admitted control' } }] });
+        if (retirement === 'unmount') {
+            await hook.unmount();
+            unmounted = true;
+        } else {
+            await act(async () => {
+                if (retirement === 'account retirement') retireActiveServerAccountScopeLifetime();
+                else publishAppliedActiveServerSnapshot(snapshot, false);
+            });
+        }
+        expect(await port.execute({ actionId: 'widgets.item.rename', instanceId: 'displayed', displayName: 'Retired write' }, undefined, target))
+            .toMatchObject({ ok: false, errorCode: 'widget_area_scope_retired' });
+        expect(artifacts.readPlainBody(artifactId)).toBe(persisted);
+    } finally {
+        if (!unmounted) await hook.unmount();
+    }
+});
+
 it('renews named layouts after same-Account activation without a Profile scope change', async () => {
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
