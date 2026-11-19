@@ -52,6 +52,79 @@ describe("managed acquisition durable authority", () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it.each(['bound', 'may-exist'] as const)('lets only the current controller settle an opaque preset canceled after allocation (%s)', async allocation => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const keys = tweetnacl.sign.keyPair();
+        const host = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id, metadata: '{}',
+            installationId: crypto.randomUUID(), installationPublicKey: Buffer.from(keys.publicKey).toString('base64') } });
+        const controller = { machineId: host.id, installationId: host.installationId! };
+        const provider = { pluginId: 'fixture.opaque', localId: 'vm' };
+        const launch = { provider, schemaVersion: 1, name: 'Allocated guest', choices: {} };
+        const recipe = { v: 1 as const, launch, name: 'Opaque guest' };
+        const content = { t: 'plain' as const, v: { ...recipe,
+            ...(allocation === 'bound' ? { nativeResult: { kind: 'bound' as const, resource: { contributionRef: provider, schemaVersion: 1, value: {} } } } : {}) } };
+        const stored = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content, recipients: [] });
+        const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id, name: '', launch: stored } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: host.id, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: `opaque-create-${allocation}`, admittedInput: {}, presetId: preset.id, presetRevision: 1, launch: stored,
+            allocation, creationState: 'active', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const { machine: canceled } = await cancelManagedCreation({ actorAccountId: account.id,
+            input: { homeId, managedId: row.id, expectedIntentRevision: 0 } });
+        expect(canceled).toMatchObject({ allocation, creationState: 'canceled', desired: 'delete' });
+        expect(canceled.resource).toBeUndefined();
+
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id }), { headers: request.headers });
+        });
+        onTestFinished(() => app.close());
+        registerManagedMachineRoutes(app);
+        const purpose = { kind: 'creation-cleanup' as const };
+        const correlation = { homeId, managedId: row.id, controller, requestId: 'opaque-cleanup', expectedIntentRevision: canceled.intentRevision };
+        const post = (route: string, body: Record<string, unknown>, signed = correlation) => {
+            const path = `/v1/machines/managed/controller/${route}`;
+            const proof = createManagedPolicyProofV1({ correlation: signed, purpose,
+                custodianAccountId: account.id, path, body, privateKey: keys.secretKey });
+            return app.inject({ method: 'POST', url: path, payload: body,
+                headers: { [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(proof) } });
+        };
+        const admission = { ...correlation, purpose };
+        expect((await post('admit-policy', admission, { ...correlation, expectedIntentRevision: 0 })).statusCode).toBe(403);
+        const context = { homeId, managedId: row.id, controller, expectedIntentRevision: correlation.expectedIntentRevision };
+        const read = await post('context', context);
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json()).toHaveProperty('presetContent');
+        const admitted = await post('admit-policy', admission);
+        expect(admitted.statusCode, admitted.body).toBe(200);
+        const current = { ...correlation, expectedIntentRevision: admitted.json().machine.intentRevision };
+        expect((await post('submit-intent', { ...current, requestId: 'unadmitted' }, { ...current, requestId: 'unadmitted' })).statusCode).toBe(409);
+        expect((await post('current', current, current)).statusCode).toBe(200);
+        if (allocation === 'may-exist') {
+            const nativeResult = { kind: 'rejected', code: 'managed_not_found' };
+            const absent = { ...current, result: { kind: nativeResult.kind },
+                observation: { observedAt: 900, availability: 'absent' },
+                presetContent: { t: 'plain', v: { ...recipe, nativeResult } } };
+            expect((await post('report', { ...absent, requestId: 'unadmitted' }, current)).statusCode).toBe(409);
+            expect((await post('report', { ...absent, observation: { observedAt: 900, availability: 'unavailable' } }, current)).statusCode).toBe(403);
+            const reconciled = await post('report', absent, current);
+            expect(reconciled.statusCode, reconciled.body).toBe(200);
+            expect(reconciled.json()).toMatchObject({ machine: { allocation: 'confirmed-absent' } });
+            expect((await post('current', current, current)).statusCode).toBe(200);
+            return;
+        }
+        expect((await post('submit-intent', current, current)).statusCode).toBe(200);
+        const settled = await post('report-intent', { ...current, result: { kind: 'confirmed' },
+            observation: { observedAt: 900, availability: 'absent' },
+            presetContent: { ...content, v: { ...content.v,
+                nativeControlResult: { kind: 'delete', result: { kind: 'confirmed' } } } } }, current);
+        expect(settled.statusCode, settled.body).toBe(200);
+        expect(settled.json()).toMatchObject({ machine: { allocation: 'confirmed-absent' } });
+        expect((await post('current', current, current)).statusCode).toBe(200);
+    });
+
     it('retains the selected warm execution atomically before native spend and restores it after the submit window', async () => {
         const { replaceManagedMachinePresetLaunchNameV1, openManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
         const { hydrateManagedOpaquePresetMachineV1 } = await import('@happier-dev/cli-common/machines/managed');

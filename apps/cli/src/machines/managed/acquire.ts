@@ -27,7 +27,7 @@ import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/mana
 import { executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1,
+import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1, isManagedCreationCleanupV1,
     ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
@@ -363,20 +363,24 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 if (!headers) throw new ManagedMachineControllerError('admission_unavailable');
                 return await request(path, body, headers, schema, signal);
             }
-            const authorization = options.policyPurpose ? (() => {
-                if (!policyMachine || (!policyMachine.resource && !(options.policyPurpose?.kind === 'creation-cleanup' && policyMachine.nativeOperationRef))
-                    || !input.externalActionMachineRequestPrivateKey
+            const purpose = options.policyPurpose;
+            const authorization = purpose ? (() => {
+                if (!policyMachine || !input.externalActionMachineRequestPrivateKey
                     || options.context?.externalActionCredential || options.context?.externalActionExecutionAuthorization) {
                     return { ok: false as const };
                 }
                 assertConnection(policyMachine);
+                const binding = { correlation: correlation(policyMachine), custodianAccountId: policyMachine.custodianAccountId,
+                    path, body, privateKey: input.externalActionMachineRequestPrivateKey,
+                    ...(options.actionOrigin ? { actionOrigin: options.actionOrigin } : {}) };
+                const proof = purpose.kind === 'creation-cleanup' && (isManagedOpaquePresetMachineV1(policyMachine) || hydrator.isOpaque(policyMachine))
+                    ? createManagedPolicyProofV1({ ...binding, purpose })
+                    : policyMachine.resource ? createManagedPolicyProofV1({ ...binding, purpose, resource: policyMachine.resource })
+                    : purpose.kind === 'creation-cleanup' && policyMachine.nativeOperationRef
+                        ? createManagedPolicyProofV1({ ...binding, purpose, nativeOperation: policyMachine.nativeOperationRef }) : undefined;
+                if (!proof) return { ok: false as const };
                 return { ok: true as const, headers: { Authorization: `Bearer ${input.token}`,
-                    [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(createManagedPolicyProofV1({
-                        correlation: correlation(policyMachine), purpose: options.policyPurpose,
-                        ...(policyMachine.resource ? { resource: policyMachine.resource } : { nativeOperation: policyMachine.nativeOperationRef! }),
-                        custodianAccountId: policyMachine.custodianAccountId, path, body, privateKey: input.externalActionMachineRequestPrivateKey,
-                        ...(options.actionOrigin ? { actionOrigin: options.actionOrigin } : {}),
-                    })),
+                    [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(proof),
                 } };
             })() : resolveExternalActionServerRequestHeaders({
                 context: options.context, effectActionId, method: 'POST', path, body,
@@ -413,9 +417,9 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 && pluginJsonValuesEqual(current.launch, machine.launch)
                 && (action === 'machines.managed.inspect' || current.creationState === 'active'
                     || (action === 'machines.managed.delete'
-                        && current.creationState === 'canceled' && current.desired === 'delete' && current.desiredWhen === 'now'
-                        && current.archivedAt === undefined && (current.allocation === 'bound' && Boolean(current.resource)
-                            || current.allocation === 'may-exist' && Boolean(current.nativeOperationRef))))
+                        && isManagedCreationCleanupV1(current) && (current.allocation === 'bound' && Boolean(current.resource)
+                            || current.allocation === 'may-exist' && (Boolean(current.nativeOperationRef)
+                                || options.policyPurpose?.kind === 'creation-cleanup' && hydrator.isOpaque(current)))))
                 && (!machine.resource || isDeepStrictEqual(current.resource, machine.resource))
                 && (machine.resource || !machine.nativeOperationRef || (!current.resource
                     && current.allocation === machine.allocation && pluginJsonValuesEqual(current.nativeOperationRef, machine.nativeOperationRef)))
@@ -599,7 +603,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
     const nativeLifetimeRenewal = (machine: ManagedMachineFullV1) => input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
         candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
         && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition.actions.renew;
-    async function openPolicyMachine(machine: ManagedMachineV1, options: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal' | 'context'>,
+    async function openPolicyMachine(machine: ManagedMachineV1, options: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal' | 'context' | 'policyPurpose' | 'policyMachine'>,
         action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator, sessionId?: string): Promise<ManagedMachineFullV1> {
         if (!isManagedOpaquePresetMachineV1(machine)) {
             return machine;
@@ -860,7 +864,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 || options.context.externalActionCredential || options.context.externalActionExecutionAuthorization) {
                 throw new ManagedMachineControllerError('admission_unavailable');
             }
-            const machine = await openPolicyMachine(structuralMachine, options,
+            const contextOptions = purpose.kind === 'creation-cleanup' && isManagedOpaquePresetMachineV1(structuralMachine)
+                ? { ...options, policyPurpose: purpose, policyMachine: structuralMachine } : options;
+            const machine = await openPolicyMachine(structuralMachine, contextOptions,
                 structuralMachine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', hydrator);
             if (purpose.kind === 'accepted-input-start' && purpose.target.origin.kind === 'finite-command') {
                 const origin = options.actionOrigin?.binding;
@@ -910,7 +916,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const policyInput = ManagedPolicyAdmissionInputV1Schema.parse({ ...admissionClient.correlation(machine), purpose: prepared.purpose });
                 // Preparation projects the reviewed effect without changing the
                 // retained row. Shared Ask owns admission as well as native IO.
-                const preview = (await normalizeManagedPresetCarrier(await admissionClient.post(
+                const preview = purpose.kind === 'creation-cleanup' ? machine : (await normalizeManagedPresetCarrier(await admissionClient.post(
                     '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema),
                 hydrator, options.signal)).machine;
                 let accepted: ReturnType<typeof ManagedIntentResultSchema.parse> | undefined;

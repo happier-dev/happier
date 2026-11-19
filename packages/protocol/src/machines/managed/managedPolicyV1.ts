@@ -8,7 +8,7 @@ import { ManagedControllerCurrentnessV1Schema, ManagedCommittedIdleEvidenceV1Sch
 export { ManagedPolicyAdmissionOutputV1Schema } from './actionsV1.js';
 import { ManagedWakeTargetV1Schema } from './managedIntentV1.js';
 import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, type ManagedResourceV1, type ManagedNativeOperationReferenceV1 } from './providerFactsV1.js';
-import { ManagedControllerV1Schema, ManagedMachineV1Schema, type ManagedControllerV1 } from './managedMachineV1.js';
+import { ManagedControllerV1Schema, ManagedMachineV1Schema, type ManagedControllerV1, type ManagedMachineV1 } from './managedMachineV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../../actions/externalActionApi.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 
@@ -75,16 +75,24 @@ export function managedPolicyDigestV1(kind: 'resource' | 'purpose' | 'body', val
 export function managedPolicyPurposeDigestV1(purpose: ManagedPolicyPurposeV1, actionOrigin?: ExternalActionExecutionAuthorizationV1): string {
   return managedPolicyDigestV1('purpose', actionOrigin ? { purpose, actionOrigin } : purpose);
 }
+
+/** Cancel has already committed immediate Delete, and an allocation still needs settlement. */
+export function isManagedCreationCleanupV1(machine: Pick<ManagedMachineV1, 'creationState' | 'desired' | 'desiredWhen' | 'archivedAt' | 'allocation'>): boolean {
+  return machine.creationState === 'canceled' && machine.desired === 'delete' && machine.desiredWhen === 'now'
+    && machine.archivedAt === undefined && (machine.allocation === 'bound' || machine.allocation === 'may-exist');
+}
+
 export function createManagedPolicyProofV1(input: Readonly<{
   correlation: Omit<ManagedPolicyAdmissionInputV1, 'purpose'>; purpose: ManagedPolicyPurposeV1;
   custodianAccountId: string; path: string; body: unknown; privateKey: string | Uint8Array;
   actionOrigin?: ExternalActionExecutionAuthorizationV1;
 }> & (Readonly<{ resource: ManagedResourceV1; nativeOperation?: never }>
-  | Readonly<{ resource?: never; nativeOperation: ManagedNativeOperationReferenceV1 }>)): ManagedPolicyProofV1 {
+  | Readonly<{ resource?: never; nativeOperation: ManagedNativeOperationReferenceV1 }>
+  | Readonly<{ purpose: { kind: 'creation-cleanup' }; resource?: never; nativeOperation?: never }>)): ManagedPolicyProofV1 {
   const { purpose, ...correlation } = ManagedPolicyAdmissionInputV1Schema.parse({ ...input.correlation, purpose: input.purpose });
   const actionOrigin = input.actionOrigin === undefined ? undefined : ExternalActionExecutionAuthorizationV1Schema.parse(input.actionOrigin);
-  const nativeTarget = input.resource === undefined ? ManagedNativeOperationReferenceV1Schema.parse(input.nativeOperation)
-    : ManagedResourceV1Schema.parse(input.resource);
+  const nativeTarget = input.resource !== undefined ? ManagedResourceV1Schema.parse(input.resource)
+    : input.nativeOperation !== undefined ? ManagedNativeOperationReferenceV1Schema.parse(input.nativeOperation) : null;
   if (input.resource === undefined && purpose.kind !== 'creation-cleanup') throw new Error('Pending native policy requires creation cleanup.');
   const payload: MachineInstallationProofPayloadV1 = { version: 1,
     machineId: correlation.controller.machineId, installationId: correlation.controller.installationId,

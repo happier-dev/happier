@@ -752,12 +752,13 @@ export async function submitManagedAcquire(input: ManagedControllerSubmitInputV1
 }
 
 /** Bound identity is saved before bootstrap, including an exact late cleanup identity. */
-export async function reportManagedAcquire(input: ManagedControllerReportV1, options: Readonly<{ requestAuthority?: 'creation' | 'intent' }> = {}) {
+export async function reportManagedAcquire(input: ManagedControllerReportV1, options: Readonly<{ requestAuthority?: 'creation' | 'intent'; cleanupReconciliation?: boolean }> = {}) {
     const canonical = ManagedControllerReportV1Schema.parse(input);
     return await inManagedMachinePublicationTx(canonical, async (tx) => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: options.requestAuthority ?? 'creation',
             allowCanceledResourceReport: (canonical.result.kind === "bound" || canonical.result.kind === "pending") && options.requestAuthority !== 'intent',
             allowInactiveCurrentIntent: options.requestAuthority === 'intent' });
+        if (options.cleanupReconciliation && row.allocation !== 'may-exist') throw new ManagedMachineError('intent_changed');
         if (isStoredOpaquePresetMachine(row)) {
             if (!('presetContent' in canonical)) throw new ManagedMachineError('invalid_request');
             // A controller snapshots its locally validated opaque content.

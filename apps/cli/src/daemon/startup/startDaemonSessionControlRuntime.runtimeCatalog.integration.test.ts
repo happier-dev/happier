@@ -2626,7 +2626,7 @@ describe('startDaemonSessionControlRuntime', () => {
     it.each(['allow', 'ask', 'reviewer-retired-after-ask', 'revoked', 'changed-root', 'revoked-after-ask', 'disconnect-after-admission'] as const)('runs shared finite wake RPC with requester custody (%s)', async scenario => {
         await runPrivateManagedRequesterFixture(true, false, scenario);
     });
-    async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown' | 'wake-approved-replay' | 'guard-cleanup-ask' | 'deferred-acquire', nativeExecEnvironment = false) {
+    async function runManagedPolicyFixture(policy: 'disabled' | 'approve' | 'reject' | 'cancel' | 'changed-policy' | 'explicit-delete-waiver' | 'event-driven-policy' | 'creation-cleanup' | 'resource-replacement' | 'wake-native-refused' | 'wake-native-unknown' | 'wake-approved-replay' | 'guard-cleanup-ask' | 'deferred-acquire', nativeExecEnvironment = false, opaqueCleanup = false) {
         const acceptedWake = policy === 'wake-native-refused' || policy === 'wake-native-unknown' || policy === 'wake-approved-replay';
         const socketPolicy = policy === 'event-driven-policy' || policy === 'creation-cleanup' || policy === 'resource-replacement';
         if (socketPolicy) {
@@ -2700,6 +2700,16 @@ describe('startDaemonSessionControlRuntime', () => {
                 devcontainerChild: deriveManagedDevcontainerChildProjectionV1({ managedMachineId: machine.id,
                     controllerMachineId: policyController.machineId, enrolledMachineId, resource }) });
         }
+        const preset = { id: 'opaque-cleanup-preset', revision: 1, contentEncryptionMode: 'plain' as const };
+        const retainedLaunch = machine.launch;
+        const retainedResource = machine.resource;
+        const opaqueCarrier = () => opaqueCleanup && retainedResource ? { presetContent: { content: { t: 'plain' as const,
+            v: { v: 1, name: 'Opaque guest', launch: retainedLaunch, nativeResult: { kind: 'bound', resource: retainedResource } } }, recipients: [] } } : {};
+        const projectPolicyMachine = () => {
+            if (!opaqueCleanup) return machine;
+            const { launch: _launch, resource: _resource, nativeOperationRef: _nativeOperationRef, ...structure } = machine;
+            return ManagedMachineV1Schema.parse({ ...structure, preset });
+        };
         const cleanupPeers = policy === 'creation-cleanup' ? [
             ManagedMachineV1Schema.parse({ ...machine, id: 'manual-retirement', archivedAt: 1,
                 cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } }),
@@ -2855,6 +2865,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 }
             }
             if (['wake-approved-replay', 'creation-cleanup'].includes(policy) && path.endsWith('/prepare-policy')) {
+                if (opaqueCleanup) throw new Error('Previously consented opaque cleanup needs no preparation');
                 return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({
                     machine: policy === 'creation-cleanup' ? machine : { ...machine, desired: 'start' },
                     requestId: ManagedPolicyAdmissionInputV1Schema.parse(body).requestId, replayed: false,
@@ -2876,7 +2887,12 @@ describe('startDaemonSessionControlRuntime', () => {
                     installationId: installation.installationId, accountId: machine.custodianAccountId, managedPolicyCensus: { homeId } },
                     proof: census.proof, publicKey: installation.publicKey })).toBe(true);
                 policyCensusReads += 1;
-                return { status: 200, data: { machines: exposePolicy ? [machine, ...cleanupPeers] : [], targets: [] } };
+                return { status: 200, data: { machines: exposePolicy ? [projectPolicyMachine(), ...cleanupPeers] : [], targets: [] } };
+            }
+            if (opaqueCleanup && path.endsWith('/context')) {
+                const proof = decodeManagedPolicyProofV1(String(options?.headers?.[MANAGED_POLICY_PROOF_HEADER]));
+                expect(proof?.payload.managedPolicy?.resourceDigest).toBe(managedPolicyDigestV1('resource', null));
+                return { status: 200, data: { machine: projectPolicyMachine(), requestId: 'canceled-creation', ...opaqueCarrier() } };
             }
             if (path.endsWith('/admit-policy')) {
                 if (policy === 'wake-approved-replay') machine = ManagedMachineV1Schema.parse({ ...machine, desired: 'start', intentRevision: 2 });
@@ -2890,12 +2906,14 @@ describe('startDaemonSessionControlRuntime', () => {
                     expect(proof?.payload.managedPolicy).toMatchObject({ homeId, managedId: machine.id,
                         expectedIntentRevision: 1, controller: policyController, purpose: 'creation-cleanup',
                         method: 'POST', path, bodyDigest: managedPolicyDigestV1('body', body),
-                        resourceDigest: managedPolicyDigestV1('resource', machine.resource),
+                        resourceDigest: managedPolicyDigestV1('resource', opaqueCleanup ? null : machine.resource),
                         purposeDigest: managedPolicyDigestV1('purpose', admission.purpose) });
                     expect(proof && verifyMachineInstallationProof({ payload: proof.payload, proof: proof.proof,
                         publicKey: installation.publicKey })).toBe(true);
+                    if (opaqueCleanup) machine = ManagedMachineV1Schema.parse({ ...machine, intentRevision: machine.intentRevision + 1 });
                 }
-                return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({ machine, requestId: 'policy-control', replayed: false }) };
+                return { status: 200, data: ManagedPolicyAdmissionOutputV1Schema.parse({ machine: projectPolicyMachine(),
+                    requestId: 'policy-control', replayed: false, ...opaqueCarrier() }) };
             }
             if (path.endsWith('/submit-intent')) {
                 if (!body || typeof body !== 'object' || !('requestId' in body) || typeof body.requestId !== 'string') {
@@ -2904,7 +2922,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 if (machine.submittedNativeEffect) return { status: 200, data: { machine, submitted: false } };
                 machine = { ...machine, submittedNativeEffect: { intentRevision: machine.intentRevision, requestId: body.requestId,
                     intent: machine.desired, controller: policyController } };
-                return { status: 200, data: { machine, submitted: true } };
+                return { status: 200, data: { machine: projectPolicyMachine(), submitted: true } };
             }
             if (path === '/v1/artifacts' && body && typeof body === 'object' && 'body' in body && typeof body.body === 'string' && 'id' in body) {
                 const content = decodePlainArtifactStoredContent(body.body);
@@ -2929,7 +2947,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 return { status: 200, data: { success: true, headerVersion: next.headerVersion, bodyVersion: next.bodyVersion } };
             }
             if (path === '/v1/auth/api-tokens/list') return { status: 200, data: { tokens: [] } };
-            if (path.startsWith('/v1/machines/managed/controller/')) return { status: 200, data: { machine } };
+            if (path.startsWith('/v1/machines/managed/controller/')) return { status: 200, data: { machine: projectPolicyMachine() } };
             throw new Error(`Unexpected policy transport ${path}`);
         });
         const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -3099,7 +3117,9 @@ describe('startDaemonSessionControlRuntime', () => {
                     await vi.waitFor(() => expect(settledPolicies + approvals.length, JSON.stringify(boundaryDiagnostics())).toBeGreaterThan(0), { timeout: 5_000 });
                     expect(approvals).toEqual([]);
                     expect(settledPolicies).toBe(1);
+                    expect(unavailable).toEqual([]);
                     expect(nativeEffects.filter(role => role === 'destroy'), JSON.stringify(boundaryDiagnostics())).toHaveLength(1);
+                    expect(nativeInputs).toEqual([{ resource: retainedResource?.value }]);
                     expect(nativeIntentReports).toMatchObject([{ result: { kind: 'confirmed' }, observation: { availability: 'absent' } }]);
                     expect(machine).toMatchObject({ allocation: 'confirmed-absent' });
                     const held = ActionOperationListV1ResponseSchema.parse(await apiMachine
@@ -3107,7 +3127,6 @@ describe('startDaemonSessionControlRuntime', () => {
                     expect(held.items).toHaveLength(1);
                     const operationId = held.items[0]!.operationId;
                     expect(cleanupAdmissions).toHaveLength(1);
-                    expect(unavailable).toEqual([]);
                     expect(ActionOperationGetV1ResponseSchema.parse(await apiMachine
                         .invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId, waitForTerminal: true })))
                         .toMatchObject({ kind: 'found', operation: { operationId, state: 'succeeded' } });
@@ -3348,6 +3367,10 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('settles admitted canceled creation without a second Ask and leaves manual retirement and until-delete peers alone', async () => {
         await runManagedPolicyFixture('creation-cleanup');
+    });
+
+    it('settles an allocated opaque cancellation from the signed policy census', async () => {
+        await runManagedPolicyFixture('creation-cleanup', false, true);
     });
 
     it('replaces a held policy Ask on one real Account edge and dispatches only the replacement devcontainer resource', async () => {

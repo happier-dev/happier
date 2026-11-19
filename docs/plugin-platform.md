@@ -4346,7 +4346,10 @@ through the invoking host's reviewed destroy roles. A failed or canceled
 installation keeps Delete available while its native resource remains bound.
 For controller-owned creation, Cancel commits the cleanup intent at Home. The
 controller consumes its signed cleanup admission through the regular teardown
-owner without a second Delete approval.
+owner without a second Delete approval or preview. For opaque presets, Home
+binds the cleanup proof to the canceled row, current installation, revision and
+request. The installed controller opens the sealed snapshot and verifies the
+native target through the existing teardown owner.
 Each issued cleanup handle is reported before continuing; a leaf's confirmed
 absence settles the retained record even when the resource was removed directly.
 The shared native enrollment recipe downloads the published guest payload on

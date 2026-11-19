@@ -14,7 +14,7 @@ import { readExternalActionManagedAcquireAdmission } from '@/app/auth/externalAc
 import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, MachineSetupResolveInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, MANAGED_POLICY_PROOF_HEADER, decodeManagedPolicyProofV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, MANAGED_POLICY_PROOF_HEADER, decodeManagedPolicyProofV1, isManagedCreationCleanupV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -119,7 +119,7 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
     });
 }
 /** Same installation identity authenticates policy-owned HTTP effects; it never mints a public Action envelope. */
-export async function requireManagedPolicyRequest(request: FastifyRequest, path: string, input: Readonly<{ homeId: string; managedId: string }>, phase: 'admit' | 'current' | 'submit' | 'report' | 'read' | 'activation-failure') {
+export async function requireManagedPolicyRequest(request: FastifyRequest, path: string, input: Readonly<{ homeId: string; managedId: string; requestId?: string }>, phase: 'admit' | 'current' | 'submit' | 'report' | 'reconcile' | 'read' | 'activation-failure') {
     const raw = request.headers[MANAGED_POLICY_PROOF_HEADER];
     if (typeof raw !== 'string') throw new ManagedMachineError('permission_denied');
     const carrier = decodeManagedPolicyProofV1(raw);
@@ -134,9 +134,20 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
         const currentSigner = carrier.payload.machineId === row.controllerMachineId && carrier.payload.installationId === row.controllerInstallationId
             && binding.expectedIntentRevision === row.intentRevision && binding.controller.machineId === row.controllerMachineId
             && binding.controller.installationId === row.controllerInstallationId;
-        const submittedSigner = phase === 'report' && pending?.controller && carrier.payload.machineId === pending.controller.machineId
+        const cleanupReconciliation = phase === 'reconcile' && carrier.purpose.kind === 'creation-cleanup';
+        const submittedSigner = (phase === 'report' || (phase === 'reconcile' && !cleanupReconciliation))
+            && pending?.controller && carrier.payload.machineId === pending.controller.machineId
             && carrier.payload.installationId === pending.controller.installationId && binding.expectedIntentRevision === pending.intentRevision
             && binding.requestId === pending.requestId && sameManagedInput(binding.controller, pending.controller);
+        const currentAdmission = readManagedAdmissionState(row.admittedInput).currentAdmission;
+        const admittedPolicyRequest = binding.requestId === readManagedCurrentRequestId(row) && currentAdmission?.kind === 'policy'
+            && currentAdmission.request.purpose.kind === carrier.purpose.kind;
+        // The installed controller opens and verifies this row's sealed target.
+        // Home can authenticate its already-committed cleanup via structural custody.
+        const structuralCleanup = carrier.purpose.kind === 'creation-cleanup' && isManagedOpaquePresetMachineV1(machine)
+            && (currentSigner && (isManagedCreationCleanupV1(machine) || phase === 'current' && admittedPolicyRequest) || submittedSigner);
+        const expectedResourceDigest = structuralCleanup ? managedPolicyDigestV1('resource', null)
+            : nativeTarget && managedPolicyDigestV1('resource', nativeTarget);
         const acceptedSource = carrier.purpose.kind === 'accepted-input-start' ? carrier.purpose.target : undefined;
         const activationFailureSigner = phase === 'activation-failure' && acceptedSource
             && acceptedSource.homeId === row.homeId && acceptedSource.managedId === row.id && acceptedSource.enrolledMachineId === row.enrolledMachineId
@@ -154,11 +165,8 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             || !(currentSigner || submittedSigner || activationFailureSigner || accountExecutor) || binding.homeId !== row.homeId || binding.managedId !== row.id
             || binding.purpose !== carrier.purpose.kind || binding.purposeDigest !== managedPolicyPurposeDigestV1(carrier.purpose, carrier.actionOrigin)
             || binding.method !== 'POST' || binding.path !== path || binding.bodyDigest !== managedPolicyDigestV1('body', request.body)
-            || !nativeTarget || binding.resourceDigest !== managedPolicyDigestV1('resource', nativeTarget)
+            || binding.resourceDigest !== expectedResourceDigest
             || !controller?.installationPublicKey || !verifyMachineInstallationProof({ payload: carrier.payload, proof: carrier.proof, publicKey: controller.installationPublicKey })) throw new ManagedMachineError('permission_denied');
-        const currentAdmission = readManagedAdmissionState(row.admittedInput).currentAdmission;
-        const admittedPolicyRequest = binding.requestId === readManagedCurrentRequestId(row) && currentAdmission?.kind === 'policy'
-            && currentAdmission.request.purpose.kind === carrier.purpose.kind;
         // Admission and reads qualify the controller's lifecycle. A follow-up of
         // the admitted request (its steps and native facts, or an accepted
         // activation failure) finishes on the proof above.
@@ -166,8 +174,8 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
                 controller: { machineId: carrier.payload.machineId, installationId: carrier.payload.installationId } });
         }
-        if (phase === 'current' || phase === 'submit') {
-            if (!admittedPolicyRequest) throw new ManagedMachineError('request_conflict');
+        if (phase === 'current' || phase === 'submit' || cleanupReconciliation) {
+            if (!admittedPolicyRequest || (cleanupReconciliation && binding.requestId !== input.requestId)) throw new ManagedMachineError('request_conflict');
             // Signed installation/Account/target custody above authenticates
             // this call. Admission owns policy; follow-ups consume its request,
             // including after the source guest retires during finite work.
@@ -547,12 +555,15 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             });
         }
         if (request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined) {
-            // Controller reconnection refreshes an existing native fact; it does
-            // not admit allocation, bootstrap completion or configuration changes.
-            if (!request.body.observation || request.body.result.kind !== 'bound'
+            const { carrier } = await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/report', request.body, 'reconcile');
+            const cleanupReconciliation = carrier.purpose.kind === 'creation-cleanup';
+            // Cancel may have preceded publication of the native target. The
+            // admitted Delete must reconcile that acquisition before removing it.
+            if ((cleanupReconciliation
+                ? (request.body.result.kind === 'rejected' && request.body.observation?.availability !== 'absent')
+                : (!request.body.observation || request.body.result.kind !== 'bound'))
                 || request.body.bootstrapInstalled || ('configurationFacts' in request.body && request.body.configurationFacts)) throw new ManagedMachineError('permission_denied');
-            await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/report', request.body, 'report');
-            return await reportManagedAcquire(request.body, { requestAuthority: 'intent' });
+            return await reportManagedAcquire(request.body, { requestAuthority: 'intent', cleanupReconciliation });
         }
         const proof = await requireManagedOperationRequest(request, request.body, effects);
         return await reportManagedAcquire(request.body, { requestAuthority: proof.requestAuthority });

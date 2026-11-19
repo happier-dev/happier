@@ -2,13 +2,13 @@ import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine } from '@/api/types';
-import type { ManagedControllerV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { canPrepareManagedRetentionPolicy, hasSubmittedManagedRetentionEffect } from '@/machines/managed/managedRetentionPolicy';
 import { logger } from '@/ui/logger';
 import { MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT,
     type createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
-import { createManagedPolicyCensusProofV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema,
+import { createManagedPolicyCensusProofV1, isManagedCreationCleanupV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema,
     type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 
 export type ManagedMachinePolicyCensus = ReturnType<typeof ManagedPolicyCensusOutputV1Schema.parse>;
@@ -98,9 +98,10 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         }
         const current = new Set<string>();
         for (let machine of census.machines) {
-            const canceledCleanup = machine.creationState === 'canceled' && machine.desired === 'delete' && machine.desiredWhen === 'now';
+            const canceledCleanup = isManagedCreationCleanupV1(machine);
             if (machine.archivedAt !== undefined || !(machine.allocation === 'bound' && machine.resource
-                || canceledCleanup && machine.allocation === 'may-exist' && machine.nativeOperationRef)) continue;
+                || canceledCleanup && (isManagedOpaquePresetMachineV1(machine)
+                    || machine.allocation === 'may-exist' && machine.nativeOperationRef))) continue;
             if (machine.creationState !== 'active' && !canceledCleanup) continue;
             // A controller may have missed host/native power changes while down.
             // Inspect once at this connection boundary, never on our own report push.
