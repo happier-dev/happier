@@ -196,7 +196,9 @@ describe('Devcontainer native roles', () => {
           dimensions: { size: [], image: [], location: [], network: [], duration: [] } } };
       },
     }, {
-      custody: { accountId: 'author', open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
+      custody: { accountId: 'author', readWriterMode: async () => 'plain' as const,
+        readRecipientCensus: async () => ({ kind: 'ready' as const, contentEncryptionMode: 'plain' as const, recipients: [] }),
+        open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
         withE2eeAccountKey: () => null },
       readSelectedProvisioners: async () => [{ contribution, occurrenceId: 'installed', acquireExecutionTarget: 'daemon', descriptor }],
       randomBytes: length => new Uint8Array(length),

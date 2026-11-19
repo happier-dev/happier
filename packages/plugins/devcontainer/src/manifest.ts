@@ -210,7 +210,10 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
         return await (await provider(context, input.launch)).acquire({ ...input.launch,
           ...(input.reviewedEffectDigest ? { reviewedEffectDigest: input.reviewedEffectDigest } : {}) }, input.managedId ?? '', input.guestHome);
       }
-        catch (error) { return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath ?? input.managedId ?? '', reason: code(error) } }; } } },
+        catch (error) {
+          if (error instanceof MissingDependency) return { kind: 'rejected' as const, code: error.code };
+          return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath ?? input.managedId ?? '', reason: code(error) } };
+        } } },
     bootstrap: { ...defaults, title: 'Resolve private child enrollment transport', dangerLevel: 'writesLocal',
       confirmation: { title: 'Prepare Devcontainer enrollment' },
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
