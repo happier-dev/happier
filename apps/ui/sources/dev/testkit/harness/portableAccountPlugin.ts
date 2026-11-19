@@ -1,11 +1,19 @@
 import { ingestPluginManifestV2} from '@happier-dev/protocol/plugins/manifest/ingest';
 import { PluginProjectedActionV2Schema, PluginProjectionInstalledPackageV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
-    normalizePluginAccountCollectionContractV1} from '@happier-dev/protocol/plugins/data/collectionsV1';
+    normalizePluginAccountCollectionContractV1, normalizePluginAccountCollectionContractsV1} from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginAccountCollectionContributionV1Schema} from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import {
     createPackageAssetArchiveV1} from '@happier-dev/protocol/plugins/availability/packageAssetV1';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import {
+    PluginAvailabilityActionHttpPathsV1,
+    PluginAvailabilityCollectionWritersClaimActionInputV1Schema,
+    PluginAvailabilityCollectionWritersClaimActionOutputV1Schema,
+    PluginAvailabilityIntentsListActionOutputV1Schema,
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+} from '@happier-dev/protocol/plugins/availability';
+import type { HomeGovernanceHarness } from './homeGovernanceHarness';
 import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
 import { validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
@@ -33,6 +41,49 @@ export type PortableAccountPluginFixture = Readonly<{
 }>;
 
 export type SourceDeclaredAccountPluginFixture = PortableAccountPluginFixture & Readonly<{ packageName: string }>;
+
+/** Serve source plugin admission at the Home HTTP boundary before restoring its Account. */
+export function answerSourceDeclaredAccountPluginForHome(
+    homes: Pick<HomeGovernanceHarness, 'answer'>,
+    serverId: string,
+    pluginId: string,
+): void {
+    const paths = PluginAvailabilityActionHttpPathsV1;
+    let intent: ReturnType<typeof PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse>['intent'] | undefined;
+    homes.answer(serverId, `POST ${paths['account.plugins.availability.materializations.read']}`, {
+        select: () => ({ body: PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({
+            availabilityCursor: intent ? 1 : 0, snapshots: [], inventoryComplete: true, releases: [],
+        }) }),
+    });
+    homes.answer(serverId, `POST ${paths['account.plugins.availability.collectionWriters.claim']}`, {
+        select: body => {
+            const claim = PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(body);
+            if (!('manifest' in claim) || claim.manifest.id !== pluginId) {
+                return { status: 404, body: { error: 'not_found' } };
+            }
+            const { manifest } = claim;
+            const refs = normalizePluginAccountCollectionContractsV1({
+                pluginId, contributions: manifest.contributes.accountCollections,
+            }).map(({ pluginId, collectionId, schemaVersion, contractDigest }) =>
+                ({ pluginId, collectionId, schemaVersion, contractDigest }));
+            intent = { pluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled',
+                writableCollections: refs, revision: 'source-claim' };
+            return { body: PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse({ intent }) };
+        },
+    });
+    homes.answer(serverId, `POST ${paths['account.plugins.availability.intents.list']}`, {
+        select: () => {
+            const availabilityCursor = intent ? 1 : 0;
+            const intentReads = intent ? [{ pluginId, response: {
+                availabilityCursor, hostingCapability: { enabled: false }, intent, release: null,
+                uiArtifacts: [], packageAssets: [],
+            } }] : [];
+            return { body: PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+                availabilityCursor, pluginIds: intent ? [pluginId] : [], intentReads, failedPluginIds: [],
+            }) };
+        },
+    });
+}
 
 /** Prepare physical app declarations before the first Account publication; install after restore. */
 export async function prepareSourceDeclaredAccountPluginsForTest(plugins: readonly SourceDeclaredAccountPluginFixture[]) {
@@ -211,56 +262,59 @@ async function preparePortableAccountPluginForTest(input: Readonly<{
     deferActivation?: boolean;
 }>, preparedArtifact?: ReturnType<typeof createPortableAccountExecutableArtifact>) {
     const platform = resolvePluginUiClientExecutablePlatform();
-    const parsed = ingestPluginManifestV2(input.manifest);
-    if (!parsed.ok) throw new Error(`Invalid authored Account fixture: ${JSON.stringify(parsed.diagnostics)}`);
-    const diagnostics = validatePublicPluginManifestPolicy(parsed.manifest);
-    if (diagnostics.length > 0) throw new Error(`Invalid authored Account fixture: ${JSON.stringify(diagnostics)}`);
-    const actions = parsed.manifest.contributes.actions.filter(action => action.execution.target === 'account');
-    const resources = parsed.manifest.contributes.resources.flatMap(resource => resource.source === 'dynamic'
-        && resource.execution?.target === 'account' ? [resource] : []);
-    const target = actions[0]?.execution;
-    if (target?.target !== 'account') throw new Error('Fixture requires an authored Account Action');
-    const account = target.account;
     const occurrenceId = input.origin?.custodyId ?? `account-fixture-${input.manifest.id}`;
-    const origin = input.origin ?? { ...input.accountLifetime.scope, custodyId: occurrenceId,
-        sourceCustody: { kind: 'account_release' as const, pluginId: input.manifest.id, version: input.manifest.version,
-            archiveDigestSha256: `sha256:${'a'.repeat(64)}` } };
-    const authorization = { generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
-        resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] };
-    const graph = preparedArtifact ?? createPortableAccountExecutableArtifact(account);
-    const projectedActions = actions.map(declaration => {
-        const { hostAccess: _hostAccess, connectedAccountPurposeBindings: _connectedAccountPurposeBindings,
-            inputSchema: _inputSchema, resultSchema: _resultSchema, ...projected } = declaration;
-        return { ...PluginProjectedActionV2Schema.parse({ ...projected, pluginId: input.manifest.id,
-            occurrenceId, available: true, authorization }), hostAccountOrigin: origin, accountActionDeclaration: declaration };
-    });
-    const projectedResources = resources.map(declaration => ({ id: declaration.id, pluginId: input.manifest.id,
-        occurrenceId, resourceKind: declaration.kind, scope: declaration.scope,
-        contentType: declaration.contentType, execution: declaration.execution,
-        hostAccountOrigin: origin, accountResourceDeclaration: declaration }));
-    const connectedAccountDescriptorsById = Object.fromEntries(Object.entries(
-        readPluginAccountAvailability(input.accountLifetime.scope).readAccountUiProjection()?.connectedAccountDescriptorsById ?? {},
-    ).filter(([, descriptor]) => descriptor.pluginId === input.manifest.id));
-    const contributionIds = [...projectedActions.map(action => action.id), ...projectedResources.map(resource => `resources/${resource.id}`),
-        ...Object.values(connectedAccountDescriptorsById).map(descriptor => `connectedAccountDescriptors/${descriptor.id}`)];
-    const projection: PluginUiProjectionModel = input.projection ?? {
-        ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
-        installedPackagesById: { [input.manifest.id]: PluginProjectionInstalledPackageV2Schema.parse({
-            id: input.manifest.id, displayName: input.manifest.displayName, version: input.manifest.version,
-            enabled: true, source: { kind: 'localPath', locator: input.manifest.id },
-        }) },
-        actionsById: Object.fromEntries(projectedActions.map(action => [`${input.manifest.id}/${action.id}`, action])),
-        resourcesById: Object.fromEntries(projectedResources.map(resource => [`${input.manifest.id}/${resource.id}`, resource])),
-        connectedAccountDescriptorsById,
-        reactNativeBundlesById: Object.fromEntries(contributionIds.map(contributionId => {
-            const id = `reactNativeBundle:${input.manifest.id}:${contributionId}`;
-            return [id, { id, pluginId: input.manifest.id, occurrenceId, contributionKind: 'reactNativeBundle' as const,
-                contributionId, generatedOwnerKind: 'clientContribution' as const,
-                artifactGraph: graph, hostAccountOrigin: origin,
-                runtime: { decision: { state: 'load' as const }, loadPolicy: { source: 'installedArtifact' as const },
-                    cacheIdentity: { artifactDigest: graph.digest } } }];
-        })),
-    };
+    let projection = input.projection;
+    if (!projection) {
+        const parsed = ingestPluginManifestV2(input.manifest);
+        if (!parsed.ok) throw new Error(`Invalid authored Account fixture: ${JSON.stringify(parsed.diagnostics)}`);
+        const diagnostics = validatePublicPluginManifestPolicy(parsed.manifest);
+        if (diagnostics.length > 0) throw new Error(`Invalid authored Account fixture: ${JSON.stringify(diagnostics)}`);
+        const actions = parsed.manifest.contributes.actions.filter(action => action.execution.target === 'account');
+        const resources = parsed.manifest.contributes.resources.flatMap(resource => resource.source === 'dynamic'
+            && resource.execution?.target === 'account' ? [resource] : []);
+        const target = actions[0]?.execution;
+        if (target?.target !== 'account') throw new Error('Fixture requires an authored Account Action');
+        const account = target.account;
+        const origin = input.origin ?? { ...input.accountLifetime.scope, custodyId: occurrenceId,
+            sourceCustody: { kind: 'account_release' as const, pluginId: input.manifest.id, version: input.manifest.version,
+                archiveDigestSha256: `sha256:${'a'.repeat(64)}` } };
+        const authorization = { generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
+            resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] };
+        const graph = preparedArtifact ?? createPortableAccountExecutableArtifact(account);
+        const projectedActions = actions.map(declaration => {
+            const { hostAccess: _hostAccess, connectedAccountPurposeBindings: _connectedAccountPurposeBindings,
+                inputSchema: _inputSchema, resultSchema: _resultSchema, ...projected } = declaration;
+            return { ...PluginProjectedActionV2Schema.parse({ ...projected, pluginId: input.manifest.id,
+                occurrenceId, available: true, authorization }), hostAccountOrigin: origin, accountActionDeclaration: declaration };
+        });
+        const projectedResources = resources.map(declaration => ({ id: declaration.id, pluginId: input.manifest.id,
+            occurrenceId, resourceKind: declaration.kind, scope: declaration.scope,
+            contentType: declaration.contentType, execution: declaration.execution,
+            hostAccountOrigin: origin, accountResourceDeclaration: declaration }));
+        const connectedAccountDescriptorsById = Object.fromEntries(Object.entries(
+            readPluginAccountAvailability(input.accountLifetime.scope).readAccountUiProjection()?.connectedAccountDescriptorsById ?? {},
+        ).filter(([, descriptor]) => descriptor.pluginId === input.manifest.id));
+        const contributionIds = [...projectedActions.map(action => action.id), ...projectedResources.map(resource => `resources/${resource.id}`),
+            ...Object.values(connectedAccountDescriptorsById).map(descriptor => `connectedAccountDescriptors/${descriptor.id}`)];
+        projection = {
+            ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+            installedPackagesById: { [input.manifest.id]: PluginProjectionInstalledPackageV2Schema.parse({
+                id: input.manifest.id, displayName: input.manifest.displayName, version: input.manifest.version,
+                enabled: true, source: { kind: 'localPath', locator: input.manifest.id },
+            }) },
+            actionsById: Object.fromEntries(projectedActions.map(action => [`${input.manifest.id}/${action.id}`, action])),
+            resourcesById: Object.fromEntries(projectedResources.map(resource => [`${input.manifest.id}/${resource.id}`, resource])),
+            connectedAccountDescriptorsById,
+            reactNativeBundlesById: Object.fromEntries(contributionIds.map(contributionId => {
+                const id = `reactNativeBundle:${input.manifest.id}:${contributionId}`;
+                return [id, { id, pluginId: input.manifest.id, occurrenceId, contributionKind: 'reactNativeBundle' as const,
+                    contributionId, generatedOwnerKind: 'clientContribution' as const,
+                    artifactGraph: graph, hostAccountOrigin: origin,
+                    runtime: { decision: { state: 'load' as const }, loadPolicy: { source: 'installedArtifact' as const },
+                        cacheIdentity: { artifactDigest: graph.digest } } }];
+            })),
+        };
+    }
     const resolved = resolveProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform })
         .filter(entry => entry.pluginId === input.manifest.id);
     if (resolved.length === 0) throw new Error('Authored Account executable was not projected');

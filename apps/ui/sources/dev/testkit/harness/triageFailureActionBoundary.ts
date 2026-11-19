@@ -56,3 +56,26 @@ export function createTriageFailureActionBoundaryFixture(overrides: Partial<Acti
         return { ok: true, result: await handler(request.input, context) };
     } };
 }
+
+/** The native client realm stays real; nested Account Actions use the screen's Home transport. */
+export function createTriageFailureFrontDoorForTest(
+    original: typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor'),
+): typeof original.createFrontDoorActionExecute {
+    return (...args) => {
+        const real = original.createFrontDoorActionExecute(...args);
+        let boundary: ActionExecutorDeps | null = null;
+        const execute: typeof real = Object.assign(async (...[actionId, input, context]: Parameters<typeof real>) => {
+            const invocation = input as { action?: { pluginId: string; localId: string }; input?: unknown } | undefined;
+            if (actionId !== 'action.invoke' || invocation?.action?.pluginId !== TRIAGE_FAILURE_TEST_BINDING.pluginId
+                || invocation.action.localId !== TRIAGE_FAILURE_TEST_BINDING.action) return real(actionId, input, context);
+            if (!boundary) {
+                boundary = createTriageFailureActionBoundaryFixture({ invokeContributedAction: request =>
+                    real('action.invoke', { action: request.action, input: request.input }, request.context) });
+                onTestFinished(() => { boundary = null; });
+            }
+            return boundary.invokeContributedAction!({ action: invocation.action, input: invocation.input,
+                context: context ?? {}, signal: context?.signal });
+        }, { prepare: real.prepare, confirmed: real.confirmed });
+        return execute;
+    };
+}
