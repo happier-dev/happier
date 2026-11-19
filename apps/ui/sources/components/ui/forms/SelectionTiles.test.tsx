@@ -1,7 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installFormsCommonModuleMocks } from './formsTestHelpers';
 
 (
@@ -811,14 +811,14 @@ describe('SelectionTiles', () => {
     // Only the chosen tile shows its "…" at rest; the operations never sit inside the radio.
     expect(screen.findByTestId('menu:ink')).not.toBeNull();
     expect(screen.findByTestId('menu:paper')).toBeNull();
-    const paper = screen.findByTestId('theme:paper')!;
-    expect(paper.findAll((node) => node.props?.testID === 'menu:paper')).toHaveLength(0);
-    const frame = screen.tree.findAll((node) => typeof node.props?.onHoverIn === 'function' && node.props?.accessible === false
-      && node.findAll((child) => child.props?.testID === 'theme:paper').length > 0)[0]!;
-    await act(async () => { frame.props.onHoverIn?.(); });
+    const paper = screen.findHostByTestId('theme:paper')!;
+    // The web host mock exposes DOM events as props on the containing view.
+    let frame = paper.parent;
+    while (frame && typeof frame.type !== 'string') frame = frame.parent;
+    await act(async () => { invokeTestInstanceHandler(frame, 'onMouseEnter'); });
     expect(screen.findByTestId('menu:paper')).not.toBeNull();
     expect(paper.findAll((node) => node.props?.testID === 'menu:paper')).toHaveLength(0);
-    await act(async () => { frame.props.onHoverOut?.(); });
+    await act(async () => { invokeTestInstanceHandler(frame, 'onMouseLeave'); });
     expect(screen.findByTestId('menu:paper')).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
