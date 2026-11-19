@@ -5,6 +5,9 @@ import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-de
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 import { readReviewNarratorOptions } from '@happier-dev/protocol/inputs/inputOptions';
 import { readAgentTargetReadinessV1 } from '@happier-dev/protocol/actions/executor/agents/agentBackendReadiness';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 
@@ -40,6 +43,37 @@ function runCapableDefinition(definition: Record<string, unknown>) {
 }
 
 describe('buildReviewEngineInventoryItems', () => {
+  it.each([true, false])('admits an explicitly connected Pi reviewer while preserving executable prerequisites (installed %s)', async installed => {
+    const agent = projectManifestAgentContribution({ pluginId: 'happier.agent.pi', provenance: 'first_party', source: { kind: 'bundled' },
+      definition: PluginAgentContributionV2Schema.parse({ id: 'pi', title: 'Pi', primary: 'sessions', runtime: { kind: 'custom' },
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }),
+    });
+    const machinesAgentsList = async () => ({ items: [{ agentId: agent.id, title: 'Pi', installed, version: null, latestVersion: null,
+      update: { supported: false, command: null }, signIn: { status: 'signedOut', required: true, loginSupport: 'login_terminal' },
+      platform: { supported: true }, install: { available: true, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] }] });
+    const inventory = await buildReviewEngineInventory({ acpCatalogSnapshot: emptyCatalog,
+      registrySnapshot: { agentDefinitionsById: new Map([[agent.id, agent]]), executionRunProfiles: [] },
+      readReadiness: targets => readAgentTargetReadinessV1({ machinesAgentsList,
+        agentsConnectedDefaultRoutesRead: async () => ({ [agent.id]: 'native' as const }),
+      }, 'machine-1', targets.map(parseBackendTargetKeyV2), {}),
+    });
+    const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const records = createInMemoryReviewRecordPortV1();
+    const executor = createActionExecutor({ reviewRecords: () => records, reviewEnginesList: async () => inventory,
+      executionRunStart: async (_sessionId, input) => { requests.push(ExecutionRunStartRequestSchema.parse(input));
+        return { runId: 'pi-review', callId: 'pi-call', sidechainId: 'pi-sidechain' }; },
+    });
+    const connectedServices = { v: 2 as const, bindingsByServiceId: { 'happier.agent.muse/muse-account': {
+      source: 'connected' as const, selection: 'profile' as const, profileId: 'ca_13007abc-ac59-4acb-a4d4-1bfa5dce1538',
+    } } };
+    const result = await executor.execute('review.start', { sessionId: 'pi-session', scope: 'repository',
+      instructions: 'Review the repository.', permissionMode: 'read-only', reviewers: [{ kind: 'engine', engineId: agent.id, connectedServices }],
+    }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true, result: { results: [installed ? { ok: true } : { ok: false, errorCode: 'review_engine_unavailable' }] } });
+    expect(inventory.items[0]?.readiness).toBe(installed ? 'needsSignIn' : 'notInstalled');
+    expect(requests.map(request => request.connectedServices)).toEqual(installed ? [connectedServices] : []);
+  });
+
   it.each([undefined, 201])('preserves the requested roster size without an implicit ceiling (limit %s)', async limit => {
     const agents = Array.from({ length: 202 }, (_, index) => projectManifestAgentContribution({
       pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },

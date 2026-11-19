@@ -102,6 +102,12 @@ const START_REFUSAL_BY_READINESS = Object.freeze({
   unsupported: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_NOT_READY,
 } as const);
 
+export function isAgentStartReadinessBlockingV1(
+  readiness: MachineAgentExecutionStateV1 | undefined,
+): readiness is keyof typeof START_REFUSAL_BY_READINESS {
+  return readiness !== undefined && Object.hasOwn(START_REFUSAL_BY_READINESS, readiness);
+}
+
 /**
  * Refuse known executable/platform prerequisites before creating a Run.
  * Authentication belongs to the launch owner: it resolves the request's selected
@@ -118,7 +124,7 @@ export async function refuseAgentStartWhenNotReadyV1(
   if (!parsed.success) return null;
   const target = readInventoryTarget({ targetKey: buildBackendTargetKeyV2(parsed.data) } as AgentBackendInventoryItem);
   const [readiness] = await readAgentTargetReadinessV1({ machinesAgentsList: deps.machinesAgentsList }, args.machineId, [target], ctx) ?? [];
-  if (readiness !== 'notInstalled' && readiness !== 'unsupported') return null;
+  if (!isAgentStartReadinessBlockingV1(readiness)) return null;
   const code = START_REFUSAL_BY_READINESS[readiness];
   // The existing run-start failure contract: a typed code and certain "no Run created" evidence.
   return { ok: false, errorCode: code, error: code, details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };

@@ -5,7 +5,8 @@ import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/cat
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AGENT_IDS, isBundledAgentId } from '@happier-dev/agents/agent-ids';
-import { isMachineAgentExecutionStateBlockingV1, type MachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import type { MachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { isAgentStartReadinessBlockingV1 } from '@happier-dev/protocol/actions/executor/agents/agentBackendReadiness';
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { resolveExecutionRunAgentDefaultSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
@@ -183,7 +184,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
       const launchModelId = selection && !isNativeAutomaticModelSelectionInputV1(selection) ? selection.modelId : undefined;
       const state = readiness?.[index];
       const unavailableCode = !item.enabled ? 'account_disabled'
-        : state && isMachineAgentExecutionStateBlockingV1(state) ? state : undefined;
+        : isAgentStartReadinessBlockingV1(state) ? state : undefined;
       return { ...ReviewEngineListItemSchema.parse({ ...item, enabled: !unavailableCode, available: !unavailableCode,
         ...(state ? { readiness: state } : {}), ...(unavailableCode ? { unavailableCode } : {}),
         ...(launchModelId ? { launchModelId } : {}) }),
