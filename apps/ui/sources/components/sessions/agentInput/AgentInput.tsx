@@ -44,6 +44,7 @@ import { readQuickOpenRecentFiles } from '@/components/workspaces/files/useQuick
 import { readComposerSessionSuggestionItems } from '@/sync/domains/input/suggestionSession';
 import { readSessionListMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListOrderingRules';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { navigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -3375,9 +3376,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             return remove ? { ...item, onRemove: () => { flushComposerInput(); remove(); } } : item;
         })
     ), [dictationEditable, flushComposerInput, props.attachmentRowItems]);
-    const editorAttachmentIds = React.useMemo(() => attachmentRowItems.flatMap((item) => (
+    // Only tray items (those with an `attachmentId`) can be referenced inline, so a plugin or Review badge arriving
+    // or leaving keeps the editor's inputs equal and the text and selection owner does not render for it (QB-40).
+    const referencedAttachmentItemsRef = React.useRef<readonly AgentInputAttachmentsRowItem[] | undefined>(undefined);
+    const referencedAttachmentItems = React.useMemo(() => referencedAttachmentItemsRef.current = retainShallow(
+        referencedAttachmentItemsRef.current, attachmentRowItems.filter((item) => item.attachmentId !== undefined),
+    ), [attachmentRowItems]);
+    const editorAttachmentIds = React.useMemo(() => referencedAttachmentItems.flatMap((item) => (
         item.attachmentId === undefined ? [] : [item.attachmentId]
-    )), [attachmentRowItems]);
+    )), [referencedAttachmentItems]);
     const referenceRouter = useDestinationRouter();
     const { open: openReferenceFile, canOpen: canOpenReferenceFile } = useWorkspaceFileOpener();
     const buildEditorReferences = React.useCallback((text: string) => {
@@ -3386,8 +3393,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const lifetime = currentLifetime && (!sourceServerId || areServerProfileIdentifiersEquivalent(sourceServerId, currentLifetime.scope.serverId))
             ? currentLifetime : null;
         const bindings = new Map(structuredInputMentions.map((mention) => [mention.start, mention]));
-        const attachments = new Map(attachmentRowItems.flatMap((item) => item.attachmentId === undefined ? [] : [[item.attachmentId, item] as const]));
-        const imageNumbers = readAgentInputImageNumbers(attachmentRowItems);
+        const attachments = new Map(referencedAttachmentItems.flatMap((item) => item.attachmentId === undefined ? [] : [[item.attachmentId, item] as const]));
+        const imageNumbers = readAgentInputImageNumbers(referencedAttachmentItems);
         return composerReferencesFromStructuredMentions({ text, mentions: structuredInputMentions }).map((reference): ComposerEditorReference<ComposerStructuredInputMention> => {
             const parsed = parseMentionRefV1(reference.ref);
             const binding = bindings.get(reference.start);
@@ -3453,7 +3460,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 ...(attachment.onPress ? { onOpen: () => attachment.onPress?.({ focusReturnRef: inputRef }) } : {}),
             };
         });
-    }, [attachmentRowItems, props.sessionAddress, props.composerFileScope, props.composerReferenceHost, props.referenceStates, structuredInputMentions,
+    }, [referencedAttachmentItems, props.sessionAddress, props.composerFileScope, props.composerReferenceHost, props.referenceStates, structuredInputMentions,
         composerDropScope, referenceRouter, openReferenceFile, canOpenReferenceFile]);
     React.useEffect(() => {
         if (attachmentRowItems.length === 0) {
@@ -3985,8 +3992,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         closePermissionPopover();
     }, [closePermissionPopover, props.onPermissionModeChange]);
 
-    // Handle keyboard navigation
-    const handleKeyPress = React.useCallback((event: KeyPressEvent): boolean => {
+    // Handle keyboard navigation. Read at key time through one stable handler, so a chrome-only change (an
+    // attachment badge, a chip) does not hand the text field a new prop and render it (QB-40).
+    const handleKeyPress = useEventCallback((event: KeyPressEvent): boolean => {
         const eventInputText = event.inputState?.text ?? inputRef.current?.getText?.() ?? inputStateRef.current.text;
         const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText || hasSendableNonText
             || props.armedContinuationTarget != null || props.armedRouteContinuation != null;
@@ -4081,7 +4089,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [handleCommandMenuKey, dictationEditable, hasSendableNonText, props.armedContinuationTarget, props.armedRouteContinuation, props.canSendNextQueued, props.alternateSendMode, onSendProp, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.messageHistory, stepMessageHistory, props.newSessionAfterSendMode, sendActionDisabled, enterToSendEnabled, submitEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
+    });
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;

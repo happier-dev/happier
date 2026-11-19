@@ -7,7 +7,7 @@ import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/inpu
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { createComposerTextStore } from './composerTextStore';
 import type { ComposerStructuredInputMention } from './structuredInputMentions';
-import { projectAgentInputAttachmentRowItems } from './agentInputContracts';
+import { projectAgentInputAttachmentRowItems, type AgentInputAttachmentsRowItem } from './agentInputContracts';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // Resolve the browser platform input exactly as Metro does; all editor logic stays real.
@@ -233,5 +233,46 @@ describe('Session composer keystroke work', () => {
         expect(store.getPrompt()).toContain('wx');
         expect(inputRender.mock.calls.length).toBeGreaterThan(0);
         expect(chipRail.mock.calls.length).toBe(0);
+    });
+    it('updates plugin attachment badges without rendering the text and selection owner (QB-40)', async () => {
+        Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] });
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect(25, 35, 0, 18) });
+        vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+        const store = createComposerTextStore('Explain this');
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        // A plugin attachment (a Triage entry) reaches the composer as a host badge with no tray identity.
+        const badge = (key: string, label: string): AgentInputAttachmentsRowItem => ({ kind: 'badge', key, label });
+        let setAttachments!: (items: readonly AgentInputAttachmentsRowItem[]) => void;
+        // A real host keeps these stable across its renders; only the attachment row changes below.
+        const kinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'] = [];
+        const suggestions = async () => [];
+        const onSend = () => {};
+        function SessionHost() {
+            const [items, setItems] = React.useState<readonly AgentInputAttachmentsRowItem[]>([]);
+            setAttachments = setItems;
+            const persistence = useSessionAgentInputComposerPersistence({ sessionId: 's1', accountLifetime: lifetime, textStore: store });
+            const draft = useDraft('s1', store, { accountLifetime: lifetime, session: storage.getState().sessions.s1, active: true });
+            return <SessionComposerAgentInput textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
+                onSend={onSend} placeholder="Message" autocompleteKinds={kinds} autocompleteSuggestions={suggestions}
+                inputPersistence={persistence.inputPersistence} structuredInputPersistence={persistence.structuredInputPersistence}
+                onStructuredInputMentionsChange={persistence.structuredInputPersistence.onMentionsChange}
+                attachmentRowItems={items} />;
+        }
+        container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+        await act(async () => { root!.render(<runtime.Wrapper><SessionHost /></runtime.Wrapper>); });
+        const editor = container.querySelector<HTMLElement>('[data-happier-text-input]')!;
+        await act(async () => { editor.focus(); });
+        type RenderProbe = { render: (...args: unknown[]) => React.ReactNode };
+        const agentRender = vi.spyOn((AgentInput as unknown as { type: RenderProbe }).type, 'render');
+        const inputRender = vi.spyOn(MultiTextInput as unknown as RenderProbe, 'render');
+        // Zero, one, then many: each is an attachment-only change to the composer.
+        for (const items of [[badge('triage:1', 'Fix the login loop')], [badge('triage:1', 'Fix the login loop'), badge('triage:2', 'Crash on save')], []]) {
+            await act(async () => { setAttachments(items); });
+            expect(container.textContent).toContain(items.length === 0 ? 'Explain this' : items.at(-1)!.label);
+        }
+        // The chrome takes the new row; the text and selection owner does not render for it.
+        expect(agentRender.mock.calls.length).toBeGreaterThan(0);
+        expect(inputRender.mock.calls.length).toBe(0);
+        expect(store.getPrompt()).toBe('Explain this');
     });
 });

@@ -19,13 +19,15 @@ export type AgentInputTextFieldProps = Omit<SessionAuthoringComposerProps, 'valu
     buildReferences: (text: string) => readonly ComposerEditorReference<ComposerStructuredInputMention>[];
 }>;
 
-export const AgentInputTextField = React.forwardRef<MultiTextInputHandle, AgentInputTextFieldProps>(
+// Memoized so a chrome-only change (an attachment badge, a chip, an overlay) does not render the text and selection
+// owner; the text itself still arrives through `textSource`.
+export const AgentInputTextField = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputTextFieldProps>(
     function AgentInputTextField({ textSource, buildReferences, ...fieldProps }, ref) {
         const value = useComposerTextValue(textSource);
         const references = React.useMemo(() => buildReferences(value), [buildReferences, value]);
         return <SessionAuthoringComposer {...fieldProps} ref={ref} value={value} references={references} />;
     },
-);
+));
 
 /** Runs `onText` after a commit that carries new text, with the same timing as an effect on the text. */
 export function AgentInputTextSync(props: Readonly<{
