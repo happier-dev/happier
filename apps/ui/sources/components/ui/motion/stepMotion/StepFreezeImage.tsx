@@ -5,6 +5,7 @@ export type StepFreezeImageProps = Readonly<{
     opacity: readonly number[];
     durationMs: number;
     delayMs: number;
+    onCleared: () => void;
 }>;
 
 export function StepFreezeImage(_props: StepFreezeImageProps) {

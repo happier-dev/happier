@@ -35,6 +35,7 @@ type StagePaint = Readonly<{
     freeze?: StepFreeze;
     freezeOpacity: readonly number[];
     scene: GlyphSurfaceProps['scene'];
+    releaseFreeze: () => void;
     finish: () => void;
 }>;
 
@@ -253,7 +254,7 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         active = { layer: layer.key, animation, stop: skip };
         syncPresentation();
-        publish({ animation, duration, freeze, freezeOpacity, scene, finish: () => finish('settled') });
+        publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
     }
 
     function enter(layer: StepMotionLayerHandle) {
@@ -535,6 +536,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
                     opacity={paints.freezeOpacity}
                     durationMs={paints.duration * 1000}
                     delayMs={paints.animation.epoch - performance.now()}
+                    onCleared={paints.releaseFreeze}
                 /> : null}
                 <renderer.GlyphSurface width={width} height={height} cell={stepMotionTiming.cell}
                     scene={paints?.scene ?? emptyScene} motion={motion} onReady={stage.glyphReadiness} warmWhenHidden />
