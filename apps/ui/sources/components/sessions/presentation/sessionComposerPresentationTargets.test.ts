@@ -631,7 +631,12 @@ describe('composer presentation targets', () => {
         const scope = { serverId: 'attachment-home', accountId: 'attachment-account' };
         activeScopeState.value = scope;
         const entry = createAttachmentProjectionEntry({ pluginId: 'acme.issues', localId: 'issue', typeLabel: 'Issue', valueValidator: value => !!value && typeof value === 'object' && 'issueId' in value });
-        const document = createDocumentTarget(createSnapshot({ ref: { kind: 'newSession', instanceId: 'attachment-input' }, text: 'Keep this text', selection: { start: 2, end: 5 } }));
+        const text = '🧑🏽‍💻 e\u0301 العربية\n漢字 @existing\r\n\t👩‍👩‍👧‍👦';
+        const token = '@existing';
+        const tokenStart = text.indexOf(token);
+        const selection = { start: text.indexOf('العربية'), end: tokenStart + 3 };
+        const references = [{ kind: 'partner.reference', ref: 'partner:existing', token, start: tokenStart, end: tokenStart + token.length }];
+        const document = createDocumentTarget(createSnapshot({ ref: { kind: 'newSession', instanceId: 'attachment-input' }, text, selection, references }));
         let composition: Readonly<{ composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>> }> | null = { composerAttachmentsById: { [entry.id]: entry } };
         const hook = await renderHook(() => useStableComposerPresentationTarget(document.readCurrent().ref, {
             ...document, readScope: () => scope, readAttachmentComposition: () => composition,
@@ -644,7 +649,7 @@ describe('composer presentation targets', () => {
         const execute = (value: unknown) => executeComposerIngressAction({ actionId: 'composer.transaction.apply', input: value,
             context: { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId } });
         expect(await execute(input)).toEqual({ status: 'applied', revision: 2, attachmentInstanceIds: ['host-created-issue-42'] });
-        expect(document.readCurrent()).toMatchObject({ text: 'Keep this text', selection: { start: 2, end: 5 }, attachments: [{
+        expect(document.readCurrent()).toMatchObject({ text, selection, references, attachments: [{
             instanceId: 'host-created-issue-42', attachment: entry.identity, value: { issueId: '42' },
         }] });
         composition = null;

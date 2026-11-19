@@ -1353,7 +1353,11 @@ function prepareComposerPresentationTransactionApply(input: Readonly<{
     const cleanedReferences = resolveReferences({ snapshot: cleanupSnapshot, operations: cleanupOperations,
         nextText: cleanedText.text, edits: cleanedText.edits });
     if (!cleanedReferences.ok) return { ok: false, result: cleanedReferences.result };
-    const selection = clampSelection(snapshot.selection, text.text.length);
+    // Unchanged text and references keep the original reference array. Leave
+    // the editor's selection alone when neither was edited.
+    const selection = cleanedReferences.references === snapshot.references
+        ? undefined
+        : clampSelection(snapshot.selection, text.text.length);
     const mapSelectionOffset = (offset: number) => offset - cleanedText.edits.reduce((removed, edit) => (
         removed + Math.max(0, Math.min(offset, edit.end) - edit.start)
     ), 0);
