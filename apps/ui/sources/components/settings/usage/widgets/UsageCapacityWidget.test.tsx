@@ -270,7 +270,6 @@ it('keeps standalone All Capacity independent of accounting across unrelated Acc
       expect(screen.findHostByTestId(`agent-input-reset-start-option.${ref.service.pluginId}/${ref.service.localId}:${ref.accountId}:weekly`)).not.toBeNull();
       const historyCalls = home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/history')).length;
       const pendingCalls = home.requests.filter(request => request.path === '/v2/pending/reset-starts/read').length;
-      const fullRead = resetModel!.slice!.quota![0]!;
       const fullQuery = resetModel!.requestedQuery!.query;
       await screen.update(view(false));
       record = { ...record, fetchedAtMs: now + 100, observedAtMs: now + 100,
@@ -284,8 +283,8 @@ it('keeps standalone All Capacity independent of accounting across unrelated Acc
       console.info('S4 Usage fixture demand', JSON.stringify({ currentOnlyHistoryReads: 0, currentOnlyPendingReads: 0,
         explicitResetHistoryRequests: historyCalls, explicitResetPendingReads: pendingCalls,
         historyRequestsAfterClosingDetail: historyCalls, pendingReadsAfterClosingDetail: pendingCalls }));
-      // A new detailed range seeds from the same Account owner's full LKG,
-      // not the newer head-only sibling claiming fresh private facts.
+      // A different detailed range can show the current allowance while its
+      // own history and Pending work are still being read.
       currentRead = createDeferred<void>();
       const context = captureUiUsageQueryAccountContext(credentials)!;
       const detail = getUsageQueryResourceStore(context).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({
@@ -294,7 +293,13 @@ it('keeps standalone All Capacity independent of accounting across unrelated Acc
       const reading = detail.refresh();
       const release = detail.subscribe(() => {}, false);
       try {
-        await expect.poll(() => detail.getSnapshot().value && decodeUsageQueryResource(detail.getSnapshot().value!).results[0]?.quota?.[0]).toEqual(fullRead);
+        const quota = () => {
+          const value = detail.getSnapshot().value;
+          return value && decodeUsageQueryResource(value).results[0]?.quota?.[0];
+        };
+        await expect.poll(() => quota()?.current?.meters[0]?.usedPct).toBe(50);
+        expect(quota()?.pageFacts).toBeUndefined();
+        expect(quota()?.waitingWork.status).toBe('unavailable');
         expect(detail.getSnapshot().pending).not.toBe('idle');
         await act(async () => {
           storage.setState({ profileScope: null });

@@ -1,9 +1,9 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { getUsageQueryKey, usageQueryNeedsContributionRows, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { createUsagePricingReuseResolver, resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
+import { createUsagePricingReuseResolver, resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageQuotaSourceSnapshot, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
     projectUsageAccountingSnapshotCalendar, type UsageAccountingSourceSnapshot, type UsageWorkSourceSnapshot,
     type UsageHowYouWorkSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryBatchResult,
-    type UsageQuerySourceState, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+    type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageCost';
 import { admitUsageCoachRemedies, applyUsageCoachPreferences } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
 import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
@@ -34,8 +34,8 @@ export type HowYouWorkEvidenceSnapshot = Readonly<{
 export type HowYouWorkReadSnapshot = HowYouWorkEvidenceSnapshot
     | Readonly<{ query: UsageQuery; errorCode: string; detail?: undefined; sessions?: undefined }>;
 
-export type OpenedQuotaRead = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['quota']> & Readonly<{
-    sources?: readonly UsageQuerySourceState[];
+export type OpenedQuotaRead = UsageQuotaSourceSnapshot & Readonly<{
+    quotaByQuery?: ReadonlyMap<string, UsageQuotaSourceSnapshot>;
 }>;
 
 export type UsageQueryReprojection = (signal?: AbortSignal,
@@ -132,17 +132,29 @@ type UsageQueryProjectionInput = Readonly<{
 }>;
 
 /** Overlay only the current entered-price fact; allowance/history admission is unchanged. */
-export function projectUsageEnteredPrices(quota: OpenedQuotaRead, scope: ServerAccountScope): OpenedQuotaRead {
+export function projectUsageEnteredPrices(quota: OpenedQuotaRead, scope: ServerAccountScope, queries: readonly UsageQuery[]): OpenedQuotaRead {
     const presentation = getConnectedMetadataCatalog(scope).presentation;
-    if (!isConnectedPresentationCatalogUsableV1(presentation) || !quota.value) return quota;
-    const value = quota.value.map(read => {
-        const current = read.current;
-        if (!current || read.source.bindingKind !== 'account') return read;
-        const enteredMonthlyPrice = readConnectedSubscriptionMonthlyPriceV1(presentation, read.source.ref) ?? undefined;
-        if (sameStrictJsonValue(current.subscription?.enteredMonthlyPrice, enteredMonthlyPrice)) return read;
-        return { ...read, current: projectProviderAccountUsageEnteredPriceV1(current, enteredMonthlyPrice) };
-    });
-    return value.every((read, index) => read === quota.value![index]) ? quota : { ...quota, value };
+    if (!isConnectedPresentationCatalogUsableV1(presentation)) return quota;
+    const project = <T extends UsageQuotaSourceSnapshot>(snapshot: T): T => {
+        if (!snapshot.value) return snapshot;
+        const value = snapshot.value.map(read => {
+            const current = read.current;
+            if (!current || read.source.bindingKind !== 'account') return read;
+            const enteredMonthlyPrice = readConnectedSubscriptionMonthlyPriceV1(presentation, read.source.ref) ?? undefined;
+            if (sameStrictJsonValue(current.subscription?.enteredMonthlyPrice, enteredMonthlyPrice)) return read;
+            return { ...read, current: projectProviderAccountUsageEnteredPriceV1(current, enteredMonthlyPrice) };
+        });
+        return value.every((read, index) => read === snapshot.value![index]) ? snapshot : { ...snapshot, value };
+    };
+    if (!quota.quotaByQuery) return project(quota);
+    let updated: Map<string, UsageQuotaSourceSnapshot> | undefined;
+    for (const query of queries) {
+        const snapshot = resolveUsageQuotaSourceSnapshot({ quota, quotaByQuery: quota.quotaByQuery }, query);
+        if (!snapshot) continue;
+        const value = project(snapshot);
+        if (value !== snapshot) (updated ??= new Map(quota.quotaByQuery)).set(getUsageQueryKey(query), value);
+    }
+    return updated ? { ...quota, quotaByQuery: updated } : quota;
 }
 
 type ProjectionSettings = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['accountSettings']>;
@@ -234,7 +246,8 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
             priorAccounting: priorAccounting.get(key), calendar: calendarQueryKeys.has(key), previous: previous.get(key), prior: input.priorSlices.get(key),
             accountingNowMs, work: work.get(key), detail: detail.get(key), stages: input.howYouWorkSourcesByQuery.get(key),
             settled: input.settledHowYouWorkQueries.has(key), baseDetailStatus: query.includeSessionEvidence ? baseDetailStatus : undefined,
-            quota: query.includeQuota !== false ? input.quota : undefined,
+            quota: query.includeQuota !== false ? resolveUsageQuotaSourceSnapshot({ quota: input.quota,
+                quotaByQuery: input.quota.quotaByQuery }, query) : undefined,
             pools: query.includeQuota !== false ? pools.get(key) : undefined,
             mcpCatalog: query.includeCoach !== false ? input.mcpCatalog : undefined, locations,
             pricing: accountSettings.usageModelPriceOverridesV1, night: accountSettings.usageNightHoursV1,
@@ -274,7 +287,7 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
     const { context, queries, accountingNowMs, accounting, previous, admittedPrevious,
         work, howYouWork, howYouWorkSourcesByQuery, settledHowYouWorkQueries, evidenceQueries, quota, pools, priorSlices, mcpCatalog } = input;
     if (queries.every(query => !query.includeAccounting)) {
-        return resolveUsageQuotaPageAggregation({ queries, previous: admittedPrevious, quota, pools,
+        return resolveUsageQuotaPageAggregation({ queries, previous: admittedPrevious, quota, quotaByQuery: quota.quotaByQuery, pools,
             sources: quota.sources, nowMs: accountingNowMs });
     }
     const sourceLocations = input.sourceLocations;
@@ -306,7 +319,7 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
         sourceLocations,
         accountSettings,
         coachPreferences: input.coachSuppressions ? accountSettings.usageCoachPreferencesV1 : null,
-        quota, pools, work, howYouWork, nowMs: accountingNowMs,
+        quota, quotaByQuery: quota.quotaByQuery, pools, work, howYouWork, nowMs: accountingNowMs,
         sources: [...(quota.sources ?? []), ...(settledHowYouWorkQueries.size < evidenceQueries.length
             ? [{ source: 'how_you_work', status: 'pending' as const }]
             : evidenceQueries.length === 0 ? [{ source: 'how_you_work', status: 'not_loaded' as const }] : [])] }, bundledUsageModelPriceCatalog);

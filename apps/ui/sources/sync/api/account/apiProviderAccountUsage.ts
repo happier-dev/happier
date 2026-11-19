@@ -89,6 +89,7 @@ type DailyHistoryCoverage = ReadonlyMap<number, DayHistoryEvidence>;
 function sameDayHistoryEvidence(previous: DayHistoryEvidence | undefined, next: DayHistoryEvidence | undefined): boolean {
     return sameStrictJsonValue(previous?.coverage, next?.coverage) && sameStrictJsonValue(previous?.summary, next?.summary);
 }
+export type ProviderAccountUsageQuotaViewDemand = Readonly<{ key: string; range?: HistoryRange; exact: boolean }>;
 type DailySummaryBasis = Readonly<{
     throughCursor: number | undefined;
     source: ConnectedServiceQuotaGetInputV1['source'];
@@ -143,7 +144,12 @@ export type ProviderAccountUsageQuotaReadOptions = Readonly<{
     readPacingTargets?: () => Promise<UsagePacingTargetsV1>;
     readEnteredMonthlyPrice?: () => Promise<import('@happier-dev/protocol/connect/accountSubscription').ProviderAccountSubscriptionMonthlyPriceV1 | undefined>;
     /** Drain the requested range under one captured read; ordinary Action callers still receive one page. */
-    readAllHistory?: Readonly<{ onProgress(value: ConnectedServiceQuotaGetResultV1): void }>;
+    readAllHistory?: Readonly<{
+        /** Host-only projections of the shared operands, including current-only demand. */
+        views?: readonly ProviderAccountUsageQuotaViewDemand[];
+        onProgress(value: ConnectedServiceQuotaGetResultV1, views?: ReadonlyMap<string, ConnectedServiceQuotaGetResultV1>): void;
+        onViewFailure?(source: ConnectedServiceQuotaGetInputV1['source'], queryKeys: readonly string[], error: unknown): void;
+    }>;
 }>;
 
 function subtractHistoryRange(range: HistoryRange, removed: HistoryRange): HistoryRange[] {
@@ -253,7 +259,10 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const { nowMs, waitingWork } = options.includePendingWork === false
         ? { nowMs: options.nowMs ?? Date.now(), waitingWork: undefined }
         : await readProviderAccountUsageWaitingWork(credentials, request, current, options);
-    return projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries: daySummaries?.summaries ?? (request.history ? [] : undefined), ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
+    const result = projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries: daySummaries?.summaries ?? (request.history ? [] : undefined), ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
+    const views = options.readAllHistory?.views;
+    if (views) options.readAllHistory?.onProgress(result, new Map(views.map(view => [view.key, result])));
+    return result;
 }
 
 /** The B owner materializes exact accepted observations once; Plans never carries raw history trees. */
@@ -274,6 +283,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     let daySummaries: ProviderAccountUsageDaySummaryV1[] | undefined;
     let recentHistory: ConnectedServiceQuotaGetResultV1['history'];
     let recentHistorySelection: ProviderAccountUsageRecentHistoryRangesV1 | undefined;
+    let dailyReady = false;
     let missingDays: readonly Readonly<{ dayStartAtMs: number }>[] | undefined;
     let dayCoverage: DailyHistoryCoverage | undefined;
     const credentialScope = resolveAuthCredentialsScopeKey(credentials);
@@ -308,7 +318,52 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             interval: getProviderAccountUsageDerivationInterval({ current, history: history.entries.map(entry => entry.snapshot), nowMs }) };
         return value;
     };
-    const publish = () => { assertCurrent(); options.readAllHistory?.onProgress(project()); };
+    const viewGroups = new Map<string, { range?: HistoryRange; exact: boolean; keys: string[]; projected?: ConnectedServiceQuotaGetResultV1 }>();
+    for (const { key, range, exact } of options.readAllHistory?.views ?? []) {
+        const identity = JSON.stringify([range?.startAtMs, range?.endAtMs, exact]);
+        const group = viewGroups.get(identity);
+        if (group) group.keys.push(key);
+        else viewGroups.set(identity, { range, exact, keys: [key] });
+    }
+    const projectViews = () => {
+        const views = new Map<string, ConnectedServiceQuotaGetResultV1>();
+        let head: ConnectedServiceQuotaGetResultV1 | undefined;
+        for (const group of viewGroups.values()) {
+            const { range, exact, keys } = group;
+            let value: ConnectedServiceQuotaGetResultV1;
+            if (!range || !(exact ? history : dailyReady)) value = head ??= projectProviderAccountUsageQuotaReadV1({ input: { source: request.source },
+                current, nowMs: readNowMs, targets, waitingWork });
+            else if (exact && !daily && range.startAtMs === displayDemand.range.startAtMs && range.endAtMs === displayDemand.range.endAtMs) value = project();
+            else {
+                // Select raw accepted observations and day operands before deriving
+                // windows, coverage, curves or cursors for this view.
+                const overlaps = ({ dayStartAtMs }: { dayStartAtMs: number }) => dayStartAtMs < range.endAtMs
+                    && dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS > range.startAtMs;
+                const facts = group.projected ??= projectProviderAccountUsageQuotaReadV1({
+                    input: { source: request.source, projection: { ...displayDemand, range } }, current, nowMs: readNowMs, targets, waitingWork,
+                    daySummaries: exact ? daySummaries?.filter(overlaps) : daySummaries, missingDays: missingDays?.filter(overlaps),
+                    ...(exact ? { history: { entries: history!.entries.filter(entry => range.startAtMs <= entry.observedAtMs
+                        && entry.observedAtMs < range.endAtMs), nextCursor: null }, exactHistoryRange: range }
+                        : { recentHistory, recentHistorySelection }),
+                });
+                value = facts.current === current && (targets === undefined || facts.targets === targets)
+                    && (waitingWork === undefined || facts.waitingWork === waitingWork) ? facts : {
+                        ...facts, current, targets: targets ?? facts.targets, waitingWork: waitingWork ?? facts.waitingWork,
+                    };
+                group.projected = value;
+            }
+            for (const key of keys) views.set(key, value);
+        }
+        return views;
+    };
+    const publish = () => {
+        assertCurrent();
+        const progress = options.readAllHistory;
+        if (!progress) return;
+        const views = viewGroups.size ? projectViews() : undefined;
+        // Usage consumes the keyed views. It has no use for a union history projection.
+        progress.onProgress(views?.values().next().value ?? project(), views);
+    };
     publish();
     const pacing = options.readPacingTargets ? options.readPacingTargets().then(value => {
         if (!active) return;
@@ -449,7 +504,9 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                     }
                     settledRecent = { throughCursor, ranges, history: recentHistory, coverage: historyCoverage };
                 }
-                if (!exactDemand) { publish(); return; }
+                dailyReady = true;
+                if (viewGroups.size || !exactDemand) publish();
+                if (!exactDemand) return;
             }
             const demand = exactDemand!;
             const query = { recordId, projection: demand };
@@ -458,138 +515,147 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             // Read before the body so a concurrent prune cannot pair an older
             // result with newer coverage on the next admission.
             await summaries;
-            // A concurrent backfill or accepted tail can invalidate publication.
-            // Reopen canonical coverage before deriving another write.
-            while (active) {
-                const retained = options.projectionDocuments?.get(recordId)?.exact;
-                const admittedPrefix = retained?.admitted;
-                const settled = admittedPrefix?.settled;
-                const overlaps = (day: number) => day < demand.range.endAtMs
-                    && day + PROVIDER_ACCOUNT_USAGE_DAY_MS > demand.range.startAtMs;
-                const coverage = dayCoverage;
-                const reuse = retained && admittedPrefix && settled && coverage
-                    && hasUsageProjectionCustody(admittedPrefix, options, credentialScope, materialBytes)
-                    && settled.range.startAtMs <= demand.range.startAtMs
-                    && (demand.range.endAtMs <= settled.range.endAtMs || [...coverage].every(([day, proof]) =>
-                        !overlaps(day) || (proof.coverage?.frontier?.observedAtMs ?? -1) < settled.range.endAtMs))
-                    && [...settled.coverage].every(([day, proof]) => !overlaps(day) || sameDayHistoryEvidence(proof, coverage.get(day)))
-                    && [...coverage.keys()].every(day => !overlaps(day) || settled.coverage.has(day));
-                const raw = reuse ? { projection: retained.projection, complete: true, published: undefined, opened: undefined }
-                    : await requestProviderAccountUsageProjection(credentials, query, options);
-                if (!active) return;
-                if (!raw) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
-                let read = raw;
-                if (read.projection && read.projection.demand.range.startAtMs > demand.range.startAtMs) {
-                    read = { projection: null, complete: false };
-                }
-                let opened: ReturnType<typeof openProviderAccountUsagePageProjectionV1> | null = null;
-                const held = options.projectionDocuments?.get(recordId)?.exact;
-                const prior = held?.projection === read.projection ? held?.admitted : undefined;
-                const sameCustody = hasUsageProjectionCustody(prior, options, credentialScope, materialBytes);
-                if (read.projection) {
-                    opened = sameCustody ? prior!.opened : read.opened ?? openProviderAccountUsagePageProjectionV1({ recordId, accountMode: options.accountMode,
-                        material: options.material, content: read.projection.content });
-                }
-                const stored = read.projection;
-                if (stored && opened && (stored.recordId !== recordId || opened.range.startAtMs !== stored.demand.range.startAtMs
-                    || opened.range.endAtMs !== stored.demand.range.endAtMs || opened.history.entries.length !== stored.observationCount
-                    || opened.range.startAtMs > demand.range.startAtMs
-                    || JSON.stringify(opened.history.entries.length ? (({ id, observedAtMs }) => ({ id, observedAtMs }))(opened.history.entries.at(-1)!) : null) !== JSON.stringify(stored.frontier))) {
-                    throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
-                }
-                if (stored && opened && held?.projection === stored) {
-                    admitted = sameCustody ? prior : { accountMode: options.accountMode, credentialScope,
-                        materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened };
-                    held.admitted = admitted;
-                }
-                let entries = opened?.history.entries ?? [];
-                if (!read.complete) {
-                    const range = { startAtMs: opened?.range.startAtMs ?? demand.range.startAtMs,
-                        endAtMs: Math.max(opened?.range.endAtMs ?? 0, demand.range.endAtMs, raw.published?.demand.range.endAtMs ?? 0) };
-                    const openPage = createProviderAccountUsagePageProjectionOpenerV1();
-                    const admit = (values: typeof entries) => openPage(packProviderAccountUsagePageProjectionV1(
-                        buildProviderAccountUsagePageProjectionV1({ recordId, range, history: { entries: values, nextCursor: null } }),
-                    )).history.entries;
-                    let admittedPrefix = false;
-                    await drainProviderAccountUsageHistory(credentials, { recordId,
-                        history: { range, pageSize: 100, ...(stored?.frontier ? { cursor: stored.frontier } : {}) } }, options, async page => {
-                        if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
-                        const next = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode, material: options.material, page }, options);
-                        if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
-                        // Raw fallback pages carry full copies of unchanged provider
-                        // inventory and meter definitions. Admit them into the same
-                        // dictionaries as a stored projection before acquiring the
-                        // next page; keep every accepted id, clock and numeric reading.
-                        if (next.entries.length) {
-                            if (!admittedPrefix) {
-                                entries = entries.length ? admit(entries) : [];
-                                admittedPrefix = true;
-                            }
-                            for (const entry of admit(next.entries)) entries.push(entry);
-                        }
-                    });
+            const readExact = async () => {
+                // A concurrent backfill or accepted tail can invalidate publication.
+                // Reopen canonical coverage before deriving another write.
+                while (active) {
+                    const retained = options.projectionDocuments?.get(recordId)?.exact;
+                    const admittedPrefix = retained?.admitted;
+                    const settled = admittedPrefix?.settled;
+                    const overlaps = (day: number) => day < demand.range.endAtMs
+                        && day + PROVIDER_ACCOUNT_USAGE_DAY_MS > demand.range.startAtMs;
+                    const coverage = dayCoverage;
+                    const reuse = retained && admittedPrefix && settled && coverage
+                        && hasUsageProjectionCustody(admittedPrefix, options, credentialScope, materialBytes)
+                        && settled.range.startAtMs <= demand.range.startAtMs
+                        && (demand.range.endAtMs <= settled.range.endAtMs || [...coverage].every(([day, proof]) =>
+                            !overlaps(day) || (proof.coverage?.frontier?.observedAtMs ?? -1) < settled.range.endAtMs))
+                        && [...settled.coverage].every(([day, proof]) => !overlaps(day) || sameDayHistoryEvidence(proof, coverage.get(day)))
+                        && [...coverage.keys()].every(day => !overlaps(day) || settled.coverage.has(day));
+                    const raw = reuse ? { projection: retained.projection, complete: true, published: undefined, opened: undefined }
+                        : await requestProviderAccountUsageProjection(credentials, query, options);
                     if (!active) return;
-                    const projection = buildProviderAccountUsagePageProjectionV1({ recordId, range, history: { entries, nextCursor: null } });
-                    const last = entries.at(-1);
-                    const metadata = { recordId, encoding: PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
-                        demand: { range, resolution: demand.resolution }, frontier: last ? { id: last.id, observedAtMs: last.observedAtMs } : null,
-                        observationCount: entries.length };
-                    const materialize = (): z.infer<typeof ProviderAccountUsagePageProjectionWriteV1Schema> => ({ ...metadata,
-                        content: sealProviderAccountUsagePageProjectionV1({ projection, accountMode: options.accountMode,
-                            material: options.material, randomBytes: getRandomBytes }) });
-                    // The server owns accepted-prefix admission and equivalent
-                    // sealed-write deduplication. Independent readers never queue
-                    // behind one another or decide another writer's custody.
-                    assertCurrent();
-                    const body = materialize();
-                    const writeScope = options.readTransport?.scope ?? options.readTransport?.key;
-                    if (writeScope) usageHttpReads.invalidate(writeScope);
-                    const response = await (options.request ?? createServerFetchForActiveServer(options.expectedActiveServer))('/v4/connect/qualified/provider-account-usage/history', {
-                        method: 'PUT', signal: options.signal, headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body),
-                    }, { includeAuth: false, ...(options.expectedActiveServer ? { expectedActiveServer: options.expectedActiveServer } : {}) })
-                        .finally(() => { if (writeScope) usageHttpReads.invalidate(writeScope); });
-                    if (!active) return;
-                    assertCurrent();
-                    if (!response.ok) {
-                        if (response.status === 409) {
-                            const failure: unknown = await response.json();
-                            assertCurrent();
-                            if (failure && typeof failure === 'object' && 'error' in failure
-                                && failure.error === 'provider_account_usage_projection_conflict') continue;
-                        }
-                        const code = response.status === 401 || response.status === 403 ? 'denied'
-                            : response.status === 409 ? 'provider_account_usage_projection_conflict' : 'provider_account_usage_projection_write_failed';
-                        throw new HappyError(code, false, { status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'server', code });
+                    if (!raw) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+                    let read = raw;
+                    if (read.projection && read.projection.demand.range.startAtMs > demand.range.startAtMs) {
+                        read = { projection: null, complete: false };
                     }
-                    admitted = { accountMode: options.accountMode, credentialScope,
-                        materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened: projection,
-                        view: sameCustody ? prior?.view : undefined };
-                    // A successful PUT can retain another writer's sealed
-                    // bytes. Its prefix acknowledgement is not a validator
-                    // for this local body or the demand's complete bit.
-                    options.projectionDocuments?.set(recordId, { ...options.projectionDocuments.get(recordId), exact: { projection: body, etag: '', admitted } });
-                } else if (!opened) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+                    let opened: ReturnType<typeof openProviderAccountUsagePageProjectionV1> | null = null;
+                    const held = options.projectionDocuments?.get(recordId)?.exact;
+                    const prior = held?.projection === read.projection ? held?.admitted : undefined;
+                    const sameCustody = hasUsageProjectionCustody(prior, options, credentialScope, materialBytes);
+                    if (read.projection) {
+                        opened = sameCustody ? prior!.opened : read.opened ?? openProviderAccountUsagePageProjectionV1({ recordId, accountMode: options.accountMode,
+                            material: options.material, content: read.projection.content });
+                    }
+                    const stored = read.projection;
+                    if (stored && opened && (stored.recordId !== recordId || opened.range.startAtMs !== stored.demand.range.startAtMs
+                        || opened.range.endAtMs !== stored.demand.range.endAtMs || opened.history.entries.length !== stored.observationCount
+                        || opened.range.startAtMs > demand.range.startAtMs
+                        || JSON.stringify(opened.history.entries.length ? (({ id, observedAtMs }) => ({ id, observedAtMs }))(opened.history.entries.at(-1)!) : null) !== JSON.stringify(stored.frontier))) {
+                        throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
+                    }
+                    if (stored && opened && held?.projection === stored) {
+                        admitted = sameCustody ? prior : { accountMode: options.accountMode, credentialScope,
+                            materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened };
+                        held.admitted = admitted;
+                    }
+                    let entries = opened?.history.entries ?? [];
+                    if (!read.complete) {
+                        const range = { startAtMs: opened?.range.startAtMs ?? demand.range.startAtMs,
+                            endAtMs: Math.max(opened?.range.endAtMs ?? 0, demand.range.endAtMs, raw.published?.demand.range.endAtMs ?? 0) };
+                        const openPage = createProviderAccountUsagePageProjectionOpenerV1();
+                        const admit = (values: typeof entries) => openPage(packProviderAccountUsagePageProjectionV1(
+                            buildProviderAccountUsagePageProjectionV1({ recordId, range, history: { entries: values, nextCursor: null } }),
+                        )).history.entries;
+                        let admittedPrefix = false;
+                        await drainProviderAccountUsageHistory(credentials, { recordId,
+                            history: { range, pageSize: 100, ...(stored?.frontier ? { cursor: stored.frontier } : {}) } }, options, async page => {
+                            if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
+                            const next = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode, material: options.material, page }, options);
+                            if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
+                            // Raw fallback pages carry full copies of unchanged provider
+                            // inventory and meter definitions. Admit them into the same
+                            // dictionaries as a stored projection before acquiring the
+                            // next page; keep every accepted id, clock and numeric reading.
+                            if (next.entries.length) {
+                                if (!admittedPrefix) {
+                                    entries = entries.length ? admit(entries) : [];
+                                    admittedPrefix = true;
+                                }
+                                for (const entry of admit(next.entries)) entries.push(entry);
+                            }
+                        });
+                        if (!active) return;
+                        const projection = buildProviderAccountUsagePageProjectionV1({ recordId, range, history: { entries, nextCursor: null } });
+                        const last = entries.at(-1);
+                        const metadata = { recordId, encoding: PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
+                            demand: { range, resolution: demand.resolution }, frontier: last ? { id: last.id, observedAtMs: last.observedAtMs } : null,
+                            observationCount: entries.length };
+                        const materialize = (): z.infer<typeof ProviderAccountUsagePageProjectionWriteV1Schema> => ({ ...metadata,
+                            content: sealProviderAccountUsagePageProjectionV1({ projection, accountMode: options.accountMode,
+                                material: options.material, randomBytes: getRandomBytes }) });
+                        // The server owns accepted-prefix admission and equivalent
+                        // sealed-write deduplication. Independent readers never queue
+                        // behind one another or decide another writer's custody.
+                        assertCurrent();
+                        const body = materialize();
+                        const writeScope = options.readTransport?.scope ?? options.readTransport?.key;
+                        if (writeScope) usageHttpReads.invalidate(writeScope);
+                        const response = await (options.request ?? createServerFetchForActiveServer(options.expectedActiveServer))('/v4/connect/qualified/provider-account-usage/history', {
+                            method: 'PUT', signal: options.signal, headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body),
+                        }, { includeAuth: false, ...(options.expectedActiveServer ? { expectedActiveServer: options.expectedActiveServer } : {}) })
+                            .finally(() => { if (writeScope) usageHttpReads.invalidate(writeScope); });
+                        if (!active) return;
+                        assertCurrent();
+                        if (!response.ok) {
+                            if (response.status === 409) {
+                                const failure: unknown = await response.json();
+                                assertCurrent();
+                                if (failure && typeof failure === 'object' && 'error' in failure
+                                    && failure.error === 'provider_account_usage_projection_conflict') continue;
+                            }
+                            const code = response.status === 401 || response.status === 403 ? 'denied'
+                                : response.status === 409 ? 'provider_account_usage_projection_conflict' : 'provider_account_usage_projection_write_failed';
+                            throw new HappyError(code, false, { status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'server', code });
+                        }
+                        admitted = { accountMode: options.accountMode, credentialScope,
+                            materialType: options.material?.type, materialBytes: materialBytes?.slice(), opened: projection,
+                            view: sameCustody ? prior?.view : undefined };
+                        // A successful PUT can retain another writer's sealed
+                        // bytes. Its prefix acknowledgement is not a validator
+                        // for this local body or the demand's complete bit.
+                        options.projectionDocuments?.set(recordId, { ...options.projectionDocuments.get(recordId), exact: { projection: body, etag: '', admitted } });
+                    } else if (!opened) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+                    if (!active) return;
+                    assertCurrent();
+                    // Coverage/range may change without a new selected observation.
+                    // Reuse only exact admitted entry identities, never a cursor/count.
+                    await summaries;
+                    if (!active) return;
+                    assertCurrent();
+                    if (admitted && !reuse && dayCoverage) admitted.settled = { range: demand.range, coverage: dayCoverage };
+                    const view = admitted?.view;
+                    const selected = entries.filter(entry => entry.observedAtMs >= demand.range.startAtMs && entry.observedAtMs < demand.range.endAtMs);
+                    history = view && selected.length === view.history.entries.length
+                        && selected.every((entry, index) => entry === view.history.entries[index])
+                        ? view.history : { entries: selected, nextCursor: null };
+                    pageFacts = view && history === view.history && sameStrictJsonValue(recordJson, view.record)
+                        && sameStrictJsonValue(daySummaries ?? null, view.daySummaries ?? null) ? view.value.pageFacts : undefined;
+                    return;
+                }
+            };
+            await readExact().catch(error => {
                 if (!active) return;
-                assertCurrent();
-                // Coverage/range may change without a new selected observation.
-                // Reuse only exact admitted entry identities, never a cursor/count.
-                await summaries;
-                if (!active) return;
-                assertCurrent();
-                if (admitted && !reuse && dayCoverage) admitted.settled = { range: demand.range, coverage: dayCoverage };
-                const view = admitted?.view;
-                const selected = entries.filter(entry => entry.observedAtMs >= demand.range.startAtMs && entry.observedAtMs < demand.range.endAtMs);
-                history = view && selected.length === view.history.entries.length
-                    && selected.every((entry, index) => entry === view.history.entries[index])
-                    ? view.history : { entries: selected, nextCursor: null };
-                pageFacts = view && history === view.history && sameStrictJsonValue(recordJson, view.record)
-                    && sameStrictJsonValue(daySummaries ?? null, view.daySummaries ?? null) ? view.value.pageFacts : undefined;
-                publish();
-                return;
-            }
+                const onViewFailure = options.readAllHistory?.onViewFailure;
+                const groups = [...viewGroups.values()];
+                if (!onViewFailure || groups.every(group => group.exact)) throw error;
+                onViewFailure(request.source, groups.flatMap(group => group.exact ? group.keys : []), error);
+            });
+            if (active && history) publish();
         })()]);
-        const result = project();
+        const result = (viewGroups.size ? projectViews().values().next().value : undefined) ?? project();
         assertCurrent();
         const documents = options.projectionDocuments;
         const held = documents?.get(recordId);

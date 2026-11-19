@@ -4952,6 +4952,10 @@ describe('usage query captured Resource adapter', () => {
     const sealed = sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes: length => new Uint8Array(length).fill(9) });
     let generation = 1;
     let projectionReads = 0;
+    // Stable old observations plus an append-only live frontier. Both
+    // coverage and sealed history describe the same accepted generation.
+    const observations = () => [now - 2 * day, now - day, ...Array.from({ length: generation }, (_, index) => now - 100 + index)]
+      .map(observedAtMs => ({ id: `observation-${observedAtMs}`, observedAtMs }));
     const captured = await context(request => {
       if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json(ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
       if (request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json(ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
@@ -4963,18 +4967,28 @@ describe('usage query captured Resource adapter', () => {
       if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
         content: { t: 'encrypted', c: sealed.ciphertext, recoveryCreditDetails: sealed.recoveryCreditDetails },
         metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' }, sources: [source] });
-      if (request.path === '/v4/connect/qualified/provider-account-usage/day-summaries') return Response.json({ summaries: [], missingDays: [] });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/day-summaries') {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema,
+          request.url.searchParams.get('query'));
+        const byDay = new Map<number, ReturnType<typeof observations>>();
+        for (const observation of observations()) {
+          const dayStartAtMs = Math.floor(observation.observedAtMs / day) * day;
+          if (query.range && (dayStartAtMs >= query.range.endAtMs || dayStartAtMs + day <= query.range.startAtMs)) continue;
+          if (!byDay.has(dayStartAtMs)) byDay.set(dayStartAtMs, []);
+          byDay.get(dayStartAtMs)!.push(observation);
+        }
+        return Response.json({ summaries: [], missingDays: query.includeCoverage ? [...byDay].map(([dayStartAtMs, entries]) => ({
+          dayStartAtMs, coverage: { observationCount: entries.length, frontier: entries.at(-1)! },
+        })) : [] });
+      }
       if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
         const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
           request.url.searchParams.get('query'));
         if (!('projection' in query)) throw new Error('Expected the real Resource projection read');
         projectionReads++;
         const range = query.projection.range;
-        // Stable old observations plus an append-only live frontier. Each
-        // protected HTTP generation is admitted through the real decoder.
-        const observations = [now - 2 * day, now - day, ...Array.from({ length: generation }, (_, index) => now - 100 + index)];
-        const entries = observations.filter(at => at >= range.startAtMs && at < range.endAtMs).map(at => ({
-          id: `observation-${at}`, observedAtMs: at, snapshot: { ...snapshot, observedAtMs: at, fetchedAtMs: at } }));
+        const entries = observations().filter(({ observedAtMs }) => observedAtMs >= range.startAtMs && observedAtMs < range.endAtMs)
+          .map(entry => ({ ...entry, snapshot: { ...snapshot, observedAtMs: entry.observedAtMs, fetchedAtMs: entry.observedAtMs } }));
         const projection = buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range,
           history: { entries, nextCursor: null } });
         const frontier = entries.at(-1)!;
@@ -6305,7 +6319,10 @@ describe('usage query captured Resource adapter', () => {
     } finally { catalog.resolve(); await reading.catch(() => {}); }
   });
 
-  it.each(['year', 'all'] as const)('keeps %s daily quota demand independent of a shorter exact-curve query', async relative => {
+  it.each([
+    ['year', 'ready'], ['all', 'ready'], ['year', 'exact failure'], ['year', 'shared failure'], ['year', 'current-only sibling'],
+  ] as const)(
+    'keeps %s daily quota demand independent of a shorter exact-curve query (%s)', async (relative, scenario) => {
     const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
     const day = 86_400_000;
     const now = Date.UTC(2026, 9, 15, 12);
@@ -6332,6 +6349,9 @@ describe('usage query captured Resource adapter', () => {
     });
     const historyRanges: { startAtMs: number; endAtMs: number }[] = [];
     const exactRanges: typeof historyRanges = [];
+    let exactProjectionResponse: Promise<Response> | undefined;
+    let pendingWitnessResponse: Promise<Response> | undefined;
+    let witnessRequested = false;
     const captured = await context(request => {
       if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
         connectedServices: { enabled: true, quotas: { enabled: true } },
@@ -6346,20 +6366,81 @@ describe('usage query captured Resource adapter', () => {
           request.url.searchParams.get('query'));
         if ('projection' in query) {
           exactRanges.push(query.projection.range);
-          return Response.json({ projection: null, complete: false });
+          return exactProjectionResponse ?? Response.json({ projection: null, complete: false });
+        }
+        if ('witness' in query && pendingWitnessResponse) {
+          witnessRequested = true;
+          return pendingWitnessResponse;
         }
         if (!('history' in query)) throw new Error('Unexpected exact witness query');
         historyRanges.push(query.history.range);
         const page = { entries: entries.filter(entry => entry.observedAtMs >= query.history.range.startAtMs && entry.observedAtMs < query.history.range.endAtMs), nextCursor: null };
         return new Response(JSON.stringify(page) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
       }
-      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: pendingWitnessResponse ? [{
+        sessionId: 'queued-session', localId: 'queued-reset', authorityCurrent: true,
+        reset: { source, recordId: current.recordId, meterId: 'daily', witness: { id: entries[0]!.id, observedAtMs: entries[0]!.observedAtMs } },
+      }] : [] });
       return undefined;
     }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
       credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
     const daily = normalizeUsageQuery({ period: { relative }, includeAccounting: false, includeQuota: true,
       includeQuotaHistory: true, includeQuotaExactHistory: false, includeComparison: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const exact = normalizeUsageQuery({ ...daily, period: { relative: '7days' }, includeQuotaExactHistory: true });
+    type Batch = Awaited<ReturnType<typeof readUiUsageQueryBatch>>;
+    const quotaFor = (batch: Batch, query: typeof daily) => batch.results.find(slice => slice.key === getUsageQueryKey(query))?.quota?.[0];
+
+    if (scenario !== 'ready') {
+      const sibling = scenario === 'current-only sibling' ? normalizeUsageQuery({ ...daily, includeQuotaHistory: false }) : daily;
+      const qualifiedState = (batch: Batch | undefined, query: typeof daily) => batch?.results
+        .find(slice => slice.key === getUsageQueryKey(query))?.sources.find(state => state.source.startsWith('quota:'));
+      const unavailable = () => Response.json({ error: 'provider_account_usage_read_failed' }, { status: 500 });
+      const exactResponse = createDeferred<Response>();
+      const witnessResponse = scenario === 'shared failure' ? createDeferred<Response>() : undefined;
+      exactProjectionResponse = exactResponse.promise;
+      pendingWitnessResponse = witnessResponse?.promise;
+      let progress: Batch | undefined;
+      const reading = readUiUsageQueryBatch(captured, { queries: [sibling, exact] }, undefined, undefined,
+        { onProgress: reproject => { progress = reproject(); } });
+      let failed: Batch;
+      try {
+        await expect.poll(() => exactRanges.length).toBe(1);
+        expect(qualifiedState(progress, sibling)?.status).toBe('available');
+        expect(qualifiedState(progress, exact)?.status).toBe('stale');
+        if (witnessResponse) {
+          // A shared Pending witness fails with the same transport error while
+          // the exact demand is still waiting.
+          await expect.poll(() => witnessRequested).toBe(true);
+          witnessResponse.resolve(unavailable());
+        } else exactResponse.resolve(unavailable());
+        failed = await reading;
+      } finally {
+        witnessResponse?.resolve(unavailable());
+        exactResponse.resolve(Response.json({ projection: null, complete: false }));
+        pendingWitnessResponse = exactProjectionResponse = undefined;
+        await reading;
+      }
+      expect.soft(qualifiedState(failed, exact)).toMatchObject({ status: 'stale', errorCode: 'provider_account_usage_read_failed' });
+      if (scenario === 'shared failure') {
+        expect(qualifiedState(failed, sibling)).toMatchObject({ status: 'stale', errorCode: 'provider_account_usage_read_failed' });
+      } else {
+        expect.soft(qualifiedState(failed, sibling)?.status).toBe('available');
+        expect.soft(qualifiedState(failed, sibling)?.errorCode).toBeUndefined();
+        if (scenario === 'current-only sibling') {
+          expect.soft(quotaFor(failed, sibling)?.current).toEqual(current);
+          expect(quotaFor(failed, sibling)?.pageFacts).toBeUndefined();
+          return;
+        }
+        expect.soft(quotaFor(failed, sibling)?.pageFacts?.dayQuotaHistory).toHaveLength(days.length);
+        const recovered = await readUiUsageQueryBatch(captured, { queries: [sibling, exact] }, undefined, failed);
+        expect.soft(qualifiedState(recovered, exact)?.status).toBe('available');
+        expect.soft(qualifiedState(recovered, exact)?.errorCode).toBeUndefined();
+        expect(quotaFor(recovered, exact)?.pageFacts?.historyStatus).toBe('complete');
+      }
+      return;
+    }
+
     const first = await readUiUsageQueryBatch(captured, { queries: [daily] });
     expect.soft(first.results[0]?.quota?.[0]?.pageFacts?.dayQuotaHistory).toHaveLength(days.length);
     expect.soft(first.results[0]?.quota?.[0]?.pageFacts?.earlierCurves).toEqual([
@@ -6371,12 +6452,26 @@ describe('usage query captured Resource adapter', () => {
       'daily Year/All only reads the actual current quota window').toBe(true);
     expect.soft(exactRanges).toEqual([]);
     historyRanges.length = 0;
-    const exact = normalizeUsageQuery({ ...daily, period: { relative: '7days' }, includeQuotaExactHistory: true });
     const mixed = await readUiUsageQueryBatch(captured, { queries: [daily, exact] });
-    expect.soft(mixed.results.find(slice => slice.key === getUsageQueryKey(daily))?.quota?.[0]?.pageFacts?.dayQuotaHistory).toHaveLength(days.length);
+    expect.soft(quotaFor(mixed, daily)?.pageFacts?.dayQuotaHistory).toHaveLength(days.length);
+    expect.soft(quotaFor(mixed, daily)?.unusedCapacity).toEqual({ historyStatus: 'not_loaded', windows: [] });
+    expect.soft(quotaFor(mixed, exact)?.pageFacts?.dayQuotaHistory).toHaveLength(2);
+    expect.soft(quotaFor(mixed, exact)?.unusedCapacity?.windows.map(window => window.value.status)).toEqual(['available']);
     expect.soft(historyRanges.length + exactRanges.length).toBeGreaterThan(0);
     expect([...historyRanges, ...exactRanges].every(range => range.startAtMs >= now - 7 * day),
       'a seven-day earlier-curve consumer must not widen the daily Year/All into exact history').toBe(true);
+
+    if (relative === 'year') {
+      const thirtyDays = normalizeUsageQuery({ ...exact, period: { relative: '30days' } });
+      const sourceReads = () => home!.requests.filter(request => request.path.endsWith('/sources/resolve')).length;
+      const before = sourceReads();
+      exactRanges.length = 0;
+      const mixedExact = await readUiUsageQueryBatch(captured, { queries: [exact, thirtyDays] });
+      expect.soft(quotaFor(mixedExact, exact)?.unusedCapacity?.windows.map(window => window.value.status)).toEqual(['available']);
+      expect.soft(quotaFor(mixedExact, thirtyDays)?.unusedCapacity?.windows.map(window => window.value.status)).toEqual(['available', 'available']);
+      expect.soft(sourceReads() - before).toBe(1);
+      expect(exactRanges).toHaveLength(1);
+    }
   });
 
   it('opens first-use B without cache hydration and admits its lossless projection only after the backfill completes', async () => {

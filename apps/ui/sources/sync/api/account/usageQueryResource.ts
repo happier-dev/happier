@@ -12,7 +12,7 @@ import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/pl
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
-import { resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
@@ -60,7 +60,7 @@ import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCreden
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import { getProviderAccountUsageCacheState, subscribeProviderAccountUsageCache, type ProviderAccountUsageCacheEntry } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { buildQualifiedQuotaSnapshotScopeKey, getQualifiedQuotaSnapshotEntry, subscribeQualifiedQuotaSnapshotEntry, type QualifiedQuotaSnapshotStoreEntry } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
-import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { getProviderAccountUsageDerivationInterval } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { isConnectedServiceUsageCapable } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -72,7 +72,7 @@ import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happ
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
-import type { ProviderAccountUsageProjectionDocuments } from './apiProviderAccountUsage';
+import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { createUsageQueryResourceContent } from './usageQueryResourceEncoding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -241,7 +241,7 @@ function reconcileQuotaRead(input: Readonly<{
 }
 
 /** Observe already-admitted B; this path never probes, decrypts or refreshes a provider. */
-function readOpenedQuota(context: UsageQueryAccountContext, previous?: UsageQueryBatchResult): OpenedQuotaRead {
+function readOpenedQuota(context: UsageQueryAccountContext, queries: readonly UsageQuery[], previous?: UsageQueryBatchResult): OpenedQuotaRead {
     const scope = readOpenedQuotaScope(context);
     if (!scope) return { status: 'unknown', errorCode: 'account_profile_unavailable' };
     if (scope.sources.length === 0) return scope.state.profile.connectedAccountsV4.length === 0
@@ -250,38 +250,45 @@ function readOpenedQuota(context: UsageQueryAccountContext, previous?: UsageQuer
     const decision = readQuotaFeatureDecision(context, scope);
     if (decision?.state !== 'enabled') return { status: decision?.state === 'unknown' || !decision ? 'unknown' : 'unsupported' };
     const rows = getProviderAccountUsageCacheState().entriesByCredentialScope[scope.providerScope] ?? {};
-    const retainedBySource = new Map(previous?.results.flatMap(slice => slice.quota ?? [])
-        .map(value => [createCanonicalJsonSigningInput(value.source), value]));
-    const previousBySource = new Map(previous?.results.flatMap(slice => slice.sources)
-        .filter(state => state.source.startsWith('quota:'))
-        .map(state => [state.source, state]));
-    const value: ConnectedServiceQuotaGetResultV1[] = [];
-    const sources: UsageQuerySourceState[] = [];
-    let pending = false;
-    let unavailable = false;
-    let stale = false;
     const nowMs = Date.now();
-    for (const { source, key } of scope.sources) {
-        const admitted = getQualifiedQuotaSnapshotEntry(key);
-        const row = admitted.supported === true && admitted.usageRecordId ? rows[admitted.usageRecordId] : undefined;
-        const sourceKey = `quota:${createCanonicalJsonSigningInput(source)}`;
-        const reconciled = reconcileQuotaRead({ admitted, source,
-            previous: retainedBySource.get(createCanonicalJsonSigningInput(source)), previousState: previousBySource.get(sourceKey),
-            revision: { kind: 'cache', row, nowMs, targets: areServerAccountScopesEqual(scope.state.settingsScope, context.accountLifetime.scope)
-                ? scope.state.settings.usagePacingTargetsV1 : undefined } });
-        if (reconciled.value) value.push(reconciled.value);
-        if (reconciled.state) sources.push(reconciled.state);
-        pending ||= reconciled.pending === true;
-        unavailable ||= reconciled.unavailable === true;
-        stale ||= reconciled.stale === true;
-    }
-    if (value.length) {
-        const clocks = value.flatMap(row => row.current && wasConnectedServiceQuotaObserved(row.current) ? [row.current.fetchedAtMs] : []);
-        return { status: unavailable || pending ? 'partial' : stale ? 'stale' : 'available', value, sources,
-            ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}) };
-    }
-    return { status: pending ? 'pending' : scope.sources.every(({ key }) => getQualifiedQuotaSnapshotEntry(key).supported === false)
-        ? 'unsupported' : 'not_loaded' };
+    const targets = areServerAccountScopesEqual(scope.state.settingsScope, context.accountLifetime.scope)
+        ? scope.state.settings.usagePacingTargetsV1 : undefined;
+    const admissions = scope.sources.map(({ key, source }) => ({ source, sourceKey: createCanonicalJsonSigningInput(source),
+        admitted: getQualifiedQuotaSnapshotEntry(key) }));
+    const project = (prior?: UsageQueryResultSlice): UsageQuotaSourceSnapshot => {
+        const retainedBySource = new Map(prior?.quota?.map(value => [createCanonicalJsonSigningInput(value.source), value]));
+        const previousBySource = new Map(prior?.sources.map(state => [state.source, state]));
+        const value: ConnectedServiceQuotaGetResultV1[] = [];
+        const sources: UsageQuerySourceState[] = [];
+        let pending = false;
+        let unavailable = false;
+        let stale = false;
+        for (const { source, sourceKey, admitted } of admissions) {
+            const row = admitted.supported === true && admitted.usageRecordId ? rows[admitted.usageRecordId] : undefined;
+            const reconciled = reconcileQuotaRead({ admitted, source, previous: retainedBySource.get(sourceKey),
+                previousState: previousBySource.get(`quota:${sourceKey}`), revision: { kind: 'cache', row, nowMs, targets } });
+            if (reconciled.value) value.push(reconciled.value);
+            if (reconciled.state) sources.push(reconciled.state);
+            pending ||= reconciled.pending === true;
+            unavailable ||= reconciled.unavailable === true;
+            stale ||= reconciled.stale === true;
+        }
+        if (value.length) {
+            const clocks = value.flatMap(row => row.current && wasConnectedServiceQuotaObserved(row.current) ? [row.current.fetchedAtMs] : []);
+            return { status: unavailable || pending ? 'partial' : stale ? 'stale' : 'available', value, sources,
+                ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}) };
+        }
+        return { status: pending ? 'pending' : admissions.every(({ admitted }) => admitted.supported === false)
+            ? 'unsupported' : 'not_loaded' };
+    };
+    const head = project();
+    const previousByQuery = new Map(previous?.results.map(slice => [slice.key, slice]));
+    const quotaByQuery = new Map(queries.map(query => {
+        const key = getUsageQueryKey(query);
+        const prior = previousByQuery.get(key);
+        return [key, prior ? project(prior) : head] as const;
+    }));
+    return { ...head, quotaByQuery };
 }
 
 function readQuotaFeatureDecision(context: UsageQueryAccountContext, scope: NonNullable<ReturnType<typeof readOpenedQuotaScope>>,
@@ -459,78 +466,152 @@ function readOpenedQuotaHistoryScope(context: UsageQueryAccountContext) {
     return scope?.sources.length && readQuotaFeatureDecision(context, scope)?.state === 'enabled' ? scope : null;
 }
 
+function getQuotaHistoryMode(query: UsageQuery): 'head' | 'daily' | 'exact' {
+    if (!query.includeQuotaHistory) return 'head';
+    return query.includeQuotaExactHistory === false && 'relative' in query.period
+        && (query.period.relative === 'year' || query.period.relative === 'all') ? 'daily' : 'exact';
+}
+
+/** Latest-batch siblings may share history only when they ask for the same history. */
+function getRetainedQuotaPeriodKey(query: UsageQuery): string {
+    const mode = getQuotaHistoryMode(query);
+    return mode === 'head' ? mode : createCanonicalJsonSigningInput([mode, query.period, query.timeZoneOffsetMinutes ?? 0]);
+}
+
+type RetainedUsageAllowance = Readonly<{
+    slices: ReadonlyMap<string, UsageQueryResultSlice>;
+    heads: ReadonlyMap<string, Readonly<{ read: ConnectedServiceQuotaGetResultV1; state: UsageQuerySourceState }>>;
+}>;
+
+function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUsageAllowance | undefined): RetainedUsageAllowance | undefined {
+    const slices = new Map<string, UsageQueryResultSlice>();
+    const heads = new Map<string, { read: ConnectedServiceQuotaGetResultV1; state: UsageQuerySourceState }>();
+    const nowMs = Date.now();
+    for (const slice of batch.results) {
+        if (slice.requestedQuery.includeQuota === false) continue;
+        slices.set(getRetainedQuotaPeriodKey(slice.requestedQuery), slice);
+        const sources = new Map(slice.sources.map(source => [source.source, source]));
+        for (const read of slice.quota ?? []) {
+            const { current } = read;
+            if (!current || !wasConnectedServiceQuotaObserved(current)) continue;
+            const key = createCanonicalJsonSigningInput(read.source);
+            const existing = heads.get(key);
+            if (existing?.read.current && ['incoming_older', 'incoming_future'].includes(compareConnectedServiceQuotaObservationRecency({
+                existingObservedAtMs: existing.read.current.observedAtMs, incomingObservedAtMs: current.observedAtMs, nowMs,
+            }))) continue;
+            const source = `quota:${key}`;
+            const status = sources.get(source)?.status === 'available' ? 'available' : 'stale';
+            if (existing?.state.status === 'available' && status === 'stale' && existing.read.current === current) continue;
+            const prior = (existing ?? previous?.heads.get(key))?.read;
+            const head = prior?.current === current && prior.targets === read.targets && prior.waitingWork === read.waitingWork ? prior
+                : projectProviderAccountUsageQuotaReadV1({ input: { source: read.source }, current, nowMs, targets: read.targets, waitingWork: read.waitingWork });
+            heads.set(key, { read: head, state: { source, status, asOfMs: current.fetchedAtMs } });
+        }
+    }
+    return slices.size ? { slices, heads } : previous;
+}
+
 async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
     demands: readonly Readonly<{ query: UsageQuery; period: NonNullable<UsageAccountingSourceSnapshot['period']> }>[], nowMs: number, signal?: AbortSignal,
     onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult,
-    opened: OpenedQuotaRead = readOpenedQuota(context, previous), changedRecordIds?: readonly string[], dayChange?: ProviderAccountUsageDayChangeV1): Promise<OpenedQuotaRead> {
+    opened: OpenedQuotaRead = readOpenedQuota(context, demands.map(({ query }) => query), previous), changedRecordIds?: readonly string[], dayChange?: ProviderAccountUsageDayChangeV1): Promise<OpenedQuotaRead> {
     const scope = readOpenedQuotaHistoryScope(context);
     if (!scope) return opened;
     // Start at the existing transport batch size; the admitted B reader grows
     // subsequent pages and publishes their accepted change points progressively.
-    const periods = demands.map(demand => demand.period);
-    const range = periods.length ? { startAtMs: Math.min(...periods.map(period => period.startMs ?? 0)),
-        endAtMs: Math.max(...periods.map(period => period.endMs ?? nowMs)) } : undefined;
-    const usesDailyFacts = ({ query }: typeof demands[number]) => query.includeQuotaExactHistory === false
-        && 'relative' in query.period && (query.period.relative === 'year' || query.period.relative === 'all');
-    const daily = demands.some(usesDailyFacts);
-    const exactPeriods = demands.filter(demand => !usesDailyFacts(demand)).map(demand => demand.period);
-    const exactHistoryRange = exactPeriods.length ? { startAtMs: Math.min(...exactPeriods.map(period => period.startMs ?? 0)),
-        endAtMs: Math.max(...exactPeriods.map(period => period.endMs ?? nowMs)) } : undefined;
-    if (range && range.endAtMs <= range.startAtMs) return { status: 'unknown', errorCode: 'quota_query_range_empty' };
-    const retainedBySource = new Map(opened.value?.map(value => [createCanonicalJsonSigningInput(value.source), value]));
-    const admissionBySource = new Map(scope.sources.map(({ source, key }) => [createCanonicalJsonSigningInput(source), key]));
-    for (const value of previous?.results.flatMap(result => result.quota ?? []) ?? []) {
-        const key = createCanonicalJsonSigningInput(value.source);
-        const admissionKey = admissionBySource.get(key);
-        if (!admissionKey || !canRetainQuotaRead(getQualifiedQuotaSnapshotEntry(admissionKey), value)) continue;
-        const observed = retainedBySource.get(key);
-        if (!observed?.current || observed.current.recordId === value.current?.recordId) retainedBySource.set(key, value);
+    const quotaByQuery = new Map<string, UsageQuotaSourceSnapshot>(opened.quotaByQuery);
+    const views: ProviderAccountUsageQuotaViewDemand[] = [];
+    for (const { query, period } of demands) {
+        const key = getUsageQueryKey(query);
+        const mode = getQuotaHistoryMode(query);
+        const range = mode === 'head' ? undefined : { startAtMs: period.startMs ?? 0, endAtMs: period.endMs ?? nowMs };
+        if (range && range.endAtMs <= range.startAtMs) quotaByQuery.set(key, { status: 'unknown', errorCode: 'quota_query_range_empty' });
+        else views.push({ key, range, exact: mode === 'exact' });
     }
-    const progressValues = scope.sources.map(({ source }) => retainedBySource.get(createCanonicalJsonSigningInput(source)) ?? null);
-    const requestedIndices = scope.sources.flatMap(({ key }, index) => usageQuotaRecordChangeAffects(
-        getQualifiedQuotaSnapshotEntry(key).usageRecordId ?? progressValues[index]?.current?.recordId, changedRecordIds) ? [index] : []);
+    if (!views.length) return { ...opened, quotaByQuery };
+    const union = (ranges: readonly NonNullable<ProviderAccountUsageQuotaViewDemand['range']>[]) => ranges.length
+        ? { startAtMs: Math.min(...ranges.map(range => range.startAtMs)), endAtMs: Math.max(...ranges.map(range => range.endAtMs)) } : undefined;
+    const range = union(views.flatMap(view => view.range ? [view.range] : []));
+    const daily = views.some(view => view.range && !view.exact);
+    const exactHistoryRange = union(views.flatMap(view => view.exact && view.range ? [view.range] : []));
+    const admissions = scope.sources.map(({ source, key }) => ({ source, sourceKey: createCanonicalJsonSigningInput(source),
+        admitted: getQualifiedQuotaSnapshotEntry(key) }));
+    const priorByQuery = new Map(previous?.results.map(slice => [slice.key, slice]));
     // Account reads settle independently. Keep their qualified identity even
     // when a failed read has no current facts to disclose.
-    const settledBySource = new Map(opened.sources
-        ?.filter(state => state.status !== 'pending' && state.status !== 'not_loaded')
-        .map(state => [state.source, state]));
-    const sources: UsageQuerySourceState[] = scope.sources.map(({ source }, index) => {
-        const key = `quota:${createCanonicalJsonSigningInput(source)}`;
-        return progressValues[index] && settledBySource.get(key) || { source: key, status: 'pending' };
+    const progress = views.map(view => {
+        const seed = quotaByQuery.get(view.key) ?? opened;
+        const prior = priorByQuery.get(view.key);
+        const retained = new Map(seed.value?.map(value => [createCanonicalJsonSigningInput(value.source), value]));
+        const previousStates = new Map(seed.sources?.map(state => [state.source, state]));
+        const priorValues = new Map(prior?.quota?.map(value => [createCanonicalJsonSigningInput(value.source), value]));
+        const sources = admissions.map(({ sourceKey, admitted }) => {
+            const prior = priorValues.get(sourceKey);
+            const observed = retained.get(sourceKey);
+            const previous = prior && canRetainQuotaRead(admitted, prior)
+                && (!observed?.current || observed.current.recordId === prior.current?.recordId) ? prior : observed;
+            const source = `quota:${sourceKey}`;
+            const state = previous && previousStates.get(source) || { source, status: 'pending' as const };
+            return { previous, previousState: state, value: previous ?? null, state,
+                accepted: undefined as ConnectedServiceQuotaGetResultV1 | undefined, settled: false,
+                errorCode: undefined as string | undefined };
+        });
+        return { ...view, sources };
     });
-    const failures = new Map<number, string>();
-    const projectQuota = (status: 'available' | 'partial' | 'stale' | 'error'): OpenedQuotaRead => {
-        const value = progressValues.filter((row): row is ConnectedServiceQuotaGetResultV1 => row !== null);
+    const requestedIndices = admissions.flatMap(({ admitted }, index) => usageQuotaRecordChangeAffects(admitted.usageRecordId
+        ?? progress.find(view => view.sources[index]?.value?.current)?.sources[index]?.value?.current?.recordId, changedRecordIds) ? [index] : []);
+    const projectQuota = (rows: typeof progress[number]['sources'], settled: boolean): UsageQuotaSourceSnapshot => {
+        const value = rows.flatMap(row => row.value ? [row.value] : []);
+        const sources = rows.map(row => row.state);
+        const failures = sources.filter(state => state.errorCode);
         const clocks = value.flatMap(row => row.current && wasConnectedServiceQuotaObserved(row.current) ? [row.current.fetchedAtMs] : []);
         // A failure answering first cannot turn the still-unanswered accounts
         // into an empty/insufficient allowance result.
+        const status = !settled ? 'partial' : !failures.length ? 'available'
+            : value.length === rows.length ? 'stale' : value.length ? 'partial' : 'error';
         const aggregateStatus = value.length ? sources.every(source => source.status === 'available') ? 'available' : status === 'available' ? 'partial' : status
             : sources.some(source => source.status === 'pending') ? 'pending'
-            : failures.size ? 'error' : status;
-        return { status: aggregateStatus, sources: [...sources], ...(value.length ? { value } : {}), ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}),
-            ...(failures.size && !value.length ? { errorCode: [...failures.values()][0] } : {}) };
+            : failures.length ? 'error' : status;
+        return { status: aggregateStatus, sources, ...(value.length ? { value } : {}), ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}),
+            ...(failures.length && !value.length ? { errorCode: failures[0]!.errorCode } : {}) };
     };
-    const publishProgress = (index: number, value: ConnectedServiceQuotaGetResultV1 | null, settled = false): void => {
+    const project = () => ({ ...opened, quotaByQuery: new Map(quotaByQuery) });
+    const publishProgress = (index: number, values?: ReadonlyMap<string, ConnectedServiceQuotaGetResultV1>, settled = false,
+        failure?: Readonly<{ code: string; queryKeys?: readonly string[] }>): void => {
         requireCurrent(context, signal);
-        const { source, key } = scope.sources[index]!;
-        const reconciled = reconcileQuotaRead({ admitted: getQualifiedQuotaSnapshotEntry(key), source,
-            previous: retainedBySource.get(createCanonicalJsonSigningInput(source)), previousState: settledBySource.get(sources[index]!.source),
-            revision: { kind: 'progress', value, settled, errorCode: failures.get(index) } });
-        progressValues[index] = reconciled.value;
-        sources[index] = reconciled.state!;
-        onProgress?.(projectQuota('partial'));
+        const { source, admitted } = admissions[index]!;
+        let changed = false;
+        for (const view of progress) {
+            if (failure?.queryKeys && !failure.queryKeys.includes(view.key)) continue;
+            const row = view.sources[index]!;
+            const value = values?.get(view.key) ?? row.accepted;
+            const errorCode = failure?.code ?? row.errorCode;
+            const viewSettled = settled || !view.range || !!value?.pageFacts;
+            if (errorCode === row.errorCode && value === row.accepted && viewSettled === row.settled) continue;
+            const reconciled = reconcileQuotaRead({ admitted, source, previous: row.previous, previousState: row.previousState,
+                revision: { kind: 'progress', value: value ?? null, settled: viewSettled, errorCode } });
+            Object.assign(row, { accepted: value, settled: viewSettled, errorCode, value: reconciled.value, state: reconciled.state! });
+            quotaByQuery.set(view.key, projectQuota(view.sources, false));
+            changed = true;
+        }
+        if (changed) onProgress?.(project());
     };
     // A cold admitted read is pending, not an unissued cache observation. Every
     // skipped read above has already returned a terminal reason.
-    if (!opened.value?.length) onProgress?.({ status: 'pending', sources: [...sources] });
-    const sourceIndices = new Map(scope.sources.map(({ source }, index) => [createCanonicalJsonSigningInput(source), index]));
-    const acceptedBySource = new Map<number, ConnectedServiceQuotaGetResultV1>();
-    const failSource = (index: number, error: unknown) => {
+    for (const view of progress) if (!quotaByQuery.get(view.key)?.value?.length) quotaByQuery.set(view.key, projectQuota(view.sources, false));
+    onProgress?.(project());
+    const sourceIndices = new Map(admissions.map(({ sourceKey }, index) => [sourceKey, index]));
+    const indexForSource = (source: ConnectedServiceQuotaGetInputV1['source']): number => {
+        const index = sourceIndices.get(createCanonicalJsonSigningInput(source));
+        if (index === undefined) throw new Error('Quota reader returned an unrequested source');
+        return index;
+    };
+    const failSource = (index: number, error: unknown, queryKeys?: readonly string[]) => {
         requireCurrent(context, signal);
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
             ? error.code : 'quota_read_failed';
-        failures.set(index, code);
-        publishProgress(index, acceptedBySource.get(index) ?? null);
+        if (queryKeys && !canRetainUsageReadFailure(code)) throw error;
+        publishProgress(index, undefined, false, { code, queryKeys });
     };
     // The batch has one captured Home/Account lifetime. Share its existing
     // mode promise and live catalog reads instead of recapturing per source.
@@ -541,24 +622,22 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
         await withUiConnectedServiceReader(context, signal, async read => Promise.all(requestedIndices.map(async index => {
             const { source } = scope.sources[index]!;
             try {
-                const accepted = await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
-                acceptedBySource.set(index, accepted);
-                publishProgress(index, accepted, true);
+                await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
+                publishProgress(index, undefined, true);
             } catch (error) { failSource(index, error); }
-        })), { includePendingWork: !!range, changesCursor, ...(daily ? { historyView: 'daily', exactHistoryRange, dayChange } : {}), readAllHistory: { onProgress: value => {
-            const index = sourceIndices.get(createCanonicalJsonSigningInput(value.source));
-            if (index === undefined) throw new Error('Quota reader returned an unrequested source');
-            acceptedBySource.set(index, value);
-            publishProgress(index, value);
-        } } });
+        })), { includePendingWork: !!range, changesCursor, ...(daily ? { historyView: 'daily', exactHistoryRange, dayChange } : {}), readAllHistory: {
+            views,
+            onProgress: (value, projectedViews) => publishProgress(indexForSource(value.source), projectedViews),
+            onViewFailure: (source, queryKeys, error) => failSource(indexForSource(source), error, queryKeys),
+        } });
     } catch (error) {
         // A failure capturing the common Account applies to every source;
         // an individual provider refusal above still settles independently.
         requestedIndices.forEach(index => failSource(index, error));
     }
     requireCurrent(context, signal);
-    return projectQuota(failures.size === 0 ? 'available' : progressValues.every(value => value !== null) ? 'stale'
-        : progressValues.some(value => value !== null) ? 'partial' : 'error');
+    for (const view of progress) quotaByQuery.set(view.key, projectQuota(view.sources, true));
+    return project();
 }
 
 type SessionAccountCurrentnessSource = ReturnType<typeof import('@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope').createOperationAccountCurrentnessSource>;
@@ -1337,14 +1416,15 @@ export async function readUiUsageQueryBatch(
     const requests = reads.map(read => read.query);
     const periods = new Map([...queries.map(query => [getUsageQueryKey(query), resolveUsageQueryPeriod(query, accountingInstants.get(getUsageQueryKey(query))!)] as const),
         ...reads.map(read => [getUsageQueryKey(read.query), read.period] as const)]);
+    const quotaQueries = queries.filter(query => query.includeQuota !== false);
+    const quotaDemands = quotaQueries.map(query => ({ query, period: periods.get(getUsageQueryKey(query))! }));
     if (readOptions?.retainedProjection) {
         const retainedProjection = readOptions.retainedProjection;
-        let quota = readOpenedQuota(context, previous);
+        let quota = readOpenedQuota(context, quotaQueries, previous);
         const reproject: UsageQueryReprojection = projectionSignal => retainedProjection(projectionSignal, { quota, nowMs: accountingNowMs });
         let progress: void | Promise<void> = undefined;
         try {
-            quota = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuota !== false && query.includeQuotaHistory)
-                .map(query => ({ query, period: periods.get(getUsageQueryKey(query))! })), accountingNowMs, signal, value => {
+            quota = await readOpenedQuotaHistory(context, quotaDemands, accountingNowMs, signal, value => {
                     quota = value;
                     progress = readOptions.onProgress?.(reproject);
                 }, previous, quota, readOptions.allowanceRecordIds, readOptions.allowanceDayChange);
@@ -1421,8 +1501,7 @@ export async function readUiUsageQueryBatch(
     const settledHowYouWorkQueries = new Set<string>();
     let mcpCatalog: McpServerCatalogSnapshotV1 | undefined;
     let mcpCatalogRead: Promise<McpServerCatalogSnapshotV1> | undefined;
-    const quotaQueries = queries.filter(query => query.includeQuota !== false);
-    let quota: OpenedQuotaRead = quotaQueries.length ? readOpenedQuota(context, previous) : { status: 'not_loaded' };
+    let quota: OpenedQuotaRead = quotaQueries.length ? readOpenedQuota(context, quotaQueries, previous) : { status: 'not_loaded' };
     let pools: readonly UsagePoolSourceSnapshot[] = quotaQueries.length ? readOpenedUsagePools(context, quotaQueries) : [];
     const priorSlices = new Map(previous?.results.map(slice => [slice.key, slice]));
     let admittedPrevious = previous;
@@ -1431,7 +1510,7 @@ export async function readUiUsageQueryBatch(
     // into its entry, never cached or rerun just to advance independent sources.
     const compose = (projectionSignal: AbortSignal | undefined): UsageQueryBatchResult => {
         requireCurrent(context, projectionSignal);
-        if (quotaQueries.length) quota = projectUsageEnteredPrices(quota, context.accountLifetime.scope);
+        if (quotaQueries.length) quota = projectUsageEnteredPrices(quota, context.accountLifetime.scope, quotaQueries);
         return projectUsageQueryBatch({ context, queries, accountingNowMs: projectionNowMs, accounting, priorAccounting, calendarQueryKeys, previous, admittedPrevious,
             prepareAccounting(snapshot, prepare) {
                 const answer = accountingAnswers.get(getUsageQueryKey(snapshot.query));
@@ -1591,7 +1670,7 @@ export async function readUiUsageQueryBatch(
             // Acquisition follows the changed input, independently of whether
             // its retained observation is complete, stale, unavailable or failed.
             if (quotaQueries.length && !readOptions?.retainAllowance) {
-                const settled = await readOpenedQuotaHistory(context, quotaQueries.filter(query => query.includeQuotaHistory).map(query => ({ query, period: periods.get(getUsageQueryKey(query))! })), accountingNowMs, signal,
+                const settled = await readOpenedQuotaHistory(context, quotaDemands, accountingNowMs, signal,
                     value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceRecordIds, readOptions?.allowanceDayChange);
                 if (settled !== quota) { quota = settled; publish(); }
             }
@@ -1911,7 +1990,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // their latest Resource revision across navigation, including zero views.
     // New query ranges still read their own history; these facts seed the body
     // until that replacement answers, rather than claiming its range is read.
-    let allowance: Pick<UsageQueryBatchResult['results'][number], 'key' | 'requestedQuery' | 'shownQuery' | 'quota' | 'sources' | 'pending'> | undefined;
+    let allowance: RetainedUsageAllowance | undefined;
     // Queries move between route batches as visible widgets register. These
     // are the same Account Resource's admitted slices, independent of batch membership.
     // Keep private evidence and selector state beside accounting so a changed
@@ -2119,20 +2198,22 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         reproject: retained ? decodedValues.get(retained)?.reproject : undefined };
                 })();
                 const previousByKey = new Map(ownPrevious?.results.map(slice => [slice.key, slice]));
+                const sharedAllowance = allowance;
+                const heads = [...(sharedAllowance?.heads.values() ?? [])];
+                const head: UsageAllowanceProjection = { quota: heads.map(row => row.read), sources: heads.map(row => row.state) };
                 const previousSlices = queries.flatMap(query => {
                     const key = getUsageQueryKey(query);
                     const slice = previousByKey.get(key) ?? slicesByQuery.get(key);
-                    return slice ? [slice] : [];
+                    if (query.includeQuota === false || !sharedAllowance) return slice ? [slice] : [];
+                    const sibling = sharedAllowance.slices.get(getRetainedQuotaPeriodKey(query));
+                    if (!slice && !sibling && !heads.length) return [];
+                    const base = slice ?? { key, requestedQuery: query, shownQuery: query, sources: [], pending: false };
+                    const retained = mergeRetainedUsageAllowance(head, base);
+                    const merged = sibling ? mergeRetainedUsageAllowance(retained, sibling) : retained;
+                    return [{ ...base, quota: merged.quota,
+                        sources: [...base.sources.filter(source => source.source !== 'quota' && !source.source.startsWith('quota:')), ...merged.sources] }];
                 });
-                const priorBatch = previousSlices.length ? { v: 1 as const, results: previousSlices } : undefined;
-                const sharedAllowance = allowance;
-                const previous = priorBatch && sharedAllowance ? { ...priorBatch, results: priorBatch.results.map(slice => {
-                    if (slice.requestedQuery.includeQuota === false) return slice;
-                    const mergedAllowance = mergeRetainedUsageAllowance(slice, sharedAllowance);
-                    return { ...slice, quota: mergedAllowance.quota,
-                        sources: [...slice.sources.filter(source => source.source !== 'quota' && !source.source.startsWith('quota:')),
-                            ...mergedAllowance.sources] };
-                }) } : priorBatch ?? (sharedAllowance ? { v: 1 as const, results: [sharedAllowance] } : undefined);
+                const previous = previousSlices.length ? { v: 1 as const, results: previousSlices } : undefined;
                 let reproject: UsageQueryReprojection | undefined;
                 let projectionIsCurrent: (() => boolean) | undefined;
                 const assertProjectionCurrent = () => {
@@ -2184,19 +2265,23 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         const opened = readOpenedQuotaScope(sharedContext);
                         const admitted = new Map(opened?.sources.map(({ source, key }) =>
                             [createCanonicalJsonSigningInput(source), getQualifiedQuotaSnapshotEntry(key)]));
-                        const states = new Map(allowance.sources.map(state => [state.source, state]));
-                        const reads = new Map(allowance.quota?.map(read => [createCanonicalJsonSigningInput(read.source), read]));
+                        const shared = allowance;
                         batch = { ...batch, results: batch.results.map(slice => {
                             if (slice.requestedQuery.includeQuota === false) return slice;
+                            const matching = shared.slices.get(getRetainedQuotaPeriodKey(slice.requestedQuery));
+                            const states = new Map(matching?.sources.map(state => [state.source, state]));
+                            const reads = new Map(matching?.quota?.map(read => [createCanonicalJsonSigningInput(read.source), read]));
                             const replacements = new Map<string, ConnectedServiceQuotaGetResultV1>();
                             const sources = slice.sources.map(state => {
                                 if (!state.source.startsWith('quota:')) return state;
                                 const key = state.source.slice('quota:'.length);
-                                const read = reads.get(key);
+                                const sibling = reads.get(key);
+                                const head = shared.heads.get(key);
+                                const read = sibling ?? head?.read;
                                 const admission = admitted.get(key);
                                 if (!read || !admission) return state;
                                 const reconciled = reconcileQuotaRead({ admitted: admission, source: read.source, previous: read,
-                                    previousState: states.get(state.source), revision: { kind: 'sibling', state } });
+                                    previousState: sibling ? states.get(state.source) : head?.state, revision: { kind: 'sibling', state } });
                                 if (!reconciled.value) return state;
                                 replacements.set(key, reconciled.value);
                                 return reconciled.state!;
@@ -2213,13 +2298,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             return { ...slice, quota: [...quota.values()], sources: settledSources };
                         }) };
                     }
-                    const first = batch.results.find(slice => slice.requestedQuery.includeQuota !== false && slice.requestedQuery.includeQuotaHistory)
-                        ?? batch.results.find(slice => slice.requestedQuery.includeQuota !== false);
-                    // A current-only sibling cannot replace the Account's richer admitted history.
-                    if (first && (!allowance?.requestedQuery.includeQuotaHistory || first.requestedQuery.includeQuotaHistory)) allowance = { key: first.key, requestedQuery: first.requestedQuery, shownQuery: first.shownQuery,
-                        quota: first.quota, sources: first.sources.filter(source => source.source === 'quota' || source.source.startsWith('quota:')),
-                        pending: first.sources.some(source => (source.source === 'quota' || source.source.startsWith('quota:')) && source.status === 'pending') };
-                    for (const slice of batch.results) slicesByQuery.set(slice.key, slice);
                     const current = entry.getSnapshot().value;
                     // Reconcile each revision against the same entry's admitted
                     // value so unrelated slices keep their selected references.
@@ -2228,6 +2306,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Reuse the entry's content as well as its decoded value. A
                     // terminal read commonly repeats its last progress revision.
                     if (current && value === currentBatch) return keepContent(current, currentBatch);
+                    allowance = retainUsageAllowance(value, allowance);
+                    for (const slice of value.results) slicesByQuery.set(slice.key, slice);
                     return keepContent(createUsageQueryResourceContent(value), value);
                 };
                 let queuedProgress: UsageQueryReprojection | null = null;
@@ -2358,7 +2438,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const records = readOpenedQuotaScope(sharedContext)?.sources
                         .filter(({ source }) => quotaSourceKey === undefined || createCanonicalJsonSigningInput(source) === quotaSourceKey)
                         .map(({ key, source }) => getQualifiedQuotaSnapshotEntry(key).usageRecordId
-                            ?? allowance?.quota?.find(read => createCanonicalJsonSigningInput(read.source) === createCanonicalJsonSigningInput(source))?.current?.recordId);
+                            ?? allowance?.heads.get(createCanonicalJsonSigningInput(source))?.read.current?.recordId);
                     return records?.length ? records : [undefined];
                 };
                 const privateEvidence = queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence);
@@ -2709,7 +2789,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         // Loading and retry deadlines change no displayed fact. Observation
         // times, replacements, removals and errors retain their known record scope.
         const keys = new Set([
-            ...(allowance?.quota?.flatMap(read => read.current ? [read.current.recordId] : []) ?? []),
+            ...[...(allowance?.heads.values() ?? [])].flatMap(({ read }) => read.current ? [read.current.recordId] : []),
             ...(readOpenedQuotaScope(sharedContext)?.sources.flatMap(({ key }) => {
                 const id = getQualifiedQuotaSnapshotEntry(key).usageRecordId;
                 return id ? [id] : [];
