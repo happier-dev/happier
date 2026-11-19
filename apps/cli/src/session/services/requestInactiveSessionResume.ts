@@ -6,7 +6,7 @@ import { PendingActivationRuntimeFailureReasonV1Schema } from '@happier-dev/prot
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { readSessionRuntimeIssueCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionPreparationFailureCode, readSessionRuntimeIssueCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 
 import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
@@ -72,7 +72,10 @@ function readResumeSpawnFailureFacts(response: unknown, requestId: string): Pick
   }
   const custodyRefusal = errorDetail?.kind === 'launch_error' && errorDetail.code === 'requester_session_custody_unavailable'
     ? readRequesterSessionCustodyRefusalCode(errorDetail.failureCause?.code) : undefined;
-  const spawnRefusalReason = custodyRefusal ?? (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
+  const preparationRefusal = errorDetail?.kind === 'launch_error'
+    && (code === SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED || code === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED)
+    ? readSessionPreparationFailureCode(errorDetail.code) : null;
+  const spawnRefusalReason = custodyRefusal ?? preparationRefusal ?? (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
     ? readSessionRuntimeIssueCode(errorDetail?.kind === 'launch_error' ? errorDetail.code : errorDetail?.kind)
     : null);
   return {

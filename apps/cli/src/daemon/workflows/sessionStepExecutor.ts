@@ -1353,9 +1353,10 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
             const launchDetail = resumed.errorDetail?.kind === 'launch_error' ? resumed.errorDetail : undefined;
             const custodyRefusal = readRequesterSessionCustodyRefusalCode(reason);
             const code = custodyRefusal && launchDetail?.failureCause?.code === custodyRefusal ? launchDetail.code : reason;
+            const cause = launchDetail?.failureCause?.code === reason ? launchDetail?.failureCause : undefined;
             const runtimeIssue = reason && code ? projectSessionRuntimeIssueMetadataV1({
               v: 1, scope: 'primary_session', status: 'failed', code, source: 'unknown', occurredAt: Date.now(),
-              failureCause: { phase: 'client_start', failureReason: 'unknown', code: reason },
+              failureCause: { phase: cause?.phase ?? 'client_start', failureReason: cause?.failureReason ?? 'unknown', code: reason },
             }) : undefined;
             throw new WorkflowSessionCompositionError(resumed.code, resumed.code, undefined, undefined, runtimeIssue);
           }

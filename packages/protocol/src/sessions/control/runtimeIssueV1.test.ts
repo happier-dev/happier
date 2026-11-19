@@ -117,6 +117,9 @@ describe('runtime authentication recovery', () => {
     expect(message).toMatch(/brokered Team/);
     expect(message).toMatch(/own login/);
   });
+  it('names the Team credential broker when its availability prevented startup', () => {
+    expect(readSessionStartupFailurePreview('broker_unavailable')).toMatch(/Team credential broker.*unavailable/iu);
+  });
   it('reads an existing public runtime issue cause without evaluating foreign Error accessors', () => {
     const failureCause = { code: 'provider_endpoint_unauthorized', phase: 'client_start', failureReason: 'permission_denied', httpStatus: 403 };
     const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',

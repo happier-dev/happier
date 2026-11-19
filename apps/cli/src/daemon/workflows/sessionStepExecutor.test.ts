@@ -2774,10 +2774,12 @@ describe('workflow Session step executor', () => {
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ attachments: [attachment] }));
   });
 
-  it('keeps the subreason when an existing Workflow Session cannot resume', async () => {
+  it.each([
+    { errorCode: 'DAEMON_RPC_UNAVAILABLE', code: 'requester_session_custody_unavailable', phase: 'client_start' },
+    { errorCode: 'SPAWN_FAILED', code: 'broker_unavailable', phase: 'authentication' },
+  ] as const)('keeps $code when an existing Workflow Session cannot resume', async ({ errorCode, code, phase }) => {
     const sessionId = 'existing-session';
     const machineId = 'machine-1';
-    const code = 'requester_session_custody_unavailable';
     const credentials = { token: 'token', encryption: null };
     const read = readiness.get.getMockImplementation()!;
     readiness.get.mockImplementation(async (url: string) => {
@@ -2788,8 +2790,10 @@ describe('workflow Session step executor', () => {
     });
     readiness.callMachineRpc.mockImplementation(async ({ method }) => {
       if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error('Unexpected RPC');
-      return { type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'PRIVATE_NATIVE_PROSE',
-        errorDetail: { kind: 'launch_error', code, message: 'PRIVATE_NATIVE_PROSE' } };
+      return { type: 'error', errorCode, errorMessage: 'PRIVATE_NATIVE_PROSE',
+        errorDetail: { kind: 'launch_error', code, message: 'PRIVATE_NATIVE_PROSE',
+          ...(code === 'broker_unavailable' ? { failureCause: { phase, failureReason: 'unknown', code,
+            providerErrorCode: 'PRIVATE_NATIVE_PROSE' } } : {}) } };
     });
     const execute = createProductionWorkflowSessionStepExecutor({ credentials, machineId,
       machineAdmissionTransport: vi.fn(), createFreshConversation: async () => { throw new Error('Existing Session required'); },
@@ -2810,7 +2814,7 @@ describe('workflow Session step executor', () => {
       onSessionReady: async () => { throw new Error('No ready Session'); },
     });
     expect(result).toMatchObject({ kind: 'failed', code: 'resume_failed',
-      runtimeIssueV1: { code, failureCause: { phase: 'client_start', code } } });
+      runtimeIssueV1: { code, failureCause: { phase, code } } });
     expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_PROSE');
   });
 

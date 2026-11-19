@@ -161,6 +161,7 @@ export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   daemon_draining: 'The target machine is temporarily pausing new work. Retry the session when it is ready.',
   daemon_shutting_down: 'Happier is shutting down on the target machine. Restart it there, then retry the session.',
   skills_unavailable: 'Skill delivery is unavailable. Check the target machine, then retry the session.',
+  broker_unavailable: 'The Team credential broker is unavailable. Check its connection, then retry the session.',
   team_credential_provider_selection_not_current: 'The selected Team provider is unavailable. Review the Team model selection, then retry the session.',
   team_credential_model_selection_required: 'Choose a Team model before starting this session.',
   resource_corrupt: 'The selected Team credential needs repair. Ask its owner to repair it, then retry the session.',
