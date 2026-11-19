@@ -9,6 +9,8 @@ import { setWorkflowStepExecutionTarget } from './workflowDefinitionEditV1.js';
 import type { ActionSessionAddressV1 } from '../actions/sessionTargetV1.js';
 import { validateInputFieldSchema } from '../inputs/inputTypeRuntime.js';
 import { workflowInputToFieldHint, type WorkflowValidationIssue } from './workflowV1.js';
+import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1, type ReviewReviewerSelectionV1 } from '../reviews/reviewStart.js';
+import { resolveWorkflowAcceptedStepSelectionV1 } from './workflowStepSelectionV1.js';
 
 export type WorkflowResolvedSessionTargetV1 = Readonly<{ address: ActionSessionAddressV1; machineId: string }>;
 export type ResolveWorkflowSessionTargetV1 = (value: JsonValue) => Promise<WorkflowResolvedSessionTargetV1 | null>;
@@ -100,7 +102,46 @@ export type WorkflowRunStartPreparationV1 = Readonly<{
   originSessionId?: string;
   origin?: WorkflowRunStartRequestV1['origin'];
   onComplete?: WorkflowRunStartRequestV1['onComplete'];
+  /** Exact accepted Review roster; absent when retained participant facts are unavailable. */
+  reviewReviewers?: readonly WorkflowReviewNewRoundReviewerV1[];
 }>;
+
+export type WorkflowReviewNewRoundReviewerV1 = Readonly<{
+  id: string;
+  reviewer: ReviewReviewerSelectionV1;
+  continuity: 'continues' | 'fresh' | 'asked_again';
+}>;
+
+/** Another Run replays the frozen program, not its prior leaf executions. */
+function projectWorkflowReviewNewRoundReviewersV1(
+  accepted: WorkflowRunAcceptedContextV1 | WorkflowAcceptedSnapshotV1,
+): readonly WorkflowReviewNewRoundReviewerV1[] | undefined {
+  const parsed = ReviewStartInputSchema.safeParse(accepted.inputs.reviewInput);
+  if (!parsed.success) return undefined;
+  const leaves = new Map(accepted.materializedLeaves.filter(leaf => leaf.sourceKey === '$root')
+    .map(leaf => [leaf.blockId, leaf]));
+  const rows: WorkflowReviewNewRoundReviewerV1[] = [];
+  const stages = parsed.data.steps ?? [{ reviewers: parsed.data.reviewers }];
+  for (const [stepIndex, stage] of stages.entries()) {
+    for (const [reviewerIndex, reviewer] of stage.reviewers.entries()) {
+      const id = reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex);
+      if (reviewer.kind === 'person') {
+        rows.push({ id, reviewer, continuity: 'asked_again' });
+        continue;
+      }
+      const leaf = leaves.get(id);
+      if (!leaf) return undefined;
+      if (reviewer.kind === 'engine') {
+        rows.push({ id, reviewer, continuity: 'fresh' });
+        continue;
+      }
+      const { participant } = resolveWorkflowAcceptedStepSelectionV1(leaf, undefined, accepted.inputs);
+      if (!participant) return undefined;
+      rows.push({ id, reviewer, continuity: participant.kind === 'session' ? 'continues' : 'fresh' });
+    }
+  }
+  return rows;
+}
 
 /** Existing, accessible Machines in the invocation's Home; callers own fresh access/reachability reads. */
 export type WorkflowCombinedActionHostMachineV1 = Readonly<{ machineId: string; online: boolean }>;
@@ -176,11 +217,14 @@ export function prepareWorkflowRunStartV1(params: Readonly<{
   const originSessionId = accepted && 'origin' in accepted && accepted.origin && 'originSessionId' in accepted.origin
     ? accepted.origin.originSessionId : undefined;
   const discussion = accepted && 'origin' in accepted ? accepted.origin?.discussion : undefined;
+  const reviewReviewers = accepted && params.replay?.intent === 'another_round'
+    ? projectWorkflowReviewNewRoundReviewersV1(accepted) : undefined;
   return {
     definition,
     inputs: params.inputs ?? accepted?.inputs,
     source: { kind: 'inline', definition: { ...definition, inputs: [...definition.inputs], blocks: [...definition.blocks] },
       ...(params.replay === undefined ? {} : { replay: params.replay }) },
+    ...(reviewReviewers === undefined ? {} : { reviewReviewers }),
     ...(accepted === undefined ? {} : {
       project: accepted.workspaceTarget.project,
       executionTarget: accepted.executionTarget,

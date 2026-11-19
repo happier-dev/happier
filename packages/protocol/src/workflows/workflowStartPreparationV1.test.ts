@@ -7,6 +7,49 @@ import { materializeWorkflowAcceptedSnapshotV1 } from './materializeWorkflowAcce
 import { actionSpecToActionDefinitionV1 } from '../actions/actionCatalog.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { buildReviewStepsWorkflowV1 } from './builtins/reviewAndConverge.js';
+import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
+import { ActionIdSchema } from '../actions/actionIds.js';
+
+it('previews each accepted Review participant without turning a Workflow repeat into leaf replays', async () => {
+  const review = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review this repository.', reviewers: [
+    { kind: 'engine', engineId: 'codex' },
+    { kind: 'session', session: { serverId: 'home', sessionId: 'existing-reviewer' } },
+    { kind: 'model', launch: { executionTarget: { serverId: 'home', machineId: 'machine-a' },
+      directory: { kind: 'path', path: '/repo' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'default' } } } },
+    { kind: 'person', principal: { kind: 'account', accountId: 'requested-reviewer' }, required: false },
+  ] });
+  const built = buildReviewStepsWorkflowV1(review, { reviewId: 'review', roundOrdinal: 1 });
+  const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: built.definition,
+    context: { source: { kind: 'inline' }, inputs: built.inputs, machineId: 'machine-a', executionTarget: { kind: 'session' },
+      workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+      origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+    admission: { kind: 'user' }, effects: {
+      // Session identity, authority and execution reachability are external host facts.
+      resolveTargetAvailability: async () => true,
+      resolveSessionTarget: async () => ({ address: { serverId: 'home', sessionId: 'existing-reviewer' }, machineId: 'machine-a' }),
+      admitSessionAuthority: async () => true,
+      readActionContract: async actionId => {
+        const action = actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(actionId)));
+        return { inputSchema: StrictJsonValueSchema.parse(action.inputSchema),
+          outputSchema: StrictJsonValueSchema.parse(action.outputSchema ?? {}) };
+      },
+    } });
+  expect(accepted).toMatchObject({ ok: true });
+  if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+  const replay = { runId: '11111111-1111-4111-8111-111111111111', intent: 'another_round' as const };
+  const prepared = prepareWorkflowRunStartV1({ definition: accepted.snapshot.authoredDefinition,
+    acceptedContext: accepted.snapshot, replay });
+  expect(prepared).toMatchObject({ reviewReviewers: [
+    { id: 'step-1-reviewer-1', reviewer: review.reviewers[0], continuity: 'fresh' },
+    { id: 'step-1-reviewer-2', reviewer: review.reviewers[1], continuity: 'continues' },
+    { id: 'step-1-reviewer-3', reviewer: review.reviewers[2], continuity: 'fresh' },
+    { id: 'step-1-reviewer-4', reviewer: review.reviewers[3], continuity: 'asked_again' },
+  ], source: { replay } });
+  expect(prepareWorkflowRunStartV1({ definition: built.definition,
+    acceptedContext: { ...accepted.snapshot, materializedLeaves: [] }, replay })).not.toHaveProperty('reviewReviewers');
+});
 
 it('requires distinct admitted participants when the authored comparison declares a minimum', async () => {
   const definition = { inputs: [{ name: 'participants', valueType: 'json' as const, required: true, multiple: true,

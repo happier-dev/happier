@@ -14009,3 +14009,11 @@ do not read the source again. It may be stored like other input, including in
 Workflow and Run records or Session history. Partial source coverage is stated
 in the input. Native input admission continues to own the input budget. Existing
 secret and credential handling is unchanged.
+
+For a Workflow-backed Review, `prepareWorkflowRunStartV1` projects
+`reviewReviewers` from the accepted roster and frozen participant selections
+when preparing `another_round`. Existing Session reviewers continue that
+Session, model and engine selections start fresh, and people are asked again.
+The host starts one accepted Workflow through `review.new_round({runId})`.
+Missing retained roster facts leave the projection absent; clients do not infer
+continuity from Workflow status or native Run headers.
