@@ -134,12 +134,14 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       } finally { await subjectPicker.close(); }
     } finally { await pickerClient.close(); }
     const workflowId = randomUUID();
-    expect(await actor.executeAsPerson('workflow.definition.create', { definitionId: workflowId,
-      metadata: { name: 'Shared ticket review' }, definition: { version: 1,
+    const definitionCreated = await actor.executeAsPerson('workflow.definition.create', { definitionId: workflowId,
+      metadata: { title: 'Shared ticket review' }, definition: { version: 1,
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
         blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the ticket.', references: [], attachments: [] },
           input: [], result: { kind: 'text' } }],
-      } })).toMatchObject({ ok: true });
+      } });
+    expect(definitionCreated.ok, JSON.stringify({ ok: definitionCreated.ok,
+      ...(!definitionCreated.ok ? { errorCode: definitionCreated.errorCode } : {}) })).toBe(true);
     expect(await actor.executeAsPerson('artifact.access.grants.set', { artifactId: workflowId,
       principal: { kind: 'account', accountId: readAccountIdFromToken(reader.credentials.token) }, accessLevel: 'view' }))
       .toMatchObject({ ok: true });

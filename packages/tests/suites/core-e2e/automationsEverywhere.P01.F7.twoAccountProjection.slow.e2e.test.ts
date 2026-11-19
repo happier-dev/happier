@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { connectUiPersonActionClient, mountUiAutomationSubjectPicker, readUiMachineProjection } from '@happier-tests/ui-action-client';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -63,6 +64,16 @@ it('reacquires the adopted projection after two Accounts and two Machines prewar
       await picker.waitForSettled();
       expect(picker.read()).toMatchObject({ status: 'ready', items: [], hasMore: false, coverage: 'complete' });
     } finally { await picker.close(); }
+    await ui.close();
+    ui = undefined;
+    const definitionCreated = await actor.executeAsPerson('workflow.definition.create', { definitionId: randomUUID(),
+      metadata: { title: 'Shared ticket review' }, definition: { version: 1,
+        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+        blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the ticket.', references: [], attachments: [] },
+          input: [], result: { kind: 'text' } }],
+      } });
+    expect(definitionCreated.ok, JSON.stringify({ ok: definitionCreated.ok,
+      ...(!definitionCreated.ok ? { errorCode: definitionCreated.errorCode } : {}) })).toBe(true);
   } finally {
     await ui?.close();
     await fixture.stop();
