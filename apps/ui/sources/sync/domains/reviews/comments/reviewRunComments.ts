@@ -1,6 +1,6 @@
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, type ReviewCommentListResponseV1, type ReviewCommentGetResponseV1, type ReviewCommentTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
-import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewCommentScopeV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -21,16 +21,19 @@ import type { ReviewCommentUiActionExecutor } from './api';
  * of another Home never reaches the focused one, and work captured under an Account that is no
  * longer the Home's is refused instead of sent as someone else.
  *
- * It is also where every confirmed ReviewComment write in the UI is announced
- * (`recordReviewCommentWrites`): the SCM review panel keeps its own list of the comments it shows,
- * and the two would otherwise drift apart until one of them reloads.
+ * SCM panels, native Reviews and retained run adapters consume these same windows and confirmed
+ * writes. Different selectors can hold the same comment; its revision and pending decision agree.
  */
 export type ReviewRunCommentsTarget = Readonly<{
     scope: ServerAccountScope;
-} & (
-    { sessionId: string; runId: string; reviewId?: string }
-    | { reviewId: string; sessionId?: string; runId?: string }
-)>;
+    reviewId?: string;
+    sessionId?: string;
+    runId?: string;
+    projectId?: string;
+    workspace?: ReviewCommentScopeV1['workspace'];
+    workspaceId?: string;
+} & ({ reviewId: string } | { sessionId: string } | { projectId: string }
+    | { workspace: NonNullable<ReviewCommentScopeV1['workspace']> } | { workspaceId: string })>;
 
 /** The materializer's typed comment reference supplies native Review identity; old runs remain unbound. */
 export function reviewRunCommentsTargetFromFindings(payload: Readonly<{
@@ -55,14 +58,15 @@ type Entry = {
     target: ReviewRunCommentsTarget;
     snapshot: ReviewRunCommentsSnapshot;
     inFlight: Promise<void> | null;
-    /** Decisions for one comment are written one after another so each carries the latest revision. */
-    writeChains: Map<string, Promise<void>>;
+    controller: AbortController | null;
     listeners: Set<() => void>;
 };
+type CommentWriteChain = { write: Promise<void>; pending: ReviewTriageStatus | undefined };
 
 export const EMPTY_REVIEW_RUN_COMMENTS_SNAPSHOT: ReviewRunCommentsSnapshot = Object.freeze({ status: 'idle', comments: [], pending: {}, cursor: null, loadingMore: false, loadMoreFailed: false });
 const entries = new Map<string, Entry>();
-const writeListeners = new Set<(comments: readonly ReviewCommentV1[], scope: ServerAccountScope) => void>();
+/** One write chain per canonical comment, even when different selectors hold it. */
+const writeChains = new Map<string, CommentWriteChain>();
 let frontDoor: ReturnType<typeof createFrontDoorActionExecute> | null = null;
 
 /** The review-comment Actions for one exact Home, refused unless that Home still signs in as the Account. */
@@ -85,19 +89,30 @@ export function resolveReviewCommentExecutor(scope: ServerAccountScope, execute?
     return execute ?? scopedExecutor(scope);
 }
 
+function queryOf(target: ReviewRunCommentsTarget) {
+    return {
+        ...(target.reviewId ? { reviewId: target.reviewId } : target.sessionId ? { sessionId: target.sessionId }
+            : target.workspace ? { workspace: target.workspace } : { projectId: target.projectId, workspaceId: target.workspaceId }),
+        ...(target.runId ? { runId: target.runId } : {}),
+    };
+}
+
 function keyOf(target: ReviewRunCommentsTarget): string {
-    const resource = target.reviewId ? `review\u0000${target.reviewId}` : `session\u0000${target.sessionId}`;
-    return `${serverAccountScopeKeySuffix(target.scope)}\u0000${resource}\u0000${target.runId ?? ''}`;
+    return `${serverAccountScopeKeySuffix(target.scope)}\u0000${JSON.stringify(queryOf(target))}`;
 }
 
 function entryFor(target: ReviewRunCommentsTarget): Entry {
     const key = keyOf(target);
     let entry = entries.get(key);
     if (!entry) {
-        entry = { target, snapshot: EMPTY_REVIEW_RUN_COMMENTS_SNAPSHOT, inFlight: null, writeChains: new Map(), listeners: new Set() };
+        entry = { target, snapshot: EMPTY_REVIEW_RUN_COMMENTS_SNAPSHOT, inFlight: null, controller: null, listeners: new Set() };
         entries.set(key, entry);
     }
     return entry;
+}
+
+function commentWriteKey(scope: ServerAccountScope, commentId: string): string {
+    return `${serverAccountScopeKeySuffix(scope)}\u0000${commentId}`;
 }
 
 function publish(entry: Entry, next: ReviewRunCommentsSnapshot): void {
@@ -111,6 +126,12 @@ function publish(entry: Entry, next: ReviewRunCommentsSnapshot): void {
         });
         next = { ...next, comments: comments.length === previous.comments.length
             && comments.every((comment, index) => comment === previous.comments[index]) ? previous.comments : comments };
+        const pending: Record<string, ReviewTriageStatus> = {};
+        for (const comment of next.comments) {
+            const decision = writeChains.get(commentWriteKey(entry.target.scope, comment.id))?.pending;
+            if (decision) pending[comment.id] = decision;
+        }
+        next = { ...next, pending };
     }
     if (next.pending !== previous.pending && sameStrictJsonValue(next.pending, previous.pending)) next = { ...next, pending: previous.pending };
     if (next.status === previous.status && next.comments === previous.comments && next.pending === previous.pending
@@ -138,41 +159,37 @@ export function recordReviewCommentReads(comments: readonly ReviewCommentV1[], s
         for (const entry of entries.values()) {
             const { target } = entry;
             if (!areServerAccountScopesEqual(target.scope, scope) || entry.snapshot.status === 'idle') continue;
-            if (target.reviewId ? target.reviewId !== comment.reviewId
-                : comment.reviewId || target.sessionId !== comment.sessionId || target.scope.accountId !== comment.accountId) continue;
-            if (target.runId && target.runId !== comment.runId && !entry.snapshot.comments.some((held) => held.id === comment.id)) continue;
+            const held = entry.snapshot.comments.find(item => item.id === comment.id);
+            const matches = target.reviewId ? target.reviewId === comment.reviewId
+                : target.sessionId ? target.sessionId === comment.sessionId
+                : target.workspace ? sameStrictJsonValue(target.workspace, comment.workspace)
+                : (!target.projectId || target.projectId === comment.projectId)
+                    && (!target.workspaceId || target.workspaceId === comment.workspaceId);
+            if (!held && !matches) continue;
+            if (target.runId && target.runId !== comment.runId && !held) continue;
             holding.push(entry);
-            const held = entry.snapshot.comments.find((item) => item.id === comment.id);
             if (held && held.serverRevision > latest.serverRevision) latest = held;
         }
         for (const entry of holding) upsert(entry, latest);
     }
 }
 
-/** Announces a confirmed write to loaded runs and other scoped comment surfaces. */
+/** Reconciles a confirmed write through the same windows that own reads and pending decisions. */
 export function recordReviewCommentWrites(comments: readonly ReviewCommentV1[], scope: ServerAccountScope): void {
-    if (comments.length === 0) return;
     recordReviewCommentReads(comments, scope);
-    for (const listener of writeListeners) listener(comments, scope);
-}
-
-/** Every ReviewComment write any UI surface confirmed, so a surface keeping its own list can follow. */
-export function subscribeReviewCommentWrites(scope: ServerAccountScope, listener: (comments: readonly ReviewCommentV1[]) => void): () => void {
-    const scopedListener = (comments: readonly ReviewCommentV1[], writtenScope: ServerAccountScope) => {
-        if (areServerAccountScopesEqual(scope, writtenScope)) listener(comments);
-    };
-    writeListeners.add(scopedListener);
-    return () => {
-        writeListeners.delete(scopedListener);
-    };
 }
 
 
 function setPending(entry: Entry, commentId: string, decision: ReviewTriageStatus | null): void {
-    const pending = { ...entry.snapshot.pending };
-    if (decision) pending[commentId] = decision;
-    else delete pending[commentId];
-    publish(entry, { ...entry.snapshot, pending });
+    writeChains.get(commentWriteKey(entry.target.scope, commentId))!.pending = decision ?? undefined;
+    for (const held of entries.values()) {
+        if (held !== entry && (!areServerAccountScopesEqual(held.target.scope, entry.target.scope)
+            || !held.snapshot.comments.some(comment => comment.id === commentId))) continue;
+        const pending = { ...held.snapshot.pending };
+        if (decision) pending[commentId] = decision;
+        else delete pending[commentId];
+        publish(held, { ...held.snapshot, pending });
+    }
 }
 
 export function readReviewRunComments(target: ReviewRunCommentsTarget): ReviewRunCommentsSnapshot {
@@ -190,6 +207,14 @@ export function subscribeReviewRunComments(target: ReviewRunCommentsTarget, list
     entry.listeners.add(listener);
     return () => {
         entry.listeners.delete(listener);
+        if (entry.listeners.size === 0) {
+            entry.controller?.abort();
+            entry.controller = null;
+            entry.inFlight = null;
+            // No placement observes changes while this window is closed. Its next demand refreshes
+            // the retained rows rather than presenting a cached revision as current indefinitely.
+            publish(entry, { ...entry.snapshot, status: 'idle', loadingMore: false });
+        }
     };
 }
 
@@ -220,24 +245,27 @@ function loadReviewRunCommentsPage(params: LoadParams, cursor?: string): Promise
         ? entry.inFlight.then(() => ensureReviewRunComments(params))
         : entry.inFlight;
     const execute = resolveReviewCommentExecutor(params.scope, params.execute);
+    const controller = new AbortController();
+    entry.controller = controller;
     const revisionsBeforeRead = new Map(entry.snapshot.comments.map((comment) => [comment.id, comment.serverRevision]));
     if (entry.snapshot.status === 'idle' || entry.snapshot.status === 'failed') publish(entry, { ...entry.snapshot, status: 'loading' });
     if (cursor) publish(entry, { ...entry.snapshot, loadingMore: true, loadMoreFailed: false });
     const run = (async () => {
         try {
             const page = await execute('reviews.comments.list', {
-                ...(params.reviewId ? { reviewId: params.reviewId } : { sessionId: params.sessionId }),
-                ...(params.runId ? { runId: params.runId } : {}),
+                ...queryOf(params),
                 includeHistory: true,
                 limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1,
                 ...(cursor ? { cursor } : {}),
-            }) as ReviewCommentListResponseV1;
+            }, { signal: controller.signal }) as ReviewCommentListResponseV1;
+            if (controller.signal.aborted) return;
             const comments = cursor ? [...entry.snapshot.comments, ...page.items] : [...page.items];
             // Native run lists are selected by canonical appearances, including reused earlier-round comments.
             // Only legacy unbound runs need their historical per-reference adapter.
             for (const commentId of new Set(params.reviewId ? [] : params.commentIds)) {
                 if (comments.some((comment) => comment.id === commentId)) continue;
-                const result = await execute('reviews.comments.get', { commentId, includeHistory: true }) as ReviewCommentGetResponseV1;
+                const result = await execute('reviews.comments.get', { commentId, includeHistory: true }, { signal: controller.signal }) as ReviewCommentGetResponseV1;
+                if (controller.signal.aborted) return;
                 if (result.comment.sessionId !== params.sessionId) throw new Error('review_comment_reference_scope_mismatch');
                 comments.push(result.comment);
             }
@@ -255,11 +283,15 @@ function loadReviewRunCommentsPage(params: LoadParams, cursor?: string): Promise
             // just as authoritative as a write response; no loaded copy may keep an older revision.
             recordReviewCommentReads(entry.snapshot.comments, params.scope);
         } catch (cause) {
+            if (controller.signal.aborted) return;
             publish(entry, { ...entry.snapshot, status: cursor ? entry.snapshot.status : 'failed',
                 loadingMore: false, loadMoreFailed: Boolean(cursor) });
             throw new Error('review_run_comments_unavailable', { cause });
         } finally {
-            entry.inFlight = null;
+            if (entry.controller === controller) {
+                entry.controller = null;
+                entry.inFlight = null;
+            }
         }
     })();
     entry.inFlight = run;
@@ -289,8 +321,11 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
 }>): Promise<boolean> {
     const entry = entryFor(params);
     const execute = resolveReviewCommentExecutor(params.scope, params.execute);
+    const writeKey = commentWriteKey(params.scope, params.commentId);
+    const previous = writeChains.get(writeKey)?.write ?? Promise.resolve();
+    const chain: CommentWriteChain = { write: previous, pending: params.decision };
+    writeChains.set(writeKey, chain);
     setPending(entry, params.commentId, params.decision);
-    const previous = entry.writeChains.get(params.commentId) ?? Promise.resolve();
     let confirmed = false;
     const write = previous.then(async () => {
         const comment = entry.snapshot.comments.find((item) => item.id === params.commentId);
@@ -312,16 +347,17 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
             await loadReviewRunComments({ ...entry.target, execute }).catch(() => undefined);
         } finally {
             // A later decision for the same comment owns the pending value once it has been made.
-            if (entry.snapshot.pending[params.commentId] === params.decision) setPending(entry, params.commentId, null);
+            if (writeChains.get(writeKey) === chain) setPending(entry, params.commentId, null);
         }
     });
-    entry.writeChains.set(params.commentId, write);
+    chain.write = write;
     return write.then(() => confirmed);
 }
 
 /** Test seam: forget every run's comments. */
 export function resetReviewRunCommentsForTests(): void {
+    for (const entry of entries.values()) entry.controller?.abort();
     entries.clear();
-    writeListeners.clear();
+    writeChains.clear();
     frontDoor = null;
 }

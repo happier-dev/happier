@@ -3,12 +3,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ReviewCommentActionIdV1} from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { buildReviewCommentFixture, flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredLanguage';
 import type {
     PluginPermissionGrant,
@@ -20,11 +19,10 @@ import {
     loadReviewRunComments,
     readReviewRunComments,
     resetReviewRunCommentsForTests,
+    recordReviewCommentWrites,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
 
 import { ReviewCommentsSessionSurface } from './ReviewCommentsSessionSurface';
-const submitMessageSpy = vi.fn(async (..._args: unknown[]) => undefined);
-vi.mock('@/sync/sync', () => ({ sync: { submitMessage: (...args: unknown[]) => submitMessageSpy(...args) } }));
 
 // The native recycler is the physical layout boundary; list/card behavior stays real.
 vi.mock('@legendapp/list/react-native', async () => {
@@ -66,38 +64,7 @@ vi.mock('@/modal', async () => {
 });
 
 function comment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
-    return {
-        v: 1,
-        id: overrides.id ?? 'comment-1',
-        accountId: 'account-1',
-        projectId: overrides.projectId ?? 'project-1',
-        workspaceId: overrides.workspaceId,
-        runId: overrides.runId,
-        engineId: overrides.engineId,
-        anchor: overrides.anchor ?? { kind: 'file', filePath: 'src/a.ts' },
-        snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
-        body: overrides.body ?? 'body',
-        bodyVersion: 1,
-        edits: [],
-        author: overrides.author ?? { kind: 'plugin', pluginId: 'review-coderabbit' },
-        state: overrides.state ?? 'open',
-        flags: overrides.flags ?? {},
-        dispositions: {},
-        threadId: overrides.threadId ?? overrides.id ?? 'comment-1',
-        transitions: [
-            {
-                transitionId: 'transition-1',
-                toState: overrides.state ?? 'open',
-                transitionedAt: 1,
-                transitionedBy: { kind: 'plugin', pluginId: 'review-coderabbit' },
-                serverRevision: 1,
-            },
-        ],
-        createdAt: 1,
-        updatedAt: overrides.updatedAt ?? 1,
-        serverRevision: overrides.serverRevision ?? 1,
-        ...overrides,
-    };
+    return buildReviewCommentFixture({ body: 'body', ...overrides });
 }
 
 function deferred<T>() {
@@ -186,19 +153,33 @@ describe('ReviewCommentsSessionSurface', () => {
         expect(execute).toHaveBeenCalledTimes(2);
     });
 
+    it('refreshes a comment window after its last placement closes and reopens', async () => {
+        let current = comment({ body: 'Before closing' });
+        const execute = vi.fn(async () => ({ items: [current], cursor: null }));
+        const surface = (open: boolean) => <ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1"
+            header="external" open={open} execute={execute} />;
+        const screen = await renderScreen(surface(true));
+        await flushHookEffects();
+        await screen.update(surface(false));
+        current = comment({ body: 'Written while closed', serverRevision: 2 });
+        await screen.update(surface(true));
+        await flushHookEffects();
+        expect(screen.getTextContent()).toContain('Written while closed');
+        expect(execute).toHaveBeenCalledTimes(2);
+    });
+
     let initialLanguage: ReturnType<typeof getPreferredLanguage>;
     beforeEach(() => {
         initialLanguage = getPreferredLanguage();
         commitPreferredLanguage('en');
         modalMock.prompt.mockReset();
-        submitMessageSpy.mockReset();
         resetReviewRunCommentsForTests();
     });
     afterEach(async () => { await act(async () => { commitPreferredLanguage(initialLanguage); }); });
 
     it('updates mounted comment, filter and toolbar labels when the committed locale changes', async () => {
         const execute = vi.fn(async () => ({ items: [comment()], cursor: null }));
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" execute={execute} testID="comments" />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
         await flushHookEffects();
         const keys = ['reply', 'resolve', 'bulkResolve', 'states.open', 'headerTitle'];
         for (const key of keys) expect(screen.getTextContent()).toContain(`files.reviewComments.durable.${key}`);
@@ -231,13 +212,13 @@ describe('ReviewCommentsSessionSurface', () => {
                 throw new Error(`Unexpected comment operation ${actionId}`);
             },
         }));
-        const execute = async (actionId: ReviewCommentActionIdV1, input: unknown) => {
+        const execute = async (actionId: ActionId, input: unknown) => {
             const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
             if (!result.ok) throw new Error(result.errorCode);
             return result.result;
         };
         modalMock.prompt.mockResolvedValue('Submitted text');
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" execute={execute} testID="comments" />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
         await flushHookEffects();
         if (operation === 'edit') {
             await screen.pressByTestIdAsync('review-comment-comment-1-more');
@@ -260,7 +241,7 @@ describe('ReviewCommentsSessionSurface', () => {
 
     function serveRunComment() {
         let current = comment({ id: 'finding-comment', state: 'open', sessionId: 'session-1', runId: 'run-1', serverRevision: 3 });
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1, input: unknown) => {
+        const execute = vi.fn(async (actionId: ActionId, input: unknown) => {
             if (actionId === 'reviews.comments.list') return { items: [current], cursor: null };
             if (actionId === 'reviews.comments.transition') {
                 const request = ReviewCommentTransitionRequestV1Schema.parse(input);
@@ -279,6 +260,9 @@ describe('ReviewCommentsSessionSurface', () => {
         const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} sessionId="session-1" runId="run-1" execute={execute} />);
         await flushHookEffects();
 
+        // Opening a second placement consumes the already demanded comment window.
+        expect(execute.mock.calls.filter(([id]) => id === 'reviews.comments.list')).toHaveLength(1);
+
         await screen.pressByTestIdAsync('review-comment-finding-comment-dismiss');
         await flushHookEffects();
 
@@ -289,12 +273,12 @@ describe('ReviewCommentsSessionSurface', () => {
 
     it.each(['resolved', 'dismissed'] as const)('reopens a %s comment from History through the durable Action', async (state) => {
         const closed = comment({ id: 'history-comment', state, serverRevision: 3 });
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1, input: unknown) => {
+        const execute = vi.fn(async (actionId: ActionId, input: unknown) => {
             if (actionId === 'reviews.comments.list') return { items: [closed], cursor: null };
             const request = ReviewCommentTransitionRequestV1Schema.parse(input);
             return { comment: { ...closed, state: request.toState, serverRevision: 4 } };
         });
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" execute={execute} testID="comments" />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
         await flushHookEffects();
         await screen.pressByTestIdAsync('comments-show-history');
         await screen.pressByTestIdAsync('review-comment-history-comment-reopen');
@@ -309,11 +293,11 @@ describe('ReviewCommentsSessionSurface', () => {
 
     it('reads as loading, never empty, until the first list arrives', async () => {
         let release: (value: unknown) => void = () => {};
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1) => {
+        const execute = vi.fn(async (actionId: ActionId) => {
             if (actionId === 'reviews.comments.list') return await new Promise((resolve) => { release = resolve; });
             throw new Error('unexpected');
         });
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" execute={execute} testID="comments" />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
         await flushHookEffects();
         expect(screen.getTextContent()).toContain('common.loading');
         expect(screen.getTextContent()).not.toContain('files.reviewComments.durable.empty');
@@ -325,7 +309,7 @@ describe('ReviewCommentsSessionSurface', () => {
 
     it('puts a failed action on the card that failed and retries it from there', async () => {
         let reject = true;
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1, input: unknown) => {
+        const execute = vi.fn(async (actionId: ActionId, input: unknown) => {
             if (actionId === 'reviews.comments.list') {
                 return { items: [comment({ id: 'other-comment' }), comment({ id: 'failed-comment' })], cursor: null };
             }
@@ -333,7 +317,7 @@ describe('ReviewCommentsSessionSurface', () => {
             const request = ReviewCommentTransitionRequestV1Schema.parse(input);
             return { comment: comment({ id: request.commentId, state: request.toState, serverRevision: 2 }) };
         });
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" execute={execute} testID="comments" />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
         await flushHookEffects();
         await screen.pressByTestIdAsync('review-comment-failed-comment-resolve');
         await flushHookEffects();
@@ -353,12 +337,12 @@ describe('ReviewCommentsSessionSurface', () => {
 
     it('handles a rejected comment mutation inline and preserves the comment for retry', async () => {
         let reject = true;
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1) => {
+        const execute = vi.fn(async (actionId: ActionId) => {
             if (actionId === 'reviews.comments.list') return { items: [comment({ id: 'retry-comment' })], cursor: null };
             if (reject) throw Object.assign(new Error('private diagnostic'), { code: 'review_comment_conflict' });
             return { comment: comment({ id: 'retry-comment', state: 'resolved', serverRevision: 2 }) };
         });
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" execute={execute} testID="comments" />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} projectId="project-1" execute={execute} testID="comments" />);
         await flushHookEffects();
         await screen.pressByTestIdAsync('review-comment-retry-comment-resolve');
         await flushHookEffects();
@@ -370,6 +354,28 @@ describe('ReviewCommentsSessionSurface', () => {
         await flushHookEffects();
         expect(screen.findHostByTestId('comments-mutation-error')).toBeNull();
         expect(screen.findHostByTestId('review-comment-retry-comment')).toBeNull();
+    });
+
+    it('shares pending decisions and confirmed native sealed comment revisions between workspace and Review windows', async () => {
+        const write = deferred<{ comment: ReviewCommentV1 }>();
+        const original = comment({ reviewId: 'review-native', findingId: 'native-finding', findingIdentity: 'f'.repeat(64),
+            workspace: { machineId: 'machine', path: '/repo' }, reviewTriageStatus: 'defer',
+            finding: { id: 'native-finding', title: 'Native finding', summary: 'body', severity: 'high', category: 'correctness' } });
+        const execute = vi.fn(async (actionId: ActionId) => {
+            if (actionId === 'reviews.comments.list') return { items: [original], cursor: null };
+            if (actionId === 'reviews.comments.transition') return write.promise;
+            throw new Error(`unexpected action ${actionId}`);
+        });
+        const target = { scope: RUN.scope, reviewId: original.reviewId! };
+        await loadReviewRunComments({ ...target, execute });
+        let saved!: Promise<boolean>;
+        await act(async () => { saved = decideReviewRunFinding({ ...target, commentId: original.id, decision: 'accept', execute }); });
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} workspace={original.workspace} execute={execute} />);
+        await flushHookEffects();
+        expect(screen.findByTestId(`review-finding-triage:${original.id}:accept`)?.props.accessibilityState?.checked).toBe(true);
+        await act(async () => { write.resolve({ comment: { ...original, reviewTriageStatus: 'accept', serverRevision: 2 } }); await saved; });
+        await act(async () => { recordReviewCommentWrites([{ ...original, body: 'Edited in Review', serverRevision: 3 }], RUN.scope); });
+        expect(screen.getTextContent()).toContain('Edited in Review');
     });
 
     it('shows a decision made on the review result in this panel without a reload', async () => {
@@ -416,49 +422,60 @@ describe('ReviewCommentsSessionSurface', () => {
     });
 
     it('reads workspace-only comments without requiring a legacy workspace-ref alias', async () => {
-        const execute = vi.fn(async (_actionId: ReviewCommentActionIdV1, _input: unknown) => ({ items: [], cursor: null }));
+        const execute = vi.fn(async (_actionId: ActionId, _input: unknown) => ({ items: [], cursor: null }));
         const workspace = { machineId: 'machine-1', path: '/repo' };
-        await renderScreen(<ReviewCommentsSessionSurface workspace={workspace} workspaceId="legacy-ref" execute={execute} />);
+        await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} workspace={workspace} workspaceId="legacy-ref" execute={execute} />);
         await flushHookEffects();
         expect(execute).toHaveBeenCalledWith('reviews.comments.list', expect.objectContaining({ workspace, includeHistory: true }),
             expect.objectContaining({ signal: expect.any(AbortSignal) }));
         expect(execute.mock.calls[0]?.[1]).not.toHaveProperty('workspaceId');
     });
 
-    it.each(['open', 'proposed'] as const)('delegates a %s file comment with distinct CAS writes and its updated revision', async (initialState) => {
-        const clock = vi.spyOn(Date, 'now').mockReturnValue(1);
-        const original = comment({ state: initialState, serverRevision: 3 });
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1, input: unknown) => {
-            if (actionId === 'reviews.comments.list') return { items: [original], cursor: null };
-            if (actionId === 'reviews.comments.transition') {
-                const request = ReviewCommentTransitionRequestV1Schema.parse(input);
-                return { comment: comment({ state: request.toState, serverRevision: request.expectedServerRevision + 1 }) };
-            }
-            throw new Error(`unexpected action ${actionId}`);
+    it.each([{ kind: 'gutter', state: 'open' }, { kind: 'gutter', state: 'proposed' }, { kind: 'native', state: 'open' }] as const)('routes the delegation transition made here through its canonical Action ($kind, $state)', async ({ kind, state }) => {
+        const sent: string[] = [];
+        let current = comment({ sessionId: 'chosen-session', state, serverRevision: 3,
+            ...(kind === 'native' ? { reviewId: 'review-1', findingId: 'finding-1', findingIdentity: 'f'.repeat(64),
+                finding: { id: 'finding-1', title: 'A finding', summary: 'body', severity: 'high', category: 'correctness' } } : {}) });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'delegate' }; },
+            reviewCommentAction: async ({ actionId, input }) => {
+                if (actionId === 'reviews.comments.list') return { items: [current], cursor: null };
+                if (actionId === 'reviews.comments.transition') {
+                    const request = ReviewCommentTransitionRequestV1Schema.parse(input);
+                    current = { ...current, state: request.toState, serverRevision: current.serverRevision + 1,
+                        ...(request.reviewTriageStatus ? { reviewTriageStatus: request.reviewTriageStatus } : {}) };
+                    return { comment: current };
+                }
+                throw new Error(`unexpected action ${actionId}`);
+            },
+        }));
+        const execute = vi.fn(async (actionId: ActionId, input: unknown) => {
+            const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+            if (!result.ok) throw new Error(result.errorCode);
+            return result.result;
         });
-        const screen = await renderScreen(<ReviewCommentsSessionSurface projectId="project-1" sessionId="chosen-session" execute={execute} />);
+        const screen = await renderScreen(<ReviewCommentsSessionSurface scope={RUN.scope} sessionId="chosen-session" execute={execute} />);
         await flushHookEffects();
         await screen.pressByTestIdAsync('review-comment-comment-1-more');
         await settleMenu();
         await screen.pressByTestIdAsync('review-comment-comment-1-delegate');
         await settleMenu();
         await flushHookEffects();
-        clock.mockRestore();
-        expect(execute).toHaveBeenCalledWith('reviews.comments.transition', expect.objectContaining({
-            commentId: 'comment-1', projectId: 'project-1', toState: 'delegated',
-            expectedState: 'open', expectedServerRevision: initialState === 'open' ? 3 : 4, clientMutationId: expect.any(String),
-        }));
-        const mutations = execute.mock.calls.filter(([id]) => id === 'reviews.comments.transition')
-            .map(([, input]) => ReviewCommentTransitionRequestV1Schema.parse(input).clientMutationId);
-        expect(new Set(mutations).size).toBe(initialState === 'open' ? 1 : 2);
-        expect(submitMessageSpy).toHaveBeenCalledWith('chosen-session', expect.stringContaining(`"expectedServerRevision": ${initialState === 'open' ? 4 : 5}`), expect.any(String), undefined, expect.any(Object));
-        expect(submitMessageSpy.mock.calls[0]?.[1]).toContain('reviews.comments.setDisposition');
-        expect(submitMessageSpy.mock.calls[0]?.[1]).toContain('body');
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toContain('body');
+        if (kind === 'native') {
+            expect(current.reviewTriageStatus).toBe('accept');
+            expect(execute).toHaveBeenCalledWith('review.apply', { sessionId: 'chosen-session', reviewId: 'review-1' }, expect.any(Object));
+        } else {
+            expect(current.state).toBe('delegated');
+            expect(current.serverRevision).toBe(state === 'open' ? 4 : 5);
+            expect(execute).toHaveBeenCalledWith('session.message.send', expect.objectContaining({ sessionId: 'chosen-session', message: expect.stringContaining('reviews.comments.setDisposition') }), expect.any(Object));
+        }
     });
 
     it('renders durable active/history comments and preserves last-known rows only while refresh is pending', async () => {
         const secondList = deferred<{ items: ReviewCommentV1[]; cursor: null }>();
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1) => {
+        const execute = vi.fn(async (actionId: ActionId) => {
             if (actionId !== 'reviews.comments.list') {
                 throw new Error(`unexpected action ${actionId}`);
             }
@@ -475,7 +492,7 @@ describe('ReviewCommentsSessionSurface', () => {
         });
 
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={execute}
@@ -512,7 +529,7 @@ describe('ReviewCommentsSessionSurface', () => {
     });
 
     it('keeps the product panel closed until the header button is pressed', async () => {
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1) => {
+        const execute = vi.fn(async (actionId: ActionId) => {
             if (actionId !== 'reviews.comments.list') {
                 throw new Error(`unexpected action ${actionId}`);
             }
@@ -525,7 +542,7 @@ describe('ReviewCommentsSessionSurface', () => {
         });
 
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={execute}
@@ -557,7 +574,7 @@ describe('ReviewCommentsSessionSurface', () => {
     });
 
     it('shows redacted durable comments in history even when their state is still active', async () => {
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1) => {
+        const execute = vi.fn(async (actionId: ActionId) => {
             if (actionId !== 'reviews.comments.list') {
                 throw new Error(`unexpected action ${actionId}`);
             }
@@ -578,7 +595,7 @@ describe('ReviewCommentsSessionSurface', () => {
         });
 
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={execute}
@@ -601,7 +618,7 @@ describe('ReviewCommentsSessionSurface', () => {
     });
 
     it('filters active durable comments by selected state without changing the unresolved badge count', async () => {
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1) => {
+        const execute = vi.fn(async (actionId: ActionId) => {
             if (actionId !== 'reviews.comments.list') {
                 throw new Error(`unexpected action ${actionId}`);
             }
@@ -616,7 +633,7 @@ describe('ReviewCommentsSessionSurface', () => {
         });
 
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={execute}
@@ -688,7 +705,7 @@ describe('ReviewCommentsSessionSurface', () => {
             updatedAt: 2,
         };
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={async () => ({ items: [], cursor: null })}
@@ -743,7 +760,7 @@ describe('ReviewCommentsSessionSurface', () => {
     it('keeps projected grants visible offline and exposes an explicit reconnect refresh', async () => {
         const onRefreshPermissionGrants = vi.fn();
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={async () => ({ items: [], cursor: null })}
@@ -783,7 +800,7 @@ describe('ReviewCommentsSessionSurface', () => {
 
     it('ignores pending grants for capabilities outside review-comment direct writes', async () => {
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={async () => ({ items: [], cursor: null })}
@@ -817,12 +834,12 @@ describe('ReviewCommentsSessionSurface', () => {
         modalMock.prompt
             .mockResolvedValueOnce('Edited body')
             .mockResolvedValueOnce('Reply body');
-        const execute = vi.fn(async (actionId: ReviewCommentActionIdV1, input: unknown) => {
+        const execute = vi.fn(async (actionId: ActionId, input: unknown) => {
             if (actionId === 'reviews.comments.list') {
                 return {
                     items: [
-                        comment({ id: 'open-1', state: 'open', body: 'Open issue.', updatedAt: 2 }),
-                        comment({ id: 'proposed-1', state: 'proposed', body: 'Proposed issue.', updatedAt: 1 }),
+                        comment({ id: 'open-1', state: 'open', body: 'Open issue.', updatedAt: 2, sessionId: 'session-1' }),
+                        comment({ id: 'proposed-1', state: 'proposed', body: 'Proposed issue.', updatedAt: 1, sessionId: 'session-1' }),
                     ],
                     cursor: null,
                 };
@@ -836,12 +853,13 @@ describe('ReviewCommentsSessionSurface', () => {
             }
             if (actionId === 'reviews.comments.reply') {
                 return {
-                    parent: comment({ id: 'open-1', state: 'open', body: 'Open issue.', updatedAt: 2 }),
+                    parent: comment({ id: 'open-1', state: 'open', body: 'Open issue.', updatedAt: 2, sessionId: 'session-1' }),
                     comment: comment({
                         id: 'reply-1',
                         parentCommentId: 'open-1',
                         threadId: 'open-1',
                         body: 'Reply body',
+                        sessionId: 'session-1',
                     }),
                 };
             }
@@ -849,7 +867,7 @@ describe('ReviewCommentsSessionSurface', () => {
         });
 
         const screen = await renderScreen(
-            <ReviewCommentsSessionSurface
+            <ReviewCommentsSessionSurface scope={RUN.scope}
                 projectId="project-1"
                 sessionId="session-1"
                 execute={execute}

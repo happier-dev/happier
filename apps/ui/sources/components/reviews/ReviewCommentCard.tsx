@@ -4,12 +4,16 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { reviewCommentTransitionTargetsV1 } from '@happier-dev/protocol/reviews/comments/mutation';
+import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ReviewSeverityLabel } from '@/components/sessions/reviews/findings/ReviewSeverity';
+import { ReviewFindingBody } from './finding/ReviewFindingBody';
+import { ReviewFindingDecisionControl } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -25,6 +29,7 @@ import { resolveReviewCommentBodyPromptDefault, resolveReviewCommentBodyText, sp
 
 export type ReviewCommentCardProps = Readonly<{
     comment: ReviewCommentV1;
+    serverId?: string;
     labels: ReviewCommentLabels;
     actions?: ReviewCommentCardActions;
     expanded?: boolean;
@@ -45,6 +50,8 @@ export type ReviewCommentCardActions = Readonly<{
     onTransition?: (input: ReviewCommentCardTransitionInput) => void;
     onRedact?: (comment: ReviewCommentV1) => void;
     onDelegate?: (comment: ReviewCommentV1) => void;
+    onDecide?: (comment: ReviewCommentV1, decision: ReviewTriageStatus) => void;
+    pendingDecision?: (comment: ReviewCommentV1) => ReviewTriageStatus | undefined;
     /** Replies to the thread this comment opens; the host passes it to a thread's root only, so a thread has one Reply. */
     onReply?: (comment: ReviewCommentV1) => void;
     /** A line the caller owns for this comment (the failure of an action taken on it), under its actions. */
@@ -118,6 +125,7 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
     const location = anchorLocation(props.comment);
     const engine = engineOf(props.comment);
     const disabled = isTerminalComment(props.comment);
+    const finding = !disabled && props.comment.reviewId ? props.comment.finding : undefined;
     const testID = props.testID ?? `review-comment-${props.comment.id}`;
     // Only readable plain text is Markdown; a redacted or unreadable body is its one quiet sentence.
     const readable = props.comment.flags.redacted ? undefined : resolveReviewCommentBodyPromptDefault(props.comment.body);
@@ -144,7 +152,7 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
 
     // Delegation and verification use their existing workflow controls. The row keeps the one move forward
     // (Open a proposal, Resolve, Reopen) and Dismiss; every other action sits behind More.
-    const targets = props.actions?.onTransition
+    const targets = props.actions?.onTransition && !finding
         ? reviewCommentTransitionTargetsV1(props.comment.state).filter((state) => state !== 'delegated' && state !== 'pending_review')
         : [];
     const onRow = (state: ReviewCommentStateV1) => state === 'dismissed' || isForwardTransition(state, props.comment.state);
@@ -179,15 +187,21 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
                 {props.comment.flags.outdated ? <StatusPill variant="neutral" label={props.labels.outdated} hideDot /> : null}
                 <StatusPill variant={STATE_VARIANT[props.comment.state]} label={props.labels.states[props.comment.state]} />
             </View>
-            {parts?.title ? <Text selectable style={styles.title}>{parts.title}</Text> : null}
-            {parts ? (
+            {finding ? <Text selectable style={styles.title}>{finding.title}</Text>
+                : parts?.title ? <Text selectable style={styles.title}>{parts.title}</Text> : null}
+            {finding ? <ReviewFindingBody rowId={props.comment.id} finding={finding} currentBodyMarkdown={readable}
+                reviewers={engine ? [{ label: resolveAgentCatalogTitle(engine), backendId: engine }] : []} conversation={null} /> : parts ? (
                 <>
                     {parts.lead ? <MarkdownView markdown={parts.lead} textStyle={styles.body} renderCacheKey={`review-comment:${props.comment.id}:${props.comment.bodyVersion}:lead`} /> : null}
                     {parts.rest && expanded ? <MarkdownView markdown={parts.rest} textStyle={styles.body} renderCacheKey={`review-comment:${props.comment.id}:${props.comment.bodyVersion}:rest`} /> : null}
                     {fold}
                 </>
             ) : <Text selectable style={styles.body}>{fallback}</Text>}
-            <ReviewCommentSnapshotView comment={props.comment} labels={props.labels} />
+            {finding ? null : <ReviewCommentSnapshotView comment={props.comment} labels={props.labels} />}
+            {finding && props.actions?.onDecide ? <ReviewFindingDecisionControl
+                testIDPrefix={`review-finding-triage:${props.comment.id}`}
+                decision={readReviewFindingDecision(props.actions.pendingDecision?.(props.comment) ?? props.comment.reviewTriageStatus)}
+                disabled={disabled} onDecide={(decision) => props.actions?.onDecide?.(props.comment, decision)} /> : null}
             {hasActions ? (
                 <View style={styles.actions}>
                     {targets.filter(onRow).map((toState) => action(

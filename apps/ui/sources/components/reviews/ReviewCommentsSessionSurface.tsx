@@ -6,7 +6,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
     ReviewCommentBulkTransitionResponseV1,
     ReviewCommentEditResponseV1,
-    ReviewCommentListResponseV1,
     ReviewCommentRedactResponseV1,
     ReviewCommentReplyResponseV1,
     ReviewCommentTransitionResponseV1} from '@happier-dev/protocol/reviews/comments/actions';
@@ -24,7 +23,10 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t, usePreferredLanguage } from '@/text';
-import { sync } from '@/sync/sync';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { useReviewCommentsWindow } from '@/components/sessions/reviews/findings/useReviewRunComments';
+import type { ReviewRunCommentsTarget } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { randomUUID } from '@/platform/randomUUID';
 import type {
     PluginPermissionGrant,
@@ -36,17 +38,14 @@ import {
 } from '@/sync/domains/plugins/permissions/types';
 import type { PluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
 import { createReviewCommentsActions } from '@/sync/domains/reviews/comments/actions';
-import type { ReviewCommentUiActionExecutor } from '@/sync/domains/reviews/comments/api';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     recordReviewCommentWrites,
-    subscribeReviewCommentWrites,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { selectReviewComments } from '@/sync/domains/reviews/comments/selectors';
 import {
     applyReviewCommentList,
     createEmptyReviewCommentsState,
-    upsertReviewComment,
 } from '@/sync/domains/reviews/comments/store';
 
 import { ReviewCommentDirectWriteGrantSheet } from './ReviewCommentDirectWriteGrantSheet';
@@ -88,7 +87,7 @@ export type ReviewCommentsSessionSurfaceProps = Readonly<{
     workspaceId?: string;
     runId?: string;
     sessionId?: string;
-    execute: ReviewCommentUiActionExecutor;
+    execute: (actionId: ActionId, input: unknown, options?: UiActionOperation) => Promise<unknown>;
     directWriteGrants?: readonly PluginPermissionGrant[];
     pendingDirectWriteGrantRequests?: readonly PluginPermissionPendingGrantRequest[];
     permissionGrantActions?: Pick<PluginPermissionGrantActions, 'grant' | 'dismissRequest' | 'revoke'>;
@@ -153,18 +152,13 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
     const headerLabels = React.useMemo(() => buildReviewCommentsHeaderLabels(), [language]);
     const directWriteGrantLabels = React.useMemo(() => buildReviewCommentDirectWriteGrantLabels(), [language]);
     const actions = React.useMemo(() => createReviewCommentsActions({ execute: props.execute }), [props.execute]);
-    const [commentsState, setCommentsState] = React.useState(createEmptyReviewCommentsState);
     const [ownPanelOpen, setPanelOpen] = React.useState(props.defaultPanelOpen !== false);
     const externalHeader = props.header === 'external';
     const panelOpen = externalHeader ? props.open === true : ownPanelOpen;
     const [showHistory, setShowHistory] = React.useState(false);
-    const [loadFailed, setLoadFailed] = React.useState<Readonly<{ cursor?: string }> | null>(null);
-    const [loading, setLoading] = React.useState(false);
-    const loadController = React.useRef<AbortController | null>(null);
     // The last action that failed: on the card it was taken on (null for a bulk action), with its retry.
     const [mutationFailure, setMutationFailure] = React.useState<Readonly<{ commentId: string | null; retry: () => void }> | null>(null);
     // Comments are read when the panel opens; until then the count is unknown, never "0".
-    const [loaded, setLoaded] = React.useState(false);
     const [bulkTransitionResult, setBulkTransitionResult] = React.useState<ReviewCommentBulkTransitionResult | null>(null);
     const [selectedActiveStates, setSelectedActiveStates] = React.useState<readonly ReviewCommentStateV1[]>(
         ACTIVE_REVIEW_COMMENT_STATES,
@@ -172,44 +166,31 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
     const workspaceMachineId = props.workspace?.machineId;
     const workspacePath = props.workspace?.path;
 
+    const serverId = props.scope?.serverId;
+    const accountId = props.scope?.accountId;
+    const target = React.useMemo<ReviewRunCommentsTarget | null>(() => {
+        if (!serverId || !accountId) return null;
+        const scope = { serverId, accountId };
+        const run = props.runId ? { runId: props.runId } : {};
+        if (props.sessionId) return { scope, sessionId: props.sessionId, ...run };
+        if (workspaceMachineId && workspacePath) return { scope, workspace: { machineId: workspaceMachineId, path: workspacePath }, ...run };
+        if (props.projectId) return { scope, projectId: props.projectId, ...(props.workspaceId ? { workspaceId: props.workspaceId } : {}), ...run };
+        return props.workspaceId ? { scope, workspaceId: props.workspaceId, ...run } : null;
+    }, [serverId, accountId, props.runId, props.sessionId, workspaceMachineId, workspacePath, props.projectId, props.workspaceId]);
+    const comments = useReviewCommentsWindow({ target, enabled: panelOpen, execute: props.execute });
+    const commentsState = React.useMemo(() => applyReviewCommentList(createEmptyReviewCommentsState(), {
+        items: [...comments.comments], cursor: comments.cursor,
+    }), [comments.comments, comments.cursor]);
+    const loaded = comments.status === 'loaded' || comments.comments.length > 0;
+    const loading = comments.status === 'loading' || comments.loadingMore;
+    const loadFailed = !target || comments.status === 'failed' || comments.loadMoreFailed
+        ? { cursor: comments.loadMoreFailed ? comments.cursor ?? undefined : undefined } : null;
     const loadComments = React.useCallback(async (cursor?: string) => {
-        if (!props.projectId && !workspaceMachineId && !props.workspaceId && !props.sessionId && !props.runId) return;
-        loadController.current?.abort();
-        const controller = new AbortController();
-        loadController.current = controller;
-        setLoadFailed(null);
-        setLoading(true);
         try {
-            const response = await actions.list({
-                ...(props.sessionId ? { sessionId: props.sessionId }
-                    : workspaceMachineId && workspacePath ? { workspace: { machineId: workspaceMachineId, path: workspacePath } }
-                    : { projectId: props.projectId, workspaceId: props.workspaceId }),
-                runId: props.runId,
-                includeHistory: true,
-                limit: 100,
-                ...(cursor ? { cursor } : {}),
-            }, { signal: controller.signal }) as ReviewCommentListResponseV1;
-            if (controller.signal.aborted) return;
-            setCommentsState((state) => cursor
-                ? { ...response.items.reduce(upsertReviewComment, state), cursor: response.cursor }
-                : applyReviewCommentList(state, response));
-            setLoaded(true);
+            await (cursor ? comments.loadMore() : comments.refresh());
             setBulkTransitionResult(null);
-        } catch {
-            if (!controller.signal.aborted) setLoadFailed({ cursor });
-        } finally {
-            if (loadController.current === controller) {
-                loadController.current = null;
-                setLoading(false);
-            }
-        }
-    }, [actions, props.projectId, props.runId, props.sessionId, props.workspaceId, workspaceMachineId, workspacePath]);
-
-    React.useEffect(() => {
-        if (!panelOpen) return;
-        void loadComments();
-        return () => { loadController.current?.abort(); };
-    }, [loadComments, panelOpen]);
+        } catch { /* The shared owner retains rows and the failed page for explicit Retry. */ }
+    }, [comments.loadMore, comments.refresh]);
 
     const activeComments = selectReviewComments(commentsState, { states: ACTIVE_REVIEW_COMMENT_STATES })
         .filter(isReviewCommentActiveItem);
@@ -272,20 +253,9 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         await props.permissionGrantActions?.revoke(input);
     }, [props.onRevokeDirectWrite, props.permissionGrantActions]);
 
-    const upsertUpdatedComments = React.useCallback((comments: readonly ReviewCommentV1[]) => {
-        if (comments.length === 0) return;
-        setCommentsState((state) => comments.reduce(upsertReviewComment, state));
-        if (props.scope) recordReviewCommentWrites(comments, props.scope);
+    const upsertUpdatedComments = React.useCallback((updated: readonly ReviewCommentV1[]) => {
+        if (props.scope) recordReviewCommentWrites(updated, props.scope);
     }, [props.scope]);
-
-    // A comment shown here can be written elsewhere too (a review result's decision): follow the
-    // newer revision of a comment this panel already holds instead of showing it stale until a reload.
-    React.useEffect(() => props.scope ? subscribeReviewCommentWrites(props.scope, (comments) => {
-        setCommentsState((state) => comments.reduce((next, comment) => {
-            const held = next.byId[comment.id];
-            return held && held.serverRevision < comment.serverRevision ? upsertReviewComment(next, comment) : next;
-        }, state));
-    }) : undefined, [props.scope]);
 
     const toggleActiveStateFilter = React.useCallback((state: ReviewCommentStateV1) => {
         setSelectedActiveStates((current) => current.includes(state)
@@ -306,6 +276,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         if (!nextBody) return;
         const response = await actions.edit({
             commentId: comment.id,
+            reviewId: comment.reviewId,
             projectId: comment.projectId,
             workspace: comment.workspace,
             nextBody,
@@ -322,6 +293,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
     }>) => {
         const response = await actions.transition({
             commentId: input.comment.id,
+            reviewId: input.comment.reviewId,
             projectId: input.comment.projectId,
             workspace: input.comment.workspace,
             toState: input.toState,
@@ -335,13 +307,23 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
 
     const delegateComment = React.useCallback(async (original: ReviewCommentV1) => {
         if (!props.sessionId) return;
+        const operation = { sessionMessageDisplayText: t('files.reviewComments.durable.headerTitle') };
+        if (original.finding && (original.reviewId || original.runId)) {
+            if (!await comments.decide(original.id, 'accept')) throw new Error(t('runPage.review.couldNotSaveChoice'));
+            await props.execute('review.apply', original.reviewId
+                ? { sessionId: props.sessionId, reviewId: original.reviewId }
+                : { sessionId: props.sessionId, reviews: [{ runId: original.runId!, findings: [{ ...original.finding,
+                    comment: { id: original.id, state: original.state, serverRevision: original.serverRevision,
+                        projectId: original.projectId, workspace: original.workspace, sessionId: original.sessionId, runId: original.runId } }] }] }, operation);
+            return;
+        }
         const body = resolveReviewCommentBodyPromptDefault(original.body);
         if (body === undefined) throw new Error('review_comment_body_unavailable');
         {
             let comment = original;
             const transition = async (toState: ReviewCommentStateV1) => {
                 const response = await actions.transition({
-                    commentId: comment.id, projectId: comment.projectId, workspace: comment.workspace,
+                    commentId: comment.id, reviewId: comment.reviewId, projectId: comment.projectId, workspace: comment.workspace,
                     toState, expectedState: comment.state, expectedServerRevision: comment.serverRevision,
                     reason: t('files.reviewComments.durable.transitionReason'),
                     clientMutationId: createReviewCommentClientMutationId('delegate'),
@@ -360,15 +342,14 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                 ...(snapshot ? { snapshot } : {}),
                 engineId: comment.engineId, flags: comment.flags, comment,
             }])}`;
-            await sync.submitMessage(props.sessionId, text, t('files.reviewComments.durable.headerTitle'), undefined, {
-                callerSurface: 'review_comments_delegate',
-            });
+            await props.execute('session.message.send', { sessionId: props.sessionId, message: text }, operation);
         }
-    }, [actions, props.sessionId, upsertUpdatedComments]);
+    }, [actions, comments.decide, props.execute, props.sessionId, upsertUpdatedComments]);
 
     const redactComment = React.useCallback(async (comment: ReviewCommentV1) => {
         const response = await actions.redact({
             commentId: comment.id,
+            reviewId: comment.reviewId,
             projectId: comment.projectId,
             workspace: comment.workspace,
             expectedServerRevision: comment.serverRevision,
@@ -392,6 +373,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         if (!body) return;
         const response = await actions.reply({
             parentCommentId: input.parentCommentId,
+            reviewId: parent.reviewId,
             projectId: parent.projectId,
             workspace: parent.workspace,
             expectedParentServerRevision: parent.serverRevision,
@@ -406,7 +388,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         for (const id of input.commentIds) {
             const comment = commentsState.byId[id];
             if (!comment) continue;
-            const key = JSON.stringify([comment.projectId, comment.workspace, comment.state]);
+            const key = JSON.stringify([comment.reviewId, comment.projectId, comment.workspace, comment.state]);
             const group = groups.get(key) ?? [];
             group.push(comment);
             groups.set(key, group);
@@ -417,7 +399,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
             const first = group[0];
             if (!first) continue;
             const response = await actions.bulkTransition({
-                projectId: first.projectId, workspace: first.workspace,
+                reviewId: first.reviewId, projectId: first.projectId, workspace: first.workspace,
                 commentIds: group.map((comment) => comment.id),
                 expectedState: first.state,
                 expectedServerRevisions: Object.fromEntries(group.map((comment) => [comment.id, comment.serverRevision])),
@@ -525,8 +507,13 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                                 comments={panelComments}
                                 listFooter={listFooter}
                                 labels={historyLabels}
+                                serverId={props.scope?.serverId}
                                 cardActions={{
                                     onOpenFile, canOpenFile,
+                                    pendingDecision: (comment) => comments.pending[comment.id],
+                                    onDecide: (comment, decision) => runCommentMutation(comment, async current => {
+                                        if (!await comments.decide(current.id, decision)) throw new Error(t('runPage.review.couldNotSaveChoice'));
+                                    }),
                                     onTransition: (input) => runCommentMutation(input.comment, (comment) => transitionComment({ ...input, comment })),
                                     renderNotice: renderCardNotice,
                                 }}
@@ -540,8 +527,13 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                             selectedStates={selectedActiveStates}
                             stateOptions={ACTIVE_REVIEW_COMMENT_STATES}
                             onToggleState={toggleActiveStateFilter}
+                            serverId={props.scope?.serverId}
                             cardActions={{
                                 onOpenFile, canOpenFile,
+                                pendingDecision: (comment) => comments.pending[comment.id],
+                                onDecide: (comment, decision) => runCommentMutation(comment, async current => {
+                                    if (!await comments.decide(current.id, decision)) throw new Error(t('runPage.review.couldNotSaveChoice'));
+                                }),
                                 onEdit: (comment) => runCommentMutation(comment, editComment),
                                 onTransition: (input) => runCommentMutation(input.comment, (comment) => transitionComment({ ...input, comment })),
                                 onRedact: (comment) => runCommentMutation(comment, redactComment),

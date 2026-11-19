@@ -12,6 +12,7 @@ import type { ReviewCommentLabels } from './labels';
 
 export type ReviewCommentsListProps = Readonly<{
     comments: readonly ReviewCommentV1[];
+    serverId?: string;
     labels: ReviewCommentLabels;
     cardActions?: ReviewCommentCardActions;
     onReply?: (input: Readonly<{ parentCommentId: string }>) => void;
@@ -55,11 +56,12 @@ export function ReviewCommentsList(props: ReviewCommentsListProps) {
     }, []);
     const rows = React.useMemo(() => groupCommentRows(props.comments), [props.comments]);
     const rowInputs = React.useMemo(() => ({
+        serverId: props.serverId,
         labels: props.labels,
         cardActions: props.cardActions,
         onReply: props.onReply,
         expandedCommentIds,
-    }), [props.labels, props.cardActions, props.onReply, expandedCommentIds]);
+    }), [props.serverId, props.labels, props.cardActions, props.onReply, expandedCommentIds]);
     return (
         <VirtualizedList
             testID={props.testID}
@@ -73,6 +75,7 @@ export function ReviewCommentsList(props: ReviewCommentsListProps) {
             renderItem={({ item }) => (
                 <ReviewCommentThreadRow
                     {...item}
+                    serverId={props.serverId}
                     expanded={expandedCommentIds.has(item.comment.id)}
                     onExpandedChange={(expanded) => setCommentExpanded(item.comment.id, expanded)}
                     labels={props.labels}

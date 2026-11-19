@@ -29,6 +29,7 @@ export type ReviewCommentBulkTransitionResult = Readonly<{
 
 export type ReviewCommentsPanelProps = Readonly<{
     comments: readonly ReviewCommentV1[];
+    serverId?: string;
     labels: ReviewCommentLabels & Readonly<{ filtersTitle: string }>;
     selectedStates?: readonly ReviewCommentStateV1[];
     stateOptions?: readonly ReviewCommentStateV1[];
@@ -45,6 +46,7 @@ export function ReviewCommentsPanel(props: ReviewCommentsPanelProps) {
     const stateOptions = props.stateOptions ?? ['proposed', 'open', 'delegated', 'pending_review', 'resolved', 'dismissed'];
     const eligibleIds = (toState: ReviewCommentStateV1) => props.comments
         .filter((comment) => !comment.flags.redacted && !comment.tombstone
+            && !(comment.reviewId && comment.finding)
             && reviewCommentTransitionAllowedV1(comment.state, toState))
         .map((comment) => comment.id);
     const resolvableIds = eligibleIds('resolved');
@@ -93,6 +95,7 @@ export function ReviewCommentsPanel(props: ReviewCommentsPanelProps) {
             {/* The toolbar stays put; only the comments scroll within the room the host gives them. */}
             <ReviewCommentsList
                 comments={props.comments}
+                serverId={props.serverId}
                 labels={props.labels}
                 cardActions={props.cardActions}
                 onReply={props.onReply}

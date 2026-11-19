@@ -9,6 +9,7 @@ import { ReviewCommentCard, type ReviewCommentCardActions } from './ReviewCommen
 
 export type ReviewCommentThreadRowProps = Readonly<{
     comment: ReviewCommentV1;
+    serverId?: string;
     isReply: boolean;
     isThreadEnd: boolean;
     expanded: boolean;
@@ -30,6 +31,7 @@ export function ReviewCommentThreadRow(props: ReviewCommentThreadRowProps) {
             <View style={props.isReply ? styles.replies : undefined}>
                 <ReviewCommentCard
                     comment={props.comment}
+                    serverId={props.serverId}
                     labels={props.labels}
                     actions={rootActions}
                     expanded={props.expanded}

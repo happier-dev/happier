@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import type { ReviewCommentUiActionExecutor } from '@/sync/domains/reviews/comments/api';
 
 import { observeReviewCommentChanges } from '@/sync/domains/reviews/comments/commentChanges';
 import {
@@ -38,13 +39,14 @@ function useReviewCommentTargets(params: Readonly<{
     enabled: boolean;
     refresh?: boolean;
     references?: Readonly<Record<string, readonly string[]>>;
+    execute?: ReviewCommentUiActionExecutor;
 }>): ReviewRunsCommentsSnapshot {
-    const { targets, enabled, refresh, references } = params;
+    const { targets, enabled, refresh, references, execute } = params;
     const actions = React.useMemo(() => targets.map(target => ({
-        refresh: () => loadReviewRunComments(target),
-        loadMore: () => loadMoreReviewRunComments(target),
-        decide: (commentId: string, decision: ReviewTriageStatus) => decideReviewRunFinding({ ...target, commentId, decision }),
-    })), [targets]);
+        refresh: () => loadReviewRunComments({ ...target, execute }),
+        loadMore: () => loadMoreReviewRunComments({ ...target, execute }),
+        decide: (commentId: string, decision: ReviewTriageStatus) => decideReviewRunFinding({ ...target, execute, commentId, decision }),
+    })), [execute, targets]);
     const cacheRef = React.useRef<Readonly<{
         sources: readonly ReviewRunCommentsSnapshot[];
         actions: typeof actions;
@@ -67,23 +69,34 @@ function useReviewCommentTargets(params: Readonly<{
 
     React.useEffect(() => {
         if (!enabled) return;
-        const releases = targets.map(target => observeReviewCommentChanges({ ...target,
+        const releases = targets.map(target => observeReviewCommentChanges({ ...target, execute,
             readComments: () => readReviewRunComments(target).comments,
-            reload: () => loadReviewRunComments(target),
+            reload: () => loadReviewRunComments({ ...target, execute }),
             onReadFailed: () => markReviewRunCommentsFailed(target),
         }));
         return () => { for (const release of releases) release(); };
-    }, [enabled, targets]);
+    }, [enabled, execute, targets]);
 
     React.useEffect(() => {
         if (!enabled) return;
         const load = refresh ? loadReviewRunComments : ensureReviewRunComments;
         for (const target of targets) {
-            fireAndForget(load({ ...target, commentIds: target.runId ? references?.[target.runId] : undefined }).catch(() => undefined),
+            fireAndForget(load({ ...target, execute, commentIds: target.runId ? references?.[target.runId] : undefined }).catch(() => undefined),
                 { tag: 'useReviewRunsComments.load' });
         }
-    }, [enabled, references, refresh, targets]);
+    }, [enabled, execute, references, refresh, targets]);
     return snapshot;
+}
+
+/** An opened SCM comment selector consumes the same window as native Reviews and run adapters. */
+export function useReviewCommentsWindow(params: Readonly<{
+    target: ReviewRunCommentsTarget | null;
+    enabled: boolean;
+    execute: ReviewCommentUiActionExecutor;
+}>): ReviewCommentsModel {
+    const { target, enabled, execute } = params;
+    const targets = React.useMemo(() => target && enabled ? [target] : [], [enabled, target]);
+    return useReviewCommentTargets({ targets, enabled, execute })[0] ?? EMPTY_REVIEW_COMMENTS_MODEL;
 }
 
 /**

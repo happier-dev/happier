@@ -7,6 +7,12 @@ import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogPr
 
 import { ReviewCommentsList } from './ReviewCommentsList';
 
+// Native recycler layout is the boundary; the list, threads and cards remain real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
+});
+
 vi.mock('@/components/ui/text/Text', async () => {
     const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
     return createUiTextModuleMock();

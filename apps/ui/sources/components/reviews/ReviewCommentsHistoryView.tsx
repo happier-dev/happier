@@ -14,6 +14,7 @@ function isHistoryComment(comment: ReviewCommentV1): boolean {
 
 export type ReviewCommentsHistoryViewProps = Readonly<{
     comments: readonly ReviewCommentV1[];
+    serverId?: string;
     labels: ReviewCommentLabels;
     cardActions?: ReviewCommentCardActions;
     listFooter?: React.ReactElement | null;
@@ -24,6 +25,7 @@ export function ReviewCommentsHistoryView(props: ReviewCommentsHistoryViewProps)
     return (
         <ReviewCommentsList
             comments={props.comments.filter(isHistoryComment)}
+            serverId={props.serverId}
             labels={props.labels}
             cardActions={props.cardActions}
             listFooter={props.listFooter}
