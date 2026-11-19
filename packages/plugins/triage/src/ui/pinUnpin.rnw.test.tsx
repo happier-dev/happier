@@ -419,7 +419,15 @@ describe('the mounted Pin/Unpin affordance', () => {
                 name: 'Pin Replace the duplicated normalizer',
             }));
         });
-        expect(await liveMarkCount(harness)).toBe(1);
+        const marks = await harness.collections.userMarks.query({
+            index: CORPUS_USER_MARKS_INDEX_ID.byPinned,
+            prefix: [true],
+            order: 'asc',
+        });
+        expect(marks.rows.map(row => row.value)).toEqual([expect.objectContaining({
+            entryRef: entryRef('17'),
+            displayAtMark: { title: 'Replace the duplicated normalizer', scopeLabel: 'example/repository' },
+        })]);
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', {
