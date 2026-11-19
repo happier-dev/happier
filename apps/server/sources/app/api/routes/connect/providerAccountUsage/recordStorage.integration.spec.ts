@@ -680,6 +680,37 @@ describe("provider account usage record storage (integration)", () => {
         })).resolves.toBe(0);
     });
 
+    it('publishes changed sealed subscription material at the same quota clock for an inclusive reread', async () => {
+        const account = await db.account.create({
+            data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }, select: { id: true },
+        });
+        const snapshot = createUsageSnapshot({ fetchedAt: Date.now() - 3000 });
+        const key = { accountId: account.id, recordId: snapshot.recordId };
+        const write = {
+            ...key, recordKey: snapshot.recordKey, payloadMode: 'sealed_account_scoped_v1' as const, status: 'ok' as const,
+            fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, materialFingerprint: 'unchanged-quota',
+        };
+        const quota = { format: 'account_scoped_v1' as const, ciphertext: 'quota' };
+        await writeProviderAccountUsageRecordWithPolicy({ ...write, sealedPayload: { ...quota,
+            subscription: { observedAtMs: write.fetchedAt - 1000, ciphertext: 'old-subscription' } } });
+        const changeKey = { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' };
+        const before = await db.accountChange.findFirstOrThrow({ where: changeKey });
+        const first = await db.providerAccountUsageHistory.findFirstOrThrow({ where: key });
+        // The new generated ID sorts before the cursor's opaque ID at this clock.
+        const held = await db.providerAccountUsageHistory.update({ where: { id: first.id }, data: { id: 'zzzz-held' } });
+        const subscription = { observedAtMs: write.fetchedAt, ciphertext: 'new-subscription' };
+        await expect(writeProviderAccountUsageRecordWithPolicy({ ...write, sealedPayload: { ...quota, subscription } }))
+            .resolves.toBe('written');
+        const change = await db.accountChange.findFirstOrThrow({ where: changeKey });
+        expect(change.cursor).toBeGreaterThan(before.cursor);
+        expect(change.hint).toMatchObject({ providerAccountUsageHistoryChange: { fromAtMs: write.fetchedAt } });
+        const history = await readProviderAccountUsageHistory({ ...key,
+            history: { range: { startAtMs: write.fetchedAt, endAtMs: write.fetchedAt + 1 }, pageSize: 10 } });
+        expect(history.entries.map(entry => entry.record.sealedPayload?.subscription?.ciphertext))
+            .toEqual(['new-subscription', 'old-subscription']);
+        expect(history.entries[1]?.id).toBe(held.id);
+    });
+
     it("preserves a sealed predecessor subscription when a newer quota write omits it", async () => {
         const account = await db.account.create({
             data: {

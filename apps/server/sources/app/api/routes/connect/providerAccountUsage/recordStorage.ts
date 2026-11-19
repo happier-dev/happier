@@ -111,14 +111,13 @@ export function sameProviderAccountUsageHistoryMaterial(next: UsageHistoryMateri
     }
     if (!next.sealedPayload || !previous.sealedPayload) return false;
     const fingerprint = next.metadata?.materialFingerprint;
-    const sealedFields = (payload: SealedProviderAccountUsageSnapshotV1) => [
-        payload.format, payload.ciphertext, payload.refreshErrorAt,
-        payload.subscription, payload.recoveryCreditDetails,
+    const sealedFacets = (payload: SealedProviderAccountUsageSnapshotV1) => [
+        payload.format, payload.refreshErrorAt, payload.subscription, payload.recoveryCreditDetails,
     ];
-    return isDeepStrictEqual(sealedFields(next.sealedPayload), sealedFields(previous.sealedPayload))
-        || (fingerprint !== undefined && fingerprint === previous.metadata?.materialFingerprint
-            && next.sealedPayload.format === previous.sealedPayload.format
-            && next.sealedPayload.refreshErrorAt === previous.sealedPayload.refreshErrorAt);
+    // The accepted write can retain the quota fingerprint while advancing a separately sealed facet.
+    return isDeepStrictEqual(sealedFacets(next.sealedPayload), sealedFacets(previous.sealedPayload))
+        && (next.sealedPayload.ciphertext === previous.sealedPayload.ciphertext
+            || (fingerprint !== undefined && fingerprint === previous.metadata?.materialFingerprint));
 }
 
 /** Only the accepted-write policy invokes this inside the same transaction as its CAS. */
