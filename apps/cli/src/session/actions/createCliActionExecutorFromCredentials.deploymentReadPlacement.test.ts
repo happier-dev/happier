@@ -20,6 +20,33 @@ vi.mock('undici', async importOriginal => {
 
 describe('deployment read placement from a CLI on another Machine', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+    it('reads a Team Environment from Home without a requester daemon', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-environment-reader-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'reader', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const serverId = configuration.activeServerId;
+            const environment = createDeploymentEnvironmentHeaderV1({ id: 'env', serverId,
+                controllerMachineId: 'collector-machine' });
+            const detail = { ok: true, environment, targetLinks: [] };
+            vi.spyOn(axios, 'request').mockImplementation(async request => {
+                const url = new URL(String(request.url));
+                if (url.origin + url.pathname === 'https://home.test/v1/deployments/environments/env'
+                    && request.method === 'GET' && request.headers?.Authorization === `Bearer ${token}`) {
+                    return { status: 200, data: detail };
+                }
+                return { status: 404, data: { error: 'not_found' } };
+            });
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+                externalActionClient: true, serverId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+            });
+            expect(await executor.execute('deployments.environments.get', { serverId, environmentId: environment.id },
+                { surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: true, result: detail });
+        });
+    });
+
     it.each(['terminal', 'account'] as const)('dispatches current health to the controller the read names, not this CLI Machine (%s)', async kind => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-health-probe-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
