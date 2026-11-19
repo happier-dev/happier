@@ -15,7 +15,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { readMachinePublishedResources } from '@/components/machines/summary/machineResourceSentences';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -113,20 +113,13 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
   // last reported says only what that means and offers Try again (lab `rv` OS 3, TH D-I). With nothing reported this
   // session the banner says that too, and no body follows.
   const offlineBanner = props.online === false && !props.offlineExplained ? (
-    <AttentionBanner
+    <MachineOfflineNotice
       testID="machine-vitals-offline"
-      tone="neutral"
       title={t('machineVitals.states.offlineBackTitle')}
       description={view.kind === 'offline_empty'
         ? t('machineVitals.states.offlineNeverReported')
         : t('machineVitals.states.offlineLastReported', { machine: props.machineName })}
-      action={props.offlineRetry ? {
-        label: t('machineVitals.states.tryAgain'),
-        testID: 'machine-vitals-offline-retry',
-        onPress: props.offlineRetry.onPress,
-        loading: props.offlineRetry.loading,
-        disabled: props.offlineRetry.loading,
-      } : null}
+      retry={props.offlineRetry ? { ...props.offlineRetry, testID: 'machine-vitals-offline-retry' } : null}
     />
   ) : null;
   if (props.online === null && view.kind !== 'ready') return <SurfaceStateCard kind="unavailable" title={t('common.unknown')} />;

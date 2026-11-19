@@ -1517,6 +1517,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online={false}
       params={{ id: 'setup' }} setParams={vi.fn()} />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-offline')).not.toBeNull());
+    // The page header already says it is offline: the tab says what that means in the page's one offline notice.
+    const { MachineOfflineNotice } = await import('@/components/machines/page/MachineOfflineNotice');
+    const { t } = await import('@/text');
+    expect(screen.findAllByType(MachineOfflineNotice)).toHaveLength(1);
+    expect(screen.getTextContent()).not.toContain(t('machinePresets.setup.tab.offline', { machine: 'devbox' }));
     expect(screen.findByTestId('machine-setup-loading')).toBeNull();
     expect(screen.findByTestId('machine-setup-recipes-none')).toBeNull();
     await screen.unmount();

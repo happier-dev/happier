@@ -707,6 +707,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesSetup: "Configurazione",
                 recipesSoftware: "Software",
                 offline: ({ machine }: { machine: string }) => `${machine} è offline. La configurazione potrà essere verificata quando tornerà online.`,
+                offlineReason: "La configurazione potrà essere verificata quando tornerà online.",
                 presets: "Preset",
                 presetsHelp: ({ machine }: { machine: string }) => `Nell’ordine in cui sono stati collegati. Modificare un preset non cambia mai ${machine}; applicalo di nuovo per prendere solo la differenza.`,
                 attachPreset: "Collega un preset",

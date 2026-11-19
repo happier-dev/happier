@@ -707,6 +707,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesSetup: "Настройка",
                 recipesSoftware: "Программы",
                 offline: ({ machine }: { machine: string }) => `${machine} не в сети. Настройку можно проверить, когда она снова станет доступна.`,
+                offlineReason: "Настройку можно проверить, когда она снова станет доступна.",
                 presets: "Пресеты",
                 presetsHelp: ({ machine }: { machine: string }) => `В порядке подключения. Изменение пресета никогда не меняет ${machine}; примените его снова, чтобы получить только разницу.`,
                 attachPreset: "Подключить пресет",

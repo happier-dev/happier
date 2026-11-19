@@ -1063,6 +1063,20 @@ describe('MachineStorageTab', () => {
         expect(screen.getTextContent()).not.toContain('Try again');
     });
 
+    it('says what an offline machine means for its storage in the page\'s one offline notice, never "<machine> is offline" again', async () => {
+        const { screen, serverId } = await mount({ id: 'storage' }, {}, (rpc) =>
+            rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET ? Promise.reject(new Error('no answer')) : undefined);
+        await act(async () => {
+            await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine({ active: false, activeAt: Date.now() })]);
+        });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-offline_empty')).not.toBeNull()); });
+        const { MachineOfflineNotice } = await import('@/components/machines/page/MachineOfflineNotice');
+        expect(screen.findAllByType(MachineOfflineNotice)).toHaveLength(1);
+        // The page header already says it is offline; the tab says only what that means here.
+        expect(screen.getTextContent()).not.toContain(t('machineStorage.states.offlineTitle', { machine: 'leeroy-mbp' }));
+        expect(screen.getTextContent()).toContain(t('machineStorage.states.offlineReason'));
+    });
+
     it('groups a kind’s page the way the machine groups it: stopped long ago first, then recent or running', async () => {
         const folder = (itemId: string, title: string, bytes: number, verdict: StorageItemV1['verdict'], code: StorageItemV1['reason']['code']): StorageItemV1 => ({
             itemId, kind: 'category-item', categoryId: 'sessionFolders', title, evidence: [], path: `/Users/leeroy/.happier/sessions/${itemId}`,

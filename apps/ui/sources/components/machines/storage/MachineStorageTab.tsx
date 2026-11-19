@@ -20,6 +20,7 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -296,7 +297,11 @@ function StorageMainView(
   const layout = useMachineTabCompactLayout();
   const { retry } = storage;
 
-  if (view.kind === 'not_reported' || view.kind === 'offline_empty' || view.kind === 'waiting') {
+  // The page header says it is offline; with nothing read yet, the tab says what that means here (one notice per tab).
+  if (view.kind === 'offline_empty') {
+    return <MachineOfflineNotice testID="machine-storage-offline_empty" title={t('machineStorage.states.offlineReason')} />;
+  }
+  if (view.kind === 'not_reported' || view.kind === 'waiting') {
     return (
       // The page's tab strip already leaves the gap before a tab's first block.
       <ItemGroup header="none">
@@ -304,15 +309,8 @@ function StorageMainView(
           testID={`machine-storage-${view.kind}`}
           kind="unavailable"
           size="line"
-          title={t(
-            view.kind === 'not_reported'
-              ? 'machineStorage.states.notReported'
-              : view.kind === 'waiting'
-                ? 'projects.checkouts.waiting'
-                : 'machineStorage.states.offlineTitle',
-            { machine: props.machineName },
-          )}
-          {...(view.kind === 'offline_empty' ? { reason: t('machineStorage.states.offlineReason') } : {})}
+          title={t(view.kind === 'not_reported' ? 'machineStorage.states.notReported' : 'projects.checkouts.waiting',
+            { machine: props.machineName })}
         />
       </ItemGroup>
     );

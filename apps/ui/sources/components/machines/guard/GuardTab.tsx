@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 
 import type { MachinePageTabBodyProps } from '@/components/machines/page/machinePageTabQuery';
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { Icon } from '@/components/ui/icons/Icon';
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -84,8 +84,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
         return (
             <ItemGroup>
                 <SurfaceStateCard testID="machine-guard-offline-empty" kind="unavailable" size="line"
-                    title={t('machineGuard.states.offlineTitle', { machine: props.machineName })}
-              reason={t('machineGuard.states.offlineReason')} />
+                    title={t('machineGuard.states.offlineReason')} />
             </ItemGroup>
         );
     }
@@ -103,7 +102,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
     // whereas this preview and the detail page share the same default history and retained store entry.
     const recent = activity.list?.entries.slice(0, RECENT_ACTIVITY) ?? [];
     const activityLine = activity.list ? { id: 'empty', kind: 'empty' as const, iconName: 'clock' as const, title: t('machineGuard.activity.empty', { machine: props.machineName }) }
-        : activity.offline ? { id: 'offline', kind: 'unavailable' as const, iconName: undefined, title: t('machineGuard.states.offlineTitle', { machine: props.machineName }), reason: t('machineGuard.states.offlineReason') }
+        : activity.offline ? { id: 'offline', kind: 'unavailable' as const, iconName: undefined, title: t('machineGuard.states.offlineReason') }
             : activity.status === 'error' || activity.status === 'not_reported' ? { id: 'error', kind: 'unavailable' as const, iconName: undefined, title: t('machineGuard.activity.error') }
                 : { id: 'loading', kind: 'loading' as const, iconName: undefined, title: t('machineGuard.activity.loading') };
     return (
@@ -116,7 +115,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
                     {props.barAccessoryShown ? null : <GuardPhoneFreshness serverId={props.serverId} machineId={props.machineId} />}
                 </View>
             </ItemGroup>
-            {guard.offline ? <OfflineBanner serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} onRetry={guard.retry} /> : readFailed}
+            {guard.offline ? <OfflineBanner serverId={props.serverId} machineId={props.machineId} onRetry={guard.retry} /> : readFailed}
             <MemoryGuardSection machineName={props.machineName} policy={policy} view={view} editable={editable}
                 failed={policyState.failed} awaiting={awaiting}
                 reading={!view && !guard.offline && guard.status !== 'error'} nowMs={nowMs} save={policyState.save} />
@@ -144,23 +143,16 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
     );
 }
 
-/** "studio is offline · These are its guard settings as of …" above what it blocks (G9-2). */
-function OfflineBanner(props: Readonly<{ serverId: string; machineId: string; machineName: string; onRetry: () => void }>) {
-    const { theme } = useUnistyles();
+/**
+ * "These are its guard settings as of … · Try again" above what it blocks (G9-2), in the page's one offline notice: the
+ * page header already says the machine is offline.
+ */
+function OfflineBanner(props: Readonly<{ serverId: string; machineId: string; onRetry: () => void }>) {
     const { lastSeenAt = null } = useMachinePresenceSummary(props.serverId, props.machineId);
     return (
-        <ItemGroup>
-            <View testID="machine-guard-offline" style={styles.banner}>
-                <Icon name="info" size={16} color={theme.colors.text.secondary} />
-                <View style={styles.bannerBody}>
-                    <Text style={styles.bannerTitle}>{t('machineGuard.states.offlineTitle', { machine: props.machineName })}</Text>
-                    <Text style={styles.bannerText}>
-                        {t('machineGuard.states.offlineBody', { time: lastSeenAt === null ? t('machineGuard.states.lastKnown') : formatAsOfTime(lastSeenAt) })}
-                    </Text>
-                    <TextLinkButton label={t('machineGuard.tryAgain')} onPress={props.onRetry} tone="strong" />
-                </View>
-            </View>
-        </ItemGroup>
+        <MachineOfflineNotice testID="machine-guard-offline"
+            title={t('machineGuard.states.offlineBody', { time: lastSeenAt === null ? t('machineGuard.states.lastKnown') : formatAsOfTime(lastSeenAt) })}
+            retry={{ onPress: props.onRetry, testID: 'machine-guard-offline-retry' }} />
     );
 }
 
@@ -184,26 +176,5 @@ const styles = StyleSheet.create((theme) => ({
         ...happierPageTextMetrics('pageDescription'),
         color: theme.colors.text.secondary,
         maxWidth: 640,
-    },
-    banner: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s12,
-        padding: theme.space.s16,
-    },
-    bannerBody: {
-        flex: 1,
-        gap: theme.space.s4,
-        alignItems: 'flex-start',
-    },
-    bannerTitle: {
-        ...Typography.default('semiBold'),
-        ...happierPageTextMetrics('rowTitle'),
-        color: theme.colors.text.primary,
-    },
-    bannerText: {
-        ...Typography.default(),
-        ...happierPageTextMetrics('rowDescription'),
-        color: theme.colors.text.secondary,
     },
 }));

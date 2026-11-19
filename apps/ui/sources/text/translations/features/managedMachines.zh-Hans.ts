@@ -707,6 +707,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesSetup: "设置",
                 recipesSoftware: "软件",
                 offline: ({ machine }: { machine: string }) => `${machine} 处于离线状态。恢复在线后即可检查设置。`,
+                offlineReason: "恢复在线后即可检查设置。",
                 presets: "预设",
                 presetsHelp: ({ machine }: { machine: string }) => `按添加顺序排列。编辑预设不会更改 ${machine}；再次应用即可只获取差异。`,
                 attachPreset: "添加预设",

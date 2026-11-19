@@ -421,6 +421,10 @@ describe('GuardTab', () => {
         expect(screen.findByTestId('machine-guard-left-behind')).not.toBeNull();
         expect(screen.findByTestId('machine-guard-activity-empty')).toBeNull();
         expect(screen.findByTestId('machine-guard-activity-offline')).not.toBeNull();
+        // The page header already says it is offline: the tab says what that means in the page's one offline notice.
+        const { MachineOfflineNotice } = await import('@/components/machines/page/MachineOfflineNotice');
+        expect(screen.findAllByType(MachineOfflineNotice)).toHaveLength(1);
+        expect(screen.getTextContent()).not.toContain(t('machineGuard.states.offlineTitle', { machine: 'leeroy-mbp' }));
     });
 
     it('keeps the saved rules under one line saying the first read failed, instead of emptying the tab', async () => {

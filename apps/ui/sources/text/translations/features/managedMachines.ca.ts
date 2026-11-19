@@ -707,6 +707,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 recipesSetup: "Configuració",
                 recipesSoftware: "Programari",
                 offline: ({ machine }: { machine: string }) => `${machine} està fora de línia. La configuració es pot comprovar quan torni a estar disponible.`,
+                offlineReason: "La configuració es pot comprovar quan torni a estar disponible.",
                 presets: "Predefinits",
                 presetsHelp: ({ machine }: { machine: string }) => `En l’ordre en què es van adjuntar. Editar un predefinit mai no canvia ${machine}; torna’l a aplicar per agafar només la diferència.`,
                 attachPreset: "Adjunta un predefinit",

@@ -37,6 +37,7 @@ import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -207,14 +208,8 @@ function MachineSetupRoot(
     return (
       <View testID="machine-setup">
         {canManage ? (
-          <ItemGroup surface="none">
-            <SurfaceStateCard
-              testID="machine-setup-offline"
-              kind="unavailable"
-              size="line"
-              title={t('machinePresets.setup.tab.offline', { machine })}
-            />
-          </ItemGroup>
+          // The page header says it is offline; this says what that means for its setup (one notice per tab).
+          <MachineOfflineNotice testID="machine-setup-offline" title={t('machinePresets.setup.tab.offlineReason')} />
         ) : (
           <ItemGroup
             surface="none"

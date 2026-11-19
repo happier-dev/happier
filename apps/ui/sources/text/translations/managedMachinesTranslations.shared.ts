@@ -762,6 +762,7 @@ export const managedMachinesEn = {
                 finishedAndChecked: ({ time }: { time: string }) => `Finished ${time} · checked after`,
                 readOnly: "You can use this machine. Its owner and people who manage it change its setup.",
                 offline: ({ machine }: { machine: string }) => `${machine} is offline. Its setup can be checked once it’s back.`,
+                offlineReason: "Its setup can be checked once it’s back.",
                 reviewTitle: "Review changes",
                 reviewRemove: "Review removal",
                 reviewHelp: "Nothing changes until you apply.",
