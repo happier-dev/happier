@@ -109,9 +109,6 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   // can bootstrap its own public utility surface before auth state settles.
   if (first === 'desktop' && normalized[1] === 'activity-overlay') return true;
 
-  // The first-open presenter paints before sign-in in its own credential-free realm.
-  if (first === 'desktop' && normalized[1] === 'opening' && normalized.length === 2) return true;
-
   // The Capture window and the selection layer are thin aux webviews with no Sync: every Account
   // operation they offer runs in the main window, so they never wait on this webview's auth state.
   if (first === 'desktop' && (normalized[1] === 'capture' || normalized[1] === 'capture-selection') && normalized.length === 2) return true;
