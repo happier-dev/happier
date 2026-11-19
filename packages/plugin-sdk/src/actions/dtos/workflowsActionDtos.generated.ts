@@ -9036,7 +9036,6 @@ export type WorkflowsActionResultById = {
                     profileUnavailable?: boolean | undefined;
                 };
                 sessionAuthorityBindings?: undefined | {
-                    inputName: string;
                     targets: {
                         address: {
                             serverId: string;
@@ -9044,6 +9043,7 @@ export type WorkflowsActionResultById = {
                         };
                         machineId: string;
                     }[];
+                    inputName?: string | undefined;
                 }[];
                 sessionBindings?: undefined | {
                     inputName: string;
@@ -10858,7 +10858,6 @@ export type WorkflowsActionResultById = {
                     profileUnavailable?: boolean | undefined;
                 };
                 sessionAuthorityBindings?: undefined | {
-                    inputName: string;
                     targets: {
                         address: {
                             serverId: string;
@@ -10866,6 +10865,7 @@ export type WorkflowsActionResultById = {
                         };
                         machineId: string;
                     }[];
+                    inputName?: string | undefined;
                 }[];
                 sessionBindings?: undefined | {
                     inputName: string;
