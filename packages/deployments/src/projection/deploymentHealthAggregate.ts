@@ -44,16 +44,17 @@ export type DeploymentHealthServicesObservationV1 = Readonly<Omit<DeploymentHeal
 
 type Observation = DeploymentHealthObservationV1 | DeploymentHealthServicesObservationV1;
 type Member = Readonly<Pick<DeploymentHealthMemberV1, 'machineId' | 'installationId' | 'roles'>>;
+type RankedHealthEvidence = Readonly<Pick<DeploymentHealthRoleEvidenceV1, 'status' | 'reason'>>;
 const key = (machineId: string, role: DeploymentHealthRoleV1) => JSON.stringify([machineId, role]);
 const rank: Record<DeploymentHealthStatusV1, number> = { up: 0, degraded: 2, unknown: 3, down: 4 };
 export const DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1 = 'running_unverified';
 
-function isRunningUnverified(evidence?: Readonly<{ status: DeploymentHealthStatusV1; reason?: string }>): boolean {
+function isRunningUnverified(evidence?: RankedHealthEvidence): boolean {
     return evidence?.status === 'unknown' && evidence.reason === DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1;
 }
 
 // A liveness observation can never mask a failing sibling or missing coverage.
-function evidenceRank(evidence?: Readonly<{ status: DeploymentHealthStatusV1; reason?: string }>): number {
+function evidenceRank(evidence?: RankedHealthEvidence): number {
     return isRunningUnverified(evidence) ? 1 : rank[evidence?.status ?? 'unknown'];
 }
 
