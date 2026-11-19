@@ -223,6 +223,27 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       }));
       return pages.flat();
     };
+    const waitForReviewSessions = async (expectedCount: number, reason: string) => {
+      // One mounted App owns the Account lifetime for these concurrent reads.
+      const runReader = await connectUiPersonActionClient({ serverUrl: fixture!.actionServerApiUrl,
+        addressAnchorUrl: fixture!.server.baseUrl, accountSecret: actor.auth.accountSigningSeed });
+      try {
+        await waitForWorkflowChildSession(async () => {
+          const observed = await runs();
+          expect(observed.length).toBeLessThanOrEqual(expectedCount);
+          if (observed.length !== expectedCount) return false;
+          const sessions = await Promise.all(observed.map(run => readWorkflowChildSession({
+            execute: (actionId, input) => runReader.executeConfirmed(actionId, input, {
+              surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+              serverId: runReader.serverId, serverIdentityId: fixture!.serverId, actionRequestId: randomUUID(),
+            }),
+            serverBaseUrl: fixture!.server.baseUrl, token: actor.credentials.token,
+            runId: run.id, blockId: 'review',
+          })));
+          return sessions.every(session => session !== null);
+        }, reason);
+      } finally { await runReader.close(); }
+    };
     const close = (pluginId: string, ticketId: string) => actor.executeAsPerson('action.invoke', {
       action: { pluginId, localId: 'close-ticket' }, input: { ticket: { ticketId } },
     }, context, { action: { pluginId, localId: 'close-ticket' }, machineId: machine.target.machineId });
@@ -230,17 +251,7 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     expectAction(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toEqual([]);
     expectAction(await close(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
-    await waitForWorkflowChildSession(async () => {
-      const observed = await runs();
-      expect(observed.length).toBeLessThanOrEqual(2);
-      if (observed.length !== 2) return false;
-      const sessions = await Promise.all(observed.map(run => readWorkflowChildSession({
-        execute: (actionId, input) => actor.executeAsPerson(actionId, input),
-        serverBaseUrl: fixture!.server.baseUrl, token: actor.credentials.token,
-        runId: run.id, blockId: 'review',
-      })));
-      return sessions.every(session => session !== null);
-    }, 'Only the qualified ticket starts its before and after review Runs');
+    await waitForReviewSessions(2, 'Only the qualified ticket starts its before and after review Runs');
     expectAction(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
     const readerContext = { externalActionTarget: { kind: 'machine' as const,
@@ -282,17 +293,7 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     expectAction(await observe(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
     expectAction(await observe(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
-    await waitForWorkflowChildSession(async () => {
-      const observed = await runs();
-      expect(observed.length).toBeLessThanOrEqual(3);
-      if (observed.length !== 3) return false;
-      const sessions = await Promise.all(observed.map(run => readWorkflowChildSession({
-        execute: (actionId, input) => actor.executeAsPerson(actionId, input),
-        serverBaseUrl: fixture!.server.baseUrl, token: actor.credentials.token,
-        runId: run.id, blockId: 'review',
-      })));
-      return sessions.every(session => session !== null);
-    }, 'The declared Event subject selects only its qualified ticket');
+    await waitForReviewSessions(3, 'The declared Event subject selects only its qualified ticket');
     expectAction(await reader.executeAsPerson('action.invoke', { action: { pluginId: pluginIds[0], localId: 'observe-ticket' },
       input: { ticketId: 'ticket-1' } }, readerContext,
       { action: { pluginId: pluginIds[0], localId: 'observe-ticket' }, machineId: readerMachine.target.machineId }))
