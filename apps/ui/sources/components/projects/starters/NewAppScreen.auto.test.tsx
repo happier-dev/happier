@@ -614,6 +614,9 @@ it('when every suggestion is dropped it says it couldn’t suggest, and Try agai
     await waitForHomeGovernance(() =>
       expect(screen.findByTestId('newApp.auto.nothing')).toBeTruthy(),
     );
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const nothing = screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.nothing');
+    expect(nothing?.props.diagnosticCode, 'why the answer was dropped stays under Details').toBe('unknown_id');
     await screen.pressByTestIdAsync('newApp.auto.tryAgain');
     await waitForHomeGovernance(() =>
       expect(calls('execution.run.start')).toHaveLength(2),
@@ -625,6 +628,81 @@ it('when every suggestion is dropped it says it couldn’t suggest, and Try agai
   }
 });
 
+
+// F-QUESTIONS (run_4e61a18e-59f9-4999-ab60-3025c6f86fa2): the model bounds a single-choice question by 0..1; that
+// only restates single choice, so the step asks it instead of saying none of the suggestions fit.
+it('asks a single-choice question whose bounds only restate single choice', async () => {
+  const questions = { kind: 'questions', title: 'Contact form handling', questions: [{ id: 'contact_handling',
+    prompt: 'How should contact form submissions be handled?', type: 'singleChoice', required: true, allowCustom: true,
+    allowNote: false, minSelections: 0, maxSelections: 1,
+    choices: [{ id: 'mailto_only', label: 'mailto only' }, { id: 'decide_later', label: 'Decide later' }] }] };
+  suggestionBoundary({ executionRunWait: async () => ({ ok: true, status: 'succeeded',
+    result: terminal({ recommendations: [], questions }) }) });
+  const { fixture, screen } = await openDescribe('auto-bounded-question');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.questions')
+      ?? screen.findByTestId('newApp.auto.nothing')).toBeTruthy());
+    expect(screen.findByTestId('newApp.auto.nothing')).toBeNull();
+    expect(screen.findByTestId('newApp.auto.questions')).toBeTruthy();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+// The Describe step keeps reading the registry sources a Machine still owes (AUTO-FIX-W2 residual): the
+// suggestion's catalog read waits on them, and the wait ends when that Machine answers.
+it('the Describe step keeps the owed registry sources read, and the suggestion starts once they arrive', async () => {
+  suggestionBoundary({ executionRunWait: async () => ({ ok: true, status: 'succeeded',
+    result: terminal({ recommendations: [recommendation] }) }) });
+  const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+  const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+  const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://auto-owed-sources.test',
+    { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } }, 'updated', { handleRequest: async () => null });
+  const owing = { machineId: 'owing-box', serverId: 'home-owed' };
+  const shell = (pending: boolean) => ({ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+    phase: 'current' as const, registrySourcesPending: pending, registrySourcesPendingTargets: pending ? [owing] : [],
+    interactionEnabled: true, machineId: null, serverId: null, platform: 'web' as const, accountLifetime: null,
+    reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables() {} });
+  const tree = (pending: boolean) => <AppShellPluginUiProjectionValueProvider value={shell(pending)}>
+    <NewAppScreen onClose={vi.fn()} />
+  </AppShellPluginUiProjectionValueProvider>;
+  const reads = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.root
+    .findAll((node) => typeof node.type === 'function' && node.type.name === 'SourceDemand')
+    .filter((node) => (node.props.target as { machineId: string }).machineId === owing.machineId).length;
+  const screen = await renderScreen(tree(true));
+  // The app shell's publication: the owing Machine has not answered its registry sources yet.
+  let pending = true;
+  const listeners = new Set<() => void>();
+  const unpublish = publishCommittedAppShellPluginUiProjection(() => null, undefined,
+    (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, undefined, undefined, () => pending);
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.describeApp')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    expect(reads(screen), 'the Describe step reads the owed sources').toBe(1);
+    expect(calls('deployments.suggestions.catalog'), 'no catalog before a starter source can be known').toHaveLength(0);
+    pending = false;
+    await screen.update(tree(false));
+    await act(async () => { for (const listener of listeners) listener(); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    expect(calls('deployments.suggestions.catalog')).toHaveLength(1);
+    expect(calls('execution.run.start')).toHaveLength(1);
+    await screen.unmount();
+  } finally {
+    unpublish();
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
 
 it('a questions round asks in the step: the footer waits for an answer, then one more run brings the cards (journey-deploy F2)', async () => {
   const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };

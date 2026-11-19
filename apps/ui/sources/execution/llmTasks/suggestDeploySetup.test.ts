@@ -186,3 +186,36 @@ it.each([false, true])('reads the catalog only once registry sources settle, so 
         expect(progress[0]).toMatchObject({ kind: 'catalog', counts: { starters: 1 } });
     } finally { unpublish(); }
 });
+
+// F-WAIT (AUTO-LIVE run_4e61a18e-59f9-4999-ab60-3025c6f86fa2): "Looking at your Store" held ~2.5 min while one
+// Machine still owed its registry sources, although the Store already held the starters. The registry selection
+// never waits once a source of the kind it lists is known; the catalog read follows the same rule.
+it('reads the catalog at once when a starter source is already known, though another Machine still owes its sources', async () => {
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { projectPluginRegistrySourceDeclarationV1 } = await import('@happier-dev/protocol/registries');
+    const starters = projectPluginRegistrySourceDeclarationV1({ pluginId: 'happier.deployment.templates', pluginVersion: '1.0.0',
+        definition: { id: 'starters', title: 'Starters', format: 'happier-catalog', kinds: ['starter'], url: 'https://starters.test/catalog.json' } });
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, registrySourcesById: { [starters.id]: starters } };
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => projection, undefined, () => () => {},
+        undefined, undefined, () => true);
+    try {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            registryActionExecute: async ({ input }) => ({ pages: [{ sourceId: (input as { kind: string }).kind,
+                status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: [] }] }),
+            connectedServiceAction: async () => ({ accounts: [], pools: [], healthBasis: 'credentials',
+                source: { completeness: 'complete', observedAtMs: 1 } }),
+            machinesList: async () => ({ items: [] }),
+            deploymentSuggestionTargets: async () => ({ targets: catalog.targets, stores: [] }),
+            deploymentSuggestionForges: async () => catalog.forges,
+            machineSetupPlan: async () => ({ targets: [] }),
+        }));
+        execute.mockImplementation(executor.execute);
+        const abort = new AbortController();
+        const result = suggestDeploySetup({ serverId: 'home', description: 'Bakery', signal: abort.signal });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const catalogReads = execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.catalog').length;
+        abort.abort();
+        await result;
+        expect(catalogReads, 'the catalog read does not wait on a Machine that can only add more starters').toBe(1);
+    } finally { unpublish(); }
+});

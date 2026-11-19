@@ -42,24 +42,6 @@ export function readCurrentAppShellRegistrySourcesPending(input?: AppShellPlugin
     return committed?.readRegistrySourcesPending?.(input) ?? false;
 }
 
-/**
- * Settles once no registry source may still arrive (the same fact the registry selection waits on), or on abort.
- * No timer: a Machine that answers or fails its registry sources ends the wait.
- */
-export function waitForAppShellRegistrySourcesSettled(signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted || !readCurrentAppShellRegistrySourcesPending()) return Promise.resolve();
-    return new Promise(resolve => {
-        const settle = () => {
-            if (!signal?.aborted && readCurrentAppShellRegistrySourcesPending()) return;
-            unsubscribe();
-            signal?.removeEventListener('abort', settle);
-            resolve();
-        };
-        const unsubscribe = subscribeCommittedAppShellPluginUiProjection(settle);
-        signal?.addEventListener('abort', settle);
-    });
-}
-
 /** Imperative consumers borrow the current Account's copy owner; each runtime still checks its exact source. */
 export function readCurrentAppShellPluginUiTranslationRuntime(projection: PluginUiProjectionModel | null | undefined,
     input?: AppShellPluginUiProjectionRead): PluginUiTranslationRuntime | null {

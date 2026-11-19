@@ -1,5 +1,6 @@
 import { it, expect } from 'vitest';
-import { DeploySuggestionCatalogV1Schema, DeploySuggestionInputV1Schema, validateDeploySuggestionV1, renderDeployPlanBriefV1 } from './deploySuggestionsV1.js';
+import { DeploySuggestionCatalogV1Schema, DeploySuggestionInputV1Schema, DeploySuggestionV1Schema, validateDeploySuggestionV1, renderDeployPlanBriefV1 } from './deploySuggestionsV1.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import type { DeploySuggestionRecommendationV1 } from './deploySuggestionsV1.js';
 import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../deploymentValidationV1.js';
 const catalog = DeploySuggestionCatalogV1Schema.parse({
@@ -28,7 +29,7 @@ it('drops numeric CAD and dollar-word prices while preserving technical version 
         { ...recommendation, whatToBuild: 'A bakery website for 20 dollars per month' }], questions: null }, catalog);
     expect(result).toEqual({ recommendations: [technical], dropped: [
         { index: 1, reason: 'invalid_recommendation' }, { index: 2, reason: 'invalid_recommendation' },
-    ], questions: null });
+    ], questions: null, droppedQuestions: [] });
 });
 it('rejects variable values before a description reaches a run', () => {
     const input = { description: 'Bakery', catalog, variables: [{ key: 'API_KEY', secret: true }] };
@@ -69,4 +70,43 @@ it('admits a setup served by another publishing forge before a repository provid
         targets: catalog.targets.map(target => ({ ...target, sources: { gitIntegration: ['gitlab'], upload: false } })) };
     expect(validateDeploySuggestionV1({ recommendations: [recommendation] }, gitlab).recommendations).toEqual([recommendation]);
     expect(validateDeploySuggestionV1({ recommendations: [recommendation] }, { ...gitlab, forges: [] }).recommendations).toEqual([]);
+});
+
+// run_4e61a18e-59f9-4999-ab60-3025c6f86fa2 (AUTO-LIVE F-QUESTIONS): the model's single-choice questions carried
+// redundant selection bounds, which the shared question schema refuses; the whole round was dropped silently.
+const liveQuestions = { kind: 'questions', title: 'Contact form handling', questions: [
+    { id: 'contact_handling', prompt: 'How should contact form submissions be handled?', description: 'Static starter has no backend; choose handling for form submissions',
+        type: 'singleChoice', required: true, allowCustom: true, allowNote: false, minSelections: 0, maxSelections: 1, choices: [
+            { id: 'mailto_only', label: 'mailto only', description: 'Use mailto link only, no backend storage' },
+            { id: 'external_form_service', label: 'External form service', description: 'Wire form to an external service you provide later' },
+            { id: 'decide_later', label: 'Decide later', description: 'Build UI now, decide handling later' }] },
+    { id: 'repo_provider', prompt: 'Which repository provider should hold the Session code?', description: 'Choose code host for the new starter code',
+        type: 'singleChoice', required: true, allowCustom: false, allowNote: false, minSelections: 0, maxSelections: 1, choices: [
+            { id: 'github', label: 'GitHub', description: 'Use GitHub forge' }, { id: 'gitlab', label: 'GitLab', description: 'Use GitLab forge' }] },
+] };
+it('keeps single-choice questions whose selection bounds only restate single choice', () => {
+    const result = validateDeploySuggestionV1({ recommendations: [], questions: liveQuestions }, catalog);
+    expect(result.questions?.questions.map(question => question.id)).toEqual(['contact_handling', 'repo_provider']);
+    expect(result.questions?.questions[0]).not.toHaveProperty('minSelections');
+    expect(result.questions?.questions[0]).not.toHaveProperty('maxSelections');
+    expect(result.droppedQuestions).toEqual([]);
+});
+it('drops a question the shared schema still refuses, with a typed reason, and keeps the rest', () => {
+    const [first, second] = liveQuestions.questions;
+    const result = validateDeploySuggestionV1({ recommendations: [], questions: { ...liveQuestions,
+        questions: [{ ...first, maxSelections: 2 }, second] } }, catalog);
+    expect(result.questions?.questions.map(question => question.id)).toEqual(['repo_provider']);
+    expect(result.droppedQuestions).toEqual([{ index: 0, reason: 'invalid_question' }]);
+    expect(validateDeploySuggestionV1({ recommendations: [], questions: { kind: 'questions', questions: 'none' } }, catalog))
+        .toMatchObject({ questions: null, droppedQuestions: [{ reason: 'invalid_questions' }] });
+});
+it('offers the model selection bounds only on multiple-choice questions', () => {
+    type Node = { const?: string; anyOf?: Node[]; properties?: Record<string, Node>; items?: Node };
+    const root = zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' }) as Node;
+    const arms = (root.properties?.questions?.anyOf ?? []).flatMap(arm => arm.properties?.questions?.items?.anyOf ?? []);
+    const types = (node: Node | undefined): string[] => node?.const ? [node.const] : (node?.anyOf ?? []).flatMap(types);
+    const bounded = (type: string) => arms.filter(arm => types(arm.properties?.type).includes(type))
+        .map(arm => 'minSelections' in (arm.properties ?? {}) || 'maxSelections' in (arm.properties ?? {}));
+    expect(bounded('singleChoice')).toEqual([false]);
+    expect(bounded('multipleChoice')).toEqual([true]);
 });

@@ -241,7 +241,9 @@ export function useNewAppAutoSuggestions(
     }
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
     if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome) };
-    return { kind: 'nothing' };
+    // Why the check dropped each part of the answer, by its typed reason, for Details.
+    const reasons = [...new Set([...outcome.dropped, ...outcome.droppedQuestions].map((row) => row.reason))];
+    return { kind: 'nothing', code: reasons.length ? reasons.join(', ') : null };
   }, [declaredPlans, openMachineSetup, params.serverId, phase, stop, theme.colors.text.secondary]);
 
   const settled = phase.kind === 'settled' ? phase.outcome : phase.kind === 'working' ? lastRecommendations.current : null;

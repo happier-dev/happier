@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -64,7 +63,8 @@ export type NewAppAutoView =
   | Readonly<{ kind: 'noAgent'; serverId: string | null; machines: readonly NewAppAutoMachine[] }>
   /** The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2). */
   | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[] }>
-  | Readonly<{ kind: 'nothing' }>
+  /** The agent answered, but nothing fit; `code` holds the check's typed reasons for each dropped part, for Details. */
+  | Readonly<{ kind: 'nothing'; code: string | null }>
   /** The suggestion owner's typed failure code, kept for the Details disclosure, and why, in words. */
   | Readonly<{ kind: 'failed'; code: string; reason: string }>;
 
@@ -130,22 +130,16 @@ export function NewAppAutoStep(
 
   if (view.kind === 'nothing') {
     return (
-      <EmptyState
+      <SurfaceStateCard
         testID="newApp.auto.nothing"
-        layout="centered"
+        // Dropped parts are a warning whose reasons stay behind Details; an empty answer is only empty.
+        kind={view.code ? 'warning' : 'empty'}
         iconName="sparkle"
         title={t('newApp.auto.nothingTitle')}
-        subtitle={t('newApp.auto.nothingBody')}
-        primaryAction={{
-          label: t('newApp.auto.tryAgain'),
-          onPress: props.onTryAgain,
-          testID: 'newApp.auto.tryAgain',
-        }}
-        secondaryAction={{
-          label: t('newApp.auto.chooseStarter'),
-          onPress: props.onChooseStarter,
-          testID: 'newApp.auto.chooseStarter',
-        }}
+        reason={t('newApp.auto.nothingBody')}
+        diagnosticCode={view.code}
+        action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
+        secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
       />
     );
   }

@@ -101,9 +101,14 @@ home folder, which always exists; nothing is created on the Machine for it. Its
 input contains the person's description,
 the catalog snapshot, and, when variable metadata is supplied, names with secret
 flags rather than secret values. When the catalog is read for a suggestion while
-the app shell still owes registry sources (`registrySourcesPending`), the read
-waits for that fact to settle, so starters supplied by a Machine are not dropped.
+the app shell still owes registry sources (`registrySourcesPending`) and no
+starter source is known yet, the read waits until one is known or that fact
+settles, so starters supplied by a Machine are not dropped. This is the registry
+selection's own rule: a Machine still owing its sources can only add more of a
+known kind, so it does not hold the read up.
 The run can return typed questions in the existing transient question shape. The
+result schema given to the model offers selection bounds only on multiple-choice
+questions. The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.
 
@@ -111,7 +116,11 @@ Both hosts send the model result to `deployments.suggestions.check`. The
 protocol owner `validateDeploySuggestionV1` parses the result once, drops unknown
 ids, invalid recommendations, price text, and incompatible source/target/forge
 pairs, then returns the validated recommendations, dropped reasons, and any
-questions. Cards are rendered from that checked result and the catalog facts.
+questions. Model questions are external input: single-choice bounds that only
+restate single choice (minimum at most 1, maximum 1) are removed before the
+shared question schema admits them, and a question it still refuses is dropped
+with a typed `droppedQuestions` reason. When nothing is left, the dialog keeps
+those reasons under Details. Cards are rendered from that checked result and the catalog facts.
 No model-written price is displayed.
 
 Target plugins declare dated plans with a public source URL. The catalog carries

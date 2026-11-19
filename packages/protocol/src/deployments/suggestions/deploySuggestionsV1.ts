@@ -3,7 +3,12 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { ProjectStarterCreateInputV1 } from '../../projects/starters/createV1.js';
 import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../deploymentValidationV1.js';
 import { DeployShapeV1Schema, DeployVariableNameV1Schema, deploymentTargetFitFieldsV1 } from '../deployShapeV1.js';
-import { InteractionTransientQuestionsAuthorRequestV1Schema, InteractionTransientQuestionAnswerV1Schema } from '../../plugins/interactions/transientV1.js';
+import {
+    InteractionTransientAuthorQuestionV1Schema,
+    InteractionTransientQuestionsAuthorRequestV1Schema,
+    InteractionTransientQuestionAnswerV1Schema,
+    type InteractionTransientQuestionsAuthorRequestV1,
+} from '../../plugins/interactions/transientV1.js';
 import { resolvePublishTargetRecommendation } from '../resolvePublishTargetRecommendation.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -47,10 +52,25 @@ export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.stri
     variables: z.array(DeployVariableNameV1Schema),
 }));
 export type DeploySuggestionRecommendationV1 = z.infer<typeof DeploySuggestionRecommendationV1Schema>;
-export const DeploySuggestionV1Schema = lazyZodSchema(() => z.strictObject({
-    recommendations: z.array(DeploySuggestionRecommendationV1Schema),
-    questions: z.optional(z.nullable(InteractionTransientQuestionsAuthorRequestV1Schema)),
-}));
+/**
+ * The answer shape the model is asked for: the shared author questions, with selection bounds offered only on
+ * multiple choice. JSON Schema can't carry the shared schema's bounds refinement, so the arms are split here from
+ * that schema's own shape; the check below still admits the answer through the shared schema itself.
+ */
+export const DeploySuggestionV1Schema = lazyZodSchema(() => {
+    const request = InteractionTransientQuestionsAuthorRequestV1Schema;
+    const [text, choice] = InteractionTransientAuthorQuestionV1Schema._zod.def.options;
+    const { minSelections, maxSelections, ...common } = choice.shape;
+    const question = z.union([text, z.strictObject({ ...common, type: z.literal('singleChoice') }),
+        z.strictObject({ ...common, type: z.literal('multipleChoice'), minSelections, maxSelections })]);
+    // The shared list's own count checks, over the split arms.
+    const list = z.array(question);
+    const questions = z.core.clone(list, { ...list._zod.def, checks: request.shape.questions._zod.def.checks });
+    return z.strictObject({
+        recommendations: z.array(DeploySuggestionRecommendationV1Schema),
+        questions: z.optional(z.nullable(z.strictObject({ ...request.shape, questions }))),
+    });
+});
 export const DeploySuggestionInputV1Schema = lazyZodSchema(() => z.strictObject({
     description: z.string().check(z.refine(value => value.trim().length > 0)),
     answers: z.optional(z.record(z.string(), InteractionTransientQuestionAnswerV1Schema)),
@@ -63,15 +83,17 @@ export const DeploySuggestionCheckResultV1Schema = lazyZodSchema(() => z.strictO
     recommendations: z.array(DeploySuggestionRecommendationV1Schema),
     dropped: z.array(z.strictObject({ index: z.number().check(z.int(), z.nonnegative()), reason: z.enum(['invalid_recommendation', 'unknown_id', 'incompatible_pair']) })),
     questions: z.nullable(InteractionTransientQuestionsAuthorRequestV1Schema),
+    // Questions the shared schema refused: one by its index, or the whole round (no index) when its envelope was.
+    droppedQuestions: z.optional(z.array(z.strictObject({ index: z.optional(z.number().check(z.int(), z.nonnegative())),
+        reason: z.enum(['invalid_question', 'invalid_questions']) }))),
 }));
 export type DeploySuggestionCheckResultV1 = z.infer<typeof DeploySuggestionCheckResultV1Schema>;
 
 /** Untrusted model output is admitted once, before either host presents an actionable card. */
 export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggestionCatalogV1): DeploySuggestionCheckResultV1 {
     const envelope = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-    const result: DeploySuggestionCheckResultV1 = { recommendations: [], dropped: [], questions: null };
-    const questions = InteractionTransientQuestionsAuthorRequestV1Schema.safeParse(envelope.questions);
-    if (questions.success) result.questions = questions.data;
+    const questions = admitDeploySuggestionQuestionsV1(envelope.questions);
+    const result: DeploySuggestionCheckResultV1 = { recommendations: [], dropped: [], ...questions };
     const recommendations = Array.isArray(envelope.recommendations) ? envelope.recommendations : [];
     recommendations.forEach((rawRecommendation, index) => {
         const parsed = DeploySuggestionRecommendationV1Schema.safeParse(rawRecommendation);
@@ -104,6 +126,33 @@ export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggesti
         result.recommendations.push(recommendation);
     });
     return result;
+}
+
+/**
+ * Model questions are external input: a single-choice question's bounds that only restate single choice
+ * (min ≤ 1, max = 1) are dropped before the shared schema admits it; a question it still refuses is dropped by name.
+ */
+function admitDeploySuggestionQuestionsV1(raw: unknown): Readonly<{ questions: InteractionTransientQuestionsAuthorRequestV1 | null;
+    droppedQuestions: NonNullable<DeploySuggestionCheckResultV1['droppedQuestions']> }> {
+    const droppedQuestions: NonNullable<DeploySuggestionCheckResultV1['droppedQuestions']> = [];
+    if (raw === undefined || raw === null) return { questions: null, droppedQuestions };
+    const envelope = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+    if (!envelope || !Array.isArray(envelope.questions)) return { questions: null, droppedQuestions: [{ reason: 'invalid_questions' }] };
+    const kept = envelope.questions.flatMap((rawQuestion: unknown, index) => {
+        const question = rawQuestion && typeof rawQuestion === 'object' ? { ...rawQuestion as Record<string, unknown> } : null;
+        if (question?.type === 'singleChoice') {
+            if (typeof question.minSelections === 'number' && question.minSelections <= 1) delete question.minSelections;
+            if (question.maxSelections === 1) delete question.maxSelections;
+        }
+        const parsed = InteractionTransientAuthorQuestionV1Schema.safeParse(question ?? rawQuestion);
+        if (parsed.success) return [parsed.data];
+        droppedQuestions.push({ index, reason: 'invalid_question' });
+        return [];
+    });
+    if (kept.length === 0) return { questions: null, droppedQuestions };
+    const request = InteractionTransientQuestionsAuthorRequestV1Schema.safeParse({ ...envelope, questions: kept });
+    return request.success ? { questions: request.data, droppedQuestions }
+        : { questions: null, droppedQuestions: [...droppedQuestions, { reason: 'invalid_questions' }] };
 }
 
 /** Preserve the person's bytes before the reviewed, value-free build plan. */

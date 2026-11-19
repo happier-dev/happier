@@ -17,7 +17,7 @@ import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmT
 import type { LlmTaskRunnerResolutionV1, LlmTaskRunnerUnavailableAgentV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 import { normalizeInteractionTransientQuestionsV1, type InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
-import { waitForAppShellRegistrySourcesSettled } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { waitForPluginRegistrySourcesOfKind } from '@/registries/pluginRegistrySources';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -46,7 +46,8 @@ export type DeploySuggestionOutcome =
         recommendations: DeploySuggestionCheckResultV1['recommendations']; dropped: DeploySuggestionCheckResultV1['dropped'] }>
     // Canonical questions (author defaults filled once), the form the step presents.
     | Readonly<{ kind: 'questions'; catalog: DeploySuggestionCatalogV1; questions: ReturnType<typeof normalizeInteractionTransientQuestionsV1> }>
-    | Readonly<{ kind: 'nothing'; catalog: DeploySuggestionCatalogV1; dropped: DeploySuggestionCheckResultV1['dropped'] }>
+    | Readonly<{ kind: 'nothing'; catalog: DeploySuggestionCatalogV1; dropped: DeploySuggestionCheckResultV1['dropped'];
+        droppedQuestions: NonNullable<DeploySuggestionCheckResultV1['droppedQuestions']> }>
     | Readonly<{ kind: 'noAgent'; machines: readonly DeploySuggestionUnavailableMachine[] }>
     /**
      * Where it failed: before any agent ran (`setup`), in the agent's Run (`run`, with the Run's typed error when it
@@ -83,8 +84,8 @@ export async function suggestDeploySetup(params: Readonly<{
         if (params.signal?.aborted) return { kind: 'stopped' };
         let catalog = params.catalog;
         if (!catalog) {
-            // A Machine still owing its registry sources may carry the only starters: read once they settle.
-            await waitForAppShellRegistrySourcesSettled(params.signal);
+            // A Machine still owing its registry sources may carry the only starters: read once one is known or they settle.
+            await waitForPluginRegistrySourcesOfKind('starter', params.signal);
             if (params.signal?.aborted) return { kind: 'stopped' };
             const listed = await readDeploySuggestionCatalog(params);
             if (params.signal?.aborted) return { kind: 'stopped' };
@@ -142,7 +143,7 @@ export async function suggestDeploySetup(params: Readonly<{
             if (result.data.recommendations.length) return { kind: 'recommendations', catalog,
                 recommendations: result.data.recommendations, dropped: result.data.dropped };
             if (result.data.questions) return { kind: 'questions', catalog, questions: normalizeInteractionTransientQuestionsV1(result.data.questions) };
-            return { kind: 'nothing', catalog, dropped: result.data.dropped };
+            return { kind: 'nothing', catalog, dropped: result.data.dropped, droppedQuestions: result.data.droppedQuestions ?? [] };
         }
         return { kind: 'noAgent', machines: unavailable };
     } catch (error) {
