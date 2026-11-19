@@ -161,14 +161,23 @@ export function createTranscriptToolCallProjection(params: Readonly<{
     description: string | null;
     messageCreatedAt: number;
     permission?: ReducerStoredPermission;
+    transcriptPermission?: Pick<ReducerStoredPermission, 'turnId' | 'source' | 'nativeChoices'>;
     isPendingPermissionRequest: boolean;
 }>): Readonly<{
     toolCall: ToolCall;
-    shouldStorePendingPermission: boolean;
+    pendingPermission?: ReducerStoredPermission;
 }> {
     const toolInput = params.permission ? params.permission.arguments : params.toolInput;
     const toolCreatedAt = params.permission ? params.permission.createdAt : params.messageCreatedAt;
-    const pendingPermission = !params.permission && params.isPendingPermissionRequest;
+    const pendingPermission: ReducerStoredPermission | undefined = !params.permission
+        && (params.transcriptPermission || params.isPendingPermissionRequest)
+        ? {
+            tool: params.toolName,
+            arguments: params.toolInput,
+            createdAt: params.messageCreatedAt,
+            status: 'pending',
+            ...params.transcriptPermission,
+        } : undefined;
     const toolCall: ToolCall = {
         id: params.toolId,
         ...(params.sourceToolId ? { sourceToolId: params.sourceToolId } : {}),
@@ -186,11 +195,13 @@ export function createTranscriptToolCallProjection(params: Readonly<{
         toolCall.permission = buildToolPermissionFromStored(params.toolId, params.permission);
         applyStoredPermissionTerminalState(toolCall, params.permission, params.messageCreatedAt);
     } else if (pendingPermission) {
-        toolCall.permission = { id: params.toolId, status: 'pending' };
+        toolCall.permission = params.transcriptPermission
+            ? buildToolPermissionFromStored(params.toolId, pendingPermission)
+            : { id: params.toolId, status: 'pending' };
     }
 
     return {
         toolCall,
-        shouldStorePendingPermission: pendingPermission,
+        pendingPermission,
     };
 }

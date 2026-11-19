@@ -24,6 +24,24 @@ installFileOpsRendererCommonModuleMocks({
 });
 
 describe('EditView', () => {
+    it('shows the unified diff and path carried by a pending native Edit', async () => {
+        fileOpsRendererModuleState.toolDiffSpy.mockClear();
+        const { EditView } = await import('./EditView');
+        const diff = '@@ -1 +1 @@\n-before\n+Calm shell QA fixture\n';
+        const tool = makeToolCall({
+            name: 'Edit',
+            state: 'running',
+            input: { filepath: '/workspace/fixture.txt', diff },
+            permission: { id: 'pending-edit', status: 'pending' },
+        });
+
+        await renderScreen(React.createElement(EditView, makeToolViewProps(tool)));
+
+        expect(fileOpsRendererModuleState.toolDiffSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ filePath: '/workspace/fixture.txt', unifiedDiff: diff }),
+        );
+    });
+
     it.each(['canonical', 'historical'] as const)('renders a late ACP diff from the %s result', async (shape) => {
         fileOpsRendererModuleState.toolDiffSpy.mockClear();
         const { EditView } = await import('./EditView');

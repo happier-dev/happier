@@ -145,7 +145,7 @@ export function runToolCallsPhase(params: Readonly<{
                                 }
                             }
 
-                            const isPendingPermissionRequest = isPermissionRequestToolCall(c.id, message.tool.input);
+                            const isPendingPermissionRequest = c.permission || isPermissionRequestToolCall(c.id, message.tool.input);
                             if (isPendingPermissionRequest) {
                                 if (!message.tool.permission) {
                                     message.tool.permission = { id: c.id, status: 'pending' };
@@ -193,6 +193,7 @@ export function runToolCallsPhase(params: Readonly<{
                             description: c.description,
                             messageCreatedAt: msg.createdAt,
                             permission,
+                            transcriptPermission: c.permission,
                             isPendingPermissionRequest: !permission && isPermissionRequestToolCall(c.id, c.input),
                         });
                         const toolCall = projection.toolCall;
@@ -202,13 +203,8 @@ export function runToolCallsPhase(params: Readonly<{
 
                         // Some providers persist pending permission requests as tool-call messages (without AgentState).
                         // Treat those tool-call inputs as pending permissions so the UI can render approval controls.
-                        if (projection.shouldStorePendingPermission) {
-                            state.permissions.set(c.id, {
-                                tool: c.name,
-                                arguments: c.input,
-                                createdAt: msg.createdAt,
-                                status: 'pending',
-                            });
+                        if (projection.pendingPermission) {
+                            state.permissions.set(c.id, projection.pendingPermission);
                         }
 
                         let mid = allocateId();

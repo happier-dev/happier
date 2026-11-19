@@ -6644,6 +6644,12 @@ require a current caller declaration. Release readiness remains gated by mixed-v
 proof and the remaining integration/live checks, not by an operator activation mode or
 legacy socket drainage.
 
+In 0.3 development, the host writes OpenCode's offered Edit path, diff, request
+reference, and native choices to the Session transcript after admitting the request.
+The existing Session-mode envelope protects that content. Transcript readers can
+review the proposed edit. The decision still requires `approveRuntimePermissions`,
+which the server checks when forwarding the response to the Session runtime.
+
 In unreleased 0.3, C79 (2026-11-13) permits one recipient-safe routing exception:
 authenticated Session detail reads may carry optional `computerMachineBinding`
 (`homeId`, `machineId`) for a participant who already holds Manage on that Machine.

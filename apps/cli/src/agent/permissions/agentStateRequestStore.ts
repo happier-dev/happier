@@ -19,7 +19,9 @@ import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCo
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
+import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE, NATIVE_TOOL_APPROVAL_REQUEST_SOURCE, SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import { readForegroundAgentRequestFollowEvent as readRequestFollowEvent } from './activeForegroundRequests';
 import type { FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { SessionActivityChangedResult } from '@/daemon/sessions/sessionActivityChangedContract';
@@ -243,6 +245,7 @@ export type AgentStateOutstandingRequest = Readonly<{
 
 type SessionLike = Readonly<{
     sessionId: string;
+    enqueueAgentMessageCommitted?: TranscriptSessionPort['enqueueAgentMessageCommitted'];
     updateAgentState: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
     updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
     getAgentStateSnapshot?: () => AgentState | null | undefined;
@@ -896,6 +899,7 @@ export class AgentStateRequestStore {
             if (!didRunUpdater || !shouldNotify) return;
             const current = this.target.readState()?.requests?.[params.requestId];
             if (!current || !publishedRequest || !isSameAgentStateRequestOccurrence(current, publishedRequest)) return;
+            this.publishNativeEditTranscript(params.requestId, current);
             this.notifyPermissionRequestPushBestEffort({
                 permissionId: params.requestId,
                 toolName: params.toolName,
@@ -1623,9 +1627,11 @@ export class AgentStateRequestStore {
 
     markPermissionRequestCompletedBestEffort(permissionId: string): void {
         const publication = this.pendingPublications.get(permissionId);
-        if (publication && isSameAgentStateRequestOccurrence(publication.request, this.target.readState()?.completedRequests?.[permissionId])) {
+        const completed = this.target.readState()?.completedRequests?.[permissionId];
+        if (publication && isSameAgentStateRequestOccurrence(publication.request, completed)) {
             publication.cancel();
         }
+        if (completed) this.publishNativeEditTranscript(permissionId, completed);
         if (this.target.markRequestCompleted) {
             try {
                 void Promise.resolve(this.target.markRequestCompleted(permissionId)).catch((error) => {
@@ -1640,6 +1646,36 @@ export class AgentStateRequestStore {
         } catch {
             // ignore
         }
+    }
+
+    private publishNativeEditTranscript(requestId: string, request: AgentStateRequestEntry | AgentStateCompletedEntry): void {
+        const session = this.session;
+        if (!session?.enqueueAgentMessageCommitted || request.sidechainId
+            || readRunScopedExecutionPermissionRequestIdentity(requestId)) return;
+        const { source, nativeChoices, turnId, createdAt, tool } = request;
+        if ((source !== NATIVE_TOOL_APPROVAL_REQUEST_SOURCE && source !== NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE)
+            || tool.toLowerCase() !== 'edit' || !nativeChoices || typeof createdAt !== 'number') return;
+        const operands: unknown = request.arguments;
+        if (!operands || typeof operands !== 'object' || !('filepath' in operands) || !('diff' in operands)
+            || typeof operands.filepath !== 'string' || typeof operands.diff !== 'string') return;
+
+        const completed = 'status' in request ? request : undefined;
+        const localId = `native-edit:${requestId}:${createdAt}:${completed ? 'settled' : 'pending'}`;
+        const observationAt = completed?.completedAt ?? createdAt;
+        const body: ACPMessageData = completed
+            ? { type: 'tool-result', callId: requestId, id: localId, output: null, isError: completed.status !== 'approved',
+                permissions: { date: observationAt, result: completed.status, ...(completed.decision ? { decision: completed.decision } : {}) } }
+            : { type: 'tool-call', callId: requestId, id: localId, name: tool,
+                input: { filepath: operands.filepath, diff: operands.diff },
+                permission: { id: requestId, status: 'pending', source, ...(turnId ? { turnId } : {}), nativeChoices } };
+        // Transcript readers get the offered operands, never a copy of the private request entry.
+        void session.enqueueAgentMessageCommitted('happier', body, {
+            localId, createdAt: observationAt, provenance: { kind: 'non_dependent', source: 'background' },
+        }).then(result => {
+            if (!result.persisted) logger.debug(`${this.logPrefix} Native Edit transcript observation was not persisted`);
+        }, () => {
+            logger.debug(`${this.logPrefix} Native Edit transcript observation failed`);
+        });
     }
 
     /**

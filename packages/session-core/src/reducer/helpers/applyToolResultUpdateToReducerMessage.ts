@@ -93,7 +93,7 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
       message.tool.permission = {
         ...message.tool.permission,
         id: toolResult.tool_use_id,
-        status: toolResult.permissions.result === 'approved' ? 'approved' : 'denied',
+        status: toolResult.permissions.result,
         date: toolResult.permissions.date,
         mode: toolResult.permissions.mode,
         allowedTools: toolResult.permissions.allowedTools,
@@ -102,7 +102,7 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     } else {
       message.tool.permission = {
         id: toolResult.tool_use_id,
-        status: toolResult.permissions.result === 'approved' ? 'approved' : 'denied',
+        status: toolResult.permissions.result,
         date: toolResult.permissions.date,
         mode: toolResult.permissions.mode,
         allowedTools: toolResult.permissions.allowedTools,

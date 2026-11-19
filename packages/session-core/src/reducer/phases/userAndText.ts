@@ -381,17 +381,13 @@ export function runUserAndTextPhase(params: Readonly<{
                         description: c.description,
                         messageCreatedAt: msg.createdAt,
                         permission,
+                        transcriptPermission: c.permission,
                         isPendingPermissionRequest: !permission && isPermissionRequestToolCall(c.id, c.input),
                     });
                     const toolCall = projection.toolCall;
 
-                    if (projection.shouldStorePendingPermission) {
-                        state.permissions.set(c.id, {
-                            tool: c.name,
-                            arguments: c.input,
-                            createdAt: msg.createdAt,
-                            status: 'pending',
-                        });
+                    if (projection.pendingPermission) {
+                        state.permissions.set(c.id, projection.pendingPermission);
                     }
 
                     let mid = allocateId();

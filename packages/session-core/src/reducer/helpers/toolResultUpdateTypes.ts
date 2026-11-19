@@ -1,6 +1,6 @@
 export type ToolResultPermissionsUpdate = {
   date: number;
-  result: 'approved' | 'denied';
+  result: 'approved' | 'denied' | 'canceled';
   mode?: string;
   allowedTools?: string[];
   decision?:

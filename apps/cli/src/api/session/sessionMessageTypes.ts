@@ -1,5 +1,6 @@
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type { TranscriptPeerSenderV1, TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 type AcpSidechainMeta = { sidechainId?: string };
 type TranscriptEventLifecycle = {
@@ -54,8 +55,10 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'message'; message: string; peer?: TranscriptPeerSenderV1 }
   | { type: 'reasoning'; message: string }
   | { type: 'thinking'; text: string }
-  | { type: 'tool-call'; callId: string; name: string; input: unknown; id: string }
-  | { type: 'tool-result'; callId: string; output: unknown; id: string; isError?: boolean }
+  | { type: 'tool-call'; callId: string; name: string; input: unknown; id: string;
+      permission?: { id: string; status: 'pending'; turnId?: string; source: string; nativeChoices: NativePermissionChoicesV1 } }
+  | { type: 'tool-result'; callId: string; output: unknown; id: string; isError?: boolean;
+      permissions?: { date: number; result: 'approved' | 'denied' | 'canceled'; decision?: string } }
   | { type: 'file-edit'; description: string; filePath: string; diff?: string; oldContent?: string; newContent?: string; id: string }
   | { type: 'terminal-output'; data: string; callId: string }
   | { type: 'task_started'; id: string }

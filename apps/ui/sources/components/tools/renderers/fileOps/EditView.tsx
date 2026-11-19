@@ -46,7 +46,7 @@ function readString(record: Record<string, unknown> | null, keys: readonly strin
     return null;
 }
 
-function extractEditStrings(input: unknown, result: unknown): { old: string; next: string; filePath: string | null } {
+function extractEditStrings(input: unknown, result: unknown): { old: string; next: string; filePath: string | null; unifiedDiff: string | null } {
     const inputRecord = asRecord(input);
     const toolCallRecord = asRecord(inputRecord?.toolCall);
     const inputDiff = extractDiffItem(toolCallRecord?.content)
@@ -60,8 +60,9 @@ function extractEditStrings(input: unknown, result: unknown): { old: string; nex
         next: readString(inputDiff, ['newText', 'new_string'])
             ?? readString(resultDiff, ['newText', 'new_string'])
             ?? '',
-        filePath: readString(inputDiff, ['path', 'file_path', 'filePath'])
-            ?? readString(resultDiff, ['path', 'file_path', 'filePath']),
+        filePath: readString(inputDiff, ['path', 'file_path', 'filePath', 'filepath'])
+            ?? readString(resultDiff, ['path', 'file_path', 'filePath', 'filepath']),
+        unifiedDiff: readString(inputDiff, ['diff']),
     };
 }
 
@@ -79,19 +80,20 @@ function truncateOneLine(text: string, maxChars: number): string {
 
 function readEditDisplay(input: unknown, result: unknown) {
     const extracted = extractEditStrings(input, result);
-    return { oldString: trimIdent(extracted.old || ''), newString: trimIdent(extracted.next || ''), filePath: extracted.filePath };
+    return { oldString: trimIdent(extracted.old || ''), newString: trimIdent(extracted.next || ''),
+        filePath: extracted.filePath, unifiedDiff: extracted.unifiedDiff };
 }
 
 export const projectEditDisplayText: ToolDisplayTextProjector = (tool) => {
-    const { oldString, newString } = readEditDisplay(tool.input, tool.result);
-    return projectToolDiffLines(buildToolFileDiffLines({ oldText: oldString, newText: newString }), 'tool-edit');
+    const { oldString, newString, unifiedDiff } = readEditDisplay(tool.input, tool.result);
+    return projectToolDiffLines(buildToolFileDiffLines({ oldText: oldString, newText: newString, unifiedDiff }), 'tool-edit');
 };
 
 export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId, serverId, messageId }) => {
     const find = useToolFindState(messageId);
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
     
-    const { oldString, newString, filePath } = readEditDisplay(tool.input, tool.result);
+    const { oldString, newString, filePath, unifiedDiff } = readEditDisplay(tool.input, tool.result);
 
     if (detailLevel === 'title' && !find.active) {
         const from = truncateOneLine(oldString, 48);
@@ -99,7 +101,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
         return (
             <ToolSectionView>
                 <Text style={styles.summaryText} numberOfLines={1}>
-                    {`${from} ${TEXT_ARROW} ${to}`}
+                    {unifiedDiff !== null ? filePath : `${from} ${TEXT_ARROW} ${to}`}
                 </Text>
             </ToolSectionView>
         );
@@ -120,6 +122,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
                     sessionId={sessionId}
                     serverId={serverId}
                     filePath={filePath}
+                    unifiedDiff={unifiedDiff}
                     oldText={truncatedOld} 
                     newText={truncatedNew} 
                     showLineNumbers={showLineNumbers}

@@ -8,6 +8,8 @@ import { SessionForkVisualOriginV1Schema } from '@happier-dev/protocol/sessions/
 import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { readTranscriptPeerSenderV1, type TranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
+import { NativePermissionChoicesV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { ToolCall } from '../messages/messageTypes.js';
 import type { z } from 'zod/mini';
 
 import type { MessageMeta } from "../messages/messageMetaTypes.js";
@@ -43,6 +45,7 @@ type NormalizedAgentContent =
         id: string;
         /** Original native correlation id, when this is an inherited source projection. */
         sourceToolId?: string;
+        permission?: Pick<NonNullable<ToolCall['permission']>, 'turnId' | 'source' | 'nativeChoices'>;
         name: string;
         input: any;
         description: string | null;
@@ -60,7 +63,7 @@ type NormalizedAgentContent =
         parentUUID: string | null;
         permissions?: {
             date: number;
-            result: 'approved' | 'denied';
+            result: 'approved' | 'denied' | 'canceled';
             mode?: string;
             allowedTools?: string[];
             decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
@@ -408,7 +411,8 @@ function normalizeRawMessageFromRaw(
         if (!rawPermissions || typeof rawPermissions !== 'object') return undefined;
         const record = rawPermissions as Record<string, unknown>;
         const date = typeof record.date === 'number' ? record.date : undefined;
-        const result = record.result === 'approved' || record.result === 'denied' ? record.result : undefined;
+        const result = record.result === 'approved' || record.result === 'denied' || record.result === 'canceled'
+            ? record.result : undefined;
         const mode = typeof record.mode === 'string' ? record.mode : undefined;
         const allowedTools = Array.isArray(record.allowedTools)
             ? record.allowedTools.filter((tool): tool is string => typeof tool === 'string')
@@ -989,6 +993,16 @@ function normalizeRawMessageFromRaw(
                   let description: string | null = null;
                   const parsedInput = maybeParseJsonString(raw.content.data.input);
                 const toolName = typeof acpDataRecord.name === 'string' ? acpDataRecord.name : 'unknown';
+                const callId = typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '';
+                const rawPermission = acpDataRecord.permission;
+                const pending = isPlainRecord(rawPermission) && rawPermission.status === 'pending'
+                    && rawPermission.id === callId && callId ? rawPermission : null;
+                const choices = pending ? NativePermissionChoicesV1Schema.safeParse(pending.nativeChoices) : null;
+                const permission = pending && choices?.success ? {
+                    ...(typeof pending.turnId === 'string' ? { turnId: pending.turnId } : {}),
+                    ...(typeof pending.source === 'string' ? { source: pending.source } : {}),
+                    nativeChoices: choices.data,
+                } : undefined;
                 if (shouldSuppressEmptyCanonicalTurnDiffToolCall({
                     toolName,
                     input: parsedInput,
@@ -1014,9 +1028,10 @@ function normalizeRawMessageFromRaw(
                     ...(structuredSidechain.sidechainId ? { sidechainId: structuredSidechain.sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
-                        id: typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '',
+                        id: callId,
                         name: toolName,
                         input: parsedInput,
+                        ...(permission ? { permission } : {}),
                         description,
                         uuid: typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id,
                         parentUUID: null
@@ -1026,6 +1041,7 @@ function normalizeRawMessageFromRaw(
             }
               if (raw.content.data.type === 'tool-result') {
                   const parsedOutput = maybeParseJsonString(raw.content.data.output);
+                  const permissions = normalizeToolResultPermissions(acpDataRecord.permissions);
                   return {
                       id,
                       ...(seq !== undefined ? { seq } : {}),
@@ -1038,6 +1054,7 @@ function normalizeRawMessageFromRaw(
                         type: 'tool-result',
                         tool_use_id: typeof acpDataRecord.callId === 'string' ? acpDataRecord.callId : '',
                         content: parsedOutput,
+                        ...(permissions ? { permissions } : {}),
                         is_error: typeof acpDataRecord.isError === 'boolean' ? acpDataRecord.isError : false,
                         uuid: typeof acpDataRecord.id === 'string' ? acpDataRecord.id : id,
                         parentUUID: null

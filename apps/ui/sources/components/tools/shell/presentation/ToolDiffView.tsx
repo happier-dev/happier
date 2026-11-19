@@ -10,14 +10,14 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
-import { buildCodeLinesFromTextDiff } from '@/components/ui/code/model/buildCodeLinesFromTextDiff';
 import { useToolFindState } from '../../renderers/core/ToolFindText';
-import { toolDiffContextLines, toolDiffFindProps } from '../../renderers/fileOps/toolDiffDisplayText';
+import { buildToolFileDiffLines, toolDiffContextLines, toolDiffFindProps } from '../../renderers/fileOps/toolDiffDisplayText';
 
 interface ToolDiffViewProps {
     sessionId?: string | null;
     serverId?: string | null;
     filePath?: string | null;
+    unifiedDiff?: string | null;
     oldText: string;
     newText: string;
     style?: any;
@@ -31,6 +31,7 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     sessionId,
     serverId,
     filePath,
+    unifiedDiff = null,
     oldText, 
     newText, 
     style, 
@@ -60,13 +61,13 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     const maxVirtualizedHeight = resolveInlineDiffVirtualizedMaxHeight(windowHeight);
     const virtualized = React.useMemo(() => {
         return resolveInlineDiffVirtualization({
-            unifiedDiff: null,
+            unifiedDiff,
             oldText: typeof oldText === 'string' ? oldText : null,
             newText: typeof newText === 'string' ? newText : null,
             lineThreshold: virtualizationLineThreshold,
             byteThreshold: virtualizationByteThreshold,
         });
-    }, [newText, oldText, virtualizationByteThreshold, virtualizationLineThreshold]);
+    }, [newText, oldText, unifiedDiff, virtualizationByteThreshold, virtualizationLineThreshold]);
     const reviewCommentsEnabled =
         reviewCommentsFeatureEnabled === true &&
         Boolean(reviewScope) &&
@@ -75,12 +76,8 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
     const codeLines = React.useMemo(() => {
         if (!reviewCommentsEnabled && !find.active) return [];
-        return buildCodeLinesFromTextDiff({
-            oldText,
-            newText,
-            contextLines,
-        });
-    }, [newText, oldText, reviewCommentsEnabled, find.active, contextLines]);
+        return buildToolFileDiffLines({ oldText, newText, unifiedDiff }, find.active);
+    }, [newText, oldText, unifiedDiff, reviewCommentsEnabled, find.active]);
     const findProps = React.useMemo(() => find.active && findBlockPrefix ? toolDiffFindProps(codeLines, findBlockPrefix, find.ranges) : undefined,
         [codeLines, find.active, find.blocks, findBlockPrefix]);
     const reviewControls = useCodeLinesReviewComments({
@@ -100,11 +97,10 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
                 findActive={find.active}
                 findRangesByLineId={findProps?.findRangesByLineId}
                 scrollToLineId={findProps?.scrollToLineId}
-                mode="text"
+                {...(unifiedDiff === null
+                    ? { mode: 'text', oldText, newText, contextLines }
+                    : { mode: 'unified', unifiedDiff })}
                 filePath={filePath}
-                oldText={oldText}
-                newText={newText}
-                contextLines={contextLines}
                 wrapLines={wrapLines}
                 virtualized={virtualized}
                 presentationStyleOverride={presentationStyleOverride}

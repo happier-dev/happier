@@ -10,6 +10,11 @@ import { createSessionNotificationContextFixture } from '@/testkit/backends/sess
 import { AgentStateRequestStore, isSameAgentStateRequestOccurrence, type PermissionResponseClaim } from './agentStateRequestStore';
 import { PermissionRequestCoordinator } from './permissionRequestCoordinator';
 import { AgentStateSchema } from '@happier-dev/session-core';
+import { listPendingRequests } from '@happier-dev/session-core/pending';
+import { normalizeRawMessage } from '@happier-dev/session-core/raw';
+import { createReducer, reducer } from '@happier-dev/session-core/reducer';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import type { CommittedTranscriptMessageOptions } from '@/api/session/transcriptPort';
 import { SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { captureSemanticSessionFollowRuleSourceEvidence } from '@/agent/runtime/session/follow/sessionFollowRuleSourceEvidence';
@@ -67,6 +72,59 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('AgentStateRequestStore', () => {
+    it('recovers an OpenCode Edit offer and its settlement from transcript content alone', async () => {
+        const records: NonNullable<ReturnType<typeof normalizeRawMessage>>[] = [];
+        const session = Object.assign(new FakeSession(), {
+            enqueueAgentMessageCommitted: async (agentId: string, body: ACPMessageData, options: CommittedTranscriptMessageOptions) => {
+                const row = normalizeRawMessage(options.localId, options.localId, options.createdAt ?? 20, {
+                    role: 'agent', content: { type: 'acp', agentId, data: body },
+                });
+                if (row) records.push(row);
+                return { persisted: true, delivered: true };
+            },
+        });
+        const store = new AgentStateRequestStore({ session, logPrefix: '[Shared Edit]' });
+        const argumentsForEdit = { filepath: '/workspace/fixture.txt', diff: '@@ -1 +1 @@\n-before\n+Calm shell QA fixture\n' };
+        const requestId = '7ae95c0b-0aff-4c75-8f83-a72565c83fde';
+        const nativeChoices = { requirementId: 'native-edit', source: 'opencode', choices: [
+            { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+            { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session', response: { approved: true, decision: 'approved_for_session', allowedTools: ['edit'] } },
+            { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+            { id: 'stop', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+        ] } as const;
+        const recipientFacts = {
+            sessionId: session.sessionId,
+            active: true,
+            agentState: null,
+            permissionRelationship: 'sharedApprover' as const,
+            actionConfirmations: null,
+            presentationCompletedRequests: null,
+            projected: { permissionCount: 1, userActionCount: null, observedAt: null },
+        };
+        try {
+            store.publishRequest({ requestId, toolName: 'edit', toolInput: { ...argumentsForEdit, privateOperand: 'owner-only' },
+                createdAt: 10, turnId: 'turn-1', kind: 'permission', source: 'native_tool_approval', nativeChoices });
+            await flushMicrotasks();
+            expect(records).toHaveLength(1);
+            expect(JSON.stringify(records)).not.toContain('owner-only');
+            const liveReducer = createReducer();
+            expect(listPendingRequests(recipientFacts, reducer(liveReducer, records).messages)).toEqual([
+                expect.objectContaining({
+                    id: requestId, turnId: 'turn-1', arguments: argumentsForEdit, nativeChoices,
+                    nativeChoiceAvailability: expect.arrayContaining([
+                        { choiceId: 'allow', allowed: true },
+                        { choiceId: 'allow_session', allowed: false, reason: 'owner_required' },
+                    ]),
+                }),
+            ]);
+
+            expect(await store.completeRequest({ requestId, status: 'denied', decision: 'denied' })).toBe(true);
+            expect(records).toHaveLength(2);
+            expect(listPendingRequests(recipientFacts, reducer(liveReducer, records.slice(1)).messages)).toEqual([]);
+            expect(listPendingRequests(recipientFacts, reducer(createReducer(), records).messages)).toEqual([]);
+        } finally { store.dispose(); }
+    });
+
     it.each(['complete', 'record'] as const)('removes cleared response targets before strict JSON persistence (%s)', async method => {
         let state: AgentState = { requests: {}, completedRequests: {} };
         const store = new AgentStateRequestStore({ logPrefix: '[Strict completion]', target: {
