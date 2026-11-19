@@ -734,6 +734,37 @@ describe('PostHog Triage source operations', () => {
         expect(host.request).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+        { origins: [], code: POSTHOG_FAILURE_CODES.originUnavailable },
+        { origins: ['https://eu.posthog.com', 'https://us.posthog.com'], code: POSTHOG_FAILURE_CODES.originAmbiguous },
+    ])('rejects configuration with $code before materializing credentials or opening HTTP', async ({ origins, code }) => {
+        const host = context([]);
+        host.listAccounts.mockResolvedValueOnce({
+            status: 'complete',
+            accounts: [{
+                account: ACCOUNT,
+                displayName: 'PostHog production',
+                state: 'connected',
+                connectedAccountOrigins: origins,
+                connectedAccountBases: origins,
+            }],
+        });
+
+        const result = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            page: { kind: 'initial' },
+        }, host.value);
+
+        expect(PosthogConfigurationDirectoryResultV1Schema.parse(result)).toEqual({
+            kind: 'unavailable',
+            failure: { class: 'unsupportedContract', code },
+        });
+        expect(host.materializeListedAccount).not.toHaveBeenCalled();
+        expect(host.request).not.toHaveBeenCalled();
+    });
+
     it('preserves a long same-origin advancing continuation without a source-local URL cap', async () => {
         const next = `https://eu.posthog.com/api/organizations/?offset=1&cursor=${'a'.repeat(9 * 1024)}`;
         const host = context([{ ...organizationsPage, next }]);
