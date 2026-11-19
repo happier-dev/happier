@@ -59,19 +59,22 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
         const sources = listRegistrySourcesV1({ record: snapshot.value ?? { v: 2, sources: [], disabledSourceIds: [] }, pluginSources });
         const fingerprint = (ids: readonly string[] | undefined) => ids === undefined
             ? JSON.stringify([snapshot.revision, pluginSources]) : registrySourceRevision(sources, ids);
-        const matchingIds = sources.filter(source => source.enabled
+        const matching = sources.filter(source => source.enabled
             && (kind === undefined || registrySourceSupportsKindV1(source, kind))
-            && (selectedIds === undefined || selectedIds.includes(source.id))).map(source => source.id);
+            && (selectedIds === undefined || selectedIds.includes(source.id)));
+        const matchingIds = matching.map(source => source.id);
         const consumedIds = kind === undefined ? selectedIds : matchingIds;
         // Partial plugin membership cannot veto known catalogs. Only an unanswered
         // selection waits for the first declarations; each admitted source reports its own failure.
         const selectionKnown = selectedIds?.length === 0 || matchingIds.length > 0;
         const resolving = snapshot.value === null && snapshot.status === 'loading' || pluginsResolving && !selectionKnown;
-        return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving]);
+        const titles = kind === undefined ? [] : matching.map(source => [source.id, source.title]);
+        return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving, titles]);
     }, [selectedIds, priorIds, pluginSources, kind, pluginsResolving]);
     const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: active });
-    const [fingerprint, priorFingerprint, consumedIds, resolving] = React.useMemo(
-        () => JSON.parse(selection) as [string, string, string[] | null, boolean], [selection]);
+    const [fingerprint, priorFingerprint, consumedIds, resolving, titles] = React.useMemo(
+        () => JSON.parse(selection) as [string, string, string[] | null, boolean, [string, string][]], [selection]);
+    const sourceTitles = React.useMemo(() => new Map(titles), [titles]);
     const previous = lifetime.current;
     // Changing the query's source selection acquires new rows while retaining the
     // former rows inert. Only a change to their consumed configuration retires them.
@@ -81,5 +84,5 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
         fingerprint, revision, generation, sourceIds: consumedIds ?? undefined };
     // An unanswered source owner cannot retire a hydrated list or certify an empty one.
     const ids = resolving ? previous?.sourceIds : consumedIds ?? undefined;
-    return React.useMemo(() => ({ revision, sourceIds: ids, resolving }), [revision, ids, resolving]);
+    return React.useMemo(() => ({ revision, sourceIds: ids, resolving, sourceTitles }), [revision, ids, resolving, sourceTitles]);
 }

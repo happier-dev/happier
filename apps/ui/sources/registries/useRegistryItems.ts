@@ -127,8 +127,9 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
         sourceRevision: revision,
         error: read.error, status: read.status, nextPage, hasNextPage: pages.some(page => page.nextCursor !== null), refresh: read.refresh,
         sourceFailures: pages.flatMap(page => page.status.state === 'ok' ? [] : [{ sourceId: page.sourceId,
+            sourceTitle: selection.sourceTitles.get(page.sourceId) ?? null,
             status: page.status, message: [page.items.length > 0 || page.discovery
                 ? t('capabilities.registries.status.updatedEarlier') : null, describeRegistrySourceStatus(page.status)].filter(Boolean).join(' · '),
             onRetry: () => read.refreshSources([page.sourceId]) }]),
-    }), [items, pages, curation, revision, read.value, read.loading, read.stale, read.error, read.status, nextPage, read.refresh, read.refreshSources]);
+    }), [items, pages, curation, revision, read.value, read.loading, read.stale, read.error, read.status, nextPage, read.refresh, read.refreshSources, selection.sourceTitles]);
 }

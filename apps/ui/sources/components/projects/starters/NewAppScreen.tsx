@@ -2,7 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
-import { useRegistryItems } from '@/registries/useRegistryItems';
+import { useAppList, useStarterList } from '@/components/store/catalog/storeRegistryLists';
+import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
+import { registrySourceFailureLine } from '@/registries/describeRegistrySourceStatus';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 
@@ -166,7 +168,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [query, setQuery] = React.useState('');
   // A pasted repository link is read by Your code, not searched for: starters and the catalog stay as they were.
   const search = isRepositoryAddressCandidate(query) ? '' : query.trim();
-  const starterCatalog = useRegistryItems(search ? { kind: 'starter', query: search } : { kind: 'starter' }, true);
+  const starterCatalog = useStarterList({ query: search }, { presented: true });
   // Only app starters: the starter owner marks one by its app deploy shape (`starterDeploy`); a workspace template
   // such as Coder's declares none and is not a way to deploy an app.
   const starters = React.useMemo(() => starterCatalog.items.filter((item) => item.starterDeploy !== undefined),
@@ -248,7 +250,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     setDoor(null);
   }, []);
   // The catalog's first apps, read only while the person is choosing a way in.
-  const appCatalog = useRegistryItems(search ? { kind: 'app', query: search } : { kind: 'app' }, step === 'start');
+  const appCatalog = useAppList({ query: search }, { presented: step === 'start' });
   const catalogApps = React.useMemo(() => appCatalog.items.slice(0, CATALOG_TILES), [appCatalog.items]);
   const builtTiles = React.useMemo((): Array<SelectionTile<Door>> => [
     { id: 'built:image', testID: 'newApp.built.image', icon: 'image',
@@ -729,7 +731,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
             ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
         <View>
-        {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0 ? null : (
+        {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0
+          && starterCatalog.sourceFailures.length === 0 && !starterCatalog.error ? null : (
         <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label"
           action={<TextLinkButton testID="newApp.allStarters" size="meta" label={t('newApp.allStarters')} onPress={browseStarters} />}>
         {/* Describe your app sits a tile gap above the starters (lab .jd-descopt), not flush against them. */}
@@ -761,27 +764,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             action={{ label: t('newApp.auto.addMachine'), onPress: addComputer }}
           />
         ) : null}
-        {starterCatalog.sourceFailures.filter((failure) => failure.status.state !== 'needs_machine' || starters.length > 0).map((failure) => (
-          <SurfaceStateCard
-            key={failure.sourceId}
-            testID={`newApp.catalogFailure:${failure.sourceId}`}
-            kind="error"
-            layout="inline"
-            title={t('capabilities.store.listing.failed')}
-            reason={failure.message}
-            action={{ label: t('common.retry'), onPress: failure.onRetry }}
-          />
-        ))}
-        {starterCatalog.error ? (
-          <SurfaceStateCard
-            testID="newApp.catalogFailure"
-            kind="error"
-            layout="inline"
-            title={t('capabilities.store.listing.failed')}
-            reason={starterCatalog.error}
-            action={{ label: t('common.retry'), onPress: starterCatalog.refresh }}
-          />
-        ) : null}
+        <NewAppCatalogReadFailure read={starterCatalog} hasVisibleItems={starters.length > 0}
+          omitNeedsMachine={startersNeedMachine} testID="newApp.catalogFailure" />
         {startersSettledEmpty && !startersNeedMachine ? (
           // Inside the picker an empty group is one quiet line; Describe your app above stays the way to start.
           <EmptyState testID="newApp.startersEmpty" layout="line" title={t('newApp.noStarters')} />
@@ -826,6 +810,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               titleRole="label"
               action={<TextLinkButton testID="newApp.fromCatalog" size="meta" label={t('newApp.browseCatalog')} onPress={browseCatalog} />}
             >
+              <NewAppCatalogReadFailure read={appCatalog} hasVisibleItems={catalogTiles.length > 0} testID="newApp.appCatalogFailure" />
               {catalogTiles.length > 0 ? (
                 <View>
                   <SelectionTiles
@@ -1206,6 +1191,29 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     </View>
   );
 });
+
+function NewAppCatalogReadFailure(props: Readonly<{
+  read: ReturnType<typeof useStarterList>;
+  hasVisibleItems: boolean;
+  omitNeedsMachine?: boolean;
+  testID: string;
+}>) {
+  const { read } = props;
+  // The listing already carries the failing source's name. The rows it still serves take precedence over empty-state copy.
+  if (read.loading) return null;
+  const failures = read.sourceFailures
+    .filter(failure => !props.omitNeedsMachine || failure.status.state !== 'needs_machine')
+    .map(failure => ({ key: failure.sourceId,
+      ...registrySourceFailureLine(failure, failure.sourceTitle ?? t('capabilities.store.unnamedCatalog')), onRetry: failure.onRetry }));
+  if (failures.length > 0) return <RegistrySourcesUnavailable size="line" failures={failures} showHiddenNote={!props.hasVisibleItems}
+    testID={failures.length === 1 ? `${props.testID}:${failures[0]!.key}` : props.testID} />;
+  // A failed refresh over items still shown hides nothing: the line would say their items are hidden above them
+  // (PAGE-ACCEPT-176 R3-D3). The Store keeps the refresh failure and its Retry; here the tiles stand.
+  if (!read.error || read.sourceFailures.length > 0 || props.hasVisibleItems) return null;
+  return <RegistrySourcesUnavailable size="line" testID={props.testID} failures={[{
+    key: 'index', allSources: true, ...registrySourceFailureLine({ status: read.status }, null), onRetry: read.refresh,
+  }]} />;
+}
 
 /** The line under a forge in Code lives on's menu: where the repository would go, or nothing while it is checked. */
 function forgeOptionLine(owner: ForgeOwnerFact | undefined, repositoryName: string): { subtitle?: string } {

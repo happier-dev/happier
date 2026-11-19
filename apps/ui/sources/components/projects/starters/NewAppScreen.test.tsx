@@ -58,6 +58,49 @@ async function starterHome(serverUrl: string, catalogResponse?: Promise<Response
   }, 'updated', { handleRequest: async path => path === '/starters.json' ? catalogResponse ?? Response.json(catalog) : null });
 }
 
+it('names the failed app catalog without saying visible catalog apps are hidden', async () => {
+  const { deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
+  const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
+  const { t } = await import('@/text');
+  const serverUrl = 'https://new-app-app-catalog-failure.test';
+  const readyUrl = serverUrl + '/ready.json';
+  const failedUrl = serverUrl + '/failed.json';
+  const readySource = deriveMarketplaceSourceId(readyUrl);
+  const failedSource = deriveMarketplaceSourceId(failedUrl);
+  const failedTitle = 'Workshop catalog';
+  const failed = vi.fn(() => new Response(null, { status: 503 }));
+  const sourceReads = vi.fn(() => Response.json({ schemaVersion: 1, apps: [{ itemId: 'workshop-web', app: {
+    schemaVersion: 1, title: 'Workshop Web', compose: { document: 'services:\n  app:\n    image: nginx:1\n', profiles: [], services: ['app'] },
+    variables: [], generatedSecrets: [], domains: [], volumes: [],
+  } }] }));
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+    key: 'registry-sources', value: { v: 2,
+      disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(source => source.id),
+      sources: [
+        { id: readySource, url: readyUrl, title: 'Public catalog', format: 'happier-catalog', kinds: ['app'], enabled: true, addedAt: 1 },
+        { id: failedSource, url: failedUrl, title: failedTitle, format: 'happier-catalog', kinds: ['app'], enabled: true, addedAt: 1 },
+      ],
+    },
+  }, 'updated', { handleRequest: async path => path === '/ready.json' ? sourceReads() : path === '/failed.json' ? failed() : null });
+  try {
+    const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+    try {
+      await waitForHomeGovernance(() => {
+        expect(failed).toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('Workshop Web');
+        expect(screen.findByTestId('newApp.appCatalogFailure:' + failedSource)).not.toBeNull();
+      });
+      const text = screen.getTextContent();
+      expect(text).not.toContain(t('capabilities.store.sourcesHidden', { count: 1 }));
+      expect(text).toContain(t('promptLibrary.registriesStatus.unreachableSource', { source: failedTitle }));
+      expect(sourceReads).toHaveBeenCalledTimes(1);
+    } finally { await screen.unmount(); }
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 async function describeApp(onClose: () => void) {
   const screen = await renderScreen(<NewAppScreen onClose={onClose} />);
   await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:static-website')).toBeTruthy());

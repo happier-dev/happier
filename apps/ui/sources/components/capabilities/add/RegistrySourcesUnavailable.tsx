@@ -43,13 +43,16 @@ const host = { State: OutageState, DetailText, retry };
  * registry shelf's state) draw it outside any Collection, so it brings the core presentation scope the public
  * presenter reads its theme from; with nothing failing there is nothing to scope.
  */
-export function RegistrySourcesUnavailable(props: RegistrySourcesUnavailableProps): React.ReactNode {
-  if (props.failures.length === 0) return null;
+export function RegistrySourcesUnavailable(props: RegistrySourcesUnavailableProps & Readonly<{
+  showHiddenNote?: boolean;
+}>): React.ReactNode {
+  const { showHiddenNote = true, ...outage } = props;
+  if (outage.failures.length === 0) return null;
   return (
     <CorePluginUiPresentationScope>
-      <HappierRegistrySourcesUnavailable {...props} host={host} labels={{
+      <HappierRegistrySourcesUnavailable {...outage} host={host} labels={{
         sourcesUnreachable: count => t('capabilities.store.sourcesUnreachable', { count }),
-        sourcesHidden: count => t('capabilities.store.sourcesHidden', { count }),
+        ...(showHiddenNote ? { sourcesHidden: (count: number) => t('capabilities.store.sourcesHidden', { count }) } : {}),
         retry: t('capabilities.store.retry'), showDetails: t('common.details'), hideDetails: t('capabilities.store.hideSources'),
       }} />
     </CorePluginUiPresentationScope>

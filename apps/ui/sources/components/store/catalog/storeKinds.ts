@@ -5,6 +5,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistryItems } from '@/registries/useRegistryItems';
+import { useAppList, useStarterList } from './storeRegistryLists';
 import { usePluginCatalog, type PluginCatalogState } from '@/components/settings/plugins/model/usePluginCatalog';
 import type { PluginMarketplaceCatalogEntry } from '@/components/settings/plugins/readPluginMarketplaceCatalog';
 import { getResolvedAgentCatalogEntries, type ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -57,9 +58,6 @@ function registrySummary(item: RegistryCatalogItemSummary): StoreItemSummary<Reg
         title: item.title, description: item.description, mark: item.brandMark };
 }
 type RegistryList = ReturnType<typeof useRegistryItems>;
-function useAppList(input: StoreListInput, demand: StoreDemand): RegistryList {
-    return useRegistryItems({ kind: 'app', query: input.query, sourceIds: input.sourceIds }, demand.presented);
-}
 function useThemeList(input: StoreListInput, demand: StoreDemand): Omit<RegistryList, 'items'> & Readonly<{ items: readonly StoreThemeItem[] }> {
     const registry = useRegistryItems({ kind: 'theme', query: input.query, sourceIds: input.sourceIds }, demand.presented);
     const plugins = usePluginThemeList(demand.presented);
@@ -81,9 +79,6 @@ function usePetList(input: StoreListInput, demand: StoreDemand): Omit<RegistryLi
         ...(demand.presented && input.sourceIds === undefined ? storeBuiltInPets(input.query) : []), ...registry.items,
     ], [demand.presented, input.sourceIds, input.query, registry.items]);
     return { ...registry, items };
-}
-function useStarterList(input: StoreListInput, demand: StoreDemand): RegistryList {
-    return useRegistryItems({ kind: 'starter', query: input.query, sourceIds: input.sourceIds }, demand.presented);
 }
 function useBrowserExtensionList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'browserExtension', query: input.query, sourceIds: input.sourceIds }, demand.presented);
