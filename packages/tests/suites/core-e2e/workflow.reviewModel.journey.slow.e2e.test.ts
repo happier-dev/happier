@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
@@ -13,6 +13,9 @@ import { readMuseLoginRecording, readMuseMspProcessAudit, waitForMuseMspProcessA
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/repositoryReview';
 import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
+import { ReviewNativeNewRoundResultV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import panelNativeReview from '../../../plugins/review-panels/src/agent/reviews/fixtures/selected-review.json';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readMuseRecord } from '../../../plugins/muse/src/agent/nativeInput';
 import { buildMuseNativeAuth } from '../../../plugins/muse/src/connectedAccounts/nativeAuth';
@@ -43,6 +46,8 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let auditPath: string;
   let recording: Awaited<ReturnType<typeof readMuseLoginRecording>>;
   let sourceSessionId: string;
+  let panelReplyPath: string;
+  let panelAuditPath: string;
   let deepSecAuditPath: string;
   let deepSecExecutablePath: string;
   async function createSourceSession(account = owner) {
@@ -76,6 +81,22 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     recording = await readMuseLoginRecording();
     await nativeReply({ summary: 'No findings in the fixture change', findings: [] });
     const executablePath = await writeFinMuseExecutable({ binDir: bin, recordingPath, auditPath });
+    panelReplyPath = join(testDir, 'panel-reply.json');
+    panelAuditPath = join(testDir, 'panel-audit.jsonl');
+    await writeFile(panelAuditPath, '');
+    await writeFile(panelReplyPath, JSON.stringify(panelNativeReview));
+    await writeFile(join(bin, 'roborev'), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) console.log('roborev 0.1.0');
+else {
+  fs.appendFileSync(${JSON.stringify(panelAuditPath)}, JSON.stringify({ args, cwd: process.cwd(), dataDirectory: process.env.ROBOREV_DATA_DIR }) + '\\n');
+  if (args[0] === 'review') console.log('Enqueued job 3');
+  else if (args[0] === 'job' && args[1] === 'list') console.log('[{"id":3,"job_type":"synthesis"}]');
+  else if (args[0] === 'job' && args[1] === 'show') console.log(fs.readFileSync(${JSON.stringify(panelReplyPath)}, 'utf8'));
+  else if (args[0] === 'job' && args[1] === 'wait') process.exitCode = 1;
+}
+`, { mode: 0o755 });
     deepSecAuditPath = join(testDir, 'deepsec-audit.jsonl');
     await writeFile(deepSecAuditPath, '');
     deepSecExecutablePath = join(bin, 'deepsec');
@@ -355,6 +376,55 @@ else {
     expect(commands.map(command => command.args[0])).toEqual(['scan', 'process', 'export']);
     expect(new Set(commands.map(command => command.dataRoot)).size).toBe(1);
     expect(commands[0]?.dataRoot).toBeTruthy();
+  });
+  it('F4 native panel with an explicitly write-enabled Role preserves a failed member and substantive evidence through public Actions and starts a new round', async () => {
+    const panelRecord = structuredClone(panelNativeReview);
+    panelRecord.panel.members[1]!.status = 'failed';
+    await writeFile(panelReplyPath, JSON.stringify(panelRecord));
+    execGit(machine.workspaceDir, ['add', 'README.md']);
+    execGit(machine.workspaceDir, ['commit', '-m', 'test: native panel committed subject']);
+    const captured = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
+      cwd: machine.workspaceDir, source: { kind: 'commit', commit: 'HEAD' },
+    }));
+    expect(captured.success).toBe(true);
+    if (!captured.success) throw new Error(captured.errorCode);
+    let result = await startNativeReview('panels', { comparisonId: captured.comparison.id }, {
+      roleId: await createWriteEnabledReviewRole(),
+    });
+    const firstRunId = result.run.runId;
+    const reviewId = result.run.display?.groupId;
+    let firstCommentId: string | undefined;
+    for (const round of [1, 2]) {
+      if (round === 2) {
+        const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
+          runId: firstRunId, target: { kind: 'detached' },
+        }));
+        expect(next.runId).not.toBe(firstRunId);
+        expect(next.reviewRound).toEqual({ reviewId, roundOrdinal: 2 });
+        await act('execution.run.wait', { runId: next.runId, condition: 'terminal' });
+        result = ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId, includeStructured: true }));
+      }
+      expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'partial', findings: [{
+        suggestion: 'Return the selected value.', extensions: { 'happier.review.panels': {
+          verdict: 'fail', sources: [1], members: [{ status: 'done' }, { status: 'failed' }],
+        } },
+      }] } });
+      const commands: unknown[] = (await readFile(panelAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(commands).toHaveLength(round * 6);
+      expect(commands.at(-1)).toMatchObject({ args: ['daemon', 'stop'] });
+      expect(commands.filter(command => command && typeof command === 'object' && 'args' in command
+        && Array.isArray(command.args) && command.args[0] === 'review')).toHaveLength(round);
+      const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
+      expect(persisted.items).toHaveLength(1);
+      expect(persisted.items[0]?.author).toEqual({ kind: 'executionRun', agentId: 'panels', runId: firstRunId });
+      if (round === 1) firstCommentId = persisted.items[0]!.id;
+      else expect(persisted.items[0]?.id).toBe(firstCommentId);
+      expect(persisted.items[0]?.appearances).toEqual(expect.arrayContaining([
+        expect.objectContaining({ roundOrdinal: round, runId: result.run.runId }),
+      ]));
+      expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
+        .toMatchObject({ state: 'partial', currentRoundOrdinal: round, counts: { total: 1 } });
+    }
   });
   it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
     const other = await fixture!.createAccount('source-owner');

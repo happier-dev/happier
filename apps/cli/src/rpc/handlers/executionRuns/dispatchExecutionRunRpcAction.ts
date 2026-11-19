@@ -1176,7 +1176,10 @@ export function createExecutionRunRpcActionExecutor(
         if (!await params.manager.getForRequest(retainedRunId, null, requesterAttribution)) return executionRunNotFound();
       }
       const createsRun = actionId === 'execution.run.start'
-        || (actionId === 'execution.run.ensure_or_start' && !retainedRunId);
+        || (actionId === 'execution.run.ensure_or_start' && !retainedRunId)
+        || (actionId === 'execution.run.action' && input && typeof input === 'object'
+          && 'actionId' in input && typeof input.actionId === 'string'
+          && isReviewRunStartActionIdV1(input.actionId));
       if (detachedRunAction && requesterAttribution && context) {
         // Derive once from admitted ingress for both start stamping and list selection.
         context = { ...context, requesterWorkAttributionV1: requesterAttribution };
