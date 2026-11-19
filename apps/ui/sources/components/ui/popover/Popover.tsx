@@ -519,6 +519,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     }, [edgePadding]);
 
     const keyboardHeightRef = React.useRef(0);
+    React.useLayoutEffect(() => {
+        if (!open || Platform.OS === 'web' || keyboardBottomInsetProp !== undefined) return;
+        if (typeof Keyboard.isVisible !== 'function') return;
+        // Opening after the keyboard has settled does not emit another keyboard event.
+        keyboardHeightRef.current = Keyboard.isVisible() ? Keyboard.metrics?.()?.height ?? 0 : 0;
+    }, [open, keyboardBottomInsetProp]);
 
     const recompute = React.useCallback(async () => {
         if (!open) return;

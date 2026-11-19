@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { flattenTestStyle as flattenStyle, findPopoverContentView } from '@/dev/testkit/harness/popoverHarness';
@@ -353,8 +353,19 @@ describe('Popover (native keyboard)', () => {
         vi.useRealTimers();
     });
 
-    it('uses the provided keyboard inset immediately when the keyboard is already visible before opening', async () => {
+    it.each([undefined, 300])('fits above an already visible keyboard with inset override %s', async (inset) => {
         vi.useFakeTimers();
+
+        const { Keyboard } = await import('react-native');
+        const previousVisibility = Keyboard.isVisible;
+        const previousMetrics = Keyboard.metrics;
+        Keyboard.isVisible = () => true;
+        Keyboard.metrics = () => ({ height: inset === undefined ? 300 : 0, width: 1000, screenX: 0, screenY: 500 });
+        onTestFinished(() => {
+            Keyboard.isVisible = previousVisibility;
+            Keyboard.metrics = previousMetrics;
+            vi.useRealTimers();
+        });
 
         const { Popover } = await import('./Popover');
         const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
@@ -389,7 +400,7 @@ describe('Popover (native keyboard)', () => {
                         placement="auto-vertical"
                         gap={0}
                         maxHeightCap={320}
-                        keyboardBottomInset={300}
+                        keyboardBottomInset={inset}
                         onRequestClose={() => {}}
                     >
                         {(renderProps) => {
@@ -407,7 +418,6 @@ describe('Popover (native keyboard)', () => {
         expect(latestRenderProps.placement).toBe('top');
         expect(latestRenderProps.maxHeight).toBe(200);
 
-        vi.useRealTimers();
     });
 
     it('pins top placement to the keyboard-safe boundary when the anchor is under the keyboard', async () => {
