@@ -6,6 +6,7 @@ import {
   resolveExternalSessionOperationTimelineV1,
   type ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -202,7 +203,34 @@ describe('external-linked durable takeover continuation', () => {
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });
-  it('CC4 retains a typed launch refusal in takeover progress', async () => {
+  it.each([
+    {
+      kind: 'launch refusal',
+      errorDetail: {
+        kind: 'launch_error' as const,
+        code: 'credential_unavailable',
+        message: 'private',
+        failureCause: { code: 'credential_unavailable', phase: 'authentication' as const, failureReason: 'authentication_required' as const, retryable: false },
+      },
+      retryable: false,
+      failureCause: { code: 'credential_unavailable', failureReason: 'authentication_required' },
+    },
+    {
+      kind: 'Provider refusal',
+      errorDetail: {
+        kind: 'provider_error' as const,
+        providerError: createProviderErrorV1(
+          'provider_endpoint_unavailable', {}, Object.assign(new Error('private'), { code: 'ECONNREFUSED' }),
+        ),
+      },
+      retryable: true,
+      failureCause: {
+        code: 'provider_endpoint_unavailable',
+        phase: 'client_start',
+        providerErrorCode: 'ECONNREFUSED',
+      },
+    },
+  ])('retains the typed cause of a $kind in takeover progress', async ({ errorDetail, retryable, failureCause }) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-account-'));
     const credentialsFor = (sub: string) => ({
       token: `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`,
@@ -252,7 +280,7 @@ describe('external-linked durable takeover continuation', () => {
         spawnResolvedTakeoverSession: async (input) => ({
           ok: true, value: await input.spawnSession({ ...input.resolved.options, ...input.options }),
         }),
-        spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'private', errorDetail: { kind: 'launch_error', code: 'credential_unavailable', message: 'private', failureCause: { code: 'credential_unavailable', phase: 'authentication', failureReason: 'authentication_required', retryable: false } } }),
+        spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'private', errorDetail }),
         admissionWaiter,
         reconcileRuntimeBindingFailure: noCommittedRuntimeBindingFailure,
         publishProgress: async () => undefined,
@@ -262,7 +290,9 @@ describe('external-linked durable takeover continuation', () => {
         sessionId: record.request.sessionId, operationId: record.operationId, revision: record.revision,
       });
       const retained = await readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope);
-      expect(outcome, JSON.stringify(retained?.error)).toMatchObject({ ok: true, progress: { status: 'failed', error: { code: 'spawn_failed', retryable: false, runtimeIssueV1: { failureCause: { code: 'credential_unavailable', failureReason: 'authentication_required' } } } } });
+      const error = { code: 'spawn_failed', retryable, runtimeIssueV1: { failureCause } };
+      expect(outcome).toMatchObject({ ok: true, progress: { status: 'failed', error } });
+      expect(retained).toMatchObject({ status: 'failed', error });
       expect(ambientCredentials.reads).toBe(1);
       await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId)).resolves.toBeNull();
       await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope))

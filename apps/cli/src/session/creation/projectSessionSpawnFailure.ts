@@ -1,7 +1,7 @@
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { isConnectedServiceResumeUnreachableSpawnErrorDetail, isConnectedServiceUxDiagnosticSpawnErrorDetail, normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { readSessionPreparationFailureCode, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionPreparationFailureCode, readSessionRuntimeFailureCause, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -56,9 +56,11 @@ export function projectSessionSpawnFailure(input: Readonly<{
   const nativeFailure = normalizeSpawnSessionErrorDetail(input.errorDetail);
   if (nativeFailure?.kind === 'provider_error') {
     const { providerError } = nativeFailure;
+    const failureCause = readSessionRuntimeFailureCause(providerError, 'client_start');
     return { type: 'error', code: 'spawn_failed', retryable: providerError.retryable,
       providerError,
-      launchError: { kind: 'launch_error', code: providerError.code, message: providerError.code } };
+      launchError: { kind: 'launch_error', code: providerError.code, message: providerError.code,
+        ...(failureCause ? { failureCause } : {}) } };
   }
   const detail = SessionSpawnLaunchErrorV1Schema.safeParse(input.errorDetail);
   const nativeCode = nativeFailure?.kind === 'spawn_failure' ? nativeFailure.errno : undefined;
