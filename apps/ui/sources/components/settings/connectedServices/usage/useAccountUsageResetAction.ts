@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -10,6 +11,7 @@ import { readMachineAdministrationTargetObservation } from '@/sync/domains/state
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readSelectedMachineAdministrationTarget } from '@/sync/domains/machines/administration/selectionPreferences';
 import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { storage } from '@/sync/domains/state/storageStore';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
@@ -36,7 +38,7 @@ export function useAccountUsageResetAction(params: Readonly<{
     onApplied: () => void;
 }>): AccountUsageResetAction {
     const activeServer = useActiveServerSnapshot();
-    const { execute } = useMountedActionExecution(activeServer.serverId);
+    const { execute, isCurrent } = useMountedActionExecution(activeServer.serverId);
     const sessionMachineId = useConnectedServiceRecoveryCreditMachineTarget({
         serviceId: params.legacyServiceId,
         profileId: params.accountId,
@@ -73,25 +75,29 @@ export function useAccountUsageResetAction(params: Readonly<{
                 ...(providerCreditId ? { providerCreditId } : {}),
             });
             if (!execution.ok) {
-                await Modal.alert(t('common.error'), execution.error || execution.errorCode);
+                if (isCurrent() && execution.errorCode !== 'cancelled' && !isActionApprovalDeclinedErrorCode(execution.errorCode)) {
+                    await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(execution, t('errors.operationFailed')));
+                }
                 return;
             }
             const parsed = ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.safeParse(execution.result);
             if (!parsed.success) {
-                await Modal.alert(t('common.error'), 'invalid_response');
+                if (isCurrent()) await Modal.alert(t('common.error'), t('errors.operationFailed'));
                 return;
             }
             const result = parsed.data;
             if (!result.ok) {
-                await Modal.alert(t('common.error'), result.error || result.errorCode);
+                if (isCurrent()) {
+                    await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(result, t('errors.operationFailed')));
+                }
                 return;
             }
             const noticeKey = resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey(result.receipt.status);
-            if (noticeKey) await Modal.alert(t('common.info'), t(noticeKey));
+            if (noticeKey && isCurrent()) await Modal.alert(t('common.info'), t(noticeKey));
             onApplied();
         } finally {
             setPending(false);
         }
-    }, [accountId, activeServer, admittedMachineId, execute, legacyServiceId, onApplied, pending, sessionMachineId, snapshotFetchedAtMs]);
+    }, [accountId, activeServer, admittedMachineId, execute, isCurrent, legacyServiceId, onApplied, pending, sessionMachineId, snapshotFetchedAtMs]);
     return { pending, use };
 }

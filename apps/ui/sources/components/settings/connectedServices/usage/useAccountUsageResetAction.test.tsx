@@ -107,6 +107,9 @@ it.each(['approve', 'reject', 'disabled', 'stale'] as const)('admits the shared 
             expect(artifacts.list()).toEqual([]);
             expect(rpc).not.toHaveBeenCalled();
             expect(applied).toBe(false);
+            if (decision === 'disabled') {
+                expect(Modal.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
+            }
             return;
         }
         expect(rpc).not.toHaveBeenCalled();
