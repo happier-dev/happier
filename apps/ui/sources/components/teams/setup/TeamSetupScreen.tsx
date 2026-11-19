@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readMachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/waitForMachineSetupOperationV1';
 
 import {
   buildProjectOpenDraft,
@@ -43,6 +44,7 @@ import {
   type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
   useActiveServerAccountScopeLifetime,
@@ -69,6 +71,7 @@ export type TeamSetupRunState =
       kind: 'stopped';
       operationId: string | null;
       failure: ActionExecuteFailure | null;
+      retry?: NonNullable<ReturnType<typeof readMachineSetupRetryV1>>;
     }>
   | Readonly<{ kind: 'done'; operationId: string | null }>;
 
@@ -324,9 +327,10 @@ function TeamSetupPlanPage(
       result.machine && !result.machine.ok
         ? result.machine
         : result.machineSettlement;
+    const retry = readMachineSetupRetryV1(machineFailure);
     setRun(
       machineFailure
-        ? { kind: 'stopped', operationId, failure: machineFailure }
+        ? { kind: 'stopped', operationId, failure: machineFailure, ...(retry ? { retry } : {}) }
         : { kind: 'done', operationId },
     );
   }, [
@@ -352,6 +356,10 @@ function TeamSetupPlanPage(
     (operationId: string) => openActionOperationDetail({ serverId: context.scope.serverId, operationId }),
     [context.scope.serverId],
   );
+  const setupRetry = run.kind === 'stopped' ? run.retry : undefined;
+  const openSetupRetry = React.useCallback(() => {
+    if (setupRetry) router.push(createWorkflowInvocationRoute(setupRetry.runId, setupRetry.invocationId, context.scope.serverId) as never);
+  }, [context.scope.serverId, router, setupRetry]);
   const toggleRepository = React.useCallback((sourceId: string, next: boolean) =>
     setExcluded((current) => {
       const updated = new Set(current);
@@ -391,6 +399,7 @@ function TeamSetupPlanPage(
       canRun={canRun}
       onRun={() => { void start(); }}
       onOpenOperation={openOperation}
+      onRetryFailedSetup={setupRetry ? openSetupRetry : undefined}
       sources={{
         loading: sourcesLoading,
         failure: sourcesFailed
@@ -429,6 +438,7 @@ export function TeamSetupPageView(
     canRun: boolean;
     onRun: () => void;
     onOpenOperation: (operationId: string) => void;
+    onRetryFailedSetup?: () => void;
     sources: Readonly<{
       loading: boolean;
       failure: Readonly<{ title: string; description?: string }> | null;
@@ -451,6 +461,11 @@ export function TeamSetupPageView(
   const compact = useDeviceType() === 'phone';
   const running = run.kind === 'running';
   const toolsOperation = run.kind !== 'idle' ? run.operationId : null;
+  const stoppedOperation = run.kind === 'stopped' ? run.operationId : null;
+  const seeWhatRan = stoppedOperation ? {
+    label: t('teams.join.setupPage.seeWhatRan'),
+    onPress: () => props.onOpenOperation(stoppedOperation),
+  } : undefined;
   // The selector draws its own card, so the heading stands alone above it, as the plan review's do below.
   const aside = (
     <>
@@ -507,17 +522,10 @@ export function TeamSetupPageView(
             machine: machineLabel ?? t('teams.join.setupPage.yourMachine'),
           })}
           reason={run.failure?.error ?? undefined}
-          action={
-            run.operationId
-              ? {
-                  label: t('teams.join.setupPage.seeWhatRan'),
-                  onPress: () => props.onOpenOperation(run.operationId!),
-                }
-              : {
-                  label: t('common.retry'),
-                  onPress: props.onRun,
-                }
-          }
+          action={props.onRetryFailedSetup
+            ? { testID: 'team-setup-retry-failed', label: t('common.retry'), onPress: props.onRetryFailedSetup }
+            : seeWhatRan ?? { label: t('common.retry'), onPress: props.onRun }}
+          secondaryAction={props.onRetryFailedSetup ? seeWhatRan : undefined}
         />
       ) : null}
       {props.hasPreset ? (

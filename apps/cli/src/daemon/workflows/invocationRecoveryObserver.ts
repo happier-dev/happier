@@ -22,6 +22,8 @@ import { resumeActionCompletionV1, readActionCompletionRunObservationV1, isActio
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readProjectSetupConsentHoldV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { DaemonAgentInstallStartResponseSchema, MachinesAgentsInstallInputSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
+import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -206,6 +208,20 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
       if (approval?.kind === 'outcome_uncertain') return unavailable;
       if (approval) return { activity: approval.kind === 'unresolved' ? 'unknown' : 'not_active',
         canReattach: approval.kind !== 'unresolved' || approval.code === 'approval_required', canContinueConversation: false };
+      const reason = params.progress.reason;
+      if (params.progress.blockKind === 'action'
+        && execution.actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
+        && reason?.code === 'native_effect_failed') {
+        const install = MachinesAgentsInstallInputSchema.safeParse(execution.input);
+        const receipt = DaemonAgentInstallStartResponseSchema.safeParse({
+          ok: false, errorCode: reason.code, error: reason.message ?? reason.code, details: params.progress.result,
+        });
+        // A finite installer's retained terminal receipt proves the job stopped.
+        if (install.success && install.data.waitForTerminal === true && receipt.success && !receipt.data.ok
+          && receipt.data.errorCode === 'native_effect_failed' && receipt.data.details.outcome.kind === 'failed') {
+          return { activity: 'not_active', canReattach: false, canContinueConversation: false };
+        }
+      }
       if (execution.awaitedOperations?.length && params.getOperation) {
         const snapshots = await Promise.all(execution.awaitedOperations.map(async (target) => {
           const parsed = ActionOperationGetV1ResponseSchema.safeParse(await params.getOperation!(target));

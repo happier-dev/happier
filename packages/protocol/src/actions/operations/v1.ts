@@ -9,7 +9,7 @@ import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVit
 import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAccessV1.js';
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
-import { MachineSetupOperationReferenceV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
+import { MachineSetupOperationReferenceV1Schema, MachineSetupRetryV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ProjectSourceIdentityV1Schema } from '../../projects/sources/projectSourceIdentityV1.js';
@@ -274,6 +274,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   requestId: ActionExecuteFailureSchema.shape.requestId,
   effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
+  /** The Workflow owner exposes this exact invocation after confirming Retry is available. */
+  setupRetry: z.optional(MachineSetupRetryV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
     ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedMachineFailureDetailsV1Schema,
     MachineSetupFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
@@ -345,6 +347,7 @@ export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.t
     ...(record.requestId === undefined ? {} : { requestId: record.requestId }),
     ...(record.effectAttempted === undefined ? {} : { effectAttempted: record.effectAttempted }),
     ...(record.details === undefined ? {} : { details: record.details }),
+    ...(record.setupRetry === undefined ? {} : { setupRetry: record.setupRetry }),
     ...(record.failureCause !== undefined ? { failureCause: readActionFailureCauseV1(record.failureCause) }
       : 'cause' in record ? { failureCause: UNKNOWN_ACTION_FAILURE_CAUSE_V1 } : {}),
   };

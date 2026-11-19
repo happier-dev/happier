@@ -22,6 +22,7 @@ import {
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -43,13 +44,37 @@ const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRu
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { t } = await import('@/text');
-const { TeamSetupScreen } = await import('./TeamSetupScreen');
+const { TeamSetupPageView, TeamSetupScreen } = await import('./TeamSetupScreen');
 beforeEach(async () => {
   await homes.reset();
 });
 afterEach(async () => {
   standardCleanup();
   await homes.reset();
+});
+
+it('offers exact Setup recovery while keeping operation details reachable', async () => {
+  const onRun = vi.fn();
+  const onOpenOperation = vi.fn();
+  const onRetryFailedSetup = vi.fn();
+  const recovery = { onRetryFailedSetup };
+  const screen = await renderScreen(<TeamSetupPageView
+    {...recovery}
+    header={null} teamName="Acme" selection={createMachineAdministrationTargetSelectionFixture()}
+    machineId="machine-a" machineLabel="Mac" homeDir={null}
+    run={{ kind: 'stopped', operationId: 'setup-operation', failure: {
+      ok: false, errorCode: 'native_effect_failed', error: 'Registry rate limited',
+    } }}
+    canRun onRun={onRun} onOpenOperation={onOpenOperation}
+    sources={{ loading: false, failure: null, onRetry: vi.fn() }}
+    hasPreset={false} machinePlan={null} repositories={[]} repositoryFreeSources={[]}
+    excluded={new Set()} onToggleRepository={vi.fn()} batch={null} sharedKeys={[]} keyDisplayNames={{}}
+  />);
+  await screen.pressByTestIdAsync('team-setup-retry-failed');
+  await screen.pressByTestIdAsync('team-setup-stopped-secondary-action');
+  expect(onRetryFailedSetup).toHaveBeenCalledOnce();
+  expect(onOpenOperation).toHaveBeenCalledWith('setup-operation');
+  expect(onRun).not.toHaveBeenCalled();
 });
 
 it('lists the keys a Team shares on its setup page instead of calling the Team empty', async () => {

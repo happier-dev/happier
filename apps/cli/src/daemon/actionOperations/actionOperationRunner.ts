@@ -1,5 +1,5 @@
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import { isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineSetupApplyResultV1Schema, MachineSetupRetryV1Schema, type MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { randomUUID } from 'node:crypto';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createPendingSessionBirth } from './pendingSessionBirth';
@@ -565,18 +565,29 @@ export function createActionOperationRunner(deps: Readonly<{
               ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
               ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}) };
-            // Only named Project, Domain, Network, Machine setup and managed-controller producers carry these
-            // validated public facts. Arbitrary executor details remain private.
+            let details = executionResult.details;
+            let setupRetry: MachineSetupRetryV1 | undefined;
+            if (isMachineSetupCombinedActionIdV1(action.actionId)
+              && details && typeof details === 'object' && !Array.isArray(details) && 'setupRetry' in details) {
+              const { setupRetry: link, ...childDetails } = details;
+              const parsed = MachineSetupRetryV1Schema.safeParse(link);
+              if (parsed.success) {
+                setupRetry = parsed.data;
+                details = childDetails;
+              }
+            }
+            const publicFailure = setupRetry ? { ...failure, setupRetry } : failure;
+            // Only named producers carry validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || isProjectCheckoutRemovalActionIdV1(action.actionId)
               || action.actionId.startsWith('machines.managed.')
               || action.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
               || MACHINE_REACHABILITY_ACTION_IDS_V1.some(actionId => actionId === action.actionId)
-              || action.actionId === 'machines.setup.apply'
+              || isMachineSetupCombinedActionIdV1(action.actionId)
               || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'
               || action.actionId === 'deployments.templates.instantiate'
               || isDeploymentDomainChildActionIdV1(action.actionId)
-              ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
-            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, failureResult);
+              ? ActionOperationFailureV1Schema.safeParse({ ...publicFailure, details }) : null;
+            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : publicFailure, failureResult);
           }
           return executionResult;
         } catch (error) {

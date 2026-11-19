@@ -12731,6 +12731,13 @@ new readers accept references without steps. Released V1 readers still receive
 the existing projection without a setup reference, so no released wire epoch,
 persisted format, additional channel or compatibility adapter changes.
 
+A failed combined Machine Setup operation can include an exact Workflow retry
+link in the current development V2 read. It contains only the Run and invocation
+IDs. The Workflow owner determines availability and admits the retry. Current
+development readers preserve this field. Earlier development readers drop it
+through the existing additive diagnostic projection. V1 reads and pushes
+keep their released failure projection. No retained storage format changes.
+
 Managed controller failures in the current development V2 read retain a strict
 `managedControllerRequest` diagnostic: the static request path, failure category,
 observed HTTP status when available, and safe machine-readable code when supplied.

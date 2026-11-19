@@ -38,6 +38,7 @@ import type { createSessionRunReportPolicyReader } from '@/api/sessionFollowCrea
 import type { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } from './workflowActionExecutor';
 import type { createWorkflowRunActionOwner } from './workflowRunActions';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import type { CombinedMachineSetupInvocationRead } from '@/machines/setup/composeMachineSetup';
 import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import type { ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
@@ -126,7 +127,7 @@ export type CliWorkflowFamily = Readonly<{
     presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>) => ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>;
   startCombinedWorkflow: (request: WorkflowCombinedRunStartV1) => Promise<unknown>;
   waitForCombinedWorkflow: (request: WorkflowCombinedRunStartV1, runId: string) => Promise<unknown>;
-  readCombinedWorkflowInvocations: (request: WorkflowCombinedRunStartV1, input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']) => Promise<unknown>;
+  readCombinedWorkflowInvocations: (request: WorkflowCombinedRunStartV1, read: CombinedMachineSetupInvocationRead) => Promise<unknown>;
 }>;
 export type CliWorkflowTriggerList = NonNullable<CliWorkflowFamily['workflowTriggers']>['list'];
 export function createCliWorkflowFamily(
@@ -666,10 +667,9 @@ export function createCliWorkflowFamily(
       input: { runId, conditions: ['terminal'] }, context: accountCallerContext(request.context) };
     return (await createOwnedWorkflowExecutor(args, request)).waitCombined(args);
   };
-  const readCombinedWorkflowInvocations: CliWorkflowFamily['readCombinedWorkflowInvocations'] = async (request, input) => {
+  const readCombinedWorkflowInvocations: CliWorkflowFamily['readCombinedWorkflowInvocations'] = async (request, read) => {
     if (!ownedWorkflowAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-    return ownedWorkflowAction({ actionId: 'workflow.run.invocations.list', input,
-      context: accountCallerContext(request.context) }, request);
+    return ownedWorkflowAction({ ...read, context: accountCallerContext(request.context) }, request);
   };
   const resolveWorkflowActionArgs = async (args: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0]) => {
         // A Machine/Account host's bound id is not a Workflow origin Session.

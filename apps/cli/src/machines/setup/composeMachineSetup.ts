@@ -8,6 +8,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteAr
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import type { MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { ActionOperationCompletionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -23,6 +24,10 @@ type HostFacts = Exclude<Awaited<ReturnType<Preparation>>, ActionExecuteFailure>
 type AppReview = NonNullable<MachineSetupPlanResultV1['appReviews']>[number];
 type AppObservation = NonNullable<MachineSetupPlanReviewV1['apps']>[number];
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+
+export type CombinedMachineSetupInvocationRead =
+  | Omit<WorkflowActionExecuteArgs<'workflow.run.invocations.list'>, 'context'>
+  | Omit<WorkflowActionExecuteArgs<'workflow.run.invocations.get'>, 'context'>;
 
 export { buildMachineSetupTargetApplyInput } from '@happier-dev/protocol/machines/managed/actionsV1';
 
@@ -111,8 +116,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
   orchestrationDirectory: string;
   startCombined(request: WorkflowCombinedRunStartV1): Promise<unknown>;
   waitForRun(request: WorkflowCombinedRunStartV1): Promise<unknown>;
-  readInvocations(request: WorkflowCombinedRunStartV1,
-    input: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>['input']): Promise<unknown>;
+  readInvocations(request: WorkflowCombinedRunStartV1, read: CombinedMachineSetupInvocationRead): Promise<unknown>;
 }>): Pick<ActionExecutorDeps, 'machineSetupPlan' | 'prepareMachineSetupApply' | 'machineSetupApply'> {
   const targetPlan: typeof host.targetPlan = async request => {
     let result: unknown;
@@ -300,13 +304,14 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const hasReceivers = reviewed.targets.some(target => target.recipePlans.some(entry =>
         entry.plan.basis.kind === 'setup' && entry.plan.basis.selection
           && isBackupReceiverSelection(entry.plan.basis.selection)));
-      const withRecovery = (value: ActionExecuteFailure): ActionExecuteFailure => {
-        if (!hasReceivers) return value;
+      const withRecovery = (value: ActionExecuteFailure, setupRetry?: MachineSetupRetryV1): ActionExecuteFailure => {
+        if (!hasReceivers && !setupRetry) return value;
         const details = value.details;
         return { ...value, details: {
           ...(details === undefined ? {} : details && typeof details === 'object' && !Array.isArray(details)
             ? details : { childResult: details }),
-          setupOperation: result,
+          ...(hasReceivers ? { setupOperation: result } : {}),
+          ...(setupRetry ? { setupRetry } : {}),
         } };
       };
       // Losing the observer does not settle the Run or release its native child.
@@ -337,8 +342,9 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const setupBlocks = new Set(reviewed.targets.map((_, index) => `setup-${index}`));
       do {
         let observed: unknown;
-        try { observed = await host.readInvocations(request, { runId, lifecycles: [succeeded ? 'completed' : 'failed'], includeContent: true,
-          ...(cursor ? { cursor } : {}) }); }
+        try { observed = await host.readInvocations(request, { actionId: 'workflow.run.invocations.list', input: {
+          runId, lifecycles: [succeeded ? 'completed' : 'failed'], includeContent: true, ...(cursor ? { cursor } : {}),
+        } }); }
         catch (error) { return withRecovery({ ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.invocations.list') }); }
         const refused = ActionExecuteFailureSchema.safeParse(observed);
         if (refused.success) return withRecovery(refused.data);
@@ -346,7 +352,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         if (!page.success) return withRecovery({ ok: false,
           ...normalizeActionExecutorThrownError(page.error, 'workflow.run.invocations.list') });
         if (!page.data.invocationDetails) return withRecovery(failure('content_unavailable'));
-        for (const { progress } of page.data.invocationDetails) {
+        for (const { index, progress } of page.data.invocationDetails) {
           if (progress.blockKind !== 'action') continue;
           if (succeeded) {
             if (!setupBlocks.has(progress.invocationPath.blockId) || progress.invocationPath.scope.length) continue;
@@ -359,9 +365,17 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
           if (!progress.reason) continue;
           const completed = ActionOperationCompletionOutputV1Schema.safeParse(progress.result);
           const details = completed.success ? completed.data.operation.error?.details : progress.result;
+          let setupRetry: MachineSetupRetryV1 | undefined;
+          if (run.state === 'interrupted') {
+            const input = { runId, invocationId: index.id };
+            // Only the exact Workflow detail owns Retry availability.
+            const detail = await host.readInvocations(request, { actionId: 'workflow.run.invocations.get', input }).catch(() => null);
+            const opened = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].safeParse(detail);
+            if (opened.success && opened.data.invocation.recoveryAvailability?.retry.kind === 'available') setupRetry = input;
+          }
           return withRecovery({ ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
             ...(progress.reason.failureCause ? { failureCause: progress.reason.failureCause } : {}),
-            ...(details === undefined ? {} : { details }) });
+            ...(details === undefined ? {} : { details }) }, setupRetry);
         }
         cursor = page.data.nextCursor;
       } while (cursor);

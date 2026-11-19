@@ -20,6 +20,7 @@ import { waitForMachineSetupOperationV1 } from '@happier-dev/protocol/machines/s
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore } from '@/daemon/workflows/production';
 import { workflowInvocationKey } from '@/daemon/workflows/coordinator';
+import { observeWorkflowInvocationRecoveryEvidence } from '@/daemon/workflows/invocationRecoveryObserver';
 import type { WorkflowJsonValue } from '@/daemon/workflows/input';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
@@ -79,7 +80,13 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
   await store.ensureIntent({ key, recordId: 'setup-child', runId, blockId: 'setup-0', memberOrdinal: '0',
     parentKey: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
     path: { blockId: 'setup-0', scope: [] }, blockKind: 'action', attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
+  const native = ActionOperationSnapshotV1Schema.safeParse(details?.operation);
   await store.commitFact({ key, lifecycle: pendingNative ? 'running' : lifecycle, reason: errorCode,
+    ...(state === 'interrupted' && native.success ? { execution: {
+      kind: 'action' as const, actionId: 'machines.setup.apply', actionRequestId: 'native-request',
+      localInputId: 'native-invocation', input,
+      awaitedOperations: [{ key: 'setup', serverId: input.homeId, machineId, operationId: native.data.operationId }],
+    } } : {}),
     ...(failureCause ? { failureCause } : {}),
     ...(details === undefined ? {} : { result: details }) });
   await store.commitFact({ key: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }), lifecycle });
@@ -93,7 +100,13 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     } },
     definitions: { get: async () => { throw new Error('inline_run_has_no_saved_definition'); } },
     resolveEncryption: async () => ({ kind: 'available', witness }), normalizeAbsolutePath: directory => directory,
-    randomBytes: () => { throw new Error('plain_account_has_no_keys'); } });
+    randomBytes: () => { throw new Error('plain_account_has_no_keys'); },
+    observeRecovery: async ({ progress }) => await observeWorkflowInvocationRecoveryEvidence({ runId, machineId,
+      credentials: { token: 'fixture', encryption: null }, progress,
+      getOperation: async target => native.success && native.data.operationId === target.operationId
+        ? { kind: 'found', operation: native.data } : { kind: 'not_found' },
+      getRun: async () => { throw new Error('Native Setup uses an Action Operation'); },
+    }) });
   const deps = createCombinedMachineSetupActionDeps({ readDeps: createUnavailableActionTransportDeps,
     targetPlan: async () => { throw new Error('reviewed_exclusions_already_present'); },
     readHostFacts: async () => ({ machines: [{ machineId, online: true }] }), orchestrationDirectory: '/setup',
@@ -103,14 +116,32 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
       : reader.waitCombined(request),
     // This host port is the external Action transport boundary; a refused read
     // supplies no retained child content for the composition owner to interpret.
-    readInvocations: (_request, input) => readRefusalCode
+    readInvocations: (_request, read) => readRefusalCode
       ? Promise.resolve(ActionExecuteFailureSchema.parse({ ok: false, errorCode: readRefusalCode, error: readRefusalCode }))
-      : reader.execute({ actionId: 'workflow.run.invocations.list', input, context }),
+      : reader.execute({ ...read, context }),
   });
-  return { apply: () => deps.machineSetupApply!({ input, context }), input, context, deps, runId, storage, store, key };
+  const readRecovery = () => reader.execute({ actionId: 'workflow.run.invocations.get',
+    input: { runId, invocationId: 'setup-child' }, context });
+  return { apply: () => deps.machineSetupApply!({ input, context }), input, context, deps, runId, storage, store, key, readRecovery };
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it.each([true, false])('observes a declared Agent failure as stopped only with terminal installer evidence (receipt: %s)', async terminal => {
+    const outcome = { kind: 'failed', code: 'rate_limited', stepId: 'cli.pi', message: 'Registry rate limited' };
+    const machineId = 'guest';
+    const observed = await observeWorkflowInvocationRecoveryEvidence({
+      runId: 'run', machineId, credentials: { token: 'fixture', encryption: null },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'action', attempt: '0',
+        invocationPath: { blockId: 'app-0-0', scope: [] }, logicalInvocationRecordId: 'install-child',
+        execution: { kind: 'action', actionId: 'machines.agents.install', actionRequestId: 'run/install-child/0',
+          localInputId: 'run/install-child/0', input: { machineId, agentId: 'pi', intent: 'install', waitForTerminal: true } },
+        reason: { code: 'native_effect_failed' }, result: terminal ? { jobId: 'pi-1', outcome } : { jobId: 'pi-1' },
+      },
+      getRun: async () => { throw new Error('Agent installation has no Execution Run'); },
+    });
+    expect(observed.activity).toBe(terminal ? 'not_active' : 'unknown');
+  });
+
   it.skipIf(process.platform === 'win32')('keeps the admitted Apply credential for a nested opaque-source Plan', async () => {
     await exercisePublicPackagePlanApply('native-confirm', false, async fixture => {
       const target = { homeId: 'srv_home', machineId: fixture.machine.id };
@@ -170,6 +201,8 @@ describe('Combined Machine setup child settlement', () => {
       conditions: ['terminal', 'attention'] })).toMatchObject({ observation: 'waiting',
       run: { state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: false } });
     expect((await fixture.store.read(fixture.key))?.result).toEqual({ operation: child });
+    const detail = await fixture.readRecovery();
+    expect(detail, JSON.stringify(detail)).toMatchObject({ invocation: { recoveryAvailability: { retry: { kind: 'available' } } } });
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.setup.apply');
     const scope = { accountId: 'actor', machineId: 'guest' };
@@ -183,8 +216,16 @@ describe('Combined Machine setup child settlement', () => {
       .then(value => { observed = value; });
     try {
       await vi.waitFor(() => expect(observed, JSON.stringify(observed)).toMatchObject({ ok: false, errorCode: 'terminal_spawn_failed' }));
-      expect(store.get(scope, 'setup-operation')).toMatchObject({ state: 'failed',
-        error: { errorCode: 'terminal_spawn_failed' } });
+      const operation = store.get(scope, 'setup-operation');
+      expect(operation).toMatchObject({ state: 'failed', error: {
+        errorCode: 'terminal_spawn_failed', setupRetry: { runId: fixture.runId, invocationId: 'setup-child' },
+      } });
+      expect(operation?.error?.details).toBeUndefined();
+      const handlers = createActionOperationRpcHandlers({ store, runner, machineId: scope.machineId,
+        resolveAccountId: async () => scope.accountId });
+      expect(await waitForMachineSetupOperationV1('setup-operation', request => handlers.getV2(request))).toMatchObject({
+        ok: false, details: { setupRetry: { runId: fixture.runId, invocationId: 'setup-child' } },
+      });
     } finally {
       controller.abort();
       await observation;
