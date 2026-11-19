@@ -200,6 +200,30 @@ describe('portable Account encryption observation', () => {
         observation.dispose();
     });
 
+    it('keeps waiting for the current observation when a reconnect replaces its in-flight initialization', async () => {
+        const replies: Array<(fact: AccountEncryptionCurrentnessResponse) => void> = [];
+        const readFresh = vi.fn(() => new Promise<AccountEncryptionCurrentnessResponse>(resolve => { replies.push(resolve); }));
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
+        observation.connected();
+        let settled = false;
+        const result = Promise.all([observation.read(), observation.readWitness()])
+            .then(values => ({ values }), error => ({ error }))
+            .finally(() => { settled = true; });
+        try {
+            observation.disconnected();
+            observation.connected();
+            // Let the retired HTTP read settle while its replacement is still pending.
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(settled).toBe(false);
+            expect(readFresh).toHaveBeenCalledTimes(2);
+            replies[1]!(encrypted);
+            await expect(result).resolves.toEqual({ values: [projectAccountEncryptionIdentity(encrypted), encrypted] });
+            replies[0]!(plain);
+            expect(await observation.read()).toEqual(projectAccountEncryptionIdentity(encrypted));
+            expect(readFresh).toHaveBeenCalledTimes(2);
+        } finally { observation.dispose(); await result; }
+    });
+
     it('ignores foreign updates and withdraws malformed matching facts before any later read', async () => {
         const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh: async () => plain, unavailable });
         observation.connected();

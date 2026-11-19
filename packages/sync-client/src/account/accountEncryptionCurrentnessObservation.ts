@@ -163,7 +163,9 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
         if (signal?.aborted) throw abortReason(signal);
         if (disposed) throw options.unavailable();
         if (connected && !fact) refresh();
-        if (pending) {
+        // A reconnect can replace initialization while its retired read settles.
+        // Borrow the replacement read rather than declaring its pending fact unavailable.
+        while (pending) {
             const operation = waitForAccountEncryptionObservation(pending, retirement.signal);
             await (signal ? waitForAccountEncryptionObservation(operation, signal) : operation);
         }
