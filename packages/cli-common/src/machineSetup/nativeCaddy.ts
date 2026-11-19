@@ -196,7 +196,7 @@ export async function disconnectNativeCaddyNetworks(input: ContainerInput & Read
         if (typeof networkId !== 'string' || !retired.has(networkId)) continue;
         // Docker keeps the primary network in immutable HostConfig.NetworkMode.
         // Retain this Caddy dependency so a later restart can still resolve it.
-        if (owned.host.NetworkMode === networkName || owned.host.NetworkMode === networkId) continue;
+        if (isNativeCaddyPrimaryNetwork(owned, networkName, networkId)) continue;
         if (input.onlyUnused) {
             const holders = await run(['ps', '--all', '--no-trunc', '--filter', `network=${networkId}`, '--format', '{{.ID}}']);
             if (holders.code !== 0) return { status: 'unavailable', reason: 'required_fact_unavailable' };
@@ -208,6 +208,20 @@ export async function disconnectNativeCaddyNetworks(input: ContainerInput & Read
         if (disconnected.code !== 0) return { status: 'unavailable', reason: 'native_effect_failed' };
     }
     return { status: 'ready' };
+}
+
+/** A retired Compose generation can leave its network for the shared Caddy container's next restart. */
+export async function observeNativeCaddyRetainedNetwork(input: ContainerInput & Readonly<{ networkId: string }>,
+    options: NativeOptions = {}): Promise<'retained' | 'needed' | 'unavailable'> {
+    const run = nativeDocker(input, options);
+    const owned = await inspectOwnedContainer(input, run);
+    if (owned.status === 'unavailable') return 'unavailable';
+    if (owned.status === 'needs_setup' || !Object.entries(owned.networks).some(([name, endpoint]) =>
+        object(endpoint)?.NetworkID === input.networkId && isNativeCaddyPrimaryNetwork(owned, name, input.networkId))) return 'needed';
+    // All states matter. A stopped or unrelated container still needs this network.
+    const holders = await run(['ps', '--all', '--no-trunc', '--filter', `network=${input.networkId}`, '--format', '{{.ID}}']);
+    if (holders.code !== 0) return 'unavailable';
+    return holders.stdout.trim() === owned.containerId ? 'retained' : 'needed';
 }
 
 const ownerLabel = 'dev.happier.machine-setup.recipe';
@@ -247,6 +261,9 @@ export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySe
 }
 type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; containerName: string; config: Record<string, unknown>; host: Record<string, unknown>;
     running: boolean; created: boolean; networks: Record<string, unknown>; ports: unknown }>;
+function isNativeCaddyPrimaryNetwork(owned: OwnedContainer, name: string, id: string): boolean {
+    return owned.host.NetworkMode === name || owned.host.NetworkMode === id;
+}
 async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<typeof nativeDocker>): Promise<OwnedContainer
     | Readonly<{ status: 'needs_setup' }> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict'; details?: NativeCaddyFailureDetails }>> {
     const unavailable = caddyFactUnavailable('caddyContainer');

@@ -9,7 +9,7 @@ import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/d
 import { getRelayAccessProvider } from '../relayAccess/registry.js';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
-import { checkNativeCaddyPortAvailability, ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, createNativeCaddyBindings, connectNativeCaddyNetworks, disconnectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
+import { checkNativeCaddyPortAvailability, ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, observeNativeCaddyRetainedNetwork, createNativeCaddyBindings, connectNativeCaddyNetworks, disconnectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -779,6 +779,13 @@ it.each(['routed-a', 'primary-network'] as const)('keeps Caddy restartable when 
     expect(retained.NetworkSettings.Networks).toEqual({
         'routed-a': { NetworkID: 'primary-network' }, successor: { NetworkID: 'successor-network' },
     });
+    expect(await observeNativeCaddyRetainedNetwork({ networkId: 'primary-network' }, {
+        run: command => command.args[0] === 'ps' ? Promise.resolve(ok(retained.Id)) : f.run(command),
+    })).toBe('retained');
+    expect(await observeNativeCaddyRetainedNetwork({ networkId: 'primary-network' }, {
+        run: command => command.args[0] === 'ps'
+            ? Promise.resolve(ok([retained.Id, ...(command.args.includes('--all') ? ['stopped-successor'] : [])].join('\n'))) : f.run(command),
+    })).toBe('needed');
 });
 
 it('preserves Caddy on a network still used by another generation', async () => {

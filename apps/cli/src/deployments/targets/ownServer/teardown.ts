@@ -7,6 +7,7 @@ import { buildDeploymentTeardownInputV1, DeploymentTeardownNothingDeployedInputV
 import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentTeardownResourceV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { observeNativeCaddyRetainedNetwork } from '@happier-dev/cli-common/machineSetup';
 import { configuration } from '@/configuration';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -166,6 +167,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                     // complete history of a sole, never-deployed link proves it empty;
                     // a missing Docker executable alone cannot prove absence.
                     if (!mayHaveWorkload) return proved();
+                    const networkIds = new Set<string>();
                     for (const project of projects) {
                         const result = await run(['ps', '--all', '--no-trunc', '--filter', `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
                         if (result.exitCode !== 0) return { kind: 'unknown', reason: 'observation_unavailable' };
@@ -173,7 +175,18 @@ export function createOwnServerTeardownForHost(host: Host) {
                         const networks = await run(['network', 'ls', '--no-trunc', '--filter',
                             `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
                         if (networks.exitCode !== 0) return { kind: 'unknown', reason: 'network_observation_unavailable' };
-                        if (networks.stdout.trim()) return { kind: 'needed' };
+                        for (const id of networks.stdout.trim().split(/\r?\n/u).filter(Boolean)) networkIds.add(id);
+                        if (networkIds.size > 1) return { kind: 'needed' };
+                    }
+                    for (const networkId of networkIds) {
+                        const network = await observeNativeCaddyRetainedNetwork({ networkId }, {
+                            run: async command => {
+                                const result = await run(command.args);
+                                return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr ?? '' };
+                            },
+                        });
+                        if (network === 'unavailable') return { kind: 'unknown', reason: 'network_observation_unavailable' };
+                        if (network === 'needed') return { kind: 'needed' };
                     }
                     if (await observeOwnServerTeardownVolumes({ resources: operation.resources, run }) === 'needed') return { kind: 'needed' };
                     if (removeImages) {

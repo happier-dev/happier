@@ -4832,10 +4832,12 @@ captured Domains before target cleanup; it does not issue another Domain Remove
 Action or ask for another confirmation. Native target cleanup then disconnects
 the canonical shared Caddy container from exact Compose-owned networks before
 removing them, preserving Caddy, its primary network dependency and sibling
-attachments. Other running or stopped network holders still prevent verified
-network removal. A failed retirement returns a typed
-partial result naming the Domain and its required fact and remedy, records a
-cleanup failure, and leaves the Environment present. Environment removal is the
+attachments. Verification accepts the retained primary network only after
+observing that the owned Caddy container is its sole holder. Other running or
+stopped container holders still prevent verified target removal, and retry
+can settle an already-retired target from that same observation. A failed
+retirement returns a typed partial result naming the Domain, required fact and
+remedy, records a cleanup failure, and leaves the Environment present. Environment removal is the
 last step of Stop and remove. A rejected or uncertain final removal returns a
 typed `removeEnvironment` partial with the Environment identity, required fact
 and remedy, preserving the original failure code. Only a committed removal
