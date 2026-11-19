@@ -578,8 +578,9 @@ describe("managed acquisition durable authority", () => {
         } finally { await app.close(); }
     });
 
-    it.each([['retained', 'new-policy'], ['fresh', 'new-policy'], ['retained', 'same-rebuild'], ['fresh', 'requester-account']] as const)(
+    it.each([['retained', 'new-policy'], ['fresh', 'new-policy'], ['retained', 'same-rebuild'], ['fresh', 'requester-account'], ['fresh', 'compute']] as const)(
         "requires fresh managed proof after reviewed rebuild before %s installation reconnects under %s admission", async (installation, settlementAdmission) => {
+        const compute = settlementAdmission === 'compute';
         const fixtureSuffix = `${installation}-${settlementAdmission}`;
         const sameRebuildAdmission = settlementAdmission === 'same-rebuild';
         const homeId = `srv_${"a".repeat(32)}`;
@@ -606,7 +607,7 @@ describe("managed acquisition durable authority", () => {
             { id: "rebuild", inputSchema: roles.rebuildInput.jsonSchema, resultSchema: roles.rebuildResult.jsonSchema },
         ];
         const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: "fixture.rebuild", version: "1.0.0", displayName: "Rebuild fixture", engines: { happier: "^1.0.0" }, runtime: { apiVersion: 1 }, contributes: {
-            machineProvisioners: [{ id: "child", title: "Child", icon: "machine", resourceKind: "devcontainer", schemaVersion: 1,
+            machineProvisioners: [{ id: "child", title: "Child", icon: "machine", resourceKind: compute ? "compute" : "devcontainer", schemaVersion: 1,
                 launchSchema: native.jsonSchema, resourceSchema: native.jsonSchema, platforms: ["linux"], prerequisites: [],
                 billing: { location: "local", stoppedBilling: "not-billed" }, retention: { supportedIntents: ["delete", "rebuild"] },
                 actions: { check: "check", acquire: "acquire", bootstrap: "bootstrap", inspect: "inspect", destroy: "destroy", rebuild: "rebuild" } }],
@@ -635,8 +636,8 @@ describe("managed acquisition durable authority", () => {
         } });
         const original = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, requestId: creationRequestId, controller };
         const resource = { contributionRef: { pluginId: manifest.id, localId: "child" }, schemaVersion: 1, value: { id: "old-native" },
-            devcontainerObservation: { nativeResourceId: 'old-native', user: 'coder', workspaceFolder: '/work',
-                storage: { kind: 'child' as const, childPath: '/work' } } };
+            ...(compute ? {} : { devcontainerObservation: { nativeResourceId: 'old-native', user: 'coder', workspaceFolder: '/work',
+                storage: { kind: 'child' as const, childPath: '/work' } } }) };
         await submitManagedAcquire(original);
         await reportManagedAcquire({ ...original, result: { kind: "bound", resource }, bootstrapInstalled: true });
         const oldGuestKeys = tweetnacl.sign.keyPair();
@@ -689,6 +690,13 @@ describe("managed acquisition durable authority", () => {
         const current = { ...original, expectedIntentRevision: 1, requestId: "reviewed-rebuild" };
         const submitted = await submitManagedIntent(current);
         expect(submitted.machine.submittedNativeEffect).toMatchObject({ reviewedEffectDigest: 'reviewed-host-child-effects' });
+        if (compute) {
+            const replacement = { ...resource, value: { id: 'new-native' } };
+            const reported = await reportManagedIntent({ ...current, result: { kind: 'bound', resource: replacement } });
+            expect(reported.machine).toMatchObject({ allocation: 'bound', resource: replacement });
+            expect(reported.machine.submittedNativeEffect).toBeUndefined();
+            return;
+        }
         const uncertain = await reportManagedIntent({ ...current, result: { kind: 'unknown', recovery: { reference: 'old-native', reason: 'native_rebuild_unknown' } },
             observation: { observedAt: 1, availability: 'absent' } });
         expect(uncertain.machine).toMatchObject({ allocation: 'bound', recovery: { reference: 'old-native', reason: 'native_rebuild_unknown' },

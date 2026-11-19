@@ -4708,8 +4708,9 @@ same unarchived, active or canceled-cleanup row and installation, without a reta
 normal submission then admits one new effect. Absence settles without another
 Delete. Same-admission replay, mere policy changes, unavailable or stale facts,
 controller replacement and native-operation cleanup custody do not grant retry.
-Power intents retain their existing fresh-state reconciliation; rebuild requires
-its provider's exact replacement result rather than presence alone.
+Power intents retain their existing fresh-state reconciliation. In 0.3 development
+source, Home admits rebuild from the provisioner's advertised rebuild intent and
+role. Settlement requires the provider's exact replacement result.
 
 In current 0.3 development source, the shared configurator consumes the options Action's explicit `inputHints.fields` and current occurrence-pinned input schema through the existing Action form owner. A schema alone does not declare rendered fields. A field's optional JSON `defaultValue` seeds a missing initial form value; an explicit retained value, including `false`, `0` or an empty string, takes precedence. Defaults are applied once when the form opens, survive hint localization, and do not replace later edits or final Action validation. Editable selector paths must match the executable launch paths so retained recipes can revalidate through that same options role; the UI does not guess native wrappers or merge launch fragments. Selected native prices retain every line in the canonical configuration facts' `prices` vector, including optional localized labels, exact amount, currency, unit, source and observation time. The shared receipt renders that vector without adding totals, currency conversion or guessed monthly rates. Missing native declarations remain unavailable rather than implying UI support.
 

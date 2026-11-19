@@ -415,7 +415,7 @@ export async function admitManagedControl(params: Readonly<{
                 } else if (request.action === MANAGED_RESIZE_ACTION_ID_V1) {
                 data.admittedInput = { ...admitted, currentAdmission: { ...currentAdmission, resizeProvisioner: declaration.provisioner } };
                 } else if (request.action === "machines.managed.rebuild") {
-                if (declaration.resourceKind !== 'devcontainer' || !declaration.retention.supportedIntents.includes('rebuild')
+                if (!declaration.retention.supportedIntents.includes('rebuild')
                     || !declaration.actions.rebuild) throw new ManagedMachineError("provider_unavailable");
                 data.desired = 'rebuild';
                 data.desiredWhen = 'now';
