@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 
 import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
@@ -144,7 +145,6 @@ it('Team Source Open links the existing checkout and its recipient inherits the 
     canManageSource: false, sourceDefaultsRow: { defaults: { approvalProfileId: projectProfileId } },
     context: { projectDefaults: { approvalProfileId: projectProfileId }, teamDefaults: { team: { approvalProfileId: teamProfileId } } },
   } });
-  const { connectUiPersonActionClient } = await import('@happier-tests/ui-action-client');
   const requestBoundary = fixture.requestProxy?.entries().length ?? 0;
   const ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl,
     addressAnchorUrl: fixture.server.baseUrl, accountSecret: owner.auth.accountSigningSeed });
@@ -211,8 +211,9 @@ it('Open imports a native task, preserves dirty work, and retains its receipt ac
   expect(await readFile(join(checkout, 'unfinished.bin'))).toEqual(sentinel);
   // Import the native reference produced by inspection through the same guarded writer as the editor.
   await writeFile(join(checkout, 'Makefile'), 'journey-task:\n\t@printf native-task\n');
+  const inspectInput = (kind: 'editor' | 'imports') => ({ workspace: opened.workspace, read: { kind } });
   const inspect = async (kind: 'editor' | 'imports') => ProjectDefinitionInspectOutputSchema.parse(
-    await action(owner, 'projects.inspect', { workspace: opened.workspace, read: { kind } }));
+    await action(owner, 'projects.inspect', inspectInput(kind)));
   const imports = await inspect('imports');
   const nativeTask = imports.importCandidates.find(row => row.usage === 'script' && row.source.kind === 'native'
     && row.source.tool === 'make' && row.source.target === 'journey-task');
@@ -253,14 +254,30 @@ it('Open imports a native task, preserves dirty work, and retains its receipt ac
   if (!receipt) throw new Error('Successful Open did not publish its operation receipt');
   for (const restart of [1, 2]) {
     await machine.restart();
-    const read = ActionOperationGetV1ResponseSchema.parse(await action(owner, 'action.operations.get', {
-      ...machine.target, operationId: receipt.operationId }));
-    expect(read, `Open receipt after restart ${restart}`).toEqual({ kind: 'found', operation: receipt });
-    const listed = ActionOperationListV1ResponseSchema.parse(await action(owner, 'action.operations.list', machine.target));
-    expect(listed.items.find(row => row.operationId === receipt.operationId)).toEqual(projectActionOperationListSnapshotV1(receipt));
-    expect(await readFile(join(checkout, 'unfinished.bin'))).toEqual(sentinel);
-    expect((await inspect('editor')).definition.document).toMatchObject({ status: 'valid', bytes: draft,
-      manifest: { scripts: { onboarding: { source: nativeTask.source } } } });
+    const person = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl,
+      addressAnchorUrl: fixture.server.baseUrl, accountSecret: owner.auth.accountSigningSeed });
+    try {
+      await waitFor(() => person.isMachineControlReady(machine.target.machineId),
+        { context: `UI receives the enrolled Machine after restart ${restart}` });
+      const readAsPerson = async (actionId: ActionId, input: unknown) => {
+        const result = await person.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
+          actionCaller: { kind: 'host' }, serverId: person.serverId, serverIdentityId: fixture.serverId,
+          actionRequestId: randomUUID() });
+        if (!result.ok) throw new Error(`${actionId} after restart ${restart}: ${result.errorCode}`);
+        return result.result;
+      };
+      const read = ActionOperationGetV1ResponseSchema.parse(await readAsPerson('action.operations.get', {
+        ...machine.target, operationId: receipt.operationId }));
+      expect(read, `Open receipt after restart ${restart}`).toEqual({ kind: 'found', operation: receipt });
+      const listed = ActionOperationListV1ResponseSchema.parse(await readAsPerson('action.operations.list', machine.target));
+      expect(listed.items.find(row => row.operationId === receipt.operationId)).toEqual(projectActionOperationListSnapshotV1(receipt));
+      expect(await readFile(join(checkout, 'unfinished.bin'))).toEqual(sentinel);
+      const definition = ProjectDefinitionInspectOutputSchema.parse(await readAsPerson('projects.inspect', inspectInput('editor')));
+      expect(definition.definition.document).toMatchObject({ status: 'valid', bytes: draft,
+        manifest: { scripts: { onboarding: { source: nativeTask.source } } } });
+    } finally {
+      await person.close();
+    }
   }
 }, 0);
 
