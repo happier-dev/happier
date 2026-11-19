@@ -14,6 +14,13 @@ export function isInAdmissionJobsSlice(pid) {
   } catch { return false; }
 }
 
+// Clients loaded before the 2026-11-19 16:02Z working-set cutover still import
+// this name while settling their payload. Skip their obsolete lifetime sample.
+// Remove after the pre-cutover client cohort has drained.
+export function readJobScopePeakKiB() {
+  return null;
+}
+
 /** Only a dedicated dispatch scope can be attributed to this workload. File
  * cache belongs to the cgroup charge but is reclaimable under memory pressure.
  * shmem is separate from anon and must remain charged. */

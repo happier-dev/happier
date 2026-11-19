@@ -1196,6 +1196,16 @@ test('working-set reads use anon, shmem and kernel and ignore the file cache and
   assert.equal(admissionMemory.readProcessJobScopeWorkingSetKiB(123, read), 1120);
 });
 
+test('a retained client can finish after the broker switches to working-set samples', linux, async t => {
+  const { root } = await fixture(t);
+  const status = await runAdmittedTask({
+    root, className: 'validation', floorKiB: 1, machine: 'fixture', env: {},
+    // The predecessor client resolves this export only after its payload exits.
+    readJobPeakKiB: async () => (await import('./admission_memory.mjs')).readJobScopePeakKiB(),
+  }, async () => 23);
+  assert.equal(status, 23);
+});
+
 test('recent working sets replace a historical outlier and survive succession', linux, async t => {
   const gib = 1024 * 1024;
   const { root, broker, sampleResources } = await fixture(t, {

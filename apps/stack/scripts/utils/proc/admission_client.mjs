@@ -5,6 +5,7 @@ import { constants } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { relative, resolve } from 'node:path';
+import { readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
 import { resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 
@@ -314,7 +315,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               // Only the outermost admission owns its jobs scope. A client nested in
               // another admitted payload shares that scope with its parent.
               if (env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT || env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN) return;
-              const peakKiB = await (readJobPeakKiB ?? (await import('./admission_memory.mjs')).readProcessJobScopeWorkingSetKiB)();
+              const peakKiB = await (readJobPeakKiB ?? readProcessJobScopeWorkingSetKiB)();
               if (!Number.isSafeInteger(peakKiB) || peakKiB <= 0) return;
               await report({ kind: 'slot-working-set', peakKiB, className: request.className,
                 resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry });
