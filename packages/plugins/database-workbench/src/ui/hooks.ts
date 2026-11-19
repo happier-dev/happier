@@ -196,8 +196,8 @@ export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<
             takeBack: (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => instance.drafts.takeBack(instance.draftKey(change)),
             discard: () => instance.drafts.takeBackMany(selected.map(instance.draftKey)),
             cellState: (rowKey: string, column: string) => instance.cellState(rowKey, column),
-            review: () => instance.review(targetKey, relation),
-            apply: instance.apply,
+            review: () => instance.review(selected),
+            apply: (relation: DatabaseRelationV1) => instance.apply(relation, targetKey),
             outcome,
         };
     }, [changes, instance, outcome, targetKey, relation]);

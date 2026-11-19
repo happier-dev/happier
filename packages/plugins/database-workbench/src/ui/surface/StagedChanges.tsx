@@ -202,7 +202,7 @@ export function StagedReview(
   const translate = usePluginTranslation();
   const instance = useWorkbenchInstance();
   const draft = useWorkbenchDraft(instance, props);
-  const review = React.useMemo(
+  const { groups: review, input: reviewedInput } = React.useMemo(
     () => draft.review(),
     [draft],
   );
@@ -270,6 +270,7 @@ export function StagedReview(
         />
         <Action.Control
           {...apply}
+          reviewedInput={reviewedInput}
           variant={production ? 'destructive' : 'primary'}
           title={
             production

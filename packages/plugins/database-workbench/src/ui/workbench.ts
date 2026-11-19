@@ -10,7 +10,7 @@ import type {
     DatabaseStatsReadV1,
     DatabaseStatsObservationV1,
 } from '@happier-dev/plugin-sdk/database';
-import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, type JsonValue } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { inspectJsonCell } from './cellInspection.js';
 import { createConsoleState } from './consoleState.js';
@@ -20,7 +20,7 @@ import { projectRelationPage } from './projections.js';
 import { databaseEngineName } from './surface/engines.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
-import { createApplyControl, selectRelationChanges } from './apply.js';
+import { createApplyControl, projectStagedApplyInput } from './apply.js';
 import { sameRelation, mergeWorkbenchLocation, foreignKeyNavigation, incomingForeignKeyNavigation, foreignKeyBack } from './location.js';
 import type {
     DatabaseRelations, DatabaseTargets, WorkbenchApplyOutcome, WorkbenchChange, WorkbenchLocation,
@@ -114,16 +114,18 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                 ? { kind: 'edited', old: held.change.original.find(value => value.column === column)?.value }
                 : { kind: 'unchanged' };
         },
-        review(targetKey: string, relation: DatabaseRelationV1 | undefined): WorkbenchReview {
-            const selected = selectRelationChanges(drafts.changes(), targetKey, relation);
+        review(selected: readonly WorkbenchChange[]): { groups: WorkbenchReview; input: JsonValue } {
             const first = selected[0];
-            return first ? [{ relation: first.relation, rows: selected.map(held => {
+            if (!first) return { groups: [], input: null };
+            const rows = selected.map(held => {
                 const change = held.change;
                 return { rowKey: held.rowKey, label: held.label, kind: change.kind,
                     changes: change.kind === 'delete' ? change.key.map(cell => ({ column: cell.column, old: cell.value }))
                         : change.values.map(value => ({ column: value.column, new: value.value,
                             ...(change.kind === 'update' ? { old: change.original.find(cell => cell.column === value.column)?.value } : {}) })) };
-            }) }] : [];
+            });
+            return { groups: [{ relation: first.relation, rows }],
+                input: projectStagedApplyInput(target(first.targetKey).target, first.relation, selected) };
         },
         target,
         /** Account/target retirement shares close's resource cancellation owner. */
@@ -272,8 +274,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             if (previous) { await client.navigate(previous); local.set('location', previous); }
         },
         refresh: invalidate,
-        apply(relation: DatabaseRelationV1): WorkbenchControlBinding {
-            const targetKey = local.get('location').targetKey;
+        apply(relation: DatabaseRelationV1, targetKey = local.get('location').targetKey): WorkbenchControlBinding {
             const controlKey = key([targetKey, relation]);
             let held = applyControls.get(controlKey);
             if (!held) {

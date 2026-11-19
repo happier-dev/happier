@@ -21,6 +21,11 @@ export function selectRelationChanges(changes: readonly WorkbenchChange[], targe
     return relation ? changes.filter(item => item.targetKey === targetKey && sameRelation(item.relation, relation)) : [];
 }
 
+export function projectStagedApplyInput(target: DatabaseDescriptorV1['target'], relation: DatabaseRelationV1,
+    changes: readonly WorkbenchChange[]) {
+    return projectNativeJsonValueForTransport({ operation: 'edits.apply', target, relation, changes: changes.map(item => item.change) });
+}
+
 export function createApplyControl(host: ApplyHost, targetKey: string, relation: DatabaseRelationV1): WorkbenchControlBinding {
     let submitted: readonly WorkbenchChange[] = [];
     const controller: PluginUiActionControlController = {
@@ -29,7 +34,7 @@ export function createApplyControl(host: ApplyHost, targetKey: string, relation:
             submitted = selectRelationChanges(host.drafts.changes(), targetKey, relation);
             if (!submitted.length) return null;
             host.onOutcome(undefined);
-            return { input: projectNativeJsonValueForTransport({ operation: 'edits.apply', target: host.target(targetKey).target, relation, changes: submitted.map(item => item.change) }) };
+            return { input: projectStagedApplyInput(host.target(targetKey).target, relation, submitted) };
         },
         onSettled(execution) {
             if (host.isClosed()) return;

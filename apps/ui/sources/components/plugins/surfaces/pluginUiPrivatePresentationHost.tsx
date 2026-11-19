@@ -804,8 +804,8 @@ export function createPluginUiPrivatePresentationHost(
         ...(options?.runPress ? { runPress: options.runPress } : {}),
         ...(options?.actionControls ? {
             ...createPluginUiActionBindingPresentation(options.actionControls.commit),
-            renderActionControl: ({ control, presentation }: Parameters<NonNullable<PluginUiPresentationHost['renderActionControl']>>[0]) =>
-                <PluginInlineActionControl controls={options.actionControls!} control={control} presentation={presentation} />,
+            renderActionControl: ({ control, presentation, reviewedInput }: Parameters<NonNullable<PluginUiPresentationHost['renderActionControl']>>[0]) =>
+                <PluginInlineActionControl controls={options.actionControls!} control={control} presentation={presentation} reviewedInput={reviewedInput} />,
             renderPopover: (input: Parameters<PluginUiPresentationHost['renderPopover']>[0]) => input.menu
                 ? <PluginUiMenuPresentation input={{ ...input, menu: input.menu }} controls={options.actionControls} />
                 : PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS.renderPopover(input),

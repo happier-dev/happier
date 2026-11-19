@@ -249,6 +249,7 @@ export type PluginUiPresentationHost = Readonly<{
   renderActionControl?(input: Readonly<{
     control: PluginUiActionControl | null;
     presentation: PluginUiActionControlPresentation;
+    reviewedInput?: JsonValue;
   }>): ReactElement | null;
   /** Host-private synchronous press scope; never carried by public Host API requests. */
   runPress?(event: unknown, invoke: () => unknown): unknown;

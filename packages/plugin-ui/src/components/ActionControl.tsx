@@ -5,7 +5,7 @@ import type {
   PluginUiActionControlController,
   PluginUiActionControlPresentation,
 } from '@happier-dev/plugin-sdk/ui';
-import { PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { usePluginHostApi } from '../hostApi/context.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
@@ -15,6 +15,8 @@ export type ActionControlProps = Readonly<{
   action: PluginUiActionReference;
   /** Fresh preparation and original execution settlement; never a person-authorized executor. */
   controller: PluginUiActionControlController;
+  /** Operands displayed by a host-supported in-place review. The host admits the confirm press. */
+  reviewedInput?: JsonValue;
   title?: string;
   titleKey?: string;
   accessibilityLabel?: string;
@@ -115,7 +117,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
   }, [host, actionKey, signal, title, accessibilityLabel, disabled, variant]);
 
   if (unavailable) return props.fallback ?? null;
-  return renderInline ? renderInline({ control: bound, presentation: nextPresentation }) : null;
+  return renderInline ? renderInline({ control: bound, presentation: nextPresentation, reviewedInput: props.reviewedInput }) : null;
 }
 
 // The host draws it as a labelled button: in a stretching column it keeps its own width (`isHappierInlineControl`).

@@ -10,8 +10,9 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import { projectAutomationSubjectStructuralV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, databaseActionLocalIdV1,
+import { DATABASE_PLUGIN_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, databaseActionLocalIdV1,
     DatabaseTargetsForgetInputV1ProtocolSchema } from '@happier-dev/database-protocol';
+import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { DatabaseManualTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 
@@ -881,6 +882,8 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         { name: 'executes the exact approved mutation once without another approval Artifact', change: 'none' },
         { name: 'executes the exact bundled approved mutation once', change: 'bundled' },
         { name: 'confirms a contributed Action.Control', change: 'contributed-control' },
+        { name: 'runs mounted Database Apply with the exact in-place review and no second prompt', change: 'reviewed-control' },
+        { name: 'refuses mounted Database Apply when preparation changes the reviewed input', change: 'changed-control' },
         { name: 'COORD R2 confirms an explicitly Ask-gated Account Action through the runtime relay', change: 'ask-control' },
         { name: 'COORD R2 leaves a declined carried review editable without executing the Action', change: 'ask-cancel' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
@@ -901,13 +904,18 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const { createDaemonExternalActionContributedInvoker } = await import('../../../../../cli/src/daemon/externalActions/createDaemonExternalActionContributedInvoker');
         const { executeExternalAction } = await import('../../../../../cli/src/daemon/externalActions/executeExternalAction');
         const { createTargetActionCurrentIntentAdapter } = await import('../../../../../cli/src/session/actions/approvals/targetActionCurrentIntent');
+        const { createPluginUiPrivatePresentationHost } = await import('./pluginUiPrivatePresentationHost');
         const home = rpcHomes.get('server-client-action')!;
         const lifetime = clientAccountLifetime(home.id);
-        const pluginId = 'acme.reviewed-picker';
-        const localId = 'assign';
-        const input = { issue: 'ISSUE-42', assignee: 'alice' };
+        const mountedReview = change === 'reviewed-control' || change === 'changed-control';
+        const pluginId = mountedReview ? DATABASE_PLUGIN_ID_V1 : 'acme.reviewed-picker';
+        const localId = mountedReview ? databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1) : 'assign';
+        const stagedInput = { operation: 'edits.apply', target: createDatabaseDescriptorV1Fixture().target,
+            relation: { schema: 'public', name: 'items' }, changes: [{ kind: 'delete', key: [{ column: 'id',
+                value: { type: 'integer', value: '1' } }] }] };
+        const input = mountedReview ? stagedInput : { issue: 'ISSUE-42', assignee: 'alice' };
         const carriedReview = change === 'ask-control' || change === 'ask-cancel';
-        const isControl = change === 'contributed-control' || carriedReview;
+        const isControl = change === 'contributed-control' || carriedReview || mountedReview;
         const previous = getStorage().getState();
         let effects = 0;
         let secondArtifacts = 0;
@@ -915,17 +923,20 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         let receivedAuthority: unknown;
         const carriedRequests: { requestId: string; reviewDigest: string | undefined; result: unknown }[] = [];
         let boundaryFailure: unknown;
-        const accountSource = change === 'bundled'
+        const accountSource = change === 'bundled' || mountedReview
             ? { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'fixture-cli-root' } }
             : { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
-        const runtimeOptions = { localId, surfaces: ['ui', 'plugin'] as const, placementBindings: ['detailsPanel'] as const, executionTarget: 'account' as const,
+        const runtimeOptions = { localId, surfaces: ['ui', 'plugin'] as const, placementBindings: ['detailsPanel'] as const,
+            ...(mountedReview ? { approvalInputCustody: 'live_only' as const } : { executionTarget: 'account' as const }),
             pluginVersion: '1.2.3', sourceCustody: accountSource, onInput: (value: unknown) => expect(value).toEqual(input),
             ...(carriedReview ? { confirmationWhen: { presentUserUi: false } } : {}),
         };
-        const runtime = createExternalActionRuntime('global', pluginId, () => { effects++; }, undefined, undefined,
+        const runtime = createExternalActionRuntime('global', pluginId, () => { effects++; }, mountedReview ? () => ({
+            serverIdentityId: 'srv_client_action', materializationRef: { pluginId, machineId: 'machine-local', materializationId: 'fixture-materialization' },
+        }) : undefined, undefined,
             undefined, undefined, 'writesRemote', undefined, runtimeOptions);
-        const published = await publishAccountExternalActionRuntime(runtime);
-        onTestFinished(() => published.dispose());
+        const published = mountedReview ? undefined : await publishAccountExternalActionRuntime(runtime);
+        onTestFinished(() => published ? published.dispose() : runtime.dispose());
         let selectedColdOccurrence: string | undefined;
         if (change === 'cold-declaration') {
             replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
@@ -951,7 +962,9 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                         version: '1.2.3', archiveDigestSha256: `sha256:${'b'.repeat(64)}` } }
                         : {}) }) : runtime;
         const rawHost = change === 'raw-host' || change === 'raw-host-target';
-        const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: published.acquire,
+        const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: published?.acquire ?? (async () => ({
+            registry: runtime, source: 'ephemeral', durableRevision: runtime.durableRevision ?? -1, release: async () => {},
+        })),
             requestCurrentIntent: createTargetActionCurrentIntentAdapter({
                 create: async () => { secondArtifacts++; throw new Error('A second approval Artifact was requested'); },
                 read: async () => null, update: async () => ({ ok: true }),
@@ -970,7 +983,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 const failure = ActionExecuteFailureSchema.safeParse(value);
                 return failure.success ? failure.data : null;
             }, execute: async (value, context) => {
-                if (changedRuntime !== runtime) await published.adopt(changedRuntime, change === 'source' ? `sha256:${'b'.repeat(64)}` : undefined);
+                if (changedRuntime !== runtime) await published?.adopt(changedRuntime, change === 'source' ? `sha256:${'b'.repeat(64)}` : undefined);
                 receivedCaller = context.invocation.caller;
                 receivedAuthority = context.invocation.authority;
                 if (carriedReview) {
@@ -1045,22 +1058,40 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 throw error;
             }
         });
-        const activation = createClientActionActivation({ pluginId, localId, accountPlacement: true, accountLifetime: lifetime,
+        const activation = mountedReview ? null : createClientActionActivation({ pluginId, localId, accountPlacement: true, accountLifetime: lifetime,
             dangerLevel: 'writesRemote', surfaces: ['ui', 'plugin'], accountActionDeclaration: declaration,
             confirmationWhen: runtimeOptions.confirmationWhen,
-            omitProjectedAccountDeclaration: change === 'cold-declaration', occurrenceId: selectedColdOccurrence ?? published.selection.custodyId,
+            omitProjectedAccountDeclaration: change === 'cold-declaration', occurrenceId: selectedColdOccurrence ?? published!.selection.custodyId,
             accountSourceCustody: accountSource, artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({
                 ...CLIENT_ACTION_ARTIFACT_GRAPH, artifactId: 'portable', executable: { exports: ['activate'] },
                 entry: 'react-native/portable/entry.cjs.bundle', files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({
                     ...file, relativePath: 'react-native/portable/entry.cjs.bundle',
                 })),
             }), accountHandler: () => { throw new Error('Browser must relay'); } });
-        await activation.composition.unload();
-        await activation.composition.reconcile([activation.activation]);
+        const qualifiedId = buildQualifiedPluginContributionKey({ pluginId, localId });
+        const daemonAction = activation?.daemonAction ?? PluginProjectedActionV2Schema.parse({
+            id: localId, pluginId, occurrenceId: runtime.readPluginOccurrenceId!(pluginId), available: true, approvalScope: 'environment',
+            title: declaration.title, scopes: declaration.scopes, surfaces: declaration.surfaces, execution: declaration.execution,
+            dangerLevel: declaration.dangerLevel, confirmation: declaration.confirmation,
+        });
+        const action = activation?.action ?? {
+            ...daemonAction, executionOrigin: callerOrigin,
+            [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...CLIENT_ACTION_HOST_ORIGIN, machineId: machine.id, executionOrigin: callerOrigin },
+        };
+        const projection = activation?.projection ?? { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+            actionsById: { [qualifiedId]: action },
+            installedPackagesById: { [pluginId]: PluginProjectionInstalledPackageV2Schema.parse({ id: pluginId,
+                displayName: 'Database Workbench', version: '1.2.3', enabled: true, source: { kind: 'localPath', locator: pluginId },
+                sourceCustody: accountSource, occurrenceId: daemonAction.occurrenceId, executionOrigin: callerOrigin }) },
+        };
+        if (activation) {
+            await activation.composition.unload();
+            await activation.composition.reconcile([activation.activation]);
+        }
         if (isControl) daemonRpc.mockImplementation(async (request: { method: string }) =>
             request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
                 ? { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {},
-                    actionsById: { [buildQualifiedPluginContributionKey({ pluginId, localId })]: activation.daemonAction } }) }
+                    actionsById: { [qualifiedId]: daemonAction } }) }
                 : answerActionSchemasRead(request));
         let confirmations = 0;
         nestedActionConfirmation.onShow = (confirm, cancel) => {
@@ -1068,14 +1099,14 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             queueMicrotask(change === 'decline' || change === 'ask-cancel' ? cancel : confirm);
         };
         accountBrowserRelay.enabled = true;
-        const withdrawProjection = isControl ? publishCommittedAppShellPluginUiProjection(() => activation.projection) : () => {};
+        const withdrawProjection = isControl ? publishCommittedAppShellPluginUiProjection(() => projection) : () => {};
         onTestFinished(withdrawProjection);
         const hook = await renderHook(() => useBoundPluginSurfaceController({ facts: {
             pluginId, contributionId: 'issue-assignee-picker', surfaceId: 'approved-picker', placement: 'appSurface', platform: 'web', channel: 'internal',
             machineId: machine.id, serverId: home.id, occurrenceId: runtime.readPluginOccurrenceId!(pluginId)!, executionOrigin: callerOrigin,
             accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: true,
             actionInputSelectionFactsKey: createPluginActionInputSelectionFactsPublication().publish({ targetPluginId: pluginId }),
-            pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+            pluginUiProjection: projection, resolveContributedAction: resolveExactClientAction(action),
         } }));
         const { Action, PropertyList, useExecutePluginAction } = await import('@happier-dev/plugin-ui');
         const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
@@ -1089,7 +1120,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         let settledExecution: unknown;
         const unregisterControlPort = isControl
             ? registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
-                invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
+                invocationSurface, hostAction, readProjection: () => projection, readNavigationBinding: () => null,
                 reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
             })) : () => {};
         function AssignmentPicker() {
@@ -1101,16 +1132,27 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                     onCommit: async selected => { await action.execute({ ...input, assignee: selected }); } } }] });
         }
         function ContributedControl() {
-            return React.createElement(Action.Control, { action: { pluginId, localId }, title: 'Assign reviewer',
+            return React.createElement(Action.Control, { action: { pluginId, localId }, title: mountedReview ? 'Apply' : 'Assign reviewer',
+                ...(mountedReview ? { reviewedInput: change === 'changed-control'
+                    ? { ...stagedInput, relation: { ...stagedInput.relation, name: 'other_items' } } : stagedInput } : {}),
                 controller: { prepare: () => ({ input }), onSettled: execution => {
                     settledExecution = execution;
                     settledStatus = execution.ok ? 'success' : 'error';
                 } } });
         }
-        const screen = await renderScreen(React.createElement(PluginUiProvider, { hostApi: facade.api, context: surface },
+        const screen = await renderScreen(React.createElement(PluginUiProvider, { hostApi: facade.api, context: surface,
+            ...(mountedReview && controller.actionControls ? { presentationHost: createPluginUiPrivatePresentationHost(undefined, {
+                actionControls: controller.actionControls,
+            }) } : {}),
+        },
             React.createElement(isControl ? ContributedControl : AssignmentPicker)));
         try {
-            await act(async () => {
+            if (mountedReview) {
+                await vi.waitFor(() => expect(controller.actionControls?.getSnapshot()).toHaveLength(1));
+                const id = controller.actionControls!.getSnapshot()[0]!.id;
+                await screen.pressByTestIdAsync(`plugin-surface-action-control:${id}`);
+                await vi.waitFor(() => expect(settledStatus).not.toBe('idle'));
+            } else await act(async () => {
                 if (rawHost) {
                     const result = await machinePluginStructuredMessageActionExecute(machine.id, {
                         qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId, localId }), input,
@@ -1128,6 +1170,11 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                     await editor.onCommit('alice');
                 }
             });
+            if (change === 'changed-control') {
+                expect(settledExecution).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+                expect({ confirmations, effects, secondArtifacts }).toEqual({ confirmations: 0, effects: 0, secondArtifacts: 0 });
+                return;
+            }
             if (change === 'ask-cancel') {
                 expect(settledExecution, JSON.stringify(carriedRequests)).toMatchObject({ ok: false, errorCode: 'approval_canceled', effectAttempted: false });
                 expect(carriedRequests).toEqual([expect.objectContaining({ reviewDigest: undefined,
@@ -1155,7 +1202,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'raw-host' || isControl
                 ? { settledStatus: change === 'raw-host' ? 'idle' : 'success', effects: 1, secondArtifacts: 0 }
                 : { settledStatus: rawHost ? 'idle' : 'error', effects: 0, secondArtifacts: 0 });
-            expect({ confirmations, execution: settledExecution }).toMatchObject({ confirmations: rawHost ? 0 : 1 });
+            expect({ confirmations, execution: settledExecution }).toMatchObject({ confirmations: rawHost || mountedReview ? 0 : 1 });
             if (rawHost || isControl) {
                 expect(receivedCaller).toEqual({ kind: 'host' });
                 expect(receivedAuthority).toBe('present_user');
@@ -1167,7 +1214,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             accountBrowserRelay.enabled = false;
             nestedActionConfirmation.onShow = null;
             unregisterControlPort();
-            await screen.unmount(); await hook.unmount(); await activation.composition.unload(); lifetime.retire(); getStorage().setState(previous, true);
+            await screen.unmount(); await hook.unmount(); await activation?.composition.unload(); lifetime.retire(); getStorage().setState(previous, true);
         }
     });
 });

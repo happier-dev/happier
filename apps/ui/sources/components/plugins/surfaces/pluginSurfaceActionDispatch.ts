@@ -15,13 +15,13 @@ import { projectActionFailureCauseV1, withActionAutomationNoticesV1, type Action
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import { createActionAutomationInvocationV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import { projectPluginActionApprovalScopeV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
-import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
 import { readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
-import { isSessionListActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, isSessionListActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -240,6 +240,7 @@ export type PluginSurfaceHostActionExecute = ((
     input: unknown,
     context?: ActionExecutorContext,
 ) => Promise<ActionExecuteResult>) & Readonly<{
+    confirmed?: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
     prepare?: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionPrepareResult>;
 }>;
 
@@ -1192,11 +1193,24 @@ async function settleDaemonActionPresentUserIntent(
         );
         normalizedInput = prepared.input;
     }
-    const invocationAuthority = await contributedInvocationAuthority(input);
-    if (!isContributedActionEnabled(identity, invocationSurface, input.hostAction?.context)) return failure('denied', 'plugin_action_disabled');
+    const hostContext = input.hostAction?.context;
+    if (!isContributedActionEnabled(identity, invocationSurface, hostContext)) return failure('denied', 'plugin_action_disabled');
+    const reviewedInput = normalizedInput === undefined ? settledInput : normalizedInput;
+    // A designed UI review has already entered action.invoke. Carry its admitted
+    // child through the existing daemon confirmation path for these exact operands.
+    if (!input.admissionOnly && invocationSurface === 'ui' && hostContext?.surface === 'ui' && isPresentUserHostInvocation(hostContext)
+        && readHostAdmittedReviewedParentV1(hostContext.hostReviewedChild)?.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+        const actionId = formatQualifiedPluginActionId(identity);
+        const operands = reviewedInput ?? null;
+        const admitted = readHostReviewedChildOperationV1(hostContext, actionId, operands);
+        return isHostAdmittedReviewedChildPolicyV1(admitted, actionId, operands)
+            ? { ok: true, presentUserIntent: 'confirmed' }
+            : clientActionFailure('approval_stale');
+    }
     // The receiving daemon owns Environment admission. Its typed no-handler
     // refusal can ask this UI for a person's decision on a fresh request.
     if (projectedAction.approvalScope === 'environment' && !requestedByDaemon) return { ok: true };
+    const invocationAuthority = await contributedInvocationAuthority(input);
     if (!requiresContributedActionCurrentIntent(identity, invocationSurface, projectedAction, normalizedInput,
         invocationAuthority, input.hostAction?.context, undefined, requestedByDaemon)) {
         return { ok: true };
@@ -1204,7 +1218,6 @@ async function settleDaemonActionPresentUserIntent(
     if (input.hostAction?.context?.interactivePresentation === 'unavailable') {
         return failure('unavailable', 'action_interactive_review_required');
     }
-    const reviewedInput = normalizedInput === undefined ? settledInput : normalizedInput;
     const approvedInvocation = { action: identity, ...(reviewedInput === undefined ? {} : { input: reviewedInput }) };
     const fingerprint = fingerprintPluginAccountActionConfirmation({ input: approvedInvocation, pluginId: identity.pluginId });
     let intent: PluginActionCurrentIntentResult;
@@ -2700,7 +2713,7 @@ async function executeContributedAction(
     let result = input.readObservation
         ? await observeDaemonActionRead(binding.machineId, options, input.readObservation)
         : await execute(binding.machineId, options);
-    if (!input.readObservation && projectedAction.approvalScope === 'environment'
+    if (!input.readObservation && !presentUserIntent.presentUserIntent && projectedAction.approvalScope === 'environment'
         && result.supported && !result.result.ok
         && result.result.code === 'plugin_action_current_intent_unavailable'
         && result.result.actionHandlerInvocation === 'notStarted') {

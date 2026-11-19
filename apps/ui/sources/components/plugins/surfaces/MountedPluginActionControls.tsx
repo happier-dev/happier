@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { PluginUiActionControlPresentationV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiActionControlPresentationV1, PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { RoundButton, type RoundButtonDisplay } from '@/components/ui/buttons/RoundButton';
 import {
     readPluginActionControlPlacement,
@@ -12,13 +12,14 @@ import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
 const DISPLAY = { primary: 'default', secondary: 'secondary', plain: 'inverted', destructive: 'destructive' } as const satisfies Record<string, RoundButtonDisplay>;
 
 /** The one physical host button for a registered control, in the slot or at its declaration. */
-function PluginActionControlButton({ controls, id, contributedPluginId, presentation, busy }: Readonly<{
+function PluginActionControlButton({ controls, id, contributedPluginId, presentation, busy, reviewedInput }: Readonly<{
     controls: PluginSurfaceActionControls;
     /** Absent until the host admits the registration: the button holds its place but does nothing. */
     id: string | undefined;
     contributedPluginId?: string;
     presentation: PluginUiActionControlPresentationV1;
     busy: boolean;
+    reviewedInput?: PluginUiJsonValueV1;
 }>) {
     // The host's button for an author's Action.Control stands at the plugin Button's own default size (`normal`, the page
     // control height), so it lines up with the author's Buttons and segmented controls beside it (DBW 02:57Z, Run).
@@ -32,7 +33,7 @@ function PluginActionControlButton({ controls, id, contributedPluginId, presenta
             disabled={busy || presentation.disabled}
             loading={busy}
             {...(id === undefined ? {} : { testID: `plugin-surface-action-control:${id}` })}
-            onPress={() => { if (id !== undefined) void controls.press(id); }} />
+            onPress={() => { if (id !== undefined) void controls.press(id, reviewedInput); }} />
     </>;
 }
 
@@ -53,10 +54,11 @@ const NO_CONTROL: MountedPluginActionControl | undefined = undefined;
  * (dialog, sheet, pane) that hosts it, in that presentation's focus order. Press authority is unchanged:
  * only this host button reaches `press`.
  */
-export function PluginInlineActionControl({ controls, control, presentation }: Readonly<{
+export function PluginInlineActionControl({ controls, control, presentation, reviewedInput }: Readonly<{
     controls: PluginSurfaceActionControls;
     control: object | null;
     presentation: PluginUiActionControlPresentationV1;
+    reviewedInput?: PluginUiJsonValueV1;
 }>) {
     const id = control === null ? undefined : readPluginActionControlPlacement(control);
     React.useLayoutEffect(() => id === undefined ? undefined : controls.placeInline(id), [controls, id]);
@@ -66,7 +68,7 @@ export function PluginInlineActionControl({ controls, control, presentation }: R
     // A bound control the mount no longer offers (Actions unavailable, released) draws nothing, as in the slot.
     if (id !== undefined && view === undefined) return null;
     return <PluginActionControlButton controls={controls} id={view?.id} contributedPluginId={view?.contributedPluginId}
-        presentation={view?.presentation ?? presentation} busy={view?.busy ?? false} />;
+        presentation={view?.presentation ?? presentation} busy={view?.busy ?? false} reviewedInput={reviewedInput} />;
 }
 
 // Inset like the page's content, so the press is never cut by the pane's edge or corner.

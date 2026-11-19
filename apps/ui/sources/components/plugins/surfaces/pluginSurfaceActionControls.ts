@@ -11,8 +11,11 @@ import {
     type PluginUiMountedActionReferenceV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
-import { normalizePluginUiMountedContributedActionReferenceV1 } from '@happier-dev/protocol/plugins/ui';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { normalizePluginUiMountedContributedActionReferenceV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
 import type { PluginSurfaceHostActionBinding } from './pluginSurfaceActionDispatch';
 import { randomUUID } from '@/platform/randomUUID';
@@ -50,7 +53,7 @@ export type PluginSurfaceActionControls = Readonly<{
     /** Draw a control at its declaration instead of the mount's slot, until the returned release. */
     placeInline(id: string): () => void;
     subscribe(listener: () => void): () => void;
-    press(id: string): Promise<void>;
+    press(id: string, reviewedInput?: PluginUiJsonValueV1): Promise<void>;
     /** Private entry used only by host-created inline controls. */
     commit<Value>(binding: PluginUiActionBinding<Value>, value: Value, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown>;
     invalidatePreparations(): void;
@@ -182,14 +185,25 @@ export function createPluginSurfaceActionControls(input: Readonly<{
 
     // The one person-admission path, shared by slot buttons and host inline editors.
     const execute = async ({ hostId, contributed }: Binding['action'], preparation: PluginUiActionControlPreparationV1,
-        signal: AbortSignal, requestId: string): Promise<PluginUiActionControlExecutionV1> => {
+        signal: AbortSignal, requestId: string, reviewedInput?: PluginUiJsonValueV1): Promise<PluginUiActionControlExecutionV1> => {
         let execution: PluginUiActionControlExecutionV1;
         if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
         else {
             const context = { ...input.hostAction.context, signal, actionRequestId: requestId,
                 surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
                 bypassApprovals: false };
-            const result = await input.hostAction.execute(hostId?.success ? hostId.data : 'action.invoke',
+            // Only the built-in Database Workbench review presents the exact
+            // staged transaction for this supported mounted confirmation.
+            const isReview = reviewedInput !== undefined && input.pluginId === DATABASE_PLUGIN_ID_V1 && contributed !== null
+                && formatQualifiedPluginActionId(contributed) === DATABASE_EDITS_APPLY_ACTION_ID_V1;
+            if (isReview && !sameStrictJsonValue(reviewedInput, preparation.input)) {
+                return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
+            }
+            const dispatch = isReview ? input.hostAction.execute.confirmed : input.hostAction.execute;
+            if (!dispatch) {
+                return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', effectAttempted: false };
+            }
+            const result = await dispatch(hostId?.success ? hostId.data : ACTION_INVOKE_ACTION_ID_V1,
                 hostId?.success ? preparation.input : { action: contributed!, ...(preparation.input === undefined ? {} : { input: preparation.input }) }, context);
             execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
         }
@@ -202,7 +216,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         captureCurrentBinding: input.captureCurrentBinding,
         execute: (action, preparation, signal) => execute(resolveMountedControlAction(input.pluginId, action), preparation, signal, randomUUID()),
     });
-    const press = async (id: string): Promise<void> => {
+    const press = async (id: string, reviewedInput?: PluginUiJsonValueV1): Promise<void> => {
         const binding = controls.get(id);
         if (input.isActionAvailable?.() === false || !binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled) return;
         const requestId = randomUUID();
@@ -216,6 +230,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         let complete!: (execution: PluginUiActionControlExecutionV1 | null) => void;
         const completion = new Promise<PluginUiActionControlExecutionV1 | null>(resolve => { complete = resolve; });
         try {
+            const reviewed = reviewedInput === undefined ? undefined : projectNativeJsonValueForTransport(reviewedInput);
             const preparation = await new Promise<PluginUiActionControlPreparationV1 | null>(resolve => {
                 binding.pending = { requestId, isCurrent: isCurrentBinding, resolve: (preparation, signal) => {
                     const merged = mergeAbortSignals([input.signal, signal]);
@@ -232,7 +247,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
                     execution: { ok: false, errorCode: 'stale_surface', error: 'stale_surface' } });
                 return;
             }
-            const execution = await execute(binding.action, preparation, executionSignal, requestId);
+            const execution = await execute(binding.action, preparation, executionSignal, requestId, reviewed);
             complete(execution);
             if (live(id, binding)) binding.publish({ kind: 'settled', requestId, execution });
         } catch (error) {

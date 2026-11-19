@@ -39,15 +39,18 @@ it('reviews, counts, discards and applies only the selected relation transaction
     try {
         await act(async () => root.render(createElement(Probe)));
         expect(draft!.counts).toEqual({ edits: 0, inserts: 0, removals: 1 });
-        expect(draft!.review()).toEqual([{ relation, rows: [expect.objectContaining({ label: 'Selected row', rowKey: 'row' })] }]);
+        const review = draft!.review();
+        expect(review).toMatchObject({ groups: [{ relation, rows: [{ label: 'Selected row', rowKey: 'row' }] }],
+            input: { operation: 'edits.apply', target: descriptor.target, relation, changes: [change.change] } });
         const prepared = await draft!.apply(relation).controller.prepare({ signal: new AbortController().signal });
-        expect(prepared?.input).toMatchObject({ target: descriptor.target, relation, changes: [change.change] });
+        expect(prepared?.input).toEqual(review.input);
         await act(async () => draft!.discard());
         expect(instance.drafts.changes()).toEqual(otherDrafts);
         expect(draft!.counts).toEqual({ edits: 0, inserts: 0, removals: 0 });
+        expect(draft!.review()).toEqual({ groups: [], input: null });
         await act(async () => instance.navigate({ relation: otherDrafts[1]!.relation }));
         expect(draft!.counts).toEqual({ edits: 0, inserts: 0, removals: 1 });
-        expect(draft!.review()).toEqual([{ relation: otherDrafts[1]!.relation, rows: [expect.objectContaining({ label: 'Other relation' })] }]);
+        expect(draft!.review().groups).toEqual([{ relation: otherDrafts[1]!.relation, rows: [expect.objectContaining({ label: 'Other relation' })] }]);
     } finally { await act(async () => root.unmount()); instance.close(); }
 });
 
