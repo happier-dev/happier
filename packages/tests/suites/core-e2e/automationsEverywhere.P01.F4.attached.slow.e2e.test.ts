@@ -192,8 +192,9 @@ describe('Automations everywhere: selected attached summaries', () => {
     expect(await owner.execute('workflow.definition.get', { definitionId: directWorkflowId })).toMatchObject({ ok: true });
     const directTriggers = [];
     for (const enabled of [true, false]) {
-      const added = await owner.executeAsPerson('workflow.trigger.add', { workflow: directWorkflowId,
-        project: { machineId: actorMachine.target.machineId, directory: actorMachine.workspaceDir },
+      // Author on the custodian's project; D15 places the consented Run on the invoking actor's Machine.
+      const added = await owner.executeReviewed('workflow.trigger.add', { workflow: directWorkflowId,
+        project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
         trigger: { kind: 'action', phase: 'before', mode: 'wait', onFailure: 'ask', enabled,
           actionIds: ['machines.command.run'], subject: actorSubject } });
       expect(added.ok, JSON.stringify(added)).toBe(true);
