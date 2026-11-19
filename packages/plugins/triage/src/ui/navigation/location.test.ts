@@ -15,7 +15,7 @@ import {
   type TriageRouteLensV1,
   type TriageRouteWriteQueueV1,
 } from './location.js';
-import { TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
+import { reduceTriageSurfaceV1, TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
 import { TRIAGE_APP_PAGE_LOCAL_ID_V1 } from '../../composer/openEntryDetails.js';
@@ -233,20 +233,43 @@ describe('PRs & Issues route owner', () => {
     expect(successor).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ result: null, superseded: true }));
   });
 
-  it('round-trips a complete lens through one canonical location', () => {
-    const value = lens({
-      order: 'oldest',
-      query: 'fix, please/now',
-      selection: entryRef({ collisionScope: 'acme,web', entryId: 'a/b' }),
+  it('replaces A with the exact direct-open B tuple and the edited saved-view lens', async () => {
+    const viewId = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const sourceInstanceId = 'bbbbbbbb-0000-4000-8000-000000000002';
+    const filters = { ...TRIAGE_LIST_NO_FILTERS_V1, types: [{ source: SOURCE, kindId: 'pullRequest' }] };
+    const entryA = entryRef();
+    const entryB = entryRef({ collisionScope: 'acme,web', entryId: 'a/b' });
+    const initial = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
+      kind: 'rowActivated', sectionId: null, entryRef: entryA, sourceInstanceId,
     });
-    const subPath = buildTriageRouteSubPathV1(value);
+    const selectedView = reduceTriageSurfaceV1(initial, {
+      kind: 'savedViewApplied', viewId, query: 'initial', filters, order: 'newest', smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
+    });
+    const searched = reduceTriageSurfaceV1(selectedView, { kind: 'searchChanged', query: 'fix, please/now' });
+    const filtered = reduceTriageSurfaceV1(searched, { kind: 'filterValueToggled', facet: 'states', value: 'open' });
+    const reordered = reduceTriageSurfaceV1(filtered, { kind: 'orderChanged', order: 'smart' });
+    const smartPolicy = { v: 1, precedence: ['activity', 'attention'] } as const;
+    const beforeOpen = reduceTriageSurfaceV1(reordered, { kind: 'smartPolicyChanged', smartPolicy });
+    const candidate = reduceTriageSurfaceV1(beforeOpen, { kind: 'rowActivated', sectionId: null, entryRef: entryB, sourceInstanceId });
+    let location = buildTriageRouteSubPathV1(readTriageRouteLensV1(beforeOpen));
+    expect(parseTriageRouteSubPathV1(location).selection).toEqual(entryA);
+    const replace = vi.fn<PluginUiHostApi['replacePageLocation']>(async (subPath) => {
+      location = subPath;
+      return { subPath };
+    });
 
-    // Every component is percent-encoded, so a comma or slash inside an id can
-    // never be read as a separator. A grammar that let them through would
-    // resolve a copied link to a DIFFERENT entry than the one shared.
-    expect(subPath).not.toContain('acme,web');
-    expect(subPath).not.toContain('a/b');
-    expect(parseTriageRouteSubPathV1(subPath)).toEqual(value);
+    await expect(writeTriageRouteLensV1(hostApiWith({ methods: ['replacePageLocation'], replace }),
+      readTriageRouteLensV1(candidate))).resolves.toEqual({ kind: 'settled', subPath: expect.any(String) });
+
+    const expected = lens({ order: 'smart', query: 'fix, please/now', smartPolicy,
+      filters: { ...filters, states: ['open'] }, selectedViewId: viewId, selection: entryB });
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(location).not.toContain(sourceInstanceId);
+    expect(location).not.toContain('acme,web');
+    expect(location).not.toContain('a/b');
+    expect(parseTriageRouteSubPathV1(location)).toEqual(expected);
+    const settled = applyTriageSettledSubPathV1({ candidate, previous: beforeOpen, subPath: location, rowsByKey: new Map() });
+    expect(readTriageRouteLensV1(settled)).toEqual(expected);
   });
 
   it('keeps the default lens out of the location entirely', () => {
