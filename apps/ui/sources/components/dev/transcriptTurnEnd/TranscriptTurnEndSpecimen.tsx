@@ -199,23 +199,28 @@ export function TranscriptTurnEndSpecimen(
       historyState: { isLoaded: true, hasOlder: false, isLoadingOlder: false },
     }),
   );
+  // The transcript reads the read cursor from the stored Session, as for an app Session: store it first.
+  const [stored, setStored] = React.useState(false);
   React.useLayoutEffect(() => {
     publishToSessionStore(messages);
+    getStorage().setState((state) => ({ sessions: { ...state.sessions, [SESSION_ID]: session } }));
+    setStored(true);
     return () =>
       getStorage().setState((state) => {
         const { [SESSION_ID]: _removed, ...sessionMessages } =
           state.sessionMessages;
-        return { sessionMessages };
+        const { [SESSION_ID]: _session, ...sessions } = state.sessions;
+        return { sessionMessages, sessions };
       });
-  }, [messages]);
+  }, [messages, session]);
   return (
     <View style={styles.container} testID="dev-transcript-turn-end">
       <PluginSurfaceFocusEligibilityProvider active>
         <SessionTranscriptSourceProvider source={source}>
-          <ChatList
+          {stored ? <ChatList
             session={session}
             sessionSurfaceKey={JSON.stringify(['dev', SESSION_ID])}
-          />
+          /> : null}
         </SessionTranscriptSourceProvider>
       </PluginSurfaceFocusEligibilityProvider>
     </View>
