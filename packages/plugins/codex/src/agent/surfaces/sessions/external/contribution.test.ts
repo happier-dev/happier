@@ -1823,6 +1823,28 @@ describe('Codex public Agent External Sessions contribution', () => {
     }
   });
 
+  it('keeps the spawn nickname of a linked native child from its admitted rollout', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codex-link-nickname-'));
+    const remoteSessionId = '0197b9d0-224d-7f97-9638-efc35fc10679';
+    try {
+      const sessions = join(home, 'sessions');
+      await mkdir(sessions);
+      await writeFile(join(sessions, `rollout-2026-06-01T00-00-00-${remoteSessionId}.jsonl`), jsonl({
+        type: 'session_meta',
+        payload: { id: remoteSessionId, source: { subagent: { thread_spawn: {} } }, agent_nickname: 'Scout' },
+      }));
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
+      await expect(contribution.resolveLinkIdentity({
+        source: { kind: 'codexHome', home: 'user', homePath: home },
+        remoteSessionId,
+        linkData: { nativeAgentNickname: 'Unverified' },
+        ...invocation(),
+      })).resolves.toMatchObject({ ok: true, value: { linkData: { nativeAgentNickname: 'Scout' } } });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('resolves link identity with the provider session id byte-exact and rejects blank', async () => {
     // Codex mints this id; the resolved link identity and the descriptor it
     // writes must address the same provider session the caller named.

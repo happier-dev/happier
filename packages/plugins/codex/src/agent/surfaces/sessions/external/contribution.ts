@@ -16,6 +16,10 @@ import { canonicalizePath } from '@happier-dev/plugin-sdk/fs';
 import { getAgentExternalSessionsInvocationFailure } from '@happier-dev/plugin-sdk/sessions/external';
 import { CODEX_NATIVE_ACCOUNTING_SOURCE, readCodexNativeAccounting } from '../../../usage/nativeAccounting.js';
 import { hydrateCodexCandidateMetadata } from './candidateMetadata.js';
+import { readCodexSessionMetaFromRollout } from '../../../rollout/discovery/indexData.js';
+import { findCodexRolloutFileById } from '../../../rollout/discovery/sessionFileSearch.js';
+import { classifyCodexSessionThread } from '../../../rollout/discovery/sessionThread.js';
+import { resolveCodexMaterializedSessionsRoot } from '../../../auth/services/home/sync/sessionFiles.js';
 
 import {
   canonicalizeCodexHomePath,
@@ -255,6 +259,7 @@ function buildIdentityLinkData(params: Readonly<{
   source: AgentExternalSessionSource;
   runtimeDescriptor?: CodexExternalSessionLinkIdentity['runtimeDescriptor'];
   codexBackendMode?: string | null;
+  nativeAgentNickname?: string | null;
 }>): AgentExternalSessionLinkData {
   return {
     source: params.source,
@@ -262,6 +267,7 @@ function buildIdentityLinkData(params: Readonly<{
       ? { runtimeDescriptorV1: params.runtimeDescriptor }
       : {}),
     ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
+    ...(params.nativeAgentNickname ? { nativeAgentNickname: params.nativeAgentNickname } : {}),
   };
 }
 
@@ -310,6 +316,22 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       invocation: request,
     });
     if (!mediaReadRoots.ok) return mediaReadRoots;
+    let nativeAgentNickname: string | null = null;
+    const codexHome = mediaReadRoots.value[0];
+    if (codexHome) {
+      for (const sessionsRoot of [resolveCodexMaterializedSessionsRoot(codexHome), join(codexHome, 'archived_sessions')]) {
+        const path = await findCodexRolloutFileById({ sessionsRoot, vendorResumeId: identity.remoteSessionId, includeCompressed: false });
+        const stopped = getAgentExternalSessionsInvocationFailure(request);
+        if (stopped) return stopped;
+        if (!path) continue;
+        const metadata = await readCodexSessionMetaFromRollout(path, request);
+        if (readExactCodexProviderSessionId(metadata?.id ?? metadata?.session_id) !== identity.remoteSessionId) continue;
+        if (classifyCodexSessionThread(metadata)?.kind === 'subagent' && typeof metadata?.agent_nickname === 'string') {
+          nativeAgentNickname = metadata.agent_nickname.trim() || null;
+        }
+        break;
+      }
+    }
     return bounded({
       source,
       remoteSessionId: identity.remoteSessionId,
@@ -318,6 +340,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
         source,
         runtimeDescriptor: identity.runtimeDescriptor,
         codexBackendMode: identityBackendMode,
+        nativeAgentNickname,
       }),
     }, request.maxSerializedBytes, 'external_sessions_result_byte_budget');
   };

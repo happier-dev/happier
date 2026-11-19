@@ -21,7 +21,7 @@ export function createCodexNativeChildObserver(params: Readonly<{
   readFailureMessage(notificationParams: unknown): string;
 }>) {
   // Provider lineage admits a child. Foreign threads observed on a shared server do not.
-  const nativeChildParents = new Map<string, string>();
+  const nativeChildren = new Map<string, { parentThreadId: string; nickname?: string | null }>();
   type NativeChildTurn = {
     threadId: string;
     turnId: string;
@@ -36,8 +36,11 @@ export function createCodexNativeChildObserver(params: Readonly<{
     const toolCallId = childTurnKey(child.threadId, child.turnId);
     const transcript = { sidechainId: child.threadId, threadId: child.threadId, providerTurnId: child.turnId };
     if (status === 'running') {
+      const provenance = nativeChildren.get(child.threadId);
+      const nickname = provenance?.nickname;
+      if (provenance) provenance.nickname = null;
       params.publish({ kind: 'tool-call', toolCallId, toolName: 'SubAgent',
-        toolInput: { ...transcript, parentThreadId: child.parentThreadId },
+        toolInput: { ...transcript, parentThreadId: child.parentThreadId, ...(nickname ? { nickname } : {}) },
       });
     } else {
       params.publish({ kind: 'tool-result', toolCallId,
@@ -75,22 +78,27 @@ export function createCodexNativeChildObserver(params: Readonly<{
     const parentThreadId = readExactCodexProviderSessionId(nativeThread?.parentThreadId)
       ?? readExactCodexProviderSessionId(spawn?.parent_thread_id);
     if (!childThreadId || !parentThreadId || childThreadId === parentThreadId) return;
-    if (parentThreadId !== params.parentThreadId() && !nativeChildParents.has(parentThreadId)) return;
-    nativeChildParents.set(childThreadId, parentThreadId);
+    if (parentThreadId !== params.parentThreadId() && !nativeChildren.has(parentThreadId)) return;
+    const existing = nativeChildren.get(childThreadId);
+    if (existing && (existing.parentThreadId !== parentThreadId || existing.nickname !== undefined)) return;
+    const nickname = typeof nativeThread?.agentNickname === 'string' ? nativeThread.agentNickname.trim() : '';
+    nativeChildren.set(childThreadId, { parentThreadId, ...(nickname ? { nickname } : {}) });
   };
   const observe = (method: string, notificationParams: unknown): Promise<void> | null => {
     const item = readProviderEventItemRecord(notificationParams);
     if (item?.type === 'collabAgentToolCall' && item.tool === 'spawnAgent') {
       const sender = readExactCodexProviderSessionId(item.senderThreadId);
-      if (sender && (sender === params.parentThreadId() || nativeChildParents.has(sender)) && Array.isArray(item.receiverThreadIds)) {
+      if (sender && (sender === params.parentThreadId() || nativeChildren.has(sender)) && Array.isArray(item.receiverThreadIds)) {
         for (const receiver of item.receiverThreadIds) {
           const childId = readExactCodexProviderSessionId(receiver);
-          if (childId && childId !== sender) nativeChildParents.set(childId, sender);
+          if (childId && childId !== sender && !nativeChildren.has(childId)) {
+            nativeChildren.set(childId, { parentThreadId: sender });
+          }
         }
       }
     }
     const childThreadId = readThreadId(notificationParams);
-    const parentThreadId = childThreadId ? nativeChildParents.get(childThreadId) : null;
+    const parentThreadId = childThreadId ? nativeChildren.get(childThreadId)?.parentThreadId : null;
     if (!childThreadId || !parentThreadId) return null;
     return observeOwnedChild(method, notificationParams, childThreadId, parentThreadId);
   };

@@ -41,6 +41,27 @@ function fixture() {
 }
 
 describe('managed Codex native children', () => {
+  it('publishes the native nickname on its first child transcript anchor only', async () => {
+    const f = fixture();
+    try {
+      await startCodexAppServerRuntime(f.runtime);
+      await f.runtime.send({ text: 'Delegate' }, { turnId: 'host-turn' });
+      const start = (agentNickname: string) => f.notify('thread/started', {
+        thread: { id: 'child', parentThreadId: 'parent', agentNickname },
+      });
+      await start('Scout');
+      await start('Replacement');
+      await f.notify('turn/started', { threadId: 'child', turn: { id: 'first' } });
+      await f.notify('turn/completed', { threadId: 'child', turn: { id: 'first', status: 'completed' } });
+      await start('Late');
+      await f.notify('turn/started', { threadId: 'child', turn: { id: 'second' } });
+      const roots = f.nativeEvents.filter(event => event.kind === 'tool-call' && event.toolName === 'SubAgent');
+      expect(roots.map(event => event.kind === 'tool-call' ? event.input : null)).toEqual([
+        expect.objectContaining({ nickname: 'Scout' }),
+        expect.not.objectContaining({ nickname: expect.anything() }),
+      ]);
+    } finally { await f.runtime.dispose(); }
+  });
   it.each([
     { child: false, failureFirst: true },
     { child: false, failureFirst: false },

@@ -362,6 +362,7 @@ function retainSessionMetaFields(payload: CodexSessionMetaPayload | null): Codex
         ...(payload.timestamp !== undefined ? { timestamp: payload.timestamp } : {}),
         ...(payload.cwd !== undefined ? { cwd: payload.cwd } : {}),
         ...(payload.source !== undefined ? { source: payload.source } : {}),
+        ...(typeof payload.agent_nickname === 'string' ? { agent_nickname: payload.agent_nickname } : {}),
         ...(payload.history_mode !== undefined ? { history_mode: payload.history_mode } : {}),
         ...(payload.history_base !== undefined ? { history_base: payload.history_base } : {}),
     });
