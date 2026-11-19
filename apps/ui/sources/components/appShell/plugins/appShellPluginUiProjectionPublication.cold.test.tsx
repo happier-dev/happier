@@ -8,8 +8,8 @@ import * as unions from '@/sync/domains/plugins/ui/projectionUnion';
 import { createAppShellPluginUiProjectionPublication } from './appShellPluginUiProjectionPublication';
 
 it('does no catalog work for cold establishing reports and merges only the Machine whose facts change', async () => {
-    // Reuse the established publication census: 148 Machines and 66 plugins.
-    const machines = Array.from({ length: 148 }, (_, index) => `machine-${index}`);
+    // Cold Home census from the Providers QA Account.
+    const machines = Array.from({ length: 483 }, (_, index) => `machine-${index}`);
     const ids = Array.from({ length: 66 }, (_, index) => `acme.cold-${index}`);
     const model: PluginUiProjectionModel = Object.freeze({ ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
         installedPackagesById: Object.fromEntries(ids.map(id => [id, { id, displayName: id, version: '1.0.0',
@@ -20,6 +20,15 @@ it('does no catalog work for cold establishing reports and merges only the Machi
     const report = (machineId: string): PluginUiProjectionCurrentness => ({ machineId, serverId: null,
         accountLifetime: null, platform: 'web', phase: 'establishing', interactionEnabled: false,
         pluginUiProjection: null, pluginBrowserProjection: null, connectedAccountProjection: null });
+    let peerCatalogReads = 0;
+    const descriptorReport = (machineId: string): PluginUiProjectionCurrentness => ({
+        ...report(machineId),
+        get pluginUiProjection() {
+            if (machineId !== machines[0]) peerCatalogReads++;
+            return null;
+        },
+        connectedAccountProjection: { kind: 'ready', descriptors: [] },
+    });
     const unionFactory = vi.spyOn(unions, 'createPluginUiProjectionUnionPublication');
     const mergeFactory = vi.spyOn(unions, 'createInstalledPluginUiProjectionPublication');
     const owner = createAppShellPluginUiProjectionPublication();
@@ -52,28 +61,37 @@ it('does no catalog work for cold establishing reports and merges only the Machi
         expect.soft(owner.getSnapshot().currentnessForActiveAccountByMachineId.size).toBe(machines.length);
         clear();
         await act(async () => { for (const machineId of machines) owner.publishMachineCurrentness(machineId, null,
-            { ...report(machineId), connectedAccountProjection: { kind: 'ready', descriptors: [] } }); });
+            descriptorReport(machineId)); });
         const descriptors = { arrivals: machines.length, derivations: derivations.mock.calls.length, merges: mergeCount() };
         expect.soft(descriptors.derivations).toBe(0);
         expect.soft(descriptors.merges).toBe(0);
+        peerCatalogReads = 0;
+        await act(async () => { owner.publishMachineCurrentness(machines[0]!, null,
+            { ...descriptorReport(machines[0]!), phase: 'unavailable' }); });
+        const phaseEdit = { peerCatalogReads };
+        expect.soft(phaseEdit.peerCatalogReads).toBe(0);
+        expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.get(machines[0]!)?.phase).toBe('unavailable');
         clear();
         await act(async () => { owner.publishMachineCurrentness(machines[0]!, null,
             { ...report(machines[0]!), pluginUiProjection: model, phase: 'current', interactionEnabled: true }); });
         const changed = { arrivals: 1, derivations: derivations.mock.calls.length, merges: mergeCount() };
         expect.soft(changed.derivations).toBe(1);
-        // One Machine merge and the Account merge; never the 147 unrelated Machines.
+        // One Machine merge and the Account merge.
         expect.soft(changed.merges).toBe(2);
         expect(owner.getSnapshot().projectionUnion.phase).toBe('current');
         expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.get(machines[0]!)?.interactionEnabled).toBe(true);
         const edited: PluginUiProjectionModel = { ...model, translationsByPluginId: { ...model.translationsByPluginId,
             [ids[0]!]: { ...model.translationsByPluginId[ids[0]!]!, bundles: { en: { title: 'Edited' } } } } };
+        clear();
         await act(async () => { owner.publishSources({ accountLifetime: null, availabilityInputs: { materializations: [],
             installedPlugins: undefined, accountUiProjection: edited }, hostBundledUiEnabled: true, activeServerId: null,
             serverProfilesGeneration: 0, activeInventoryLoaded: true, onlineMachineIds: machines, selectableMachineIds: machines }); });
+        const sourceEdit = { machineMerges: mergeCount() - 1 };
+        expect.soft(sourceEdit.machineMerges).toBe(0);
         expect(owner.getSnapshot().pluginUiProjection?.translationsByPluginId[ids[0]!]?.bundles).toEqual({ en: { title: 'Edited' } });
         expect(mounted.getCurrent()).toBe(initial.pluginUiProjection?.translationsByPluginId[ids[1]!]);
         expect(renders - initialRenders).toBe(0);
-        if (process.env.PLUGIN_UI_COLD_COUNTS) console.info(JSON.stringify({ cold, descriptors, changed }));
+        if (process.env.PLUGIN_UI_COLD_COUNTS) console.info(JSON.stringify({ cold, descriptors, phaseEdit, changed, sourceEdit }));
     } finally {
         await mounted.unmount(); stop(); owner.dispose();
         for (const merge of merges) merge.mockRestore();

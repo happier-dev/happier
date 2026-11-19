@@ -133,6 +133,49 @@ function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): P
 }
 
 describe('Plugin Account Availability reader', () => {
+    it('diffs a rebuilt census before projecting unchanged plugin installations', () => {
+        const focus = 'com.acme.fixture';
+        const peer = 'com.acme.peer';
+        const release = intentRead().release!;
+        const releases = [release, { ...release, ref: { ...release.ref, pluginId: peer },
+            normalizedManifest: { ...release.normalizedManifest, id: peer } }];
+        const source = snapshot().materializations[0]!;
+        const machines = Array.from({ length: 483 }, (_, index) => ({
+            ...source, machineId: `machine-${index}`, pluginId: index === 0 ? focus : peer,
+        }));
+        const census = (availabilityCursor: number, edited: boolean) => {
+            const materializations = machines.map((row, index) => ({ ...row, enabled: edited && index === 0 }));
+            return snapshot({ availabilityCursor, materializations, releases, snapshots: materializations.map(row => ({
+                serverIdentityId: row.serverIdentityId, machineId: row.machineId, materializations: [row],
+            })) });
+        };
+        const store = createPluginAccountAvailabilityReaderStore();
+        const reader = store.bind(scope);
+        store.replace({ scope, snapshot: census(42, false) });
+        const before = reader.readUiProjectionInputs()!;
+        const peerObservation = reader.getObservationSnapshot(peer);
+        const focusObservation = reader.getObservationSnapshot(focus);
+        const matchRelease = vi.spyOn(availability, 'isExactPluginMachineMaterializationReleaseCorrespondenceV1');
+        onTestFinished(() => matchRelease.mockRestore());
+        for (let cursor = 43; cursor < 46; cursor++) store.replace({ scope, snapshot: census(cursor, false) });
+        const unchangedChecks = matchRelease.mock.calls.length;
+        expect.soft(unchangedChecks).toBe(0);
+        expect(reader.readUiProjectionInputs()).toBe(before);
+        matchRelease.mockClear();
+        store.replace({ scope, snapshot: census(46, true) });
+        const editedChecks = matchRelease.mock.calls.map(([row]) => row.pluginId);
+        const unrelatedChecks = editedChecks.filter(id => id === peer).length;
+        if (process.env.PLUGIN_UI_COLD_COUNTS) console.info({ unchangedChecks, editedChecks: editedChecks.length, unrelatedChecks });
+        expect.soft(unrelatedChecks).toBe(0);
+        expect(editedChecks).toContain(focus);
+        expect(reader.readUiProjectionInputs()?.installedPlugins?.find(row => row.pluginId === peer))
+            .toBe(before.installedPlugins?.find(row => row.pluginId === peer));
+        expect(reader.readUiProjectionInputs()?.installedPlugins?.find(row => row.pluginId === focus)
+            ?.installations[0]?.materialization.enabled).toBe(true);
+        expect(reader.getObservationSnapshot(peer)).toBe(peerObservation);
+        expect(reader.getObservationSnapshot(focus)).not.toBe(focusObservation);
+    });
+
     it('keeps each Machine Event declaration current across equal-version claims and same-Machine edits', async () => {
         const base = intentRead();
         const sourceConfigSchema = { type: 'object', properties: {}, additionalProperties: false } as const;

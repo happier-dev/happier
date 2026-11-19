@@ -611,6 +611,7 @@ export type PluginAccountAvailabilityStoredProjection = Readonly<{
 type AvailabilityProjectionState = PluginAccountAvailabilityStoredProjection & Readonly<{
     materializationsByIdentity: ReadonlyMap<string, readonly PluginMachineMaterializationV1[]>;
     intentReadsByPluginId: ReadonlyMap<string, readonly PluginAccountAvailabilityIntentReadProjection[]>;
+    releasesByPluginId: ReadonlyMap<string, readonly PluginReleaseFactsV1[]>;
     bundledUiByPluginId: ReadonlyMap<string, readonly PreparedBundledUiDeclaration[]>;
 }>;
 
@@ -952,17 +953,17 @@ function readManifestDeclaredExecution(manifest: PluginPortableReleaseManifestV1
 function readInstalledPluginsAdmission(
     state: AvailabilityProjectionState | null,
     scope: ServerAccountScope,
-    previous?: PluginAccountInstalledPluginsAdmission,
+    admitted = readMaterializationAdmission(state, scope),
+    previous?: Readonly<{ state: AvailabilityProjectionState; installed: PluginAccountInstalledPluginsAdmission }>,
 ): PluginAccountInstalledPluginsAdmission {
-    const admitted = readMaterializationAdmission(state, scope);
     if (admitted.kind === 'unavailable') return admitted;
-    const snapshot = readProjectionForScope(state, scope)!;
-    return retainIfEqual(previous, Object.freeze({
+    const snapshot = state!.snapshot;
+    return retainIfEqual(previous?.installed, Object.freeze({
         kind: 'available',
         availabilityCursor: snapshot.availabilityCursor,
         completeness: snapshot.inventoryComplete === false ? 'incomplete' : 'complete',
         plugins: readInstalledPluginRows(state!, scope, admitted.materializations,
-            previous?.kind === 'available' ? previous.plugins : []),
+            previous?.installed.kind === 'available' ? previous.installed.plugins : [], previous?.state),
     }));
 }
 
@@ -970,17 +971,47 @@ type InstalledPluginRows = Extract<PluginAccountInstalledPluginsAdmission, { kin
 
 /** The same declaration projection serves census ingestion and a single bundle's fulfillment. */
 function readInstalledPluginRows(state: AvailabilityProjectionState, scope: ServerAccountScope,
-    materializations: readonly PluginMachineMaterializationV1[], previous: InstalledPluginRows): InstalledPluginRows {
-    const snapshot = state.snapshot;
+    materializations: readonly PluginMachineMaterializationV1[], previous: InstalledPluginRows,
+    previousState?: AvailabilityProjectionState): InstalledPluginRows {
     const previousInstallations = new Map(previous.flatMap(plugin => plugin.installations.map(installation =>
         [materializationLookupKey(installation.materialization), installation] as const)));
     const previousPlugins = new Map(previous.map(plugin => [plugin.pluginId, plugin] as const));
     const byPluginId = new Map<string, PluginAccountInstalledPluginInstallation[]>();
+    const releaseInputs = new Map<string, Readonly<{ releases: readonly PluginReleaseFactsV1[]; unchanged: boolean }>>();
     for (const materialization of materializations) {
-        const releases = [...(snapshot.releases ?? []), ...snapshot.intentReads.flatMap((entry) => {
-            const release = entry.pluginId === materialization.pluginId ? entry.response.release : null;
-            return release ? [release] : [];
-        })].filter(release => isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release));
+        const { pluginId } = materialization;
+        let input = releaseInputs.get(pluginId);
+        if (!input) {
+            const censusReleases = state.releasesByPluginId.get(pluginId) ?? [];
+            const intents = state.intentReadsByPluginId.get(pluginId) ?? [];
+            const oldReleases = previousState?.releasesByPluginId.get(pluginId) ?? [];
+            const oldIntents = previousState?.intentReadsByPluginId.get(pluginId) ?? [];
+            input = {
+                releases: [...censusReleases, ...intents.flatMap(({ response }) => response.release ? [response.release] : [])],
+                unchanged: previousState !== undefined
+                    && previousState.bundledUiByPluginId.get(pluginId) === state.bundledUiByPluginId.get(pluginId)
+                    && previousState.retiredPluginIds?.includes(pluginId) === state.retiredPluginIds?.includes(pluginId)
+                    && oldReleases.length === censusReleases.length && oldReleases.every((release, index) => release === censusReleases[index])
+                    && oldIntents.length === intents.length && oldIntents.every(({ response }, index) =>
+                        response.release === intents[index]!.response.release
+                        && sameStrictJsonValue(response.intent, intents[index]!.response.intent)),
+            };
+            releaseInputs.set(pluginId, input);
+        }
+        const installations = byPluginId.get(pluginId) ?? [];
+        byPluginId.set(pluginId, installations);
+        const key = materializationLookupKey(materialization);
+        const incumbent = previousInstallations.get(key);
+        // A duplicate identity can change installed-release admission even when
+        // this row survives the census. A unique held row shares its exact input.
+        if (input.unchanged && incumbent?.materialization === materialization
+            && (!materialization.portableRelease || (state.materializationsByIdentity.get(key)?.length === 1
+                && previousState?.materializationsByIdentity.get(key)?.length === 1))) {
+            installations.push(incumbent);
+            continue;
+        }
+        const releases = input.releases.filter(release =>
+            isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release));
         const uniqueReleases = new Map(releases.map(release => [release.archiveDigestSha256, release]));
         const release = uniqueReleases.size === 1 ? [...uniqueReleases.values()][0]! : null;
         // Machine census rows omit live manifests. The app's admitted bundled
@@ -991,8 +1022,6 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
         const contributorDeclaration = release?.normalizedManifest ?? materialization.declaredManifest
             ?? bundle?.normalizedManifest ?? null;
         const declaration = contributorDeclaration ?? bundle?.presentationManifest ?? null;
-        const installations = byPluginId.get(materialization.pluginId) ?? [];
-        const incumbent = previousInstallations.get(materializationLookupKey(materialization));
         let uiModel = incumbent && samePluginUiMaterializationFacts(incumbent.materialization, materialization) && incumbent.declaration === declaration
             && incumbent.release === release ? incumbent.uiModel : undefined;
         if (!uiModel) {
@@ -1037,7 +1066,6 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
             execution: classifyMaterializationRelease(state, scope, materialization),
             uiModel,
         })));
-        byPluginId.set(materialization.pluginId, installations);
     }
     const plugins = [...byPluginId].sort(([a], [b]) => compareCodeUnits(a, b)).map(([pluginId, installations]) => retainIfEqual(previousPlugins.get(pluginId), Object.freeze({
         pluginId,
@@ -1173,7 +1201,7 @@ function readInstalledReleaseAdmission(
     if (rows.length !== 1) return null;
     const materialization = rows[0]!;
     if (!materialization.enabled || materialization.trustState !== 'trusted' || !materialization.portableRelease) return null;
-    const releases = (snapshot.releases ?? []).filter(release =>
+    const releases = (state!.releasesByPluginId.get(pluginId) ?? []).filter(release =>
         isExactPluginMachineMaterializationReleaseCorrespondenceV1(materialization, release));
     if (releases.length !== 1) return null;
     return Object.freeze({ availabilityCursor: snapshot.availabilityCursor, release: releases[0]! });
@@ -1832,11 +1860,15 @@ function retainUiMaterializations(previous: readonly PluginMachineMaterializatio
 
 /** Reuse ingestion-owned declaration/model references; never compare manifests again here. */
 function retainUiInstalledPlugins(previous: PluginAccountUiProjectionInputs['installedPlugins'],
-    next: PluginAccountUiProjectionInputs['installedPlugins']): PluginAccountUiProjectionInputs['installedPlugins'] {
+    next: PluginAccountUiProjectionInputs['installedPlugins'],
+    previousAdmission: PluginAccountUiProjectionInputs['installedPlugins']): PluginAccountUiProjectionInputs['installedPlugins'] {
     if (!next) return next;
+    if (next === previousAdmission) return previous;
     const preceding = new Map(previous?.map(plugin => [plugin.pluginId, plugin] as const));
+    const admitted = new Map(previousAdmission?.map(plugin => [plugin.pluginId, plugin] as const));
     const plugins = next.map(plugin => {
         const prior = preceding.get(plugin.pluginId);
+        if (prior && admitted.get(plugin.pluginId) === plugin) return prior;
         const previousInstallations = new Map(prior?.installations.map(installation =>
             [materializationLookupKey(installation.materialization), installation] as const));
         const installations = plugin.installations.map(installation => {
@@ -1885,7 +1917,8 @@ type AvailabilityObservation = Readonly<{
         intentReads: readonly Readonly<{ pluginId: string; response: Omit<PluginAccountAvailabilityIntentReadProjection['response'], 'availabilityCursor'> }>[];
         materializations: readonly Omit<PluginMachineMaterializationV1, 'observedAt'>[];
         releases: readonly PluginReleaseFactsV1[];
-        snapshots: readonly Readonly<{ serverIdentityId: string; machineId: string;
+        machines: readonly Readonly<{ serverIdentityId: string; machineId: string }>[];
+        machineMaterializations: readonly Readonly<{ machineIndex: number;
             materializations: readonly Omit<PluginMachineMaterializationV1, 'observedAt'>[] }>[];
     }>;
     token: object;
@@ -1965,7 +1998,7 @@ function deriveAvailabilityObservations(state: AvailabilityProjectionState,
             if (rows) rows.push(row); else targetedMaterializations.set(target, [row]);
         }
     }
-    const releases = indexAvailabilityRows(snapshot.releases ?? [], row => row.ref.pluginId);
+    const releases = state.releasesByPluginId;
     const retired = new Set(state.retiredPluginIds);
     const observe = (value: AvailabilityObservation['value'], prior?: AvailabilityObservation): AvailabilityObservation =>
         prior && sameStrictJsonValue(prior.value, value) ? prior : Object.freeze({ value, token: Object.freeze({}) });
@@ -1979,15 +2012,24 @@ function deriveAvailabilityObservations(state: AvailabilityProjectionState,
     const unstamped = (rows: readonly PluginAccountAvailabilityIntentReadProjection[] | undefined) =>
         Object.freeze((rows ?? []).map(({ response: { availabilityCursor: _cursor, ...response }, ...row }) =>
             Object.freeze({ ...row, response: Object.freeze(response) })));
-    const censusFor = (pluginId: string | undefined) => Object.freeze(snapshot.snapshots.map(machine => Object.freeze({
-        serverIdentityId: machine.serverIdentityId, machineId: machine.machineId,
-        materializations: unclocked(pluginId === undefined ? undefined
-            : machine.materializations.filter(row => row.pluginId === pluginId)),
-    })));
+    // Every plugin observes the same ordered Machine census. Only Machines
+    // with that plugin's rows supply a plugin-specific observation.
+    const machines = retainAvailabilityRows(previous?.empty.value.machines,
+        Object.freeze(snapshot.snapshots.map(({ serverIdentityId, machineId }) => Object.freeze({ serverIdentityId, machineId }))));
+    const byPluginAndMachine = new Map<string, Map<number, PluginMachineMaterializationV1[]>>();
+    snapshot.snapshots.forEach((machine, machineIndex) => {
+        for (const row of machine.materializations) {
+            let byMachine = byPluginAndMachine.get(row.pluginId);
+            if (!byMachine) { byMachine = new Map(); byPluginAndMachine.set(row.pluginId, byMachine); }
+            const rows = byMachine.get(machineIndex);
+            if (rows) rows.push(row);
+            else byMachine.set(machineIndex, [row]);
+        }
+    });
     const empty = observe(Object.freeze({ scope: state.scope, inventoryComplete: snapshot.inventoryComplete !== false,
         intentCensusIncomplete: state.intentCensusIncomplete === true,
         retired: false, accountDeclarations: Object.freeze([]), intentReads: Object.freeze([]), materializations: Object.freeze([]),
-        releases: Object.freeze([]), snapshots: censusFor(undefined) }), previous?.empty);
+        releases: Object.freeze([]), machines, machineMaterializations: Object.freeze([]) }), previous?.empty);
     const byPluginId = new Map<string, AvailabilityObservation>();
     for (const pluginId of new Set([...intents.keys(), ...materializations.keys(), ...targetedMaterializations.keys(),
         ...accountDeclarations.keys(), ...releases.keys(), ...retired])) {
@@ -1997,7 +2039,8 @@ function deriveAvailabilityObservations(state: AvailabilityProjectionState,
             intentReads: unstamped(intents.get(pluginId)),
             materializations: unclocked([...(materializations.get(pluginId) ?? []), ...(targetedMaterializations.get(pluginId) ?? [])]),
             releases: Object.freeze(releases.get(pluginId) ?? []),
-            snapshots: censusFor(pluginId),
+            machineMaterializations: Object.freeze([...(byPluginAndMachine.get(pluginId) ?? [])].map(([machineIndex, rows]) =>
+                Object.freeze({ machineIndex, materializations: unclocked(rows) }))),
         }), previous?.byPluginId.get(pluginId) ?? previous?.empty));
     }
     const unchanged = previousCursor === snapshot.availabilityCursor
@@ -2463,11 +2506,15 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 ? state!.intentReadsByPluginId : indexAvailabilityRows(next.snapshot.intentReads, row => row.pluginId),
             materializationsByIdentity: sameScope && state!.snapshot.materializations === next.snapshot.materializations
                 ? state!.materializationsByIdentity : indexMaterializations(next.snapshot),
+            releasesByPluginId: sameScope && state!.snapshot.releases === next.snapshot.releases
+                ? state!.releasesByPluginId : indexAvailabilityRows(next.snapshot.releases ?? [], row => row.ref.pluginId),
         });
+        const admitted = retainIfEqual(sameScope ? derived?.materializations : undefined,
+            readMaterializationAdmission(nextState, nextState.scope));
         const nextProjection = {
-            materializations: retainIfEqual(sameScope ? derived?.materializations : undefined,
-                readMaterializationAdmission(nextState, nextState.scope)),
-            installed: readInstalledPluginsAdmission(nextState, nextState.scope, sameScope ? derived?.installed : undefined),
+            materializations: admitted,
+            installed: readInstalledPluginsAdmission(nextState, nextState.scope, admitted,
+                sameScope && derived ? { state: state!, installed: derived.installed } : undefined),
             accountUi: deriveAccountUiProjection({ scope: nextState.scope, hostBundledUi }, nextState,
                 sameScope ? derived?.accountUi : undefined),
         };
@@ -2475,7 +2522,8 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
         const materializations = retainUiMaterializations(previousInputs?.materializations,
             nextProjection.materializations.kind === 'available' ? nextProjection.materializations.materializations : []);
         const installedPlugins = retainUiInstalledPlugins(previousInputs?.installedPlugins,
-            nextProjection.installed.kind === 'available' ? nextProjection.installed.plugins : undefined);
+            nextProjection.installed.kind === 'available' ? nextProjection.installed.plugins : undefined,
+            sameScope && derived?.installed.kind === 'available' ? derived.installed.plugins : undefined);
         const accountUiProjection = nextProjection.accountUi.model;
         const uiInputs = previousInputs && previousInputs.materializations === materializations
             && previousInputs.installedPlugins === installedPlugins && previousInputs.accountUiProjection === accountUiProjection

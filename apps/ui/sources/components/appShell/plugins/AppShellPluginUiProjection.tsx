@@ -231,12 +231,10 @@ const AppShellPluginUiDeclarationProjectionContext = React.createContext<Readonl
 
 export {
     resolveAppShellPluginProjectionTargets,
-    selectCurrentAppShellPluginUiCurrentness,
 } from './appShellPluginUiProjectionPublication';
 export type {
     AppShellPluginProjectionTarget,
     AppShellAccountScopedPluginExecutionOriginReport,
-    AppShellAccountScopedPluginUiCurrentnessReport,
 } from './appShellPluginUiProjectionPublication';
 
 function isCurrentAccountLifetime(lifetime: ActiveServerAccountScopeLifetime | null): boolean {

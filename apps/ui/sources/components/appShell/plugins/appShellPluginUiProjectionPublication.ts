@@ -38,10 +38,6 @@ export type AppShellAccountScopedPluginExecutionOriginReport = Readonly<{
     selectableOrigins?: readonly PluginMachineExecutionOriginV1[];
     hasStoredTarget?: boolean;
 }>;
-export type AppShellAccountScopedPluginUiCurrentnessReport = Readonly<{
-    accountLifetime: ActiveServerAccountScopeLifetime | null;
-    currentness: PluginUiProjectionCurrentness;
-}>;
 type InstalledMachineDeclarations = Readonly<{
     models: readonly PluginUiProjectionModel[];
     completeUiPluginIds: ReadonlySet<string>;
@@ -68,14 +64,6 @@ export function resolveAppShellPluginProjectionTargets(params: Readonly<{
 
 function isCurrent(lifetime: ActiveServerAccountScopeLifetime | null): boolean {
     return lifetime?.isCurrent() ?? true;
-}
-
-export function selectCurrentAppShellPluginUiCurrentness(input: Readonly<{
-    reports: ReadonlyMap<string, AppShellAccountScopedPluginUiCurrentnessReport>;
-    accountLifetime: ActiveServerAccountScopeLifetime | null;
-}>): ReadonlyMap<string, PluginUiProjectionCurrentness> {
-    return new Map([...input.reports].filter(([, report]) => report.accountLifetime === input.accountLifetime
-        && isCurrent(report.accountLifetime)).map(([machineId, report]) => [machineId, report.currentness]));
 }
 
 export type AppShellPluginUiProjectionSources = Readonly<{
@@ -182,6 +170,11 @@ export type AppShellPluginUiProjectionPublication = Readonly<{
     dispose(): void;
 }>;
 
+function retainPluginIds(previous: readonly string[], declared: readonly string[], reported: ReadonlyMap<string, number>): readonly string[] {
+    const ids = [...new Set([...declared, ...reported.keys()])].sort((left, right) => left.localeCompare(right));
+    return previous.length === ids.length && previous.every((id, index) => id === ids[index]) ? previous : Object.freeze(ids);
+}
+
 /** The AppShell's existing aggregation owner, published by sources rather than evaluated by readers. */
 export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiProjectionPublication {
     let sources: AppShellPluginUiProjectionSources | null = null;
@@ -190,7 +183,6 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     // a consumer publication when the union and candidates are unchanged.
     let unionMembers = NO_MEMBERS;
     let membersByMachineId: ReadonlyMap<string, PluginUiProjectionUnionMember> = new Map();
-    let currentnessReports: ReadonlyMap<string, AppShellAccountScopedPluginUiCurrentnessReport> = new Map();
     let originReports: ReadonlyMap<string, AppShellAccountScopedPluginExecutionOriginReport> = new Map();
     let groupedOriginReports = originReports;
     let selectableByMachine: ReadonlyMap<string, Readonly<{
@@ -202,7 +194,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     let installedInput: InstalledPlugins | undefined;
     let installedByMachineId: ReadonlyMap<string, InstalledMachineDeclarations> = new Map();
     let targetBasis: readonly unknown[] = [];
-    let modelBasis: readonly unknown[] = [];
+    let sourcePluginIds = NO_IDS;
+    const reportedPluginSupply = new Map<string, number>();
     let identityBasis: readonly unknown[] = [];
     let activeServerIdentity: string | undefined;
     let retirement: { dispose(): void } | undefined;
@@ -257,7 +250,6 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         unnotifiedPrevious = null;
         for (const member of mountedActions.values()) member.retirement.dispose();
         mountedActions.clear();
-        currentnessReports = new Map();
         unionMembers = NO_MEMBERS;
         membersByMachineId = new Map();
         originReports = new Map();
@@ -268,7 +260,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         installedInput = undefined;
         installedByMachineId = new Map();
         targetBasis = [];
-        modelBasis = [];
+        sourcePluginIds = NO_IDS;
+        reportedPluginSupply.clear();
         identityBasis = [];
         activeServerIdentity = undefined;
         machineMerges.clear();
@@ -352,11 +345,39 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         if (snapshot !== previous && unnotifiedPrevious === null) unnotifiedPrevious = previous;
     }
 
-    function publishDerived(changedMachineId?: string, quiet = false) {
+    function updateReportedPluginSupply(before?: PluginUiProjectionCurrentness, after?: PluginUiProjectionCurrentness): boolean {
+        const beforeUi = before?.pluginUiProjection?.installedPackagesById;
+        const afterUi = after?.pluginUiProjection?.installedPackagesById;
+        const beforePackages = before?.installedPackagesProjection?.installedPackagesById;
+        const afterPackages = after?.installedPackagesProjection?.installedPackagesById;
+        if (beforeUi === afterUi && beforePackages === afterPackages) return false;
+        const oldIds = new Set([...Object.keys(beforeUi ?? {}), ...Object.keys(beforePackages ?? {})]);
+        const newIds = new Set([...Object.keys(afterUi ?? {}), ...Object.keys(afterPackages ?? {})]);
+        let membershipChanged = false;
+        for (const id of oldIds) {
+            if (newIds.has(id)) continue;
+            const count = reportedPluginSupply.get(id)!;
+            if (count === 1) {
+                reportedPluginSupply.delete(id);
+                membershipChanged = true;
+            } else reportedPluginSupply.set(id, count - 1);
+        }
+        for (const id of newIds) {
+            if (oldIds.has(id)) continue;
+            const count = reportedPluginSupply.get(id) ?? 0;
+            reportedPluginSupply.set(id, count + 1);
+            membershipChanged ||= count === 0;
+        }
+        return membershipChanged;
+    }
+
+    function publishDerived(changedMachineId?: string, quiet = false,
+        machineReports = snapshot.currentnessForActiveAccountByMachineId) {
         originReportsPending = false;
         if (!sources || !isCurrent(sources.accountLifetime)) return;
         const { accountLifetime, availabilityInputs } = sources;
         const previous = snapshot;
+        const previousDeclarations = installedByMachineId;
         const nextIdentityBasis = [sources.activeServerId, sources.serverProfilesGeneration];
         if (nextIdentityBasis.some((value, index) => value !== identityBasis[index]) || identityBasis.length === 0) {
             activeServerIdentity = resolvePortableServerIdentityForRoutingId(sources.activeServerId) ?? undefined;
@@ -412,31 +433,41 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 ? Object.values(loadPluginUiProjectionWarmCacheEntries(accountLifetime.scope.serverId, accountLifetime.scope.accountId)).map(entry => entry.machineId) : NO_IDS;
             const nextTargets = resolveAppShellPluginProjectionTargets({ activeServerId: sources.activeServerId,
                 onlineMachineIds: sources.onlineMachineIds, materializationMachineIds: materializations.map(value => value.machineId), retainedMachineIds: retainedIds });
-            if (nextTargets.length !== targets.length || nextTargets.some((target, index) => target.machineId !== targets[index]?.machineId || target.serverId !== targets[index]?.serverId)) targets = nextTargets;
+            if (nextTargets.length !== targets.length || nextTargets.some((target, index) => target.machineId !== targets[index]?.machineId || target.serverId !== targets[index]?.serverId)) {
+                const previousTargets = new Map(targets.map(target => [target.machineId, target]));
+                targets = Object.freeze(nextTargets.map(target => {
+                    const held = previousTargets.get(target.machineId);
+                    return held && held.serverId === target.serverId ? held : target;
+                }));
+            }
             targetBasis = nextTargetBasis;
         }
-        const eligible = new Set(targets.map(target => target.machineId));
-        if ([...currentnessReports.keys()].some(id => !eligible.has(id))) {
-            currentnessReports = new Map([...currentnessReports].filter(([id]) => eligible.has(id)));
+        const eligible = targets === previous.projectionTargets ? undefined : new Set(targets.map(target => target.machineId));
+        let currentness = machineReports;
+        let membershipChanged = false;
+        if (eligible) {
+            const removed = [...machineReports].filter(([id]) => !eligible.has(id));
+            if (removed.length > 0) {
+                const retained = new Map(machineReports);
+                for (const [id, report] of removed) {
+                    retained.delete(id);
+                    membershipChanged = updateReportedPluginSupply(report) || membershipChanged;
+                }
+                currentness = retained;
+            }
         }
-        const currentness = selectCurrentAppShellPluginUiCurrentness({ reports: currentnessReports, accountLifetime });
-        const sameCurrentness = previous.currentnessForActiveAccountByMachineId.size === currentness.size
-            && [...currentness].every(([id, value]) => previous.currentnessForActiveAccountByMachineId.get(id) === value);
-        const currentnessForActiveAccountByMachineId = sameCurrentness ? previous.currentnessForActiveAccountByMachineId : currentness;
-        const nextModelBasis = [materializations, installedByMachineId,
-            ...[...currentness.values()].flatMap(value => [value.pluginUiProjection?.installedPackagesById,
-                value.installedPackagesProjection?.installedPackagesById])];
-        let pluginIds = previous.executionOriginPluginIds;
-        if (nextModelBasis.length !== modelBasis.length || nextModelBasis.some((value, index) => value !== modelBasis[index])) {
-            const nextIds = [...new Set([...materializations.map(value => value.pluginId),
-                // An establishing Machine's held packages are current facts beside its unread presentation.
-                ...[...currentness.values()].flatMap(value => [...Object.keys(value.pluginUiProjection?.installedPackagesById ?? {}),
-                    ...Object.keys(value.installedPackagesProjection?.installedPackagesById ?? {})]),
-                ...[...installedByMachineId.values()].flatMap(value => value.models.flatMap(model => Object.keys(model.installedPackagesById)))])]
-                .sort((left, right) => left.localeCompare(right));
-            if (nextIds.length !== pluginIds.length || nextIds.some((id, index) => id !== pluginIds[index])) pluginIds = Object.freeze(nextIds);
-            modelBasis = nextModelBasis;
+        if (changedMachineId !== undefined) {
+            membershipChanged = updateReportedPluginSupply(previous.currentnessForActiveAccountByMachineId.get(changedMachineId),
+                currentness.get(changedMachineId)) || membershipChanged;
         }
+        if (materializations !== previous.executionOriginMaterializations || installedByMachineId !== previousDeclarations) {
+            sourcePluginIds = [...new Set([...materializations.map(value => value.pluginId),
+                ...[...installedByMachineId.values()].flatMap(value => value.models.flatMap(model => Object.keys(model.installedPackagesById)))])];
+            membershipChanged = true;
+        }
+        const pluginIds = membershipChanged
+            ? retainPluginIds(previous.executionOriginPluginIds, sourcePluginIds, reportedPluginSupply)
+            : previous.executionOriginPluginIds;
         const admitted = new Set(pluginIds);
         if ([...originReports.keys()].some(id => !admitted.has(id))) {
             originReports = new Map([...originReports].filter(([id]) => admitted.has(id)));
@@ -450,8 +481,6 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         // Each report owns one plugin's admissions. Replacing it must not
         // republish sibling Machines or walk the other plugins' origin facts.
         if (groupedOriginReports !== originReports) {
-            // A changed plugin census can also withdraw origins on other Machines.
-            changedMachineId = undefined;
             const changedMachines = new Map<string, Map<string, readonly PluginMachineExecutionOriginV1[]>>();
             const editMachine = (machineId: string) => {
                 let plugins = changedMachines.get(machineId);
@@ -488,11 +517,14 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         }
         const nextMembers = targets.map(target => {
             const old = membersByMachineId.get(target.machineId);
-            // A Machine report changes only that Machine's merge inputs.
-            // Sources and origin selections still reconcile the whole membership.
-            if (changedMachineId !== undefined && target.machineId !== changedMachineId && old) return old;
             const current = currentness.get(target.machineId);
             const declaration = installedByMachineId.get(target.machineId);
+            const serverIdentityId = declaration?.serverIdentityId ?? activeServerIdentity;
+            const selectableExecutionOrigins = selectableByMachine.get(target.machineId)?.origins;
+            if (old && old.serverId === target.serverId && old.serverIdentityId === serverIdentityId
+                && old.selectableExecutionOrigins === selectableExecutionOrigins
+                && (installedByMachineId === previousDeclarations || declaration === previousDeclarations.get(target.machineId))
+                && changedMachineId !== target.machineId) return old;
             let merge = machineMerges.get(target.machineId);
             if (!merge) { merge = createInstalledPluginUiProjectionPublication(); machineMerges.set(target.machineId, merge); }
             // Held plugin slices (a mounted surface's, the Session's) present those plugins
@@ -504,9 +536,9 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 && (Object.keys(read.themesById).length > 0 || Object.keys(presentedProjection?.themesById ?? {}).length > 0);
             const member: PluginUiProjectionUnionMember = {
                 machineId: target.machineId, serverId: target.serverId,
-                serverIdentityId: declaration?.serverIdentityId ?? activeServerIdentity,
+                serverIdentityId,
                 materializationsByPluginId: declaration?.materializationsByPluginId,
-                selectableExecutionOrigins: selectableByMachine.get(target.machineId)?.origins,
+                selectableExecutionOrigins,
                 projection: merge.publish(declaration?.models ?? NO_MODELS,
                     read && (registrySourcesRead || themesRead)
                         ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, themesRead) : presentedProjection,
@@ -518,7 +550,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             };
             return old && shallow(old, member) ? old : member;
         });
-        for (const id of machineMerges.keys()) if (!eligible.has(id)) machineMerges.delete(id);
+        if (eligible) for (const id of machineMerges.keys()) if (!eligible.has(id)) machineMerges.delete(id);
         const members = unionMembers.length === nextMembers.length && nextMembers.every((member, index) => member === unionMembers[index])
             ? unionMembers : Object.freeze(nextMembers);
         if (unionMembers !== members) {
@@ -544,7 +576,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             candidateMembersByMachineId.set(member.machineId, { member, packages, candidate, merge });
             return candidate;
         });
-        for (const id of candidateMembersByMachineId.keys()) if (!eligible.has(id)) candidateMembersByMachineId.delete(id);
+        if (eligible) for (const id of candidateMembersByMachineId.keys()) if (!eligible.has(id)) candidateMembersByMachineId.delete(id);
         if (candidateMembers.length !== nextCandidateMembers.length || nextCandidateMembers.some((member, index) => member !== candidateMembers[index])) {
             candidateMembers = nextCandidateMembers.every((member, index) => member === members[index]) ? members : Object.freeze(nextCandidateMembers);
         }
@@ -570,7 +602,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const registrySourcesPending = (accountLifetime !== null && availabilityInputs === null) || owing.length > 0;
         const next: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime, activeServerId: sources.activeServerId, accountUiProjection,
             executionOriginMaterializations: materializations, executionOriginPluginIds: pluginIds, projectionTargets: targets,
-            currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection,
+            currentnessForActiveAccountByMachineId: currentness, projectionUnion, pluginUiProjection,
             mountedActionProjections: previous.mountedActionProjections, skillSourceIdentity,
             destinationSurfacePlacements, settingsPages, candidateFactsByPluginId, connectedAccountResolution,
             registrySourcesPending, registrySourcesPendingTargets });
@@ -624,30 +656,29 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         publishMachineCurrentness(machineId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, currentness: PluginUiProjectionCurrentness) {
             if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)
                 || currentness.serverId !== sources.activeServerId || !membersByMachineId.has(machineId)) return;
-            const current = currentnessReports.get(machineId);
-            if (current?.accountLifetime === accountLifetime && shallow(current.currentness, currentness)) return;
-            currentnessReports = new Map(currentnessReports).set(machineId, Object.freeze({ accountLifetime, currentness }));
-            if ((current?.currentness.pluginUiProjection ?? null) === currentness.pluginUiProjection
-                && (current?.currentness.phase ?? 'establishing') === currentness.phase
-                && current?.currentness.unavailableReasonCode === currentness.unavailableReasonCode
-                && (current?.currentness.interactionEnabled ?? false) === currentness.interactionEnabled
-                && (current?.currentness.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)
-                && (current?.currentness.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)
-                && (current?.currentness.registrySourcesCurrent ?? false) === (currentness.registrySourcesCurrent ?? false)
-                && (current?.currentness.themesCurrent ?? false) === (currentness.themesCurrent ?? false)) {
+            const previous = snapshot;
+            const current = previous.currentnessForActiveAccountByMachineId.get(machineId);
+            if (current && shallow(current, currentness)) return;
+            const reports = new Map(previous.currentnessForActiveAccountByMachineId).set(machineId, currentness);
+            if ((current?.pluginUiProjection ?? null) === currentness.pluginUiProjection
+                && (current?.phase ?? 'establishing') === currentness.phase
+                && current?.unavailableReasonCode === currentness.unavailableReasonCode
+                && (current?.interactionEnabled ?? false) === currentness.interactionEnabled
+                && (current?.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)
+                && (current?.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)
+                && (current?.registrySourcesCurrent ?? false) === (currentness.registrySourcesCurrent ?? false)
+                && (current?.themesCurrent ?? false) === (currentness.themesCurrent ?? false)) {
                 // Missing reports already contribute null/establishing/noninteractive
                 // inputs. Their first matching answer, like Browser and descriptor
                 // arrivals, changes the raw report without changing the catalog.
-                const previous = snapshot;
-                const reports = new Map(previous.currentnessForActiveAccountByMachineId).set(machineId, currentness);
                 snapshot = Object.freeze({ ...previous, currentnessForActiveAccountByMachineId: reports,
-                    connectedAccountResolution: current?.currentness.connectedAccountProjection === currentness.connectedAccountProjection
+                    connectedAccountResolution: (current?.connectedAccountProjection ?? null) === (currentness.connectedAccountProjection ?? null)
                         ? previous.connectedAccountResolution
                         : publishConnectedAccounts(previous.projectionTargets, reports, new Set(previous.executionOriginPluginIds), accountLifetime) });
                 notify(previous);
                 return;
             }
-            publishDerived(machineId);
+            publishDerived(machineId, false, reports);
         },
         publishExecutionOrigin(pluginId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
             selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget = false) {

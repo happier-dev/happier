@@ -31,7 +31,6 @@ import * as executionOriginSelection from '@/sync/domains/machines/administratio
 import * as translationRuntime from '@/sync/domains/plugins/ui/i18n';
 import * as translationBytes from '@/sync/domains/plugins/availability/translationResourceBytes';
 import {
-    selectCurrentAppShellPluginUiCurrentness,
     isAppShellPluginClientExecutableAvailable,
     settleAppShellPluginRuntimeUpdate,
     resolveAppShellPluginProjectionTargets,
@@ -1459,29 +1458,30 @@ describe('AppShellPluginUiProjectionProvider', () => {
     it('withholds same-server currentness reports from the retired Account', () => {
         const accountA = accountLifetimeFixture({ accountId: 'account-a' });
         const accountB = accountLifetimeFixture({ accountId: 'account-b' });
-        const currentnessA = {
+        const machineId = 'machine-a';
+        const serverId = accountA.scope.serverId;
+        const currentnessA: projectionCurrentness.PluginUiProjectionCurrentness = {
+            machineId, serverId, platform: 'web', accountLifetime: accountA, phase: 'current',
             pluginUiProjection: null,
             pluginBrowserProjection: null,
+            connectedAccountProjection: null,
             interactionEnabled: true,
-        } as never;
-        const currentnessReports = new Map([[
-            'machine-a',
-            { accountLifetime: accountA, currentness: currentnessA },
-        ]]);
-
-        // Control: Account A can read its own Machine report.
-        expect(selectCurrentAppShellPluginUiCurrentness({
-            reports: currentnessReports,
-            accountLifetime: accountA,
-        })).toEqual(new Map([['machine-a', currentnessA]]));
-
-        // Same server and same plugin id are deliberately insufficient. Before
-        // the Account-B children publish, these old reports must be invisible
-        // synchronously rather than surviving one render as a stale union.
-        expect(selectCurrentAppShellPluginUiCurrentness({
-            reports: currentnessReports,
-            accountLifetime: accountB,
-        })).toEqual(new Map());
+        };
+        const sources = { availabilityInputs: null, hostBundledUiEnabled: false, activeServerId: serverId,
+            serverProfilesGeneration: 0, activeInventoryLoaded: true, onlineMachineIds: [machineId], selectableMachineIds: [machineId] };
+        const owner = createAppShellPluginUiProjectionPublication();
+        try {
+            owner.publishSources({ ...sources, accountLifetime: accountA });
+            owner.publishMachineCurrentness(machineId, accountA, currentnessA);
+            expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.get(machineId)).toBe(currentnessA);
+            owner.publishSources({ ...sources, accountLifetime: accountB });
+            expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.size).toBe(0);
+            owner.publishMachineCurrentness(machineId, accountA, currentnessA);
+            expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.size).toBe(0);
+            const currentnessB = { ...currentnessA, accountLifetime: accountB };
+            owner.publishMachineCurrentness(machineId, accountB, currentnessB);
+            expect(owner.getSnapshot().currentnessForActiveAccountByMachineId.get(machineId)).toBe(currentnessB);
+        } finally { owner.dispose(); }
     });
 
     it('contains activation rejections and cancellation from the React effect', async () => {
