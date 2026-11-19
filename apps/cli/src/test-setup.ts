@@ -309,12 +309,18 @@ export async function prepareNativeCustody(projectRoot: string, runCommand: RunC
 }
 
 /** Source collection never compiles: this Machine's native custody must already be current. */
-async function assertNativeCustodyCurrent(projectRoot: string): Promise<void> {
+export async function readStaleNativeCustody(projectRoot: string, { sessionTargets = false } = {}): Promise<string[]> {
   const { target, executablePath } = resolveNativeCustodyTarget(projectRoot)
   const stale: string[] = []
   if (!await isProcessCustodyRuntimeCurrent({ repoRoot: resolveRepoRoot(projectRoot), payloadDir: projectRoot, target })) stale.push(executablePath)
   const builder = await loadSessionHolderBuilder()
   if (!await isSessionHolderCurrent(projectRoot, builder)) stale.push(resolveSessionHolderSourcePath(projectRoot))
+  if (sessionTargets) stale.push(...await readStaleSessionTargetArtifacts(projectRoot, builder))
+  return stale
+}
+
+async function assertNativeCustodyCurrent(projectRoot: string): Promise<void> {
+  const stale = await readStaleNativeCustody(projectRoot)
   if (stale.length) {
     throw new Error(`CLI source tests require public native preparation (missing or built from older sources): ${stale.join(', ')}`)
   }
@@ -325,10 +331,13 @@ async function assertNativeCustodyCurrent(projectRoot: string): Promise<void> {
  * them only for selections that include such a test, so the test refuses
  * artifacts that are missing or built from older sources rather than run them.
  */
-export async function assertSessionTargetArtifactsCurrent(projectRoot: string = resolveCliProjectRoot()): Promise<void> {
-  const builder = await loadSessionHolderBuilder()
-  const stale = [...(await staleProcessCustodyTargets(projectRoot)), ...(await staleSessionTargetHolders(projectRoot, builder))]
+async function readStaleSessionTargetArtifacts(projectRoot: string, builder: SessionHolderBuilder): Promise<string[]> {
+  return [...(await staleProcessCustodyTargets(projectRoot)), ...(await staleSessionTargetHolders(projectRoot, builder))]
     .map(target => target.executablePath)
+}
+
+export async function assertSessionTargetArtifactsCurrent(projectRoot: string = resolveCliProjectRoot()): Promise<void> {
+  const stale = await readStaleSessionTargetArtifacts(projectRoot, await loadSessionHolderBuilder())
   if (stale.length) {
     throw new Error(`Session target tests require native preparation of the target artifacts (missing or built from older sources): ${stale.join(', ')}`)
   }

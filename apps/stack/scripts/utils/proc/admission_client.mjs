@@ -383,18 +383,40 @@ export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = proces
   return { component: relative(repoDir, cwd) || '.', entry: entry.join(' ') };
 }
 
-export async function runAdmissionCommand({ command, args = [], ...options } = {}) {
+export async function runAdmissionCommand({ command, args = [], validationPreparation, ...options } = {}) {
   let payloadStarted = false;
   let payloadStartedAt;
   try {
     const identity = options.entry !== undefined ? {} : admissionCommandIdentity({ repoDir: options.repoDir, command, args });
-    const status = await runAdmittedTask({ ...identity, ...options,
+    const admission = { ...identity, ...options,
       requestedCpuCores: options.requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env: options.env ?? process.env, args }),
-    }, (env, signal) => {
+    };
+    const launch = (env, signal) => {
       payloadStarted = true;
       payloadStartedAt = Date.now();
       return runPayload({ command, args, env, signal });
-    });
+    };
+    const nativeCustody = validationPreparation
+      ? await import('../dev_targets/native_custody_preparation.mjs')
+      : undefined;
+    const nativeOptions = nativeCustody?.resolveCliNativeCustodyOptions(validationPreparation);
+    const nativeRepoDir = validationPreparation?.repoDir ?? options.repoDir ?? process.cwd();
+    const stale = Symbol('stale native custody');
+    let status = await runAdmittedTask(admission, nativeOptions ? async (env, signal) => {
+      const current = await nativeCustody.isCliSourceNativeCustodyCurrent(nativeRepoDir, env, { ...nativeOptions, signal });
+      return current ? await launch(env, signal) : stale;
+    } : launch);
+    if (status === stale) {
+      // Release the first reservation before waiting for native-build capacity.
+      // On readmission the payload's existing setup check owns the verdict.
+      console.error('[native-custody] preparation became stale during validation admission; preparing current sources');
+      await nativeCustody.prepareCliSourceNativeCustody(nativeRepoDir, {
+        ...(options.env ?? process.env),
+        HAPPIER_ADMISSION_PREPARES_CLASS: options.className,
+      }, { ...nativeOptions, signal: options.signal });
+      console.error('[native-custody] readmitting validation after native preparation');
+      status = await runAdmittedTask(admission, launch);
+    }
     // The dispatcher's wall clock includes queue wait. Report the admitted run
     // time on this host's clock for its duration projection (overrun p99).
     if (options.failureId) console.error(`HSTACK_ADMISSION_RUN_MS:${options.failureId}:${Date.now() - payloadStartedAt}`);
@@ -480,7 +502,15 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
     return;
   }
   if (!options.includes('--run') || delimiter < 0 || !argv[delimiter + 1]) throw new Error('admission requires a command');
-  process.exitCode = await runAdmissionCommand({ ...identity, root, className: value('class'),
+  const validationKind = value('validation-kind');
+  const validationPreparation = validationKind && {
+    validationKind,
+    componentRelativeDir: value('component-relative-dir'),
+    requiredTools: value('required-tools'),
+    preparationScope: value('preparation-scope'),
+    repoDir: value('repo-dir'),
+  };
+  process.exitCode = await runAdmissionCommand({ ...identity, root, className: value('class'), validationPreparation,
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
     projects,
     exportMode: value('export-mode'), exportWorkers: Number(value('export-workers')),

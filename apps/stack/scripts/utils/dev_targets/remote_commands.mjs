@@ -1916,9 +1916,14 @@ export function buildRemoteExecCommand(
       body.push(`${cacheEnv} node ${posixQuote(diskOwner)} --admit --cold-dependencies --class=dependency-install ${posixQuote(`--repo=${repoDir}`)} >/dev/null`);
       body.push(`${cacheEnv}${preparesEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs --execution-placement=remote ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
+    const preparationArgs = [];
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv}${preparesEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}${FOCUSED_TEST_ADMISSION_CLASSES.includes(policy.heavyClass) ? ' --focused-test' : ''}`);
+      preparationArgs.push(`--component-relative-dir=${preparation.componentRelativeDir}`,
+        `--validation-kind=${preparation.validationKind}`,
+        `--preparation-scope=${policy.preparationScope}`, `--repo-dir=${repoDir}`);
+      if (policy.requiredTools) preparationArgs.push(`--required-tools=${policy.requiredTools.replaceAll(' ', ',')}`);
+      body.push(`${cacheEnv}${preparesEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${preparationArgs.map(posixQuote).join(' ')} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}${FOCUSED_TEST_ADMISSION_CLASSES.includes(policy.heavyClass) ? ' --focused-test' : ''}`);
     }
     body.push(`cd -- ${posixQuote(workingDirectory)}`);
     let payloadCommand = '';
@@ -1931,7 +1936,7 @@ export function buildRemoteExecCommand(
       const admittedArgs = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
         ...runDurationEntries.map(([key, value]) => `${key}=${value}`), `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
         `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`,
-        ...(admissionMode === 'try' ? ['--no-wait'] : [])];
+        ...preparationArgs, ...(admissionMode === 'try' ? ['--no-wait'] : [])];
       const admittedCommand = `${admittedArgs.map(posixQuote).join(' ')} "--workspace-locks=$workspace_locks" -- ${args.map(posixQuote).join(' ')}`;
       const facts = normalizeCommandArguments(args, workingDirectory, repoDir);
       if (policy.selfPublisher !== '1') {

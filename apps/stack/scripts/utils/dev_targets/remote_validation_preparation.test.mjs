@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture } from '../../testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, installCliNativeCustodySourceFixture, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture, rustToolchainFakeBins } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { collectWorkspaceBuildBatchResources, ensureWorkspacePackagesBuiltForComponent } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { withWorkspaceBundleLock } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
@@ -18,6 +18,7 @@ import { resolveWorkspacePackageBuildLockPath } from '../../../../../scripts/wor
 import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { prepareWorkspaceTypecheckDeclarations } from '../../../../../scripts/workspaces/prepareReferencedTypecheckDeclarations.mjs';
 import { runWorkspaceBuildAdmission } from '../proc/workspace_build_admission.mjs';
+import { runAdmissionCommand } from '../proc/admission_client.mjs';
 import { resolveHeavyweightMemoryFloorKiB, resolveRemoteCommandPolicy } from './remote_commands.mjs';
 
 import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
@@ -471,7 +472,7 @@ socket.on('error', error => { watcher.close(); throw error; });`);
 
 test('CLI source preparation stages admitted native custody without package-dist capacity or a build-time publication lease', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-cli-source-native-preparation-' });
-  await installNativeAdmissionFixture({ root });
+  const native = await installNativeAdmissionFixture({ root });
   const repoDir = join(root, 'native-owner');
   const source = await installCliNativeCustodySourceFixture(repoDir);
   const cliDir = join(repoDir, 'apps/cli');
@@ -506,10 +507,15 @@ printf 'compiled\\n' >> '${buildRecord}'
   // admit the unrelated six-GiB package-dist envelope.
   writeFakeBin({ root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "4194304 4194304\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
   writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  const cargoBuilds = join(root, 'cargo-builds');
+  const { cargo, rustup } = rustToolchainFakeBins();
+  writeFakeBin({ root, name: 'rustup', content: rustup });
+  writeFakeBin({ root, name: 'cargo', content: cargo + `printf '%s\\n' "$target" >> '${cargoBuilds}'\n` });
   const env = { ...buildNativeAdmissionFixtureEnv(), PATH: `${join(root, 'bin')}:${process.env.PATH}`,
     HAPPIER_EXEC_CONFIG_PATH: '', HAPPIER_DEV_TARGET_EXECUTION: '1' };
-  const prepare = (requiredTools = 'go') => prepareRemoteValidationWorkspace({ repoDir,
-    componentRelativeDir: 'apps/cli', validationKind: 'source-test', requiredTools, env });
+  const preparation = { repoDir, componentRelativeDir: 'apps/cli', validationKind: 'source-test',
+    requiredTools: 'go', preparationScope: 'host-native' };
+  const prepare = (requiredTools = 'go') => prepareRemoteValidationWorkspace({ ...preparation, requiredTools, env });
 
   await prepare('');
   assert.throws(() => readFileSync(buildRecord), { code: 'ENOENT' },
@@ -522,6 +528,55 @@ printf 'compiled\\n' >> '${buildRecord}'
   assert.equal(readFileSync(join(cliDir, 'tools/unpacked/happier-process-custody'), 'utf8'), 'native-custody');
   assert.throws(() => readFileSync(join(repoDir, '.project/tmp/cli-dist-build.lock')), { code: 'ENOENT' });
   assert.throws(() => readFileSync(join(cliDir, 'dist/index.mjs')), { code: 'ENOENT' });
+  // Mutagen may replace inputs after the public preparation returns, while the test waits.
+  const holderSourceDir = join(repoDir, 'packages/iroh-native/rust/happier-session-holder/src');
+  mkdirSync(holderSourceDir, { recursive: true });
+  const holderSource = join(holderSourceDir, 'main.rs');
+  const setupFailure = join(root, 'setup-failure');
+  const check = `import { writeFileSync } from 'node:fs';
+    await import(${JSON.stringify(pathToFileURL(source.runtimeTarget).href)});
+    const { setup } = await import(${JSON.stringify(pathToFileURL(source.setupTarget).href)});
+    try {
+      await setup({ buildMode: 'none', dependencies: { resolveProjectRoot: () => ${JSON.stringify(cliDir)} } });
+    } catch (error) {
+      writeFileSync(${JSON.stringify(setupFailure)}, error.message);
+      throw error;
+    }`;
+  const runFocused = signal => runAdmissionCommand({
+    root: native.admissionRoot, repoDir, env, className: 'focused-validation-cli',
+    floorKiB: 2 * 1024 * 1024, machine: 'fixture', validationPreparation: preparation,
+    command: process.execPath, args: ['--input-type=module', '--eval', check], signal,
+  });
+  const countCargoBuilds = () => readFileSync(cargoBuilds, 'utf8').trim().split('\n').length;
+
+  await t.test('readmission refreshes changed Rust inputs once and subsequent tests reuse the holder', async t => {
+    const before = countCargoBuilds();
+    writeFileSync(holderSource, 'fn main() {}\n');
+    assert.equal(await runFocused(t.signal), 0, 'source setup sees the current holder after admission');
+    assert.equal(await runFocused(t.signal), 0);
+    assert.equal(countCargoBuilds(), before + 1);
+  });
+
+  await t.test('a second source change reaches the original setup error without another recovery', async t => {
+    const before = countCargoBuilds();
+    writeFileSync(holderSource, 'fn main() {} // before admission\n');
+    const write = process.stderr.write;
+    let readmissions = 0;
+    t.mock.method(process.stderr, 'write', function (chunk, ...args) {
+      const line = String(chunk);
+      if (line.includes('session-holder linux-') && line.includes('rebuilt')) {
+        // Publication has completed by the time its diagnostic reaches this stream.
+        writeFileSync(holderSource, 'fn main() {} // after publication\n');
+      }
+      if (line.includes('readmitting validation')) readmissions += 1;
+      return write.call(this, chunk, ...args);
+    });
+    assert.equal(await runFocused(t.signal), 1);
+    assert.match(readFileSync(setupFailure, 'utf8'), /CLI source tests require public native preparation/);
+    assert.equal(readmissions, 1);
+    assert.equal(countCargoBuilds(), before + 1);
+  });
+
   writeFileSync(nativeSource, 'native-custody-current-source');
   await prepare();
   assert.equal(readFileSync(join(cliDir, 'tools/unpacked/happier-process-custody'), 'utf8'), 'native-custody-current-source',

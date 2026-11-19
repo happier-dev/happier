@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { requiresTypeScriptAdmission } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { runWorkspaceBuildAdmission } from '../proc/workspace_build_admission.mjs';
-import { prepareCliSourceNativeCustody } from './native_custody_preparation.mjs';
+import { prepareCliSourceNativeCustody, resolveCliNativeCustodyOptions } from './native_custody_preparation.mjs';
 import { resolveRemoteCommandPolicy } from './remote_commands.mjs';
 import { writeJsonAtomic } from '../fs/json.mjs';
 import { resolveRemoteValidationPreparationEnv } from './validation_env.mjs';
@@ -133,9 +133,10 @@ export async function prepareRemoteValidationWorkspace({
   if (!componentPath) return { ok: true, built: [], skipped: ['repository-root-script-owned'] };
   const normalizedComponentPath = componentPath.replaceAll('\\', '/');
   if (validationKind === 'source-test') {
-    if (normalizedComponentPath === 'apps/cli' && requiredTools.split(/\s+/u).includes('go')) {
-      await prepareCliSourceNativeCustody(repoDir, env, { sessionTargets: preparationScope !== 'host-native' });
-    }
+    const nativeCustody = resolveCliNativeCustodyOptions({
+      componentRelativeDir: normalizedComponentPath, validationKind, requiredTools, preparationScope,
+    });
+    if (nativeCustody) await prepareCliSourceNativeCustody(repoDir, env, nativeCustody);
     if (componentLoadsUiSource(repoDir, normalizedComponentPath)) await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }

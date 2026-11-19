@@ -6,8 +6,17 @@ import { requiresTypeScriptAdmission } from '../../../../../scripts/workspaces/r
 import { redactFailureDiagnostic, runCaptureResult } from '../proc/proc.mjs';
 
 const preparationCode = 'HSTACK_CLI_NATIVE_CUSTODY_PREPARATION_FAILED';
+const stalePreparationExitCode = 3;
 
-/** @typedef {'dependency-refresh' | 'source-load' | 'native-staging' | 'go-build' | 'post-build' | 'source-runtime'} PreparationStep */
+export function resolveCliNativeCustodyOptions({
+  componentRelativeDir, validationKind, requiredTools = '', preparationScope,
+}) {
+  if (validationKind !== 'source-test' || componentRelativeDir?.replaceAll('\\', '/') !== 'apps/cli'
+    || !requiredTools.split(/[\s,]+/u).includes('go')) return null;
+  return { sessionTargets: preparationScope !== 'host-native' };
+}
+
+/** @typedef {'dependency-refresh' | 'source-load' | 'native-staging' | 'native-readiness' | 'go-build' | 'post-build' | 'source-runtime'} PreparationStep */
 /** @typedef {{ phase: 'native-custody-preparation' | 'native-custody-publication', step: PreparationStep, exitCode: number | null, signal: string | null, errorLines: string[] }} PreparationCause */
 
 function preparationFailure(error, step, env) {
@@ -26,21 +35,27 @@ function preparationFailure(error, step, env) {
   return { code, phase, retryable: false, cause };
 }
 
-async function prepareWorker(projectRoot, repoDir, resultPath, sessionTargets) {
+async function prepareWorker(projectRoot, repoDir, resultPath, { sessionTargets, checkOnly }) {
   /** @type {PreparationStep} */
   let step = 'dependency-refresh';
   try {
     const { withDependencyConsumption } = await import(pathToFileURL(resolve(repoDir,
       'apps/stack/scripts/utils/proc/dependency_refresh.mjs')).href);
-    const [{ prepareNativeCustody }, { runWorkspaceBuildAdmission }] = await withDependencyConsumption({ installDir: repoDir }, async () => {
-      step = 'source-runtime';
-      await import(pathToFileURL(resolve(repoDir, 'packages/cli-common/registerSourceRuntime.mjs')).href);
-      step = 'source-load';
-      return await Promise.all([
-        import(pathToFileURL(resolve(projectRoot, 'src/test-setup.ts')).href),
-        import(pathToFileURL(resolve(repoDir, 'apps/stack/scripts/utils/proc/workspace_build_admission.mjs')).href),
-      ]);
-    });
+    const [{ prepareNativeCustody, readStaleNativeCustody }, { runWorkspaceBuildAdmission }] =
+      await withDependencyConsumption({ installDir: repoDir, wait: !checkOnly }, async () => {
+        step = 'source-runtime';
+        await import(pathToFileURL(resolve(repoDir, 'packages/cli-common/registerSourceRuntime.mjs')).href);
+        step = 'source-load';
+        return await Promise.all([
+          import(pathToFileURL(resolve(projectRoot, 'src/test-setup.ts')).href),
+          import(pathToFileURL(resolve(repoDir, 'apps/stack/scripts/utils/proc/workspace_build_admission.mjs')).href),
+        ]);
+      });
+    if (checkOnly) {
+      step = 'native-readiness';
+      if ((await readStaleNativeCustody(projectRoot, { sessionTargets })).length) process.exitCode = stalePreparationExitCode;
+      return;
+    }
     step = 'native-staging';
     const runCommand = async (command, args, options) => {
       step = 'go-build';
@@ -64,17 +79,28 @@ async function prepareWorker(projectRoot, repoDir, resultPath, sessionTargets) {
 const ARTIFACT_LINE = /^\[native-custody\] \S.* (?:current|rebuilt) \d+ms$/u;
 
 /** `sessionTargets: false` prepares this Machine's artifacts only (a selection without placed-Session tests). */
-export async function prepareCliSourceNativeCustody(repoDir, env, { sessionTargets = true, stderr = process.stderr } = {}) {
+export async function prepareCliSourceNativeCustody(repoDir, env, options) {
+  await runCliSourceNativeCustodyWorker(repoDir, env, options);
+}
+
+export async function isCliSourceNativeCustodyCurrent(repoDir, env, options) {
+  return await runCliSourceNativeCustodyWorker(repoDir, env, { ...options, checkOnly: true });
+}
+
+async function runCliSourceNativeCustodyWorker(repoDir, env, {
+  sessionTargets = true, stderr = process.stderr, checkOnly = false, signal,
+} = {}) {
   const projectRoot = resolve(repoDir, 'apps/cli');
   const resultDir = await mkdtemp(resolve(tmpdir(), 'happier-native-custody-result-'));
   const resultPath = resolve(resultDir, 'failure.json');
   try {
     const result = await runCaptureResult(process.execPath, [
-      fileURLToPath(import.meta.url), '--worker', projectRoot, repoDir, resultPath, ...(sessionTargets ? [] : ['--host-only'])], {
-      // Only Go requests capacity. It finishes before the canonical publication
-      // lock is acquired. The worker releases import custody before Go admission.
-      cwd: repoDir, env,
+      fileURLToPath(import.meta.url), '--worker', projectRoot, repoDir, resultPath,
+      ...(sessionTargets ? [] : ['--host-only']), ...(checkOnly ? ['--check-only'] : [])], {
+      cwd: repoDir, env, signal,
     });
+    signal?.throwIfAborted();
+    if (checkOnly && result.exitCode === stalePreparationExitCode && !result.signal) return false;
     // Only the worker's own artifact lines: any other worker output stays captured (failures are redacted below).
     for (const line of String(result.err ?? '').split(/\r?\n/u)) if (ARTIFACT_LINE.test(line)) stderr.write(`${line}\n`);
     if (!result.ok) {
@@ -90,10 +116,14 @@ export async function prepareCliSourceNativeCustody(repoDir, env, { sessionTarge
         : `CLI native process custody preparation exited with status ${String(result.exitCode)}`),
       { ...failure, exitCode: result.exitCode, signal: result.signal });
     }
+    return true;
   } finally { await rm(resultDir, { recursive: true, force: true }); }
 }
 
 const entryPath = String(process.argv[1] ?? '').trim();
 if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url && process.argv[2] === '--worker') {
-  await prepareWorker(process.argv[3], process.argv[4], process.argv[5], process.argv[6] !== '--host-only');
+  const flags = process.argv.slice(6);
+  await prepareWorker(process.argv[3], process.argv[4], process.argv[5], {
+    sessionTargets: !flags.includes('--host-only'), checkOnly: flags.includes('--check-only'),
+  });
 }

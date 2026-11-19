@@ -1053,10 +1053,13 @@ only when its recorded input identity (the holder: crate sources and manifest, w
 manifest and lock, Rust pin, target and flags, `readSessionHolderInputIdentity`) and its
 output digest match (`isPublishedNativeArtifactCurrent`, records in
 `apps/cli/.project/tmp/`), never because the file exists. Source-only test collection
-does not compile: a missing or stale holder or helper is a refusal naming the path, and
-the executor's public preparation (a CLI vitest command run from `apps/cli`) rebuilds it. The holder never reimplements what the
-Go helper owns (Windows Job membership, peer identity, the secure pipe relay, confined
-file operations); it calls that helper. The CLI release
+leaves compilation to the executor's public preparation (a CLI Vitest command run from
+`apps/cli`). On Linux workers, admission checks that preparation before starting Vitest.
+If the inputs changed while the run waited, the executor releases its validation reservation,
+uses the same fingerprinted preparation, and requests admission once more. Concurrent runs
+share the publication. If inputs become stale again, test setup reports the stale path.
+The holder uses the Go helper for Windows Job membership, peer identity, the secure pipe
+relay, and confined file operations. The CLI release
 matrix has no musl target yet, and Windows payloads have no Authenticode signing,
 for the holder as for every other CLI native file.
 Resource-bound Machine sandbox targets consume these same Linux target
