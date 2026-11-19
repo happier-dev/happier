@@ -2,7 +2,7 @@ import { areWorkspaceSyncWorkerCopyProvenancesEqual,
   getWorkspaceSyncWorkerCopyV1, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute,
   type WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceRefV1, WorkspaceSyncPrepareBetweenResultV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncFlushExpectation, WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import type { StoredCredentials } from '@/persistence';
@@ -107,7 +107,8 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
         relationshipStatuses: snapshot.relationshipStatuses });
       if (!basis.ok) return fail(basis.errorCode);
       if (basis.source.machineId !== source.machineId || basis.source.rootPath !== source.rootPath
-        || basis.source.projectKey !== source.projectKey || basis.target.projectKey !== source.projectKey) fail('project_workspace_changed');
+        || basis.source.projectKey !== source.projectKey
+        || projectWorkspaceRefV1(basis.target).projectKey !== projectWorkspaceRefV1(source).projectKey) fail('project_workspace_changed');
       await readWorkspaceSyncRootObjectIdentity(basis.target.rootPath);
       return basis;
     },

@@ -272,7 +272,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 machineId: workerBasis.target.machineId, rootPath: workerBasis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime),
                 serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
             await assertNotCancelled();
-            if (target.workspace.machineId !== runtime.machineId || target.workspace.projectKey !== association.workspace.projectKey) throw coded('project_workspace_changed');
+            if (target.workspace.machineId !== runtime.machineId || target.project.projectId !== association.project.projectId) throw coded('project_workspace_changed');
             return target;
         });
         let association: Awaited<ReturnType<typeof resolveAccepted>>;

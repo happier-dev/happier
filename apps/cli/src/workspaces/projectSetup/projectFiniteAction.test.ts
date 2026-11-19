@@ -2995,13 +2995,22 @@ describe('authenticated finite Project Action owner', () => {
         await expect.poll(() => h.runtime.workerAdmission.dependencies()).toEqual([]);
     });
 
-    it.each([false, true])('retains the actual final-target clean Sync timestamp through a worker Run (setup: %s)', async setup => {
+    it.each([
+        { setup: false, selfProject: false },
+        { setup: true, selfProject: false },
+        { setup: false, selfProject: true },
+    ])('retains the actual final-target clean Sync timestamp through a worker Run (setup: $setup, self Project: $selfProject)', async ({ setup, selfProject }) => {
         const source = { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } as const;
         const h = await harness({ version: 1,
             ...(setup ? { workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } } : {}),
             scripts: { checked: { execution: 'portable', source } },
         }, null, 'source-machine', ownerToken);
         const target = await h.addWorkerTarget();
+        if (selfProject) {
+            const { projectKey: _projectKey, ...self } = h.workspaceRefs[0]!;
+            h.workspaceRefs[0] = self;
+            target.projectKey = self.id;
+        }
         const hubRoot = await mkdtemp(join(tmpdir(), 'happier-project-sync-hub-'));
         roots.push(hubRoot);
         const hub = { ...h.workspaceRefs[0]!, id: 'hub', machineId: 'hub-machine', rootPath: hubRoot };
@@ -3076,12 +3085,21 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.operationRuntime.store.get(scope, 'operation')).toMatchObject({ domainRef: { lastCleanSyncAtMs: 450 } });
     });
 
-    it.each([true, false])('admits a portable named SOURCE declaration using canonical inspection (explicit workers: %s)', async explicit => {
+    it.each([
+        { explicit: true, selfProject: false },
+        { explicit: false, selfProject: false },
+        { explicit: true, selfProject: true },
+    ])('admits a portable named SOURCE declaration using canonical inspection (explicit workers: $explicit, self Project: $selfProject)', async ({ explicit, selfProject }) => {
         const source = { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } as const;
         const h = await harness({ version: 1, scripts: { checked: { execution: 'portable', memoryDemand: { bytes: 1024, basis: { kind: 'declared' } },
             source } } }, null, 'source-machine');
         h.observeMemory({ totalBytes: 4096, availableBytes: 4096 });
         const target = await h.addWorkerTarget();
+        if (selfProject) {
+            const { projectKey: _projectKey, ...self } = h.workspaceRefs[0]!;
+            h.workspaceRefs[0] = self;
+            target.projectKey = self.id;
+        }
         const inspectSource = vi.spyOn(h.runtime, 'inspectSourceProjectManifest');
         expect(await h.rpcInvoke('projects.script.run', { workspace: h.address, selection: { kind: 'named', name: 'checked' },
             ...(explicit ? { choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'machine' } } } : {}),
