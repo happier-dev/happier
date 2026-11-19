@@ -16,7 +16,7 @@ import {
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import semver from 'semver';
 
 const PACKAGE_NAME_SEGMENT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/u;
@@ -625,6 +625,21 @@ export function assertResolvedRuntimeDependencyMatchesDeclaration({
   }
 }
 
+function readOwnSourceRevisionTree(physicalApprovedRoot) {
+  // Only the running source tree can declare a second root. A record in some
+  // other caller-approved directory cannot extend that directory's authority.
+  const recordPath = fileURLToPath(new URL('../../source-bundle.json', import.meta.url));
+  if (dirname(recordPath) !== physicalApprovedRoot) return null;
+  try {
+    const tree = readJson(recordPath)?.sourceTree;
+    return typeof tree?.dir === 'string' && isAbsolute(tree.dir)
+      && realpathSync(tree.dir) === physicalApprovedRoot ? tree : null;
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return null;
+    throw error;
+  }
+}
+
 export function assertPhysicalPathWithinApprovedRoot({
   approvedRootDir,
   sourcePath,
@@ -642,6 +657,16 @@ export function assertPhysicalPathWithinApprovedRoot({
   };
   if (containsSource(physicalApprovedRoot)) return physicalSourcePath;
 
+  const sourceTree = readOwnSourceRevisionTree(physicalApprovedRoot);
+  const installDir = sourceTree?.dependencyInstallDir;
+  if (typeof installDir === 'string' && isAbsolute(installDir)) {
+    try {
+      if (containsSource(realpathSyncImpl(installDir))) return physicalSourcePath;
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
+    }
+  }
+
   // Captured builds mount the source checkout's installed dependencies. Only
   // the capture's repository-wide boundary can approve that source repository;
   // inherited identity must not widen a package-local or unrelated copy root.
@@ -650,7 +675,7 @@ export function assertPhysicalPathWithinApprovedRoot({
   const captureRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
   const identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR;
   const captureSourceRepoDir = process.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR;
-  if (captureRepoDir && (captureSourceRepoDir || identityRepoDir)) {
+  if (!sourceTree && captureRepoDir && (captureSourceRepoDir || identityRepoDir)) {
     try {
       if (realpathSyncImpl(captureRepoDir) === physicalApprovedRoot) {
         for (const root of new Set([captureSourceRepoDir, identityRepoDir].filter(Boolean))) {

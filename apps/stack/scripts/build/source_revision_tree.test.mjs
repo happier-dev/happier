@@ -8,7 +8,7 @@ import { cp, lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile }
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { inspectDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
 import { generateServerClients, installServerGeneratorFixture, readGeneratedClientFields, writeServerSchemas, FIXTURE_MACHINE_SCHEMA } from '../testkit/core/server_generator_fixture.mjs';
@@ -337,6 +337,38 @@ test('a cold source reload prepares one shared base for the server and daemon', 
   assert.equal(cold.server.sourceCapture.inputIdentity, cold.daemon.sourceCapture.inputIdentity);
   assert.equal(countBaseBuilds(cold), 1);
   assert.equal(countBaseBuilds(warm), 0);
+});
+
+test('a daemon revision tree resolves runtime dependencies only within the tree and its declared install', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const guard = 'packages/cli-common/workspaceRuntimeDependencies.mjs';
+  await cp(new URL(`../../../../${guard}`, import.meta.url), join(repoDir, guard));
+  await promisify(execFile)('git', ['-C', repoDir, 'add', guard]);
+  await promisify(execFile)('git', ['-C', repoDir, 'commit', '--quiet', '-m', 'runtime dependency guard']);
+  await cp(dirname(createRequire(import.meta.url).resolve('semver/package.json')), join(repoDir, 'node_modules/semver'), { recursive: true });
+  const stackBaseDir = fixture.path('stacks/daemon');
+  for (const [root, name] of [[repoDir, 'tweetnacl'], [stackBaseDir, 'outside-dep']]) {
+    const packageDir = join(root, 'node_modules', name);
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name, version: '1.0.3' }));
+  }
+  const descriptor = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir),
+    rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir,
+    descriptorPath: descriptor.descriptorPath, components: [{ component: 'daemon' }],
+    env: { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+      HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, logger: { error() {} } });
+  const treeDir = daemon.sourceTree.dir;
+  const { resolveInstalledRuntimePackage } = await import(pathToFileURL(join(treeDir, guard)).href);
+  const resolveFromPackageJsonPath = join(daemon.cliDir, 'package.json');
+  const resolveDependency = (packageName, dereferenceRootDir) => resolveInstalledRuntimePackage({
+    packageName, resolveFromPackageJsonPath, dereferenceRootDir,
+  }).packageDir;
+
+  assert.equal(await realpath(resolveDependency('outside-dep')), await realpath(join(stackBaseDir, 'node_modules/outside-dep')));
+  assert.throws(() => resolveDependency('outside-dep', treeDir), /outside the caller-approved root/u);
+  assert.throws(() => resolveDependency('tweetnacl', daemon.cliDir), /outside the caller-approved root/u);
+  assert.equal(await realpath(resolveDependency('tweetnacl', treeDir)), await realpath(join(treeDir, 'node_modules/tweetnacl')));
 });
 
 test('a declared overlay keeps its selected bytes when the checkout moves after description', async t => {

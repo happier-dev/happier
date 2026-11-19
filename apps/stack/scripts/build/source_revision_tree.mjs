@@ -620,6 +620,7 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
     const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot, signal, descriptorPath, env, requestBaseArchive, preparePluginUi: component === 'daemon',
       treeDir: join(resolve(stackBaseDir), 'source-runtime', `tree-${component}-${randomUUID().slice(0, 8)}`) });
     const t = tree.treeDir;
+    const dependencyInstallDir = revisionInstallDir(treesRoot, tree.installIdentity);
     const identity = createHash('sha256').update(JSON.stringify([tree.key, component, serverComponent, dbProvider ?? null])).digest('hex').slice(0, 16);
     // The shared capture record shape: 64-hex input identity, full overlay digest.
     const sourceCapture = { revision: tree.revision, ...(tree.overlayDigest ? { overlayDigest: tree.overlayDigest } : {}),
@@ -678,7 +679,7 @@ const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), 
 console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
         const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
           args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
-            dependencyRootDir: revisionInstallDir(treesRoot, tree.installIdentity), outputDir: t, targets, sourceCapture })] }),
+            dependencyRootDir: dependencyInstallDir, outputDir: t, targets, sourceCapture })] }),
         { cwd: t, env, signal });
         const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
         if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
@@ -693,7 +694,7 @@ console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
     const runtimeDependencyClosure = tree.installIdentity ? { captured: true, identity: tree.installIdentity, imports: [] } : null;
     Object.assign(record, { sourceCapture, dependencyPublication, inputIdentity: sourceCapture.inputIdentity,
       ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
-      sourceTree: { dir: t, base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
+      sourceTree: { dir: t, dependencyInstallDir, base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
     await writeOwnFile(join(t, 'source-bundle.json'), JSON.stringify(record, null, 2));
     logger.error(`[source-tree] prepared component=${component} rev=${tree.revision} base=${tree.base} baseBuilt=${tree.baseBuilt} overlaid=${tree.overlaid} nativeSupport=${tree.supportFingerprint} elapsedMs=${Math.round(performance.now() - started)}`);
     prepared[component] = record;

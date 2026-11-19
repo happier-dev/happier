@@ -1942,6 +1942,11 @@ candidate, not a required build target. If that ancestor fails preparation,
 same preparation owner, then applies the declared checkout overlay. The reload
 logs this fallback; failure of the requested commit still refuses preparation.
 
+The revision tree's `source-bundle.json` declares its pinned shared dependency
+install. Runtime dependency resolution for the tree, including Plugin SDK
+preparation for `plugins dev install`, accepts physical paths in the tree and
+its declared install. Paths outside those roots are refused.
+
 Selection is by revision. The exact revision (+overlay) has its own candidate
 locator; otherwise the producer captures the revision first and adopts any
 completed capture whose consumed-input digests equal the revision's bytes (the
