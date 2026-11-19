@@ -1,4 +1,6 @@
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import axios from 'axios';
+import nacl from 'tweetnacl';
 import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -11,7 +13,8 @@ import { createCliMachineActionTransport } from './machineTransport';
 import { createCliMachineActionDeps } from './machine';
 import { createCombinedMachineSetupActionDeps } from '@/machines/setup/composeMachineSetup';
 import type { MachineActionDirectTargetTransport } from '../createCliActionDeps';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
@@ -25,6 +28,54 @@ import { createCliMachineInventoryActionDeps } from './machineInventory';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('delivers the reviewed Agent install operand to Home and retains the receiving installer failure', async () => {
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const actionId = 'machines.agents.install';
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'parent-proof', binding: {
+    accountId: 'member', custodianAccountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 },
+    accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', actionId: 'machines.setup.apply', requestId: 'apply',
+    machineId: target.machineId, installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+  } });
+  const requestId = 'run/invocation/0';
+  const input = { machineId: target.machineId, agentId: 'pi', intent: 'install' as const,
+    waitForTerminal: true, consent: { vendorRecipe: true } };
+  const context: RpcActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'srv_home',
+    actionRequestId: requestId, executionRunWorkflowRunId: 'run', externalActionExecutionAuthorization: authorization,
+    externalActionTarget: target, actionCaller: { kind: 'workflowRun', runId: 'run', authorization: {
+      principal: { kind: 'host' }, externalActionExecutionAuthorization: authorization,
+    } } };
+  const token = `e30.${Buffer.from(JSON.stringify({ sub: 'member', tokenEpoch: 0,
+    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+  const outcome = { kind: 'failed' as const, code: 'rate_limited', message: 'The registry is rate limited.' };
+  const execution = { ok: false, errorCode: 'native_effect_failed', error: outcome.message,
+    details: { jobId: 'job', outcome } };
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+    expect(request.envelope).toMatchObject({ requestId, target, input });
+    if (!String(url).endsWith('/execution-authorization')) {
+      return { status: 200, data: { v: 1, actionId, requestId, execution } };
+    }
+    expect(request.workflowActionOrigin).toMatchObject({ runId: 'run', requestId });
+    expect(request.installationProof).toBeDefined();
+    return { status: 200, data: { v: 1, token: 'child-proof', binding: {
+      ...authorization.binding, actionId, requestId, workflowActionOrigin: request.workflowActionOrigin,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+    } } };
+  });
+  // Home and generic Machine RPC are transport boundaries. The latter cannot
+  // spend a parent Apply proof as a separate native install invocation.
+  vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new Error('No receiving child admission'));
+  const params = { credentials: { token, encryption: null, credentialProvenance: 'stored_session' as const },
+    serverId: 'srv_home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example.test',
+    externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: nacl.sign.keyPair().secretKey,
+    machineActionDirectTargetTransport: { machineId: target.machineId, invoke: vi.fn() } };
+  const deps = createCliMachineActionDeps(params, { ...createCliMachineActionTransport(params),
+    resolveServerRequestHeaders: () => ({}) });
+  await expect(deps.machineAgentInstallStart!({ ...input, serverId: params.serverId, context, effectActionId: actionId }))
+    .rejects.toMatchObject(execution);
+  expect(post).toHaveBeenCalledTimes(2);
+});
 
 describe('Machine capability observation during unsigned approval replay', () => {
   it.each([

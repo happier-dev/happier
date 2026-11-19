@@ -5,7 +5,7 @@ import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isOrdinaryMachineSetupNativeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupCombinedActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isManagedControllerCodecActionV1, projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -34,8 +34,13 @@ export { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc
 export function requiresWorkflowMachineActionAdmission(actionId: string, context?: Pick<ActionExecutorContext,
   'actionCaller' | 'actionRequestId' | 'externalActionExecutionAuthorization'>): boolean {
   const caller = context?.actionCaller;
+  if (caller?.kind !== 'workflowRun') return false;
   const origin = context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
-  return isOrdinaryMachineSetupNativeActionIdV1(actionId) && caller?.kind === 'workflowRun'
+  const parent = caller.authorization.reviewedChild?.actionId
+    ?? caller.authorization.externalActionExecutionAuthorization?.binding.actionId;
+  const setupInstall = actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
+    && parent !== undefined && isMachineSetupCombinedActionIdV1(parent);
+  return (isOrdinaryMachineSetupNativeActionIdV1(actionId) || setupInstall)
     && (!origin || origin.runId !== caller.runId || origin.requestId !== context?.actionRequestId);
 }
 
@@ -46,6 +51,7 @@ export type CliMachineActionCall = (input: Readonly<{
     serverId?: string;
     method: string;
     request: unknown;
+    workflowActionInput?: unknown;
     authorization?: Parameters<typeof callMachineRpc>[0]['authorization'];
     signal?: AbortSignal;
     timeoutMs?: number | null;
@@ -151,24 +157,7 @@ export function createCliMachineActionTransport(
       RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL,
     ] : []),
   ]);
-  const callMachineAction = async (input: Readonly<{
-    processEnvironmentRead?: RpcLocalActionContext['processEnvironmentRead'];
-    machineId: string;
-    authority?: ActionExecutorContext['authority'];
-    serverId?: string;
-    method: string;
-    request: unknown;
-    authorization?: Parameters<typeof callMachineRpc>[0]['authorization'];
-    signal?: AbortSignal;
-    timeoutMs?: number | null;
-    waitForResultOnCancel?: boolean;
-    requestId?: string;
-    reattachOnReconnect?: Parameters<typeof callMachineRpc>[0]['reattachOnReconnect'];
-    exactMachine?: true;
-    requireCurrentMachine?: true;
-    context?: RpcActionExecutorContext;
-    effectActionId?: string;
-  }>): Promise<unknown> => {
+  const callMachineAction: CliMachineActionCall = async (input) => {
     if (!await isMachineActionServerScopeCurrent(input)) {
       throw new RpcError('server_scope_mismatch', 'server_scope_mismatch');
     }
@@ -211,7 +200,7 @@ export function createCliMachineActionTransport(
         || !params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId
         || !input.context.actionRequestId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
       const execution = await dispatchOriginalAccountAction({ actionId: input.effectActionId,
-        input: input.request, requestId: input.context.actionRequestId, target: { kind: 'machine', machineId: input.machineId },
+        input: input.workflowActionInput ?? input.request, requestId: input.context.actionRequestId, target: { kind: 'machine', machineId: input.machineId },
         credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         serverIdentityId: params.serverIdentityId, authority: 'account_automation',
         installedWorkflow: { context: input.context, machineId: publisherMachineId,

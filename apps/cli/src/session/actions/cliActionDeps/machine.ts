@@ -273,7 +273,7 @@ export function createCliMachineActionDeps(
       }
       return DaemonAgentInstallStartResponseSchema.parse(await callMachineAction({
         machineId, serverId, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START, request,
-        context, effectActionId, authority: context?.authority,
+        workflowActionInput: { ...request, machineId }, context, effectActionId, authority: context?.authority,
         ...(request.waitForTerminal ? { timeoutMs: null } : {}),
         ...(signal ? { signal } : {}),
       }));
