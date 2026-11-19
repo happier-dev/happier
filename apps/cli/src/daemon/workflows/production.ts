@@ -1549,6 +1549,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       }
       // A frozen predecessor owns its exact source and has no mutable scope/ref.
       const scopeSessionId = frozen.success ? null : claim.scopeSessionId;
+      // An admitted lifecycle occurrence owns its source independently of the habit's lifetime scope.
+      const sourceSessionId = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'sessionLifecycle'
+        ? claim.automationCause.evidence.sourceSessionId : undefined;
+      const originSessionId = sourceSessionId ?? scopeSessionId ?? undefined;
       const storedDefinition = AutomationStoredWorkflowDefinitionV2ReadSchema.safeParse(definitionContent);
       const target = readTriggerTargetV1({ workflowDefinitionId: frozen.success ? null : claim.workflowDefinitionId,
         scopeSessionId }, definitionContent);
@@ -1612,7 +1616,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       };
       // The signed project may use a home alias. Fingerprint the same canonical
       // project that execution receives, without creating any Run-owned worktree.
-      const fingerprintWorkspace = scopeSessionId && source.definition.inputs.some((input) => input.name === 'diffFingerprint')
+      const fingerprintWorkspace = originSessionId && source.definition.inputs.some((input) => input.name === 'diffFingerprint')
         ? await prepareClaimWorkspace() : undefined;
       if (fingerprintWorkspace?.ok === false) return refuse('workspace', fingerprintWorkspace.code);
       const fingerprint = fingerprintWorkspace?.ok
@@ -1636,7 +1640,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const workspace = fingerprintWorkspace ?? await prepareClaimWorkspace();
       if (!workspace.ok) return refuse('workspace', workspace.code);
       if (!params.resolveMaterializationHost) return refuse('materialization_host', 'target_unavailable');
-      const originSessionId = scopeSessionId ?? undefined;
       let reportPolicy: Awaited<ReturnType<typeof readRunReportPolicy>> | undefined;
       if (storedDefinition.data.onComplete?.kind === 'originating_session' && originSessionId) {
         try {
@@ -1733,8 +1736,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       }
       // Only a lifecycle event has a source turn that can feed back into itself.
       // A manual/scheduled scoped habit intentionally continues its destination.
-      const sourceSessionId = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'sessionLifecycle'
-        ? claim.automationCause.evidence.sourceSessionId : undefined;
       const selfTarget = sourceSessionId ? created.snapshot.materializedLeaves.find((leaf) => {
         if (leaf.selection.conversation?.kind !== 'existing_session' || leaf.selection.conversation.sessionId !== sourceSessionId) return false;
         // A declared source-context input preserves origin_session semantics.

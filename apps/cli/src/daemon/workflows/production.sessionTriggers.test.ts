@@ -232,6 +232,58 @@ describe('scoped workflow claim admission', () => {
     expect(independent.effects).toEqual([]);
   });
 
+  it('binds an Account habit to each admitted lifecycle source instead of its launcher Session', async () => {
+    const source: WorkflowDefinitionV1 = { ...definition,
+      inputs: [{ name: 'reviewSession', valueType: 'json', required: true, defaultFrom: 'origin_session',
+        inputType: { hostType: 'session' } }],
+      defaults: { ...definition.defaults, conversation: { kind: 'input', name: 'reviewSession' } } };
+    const triggerId = AutomationTriggerIdSchema.parse('account-review-trigger');
+    for (const [sourceSessionId, constant] of [['event-session-y', undefined], ['event-session-z', undefined],
+      ['event-session-y', 'launcher-session']] as const) {
+      const harness = admissionHarness(input => prepareWorkflowAcceptedWorkspaceTarget({ ...input,
+        env: { NODE_ENV: 'test', HOME: '/home/reviewer' }, platform: 'linux', pathIsDirectory: async () => true,
+        inspectLocation: async () => ({ inspection: { rootPath: '/repo' } }),
+      }));
+      const evidence = { v: 1 as const, kind: 'sessionLifecycle' as const, event: 'parentTurnCompleted' as const,
+        sourceSessionId, sourceTurnId: 'turn-1', occurredAt: 1 };
+      const occurrence = claim(source);
+      const definitionEnvelope = constant ? JSON.stringify({ t: 'plain', v: { inlineDefinition: source,
+        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+        inputs: { reviewSession: { serverId: 'server-1', sessionId: constant } } } }) : occurrence.definitionEnvelope;
+      await expect(harness.coordinate({ ...occurrence, definitionEnvelope, scopeSessionId: null,
+        automationCause: { kind: 'trigger', triggerKind: 'sessionLifecycle', triggerId, triggerRevision: 0,
+          occurredAt: 1, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }),
+          evidence: { event: evidence.event, sourceSessionId, sourceTurnId: evidence.sourceTurnId,
+            policy: { kind: 'currentTurn' } } } })).rejects.toBe(captured);
+      expect(harness.snapshots[0]).toMatchObject({ origin: { originSessionId: sourceSessionId },
+        inputs: { reviewSession: { serverId: 'server-1', sessionId: constant ?? sourceSessionId } },
+        materializedLeaves: [{ selection: { conversation: { kind: 'existing_session', sessionId: constant ?? sourceSessionId, machineId } } }] });
+    }
+  });
+
+  it('does not turn arbitrary webhook payload into an origin Session', async () => {
+    const harness = admissionHarness(input => prepareWorkflowAcceptedWorkspaceTarget({ ...input,
+        env: { NODE_ENV: 'test', HOME: '/home/reviewer' }, platform: 'linux', pathIsDirectory: async () => true,
+        inspectLocation: async () => ({ inspection: { rootPath: '/repo' } }),
+      }));
+    const triggerId = AutomationTriggerIdSchema.parse('payload-origin-trigger');
+    const base = { v: 1 as const, kind: 'pluginEvent' as const,
+      eventRef: { pluginId: 'happier.scm.github', localId: 'push' },
+      sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('9d5af559-2c82-4c22-b6a0-ecabce38a631'),
+      occurrenceId: 'payload-origin', occurredAt: 1, payload: { sourceSessionId: 'untrusted-session' } };
+    const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...base,
+      sourceInstanceId: 'github-hooks', sourceContractVersion: 1, observationReceivedAt: 1,
+      filter: { version: null, result: 'matched' } });
+    await expect(harness.coordinate({ ...claim(definition), scopeSessionId: null,
+      automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: evidence }),
+      automationCause: { kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
+        occurredAt: 1, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: base }),
+        evidence: { eventRef: base.eventRef, sourceSelectorId: base.sourceSelectorId } } })).rejects.toBe(captured);
+    expect(harness.snapshots[0]).toMatchObject({ inputs: {} });
+    expect(harness.snapshots[0]).toHaveProperty('origin');
+    expect((harness.snapshots[0] as { origin: object }).origin).not.toHaveProperty('originSessionId');
+  });
+
   it('skips an unchanged claimed tree without freezing a snapshot or starting work', async () => {
     const read = vi.spyOn(scm, 'readWorktreeChangeFingerprint').mockResolvedValue({ kind: 'available', fingerprint: 'F-b' });
     const harness = admissionHarness();
