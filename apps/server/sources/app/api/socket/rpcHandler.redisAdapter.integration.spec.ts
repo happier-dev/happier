@@ -384,6 +384,46 @@ describe("rpcHandler redis adapter integration", () => {
         }
     });
 
+    it('keeps a registered cross-node RPC callable through a Redis stream-reader timeout', async () => {
+        const cluster = await startRedisAdapterRecoveryCluster();
+        const [source, target] = cluster.nodes;
+        registerTestRpcHandlers(source.io);
+        registerTestRpcHandlers(target.io);
+        const caller = await connectClient(source.port);
+        const listener = await connectClient(target.port);
+        try {
+            const method = 'agent.readerRecovery';
+            const listenerId = listener.id;
+            listener.on(SOCKET_RPC_EVENTS.REQUEST, (request, respond) => respond(request.params));
+            const registered = waitForEvent(listener, SOCKET_RPC_EVENTS.REGISTERED);
+            listener.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
+            await registered;
+            const call = async (phase: string) => {
+                expect(await emitWithAck(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { phase } }))
+                    .toEqual({ ok: true, result: { phase } });
+            };
+            await call('before');
+
+            const readerName = target.owner.buildSocketClusterRedisConnectionName({ kind: 'adapter-duplicate', diagnosticOrdinal: 1 });
+            const reader = target.adapterConnections.get(readerName);
+            if (!reader) throw new Error('Expected the adapter stream reader');
+            if (reader.status !== 'ready') await new Promise<void>(resolve => reader.once('ready', () => resolve()));
+            const timeout = new Promise<Error>(resolve => reader.once('error', resolve));
+            const reconnected = new Promise<void>(resolve => reader.once('ready', () => resolve()));
+            // Stall only the real blocking XREAD connection and let ioredis detect it.
+            reader.stream.pause();
+            await call('stalled');
+            expect((await timeout).message).toContain("Socket timeout. Expecting data");
+            await reconnected;
+            await call('on-ready');
+            expect(listener.id).toBe(listenerId);
+        } finally {
+            caller.disconnect();
+            listener.disconnect();
+            await cluster.close();
+        }
+    });
+
     it.each(["restart", "silent partition"] as const)("recovers remote RPC discovery, calls and no-target after Redis %s", async (failure) => {
         const cluster = await startRedisAdapterRecoveryCluster();
         const [nodeA, nodeB] = cluster.nodes;

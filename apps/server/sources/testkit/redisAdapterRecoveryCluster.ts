@@ -12,6 +12,7 @@ type ProductRedisOwner = typeof import("@/storage/redis/redis");
 type RecoveryNode = {
     io: Server;
     redis: ReturnType<ProductRedisOwner["getRedisSocketClusterClient"]>;
+    adapterConnections: ReadonlyMap<string, ReturnType<ProductRedisOwner["getRedisSocketClusterClient"]>>;
     port: number;
     owner: ProductRedisOwner;
 };
@@ -89,9 +90,21 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
                 else process.env.REDIS_URL = previousUrl;
             }
             const httpServer = http.createServer();
+            const adapterConnections = new Map<string, typeof redis>();
+            const observedAdapterClient = new Proxy(adapter, {
+                get(target, property) {
+                    if (property !== "duplicate") return Reflect.get(target, property);
+                    return () => {
+                        const connection = target.duplicate();
+                        const name = connection.options.connectionName;
+                        if (name) adapterConnections.set(name, connection);
+                        return connection;
+                    };
+                },
+            });
             const io = new Server(httpServer, {
                 path: "/v1/updates", transports: ["websocket"], serveClient: false,
-                adapter: createAdapter(adapter, readRedisStreamsAdapterOptionsFromEnv({
+                adapter: createAdapter(observedAdapterClient, readRedisStreamsAdapterOptionsFromEnv({
                     HAPPIER_SOCKET_ADAPTER_SCOPE: options.adapterScope,
                 })),
             });
@@ -103,7 +116,7 @@ export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: str
             });
             const address = httpServer.address();
             if (!address || typeof address === "string") throw new Error("Missing server address");
-            nodes.push({ io, redis, port: address.port, owner });
+            nodes.push({ io, redis, adapterConnections, port: address.port, owner });
         }
         const waitForRecovery = async () => {
             await vi.waitFor(async () => {
