@@ -60,7 +60,8 @@ export type FieldDotOptions = Readonly<{
     ripples?: readonly FieldInput[];
 }>;
 export type FieldDotLayer = FieldDotOptions & { kind: 'field' };
-export type GlyphLayer = PlanetGlyphLayer | MarkGlyphLayer | TravellerGlyphLayer | FrontGlyphLayer | FieldDotLayer;
+export type PlacedGlyphLayer = Readonly<{ kind: 'placed'; cells: Float32Array }>;
+export type GlyphLayer = PlanetGlyphLayer | MarkGlyphLayer | TravellerGlyphLayer | FrontGlyphLayer | FieldDotLayer | PlacedGlyphLayer;
 type GlyphSprites = Readonly<{ at: Uint16Array; glyph: Uint8Array; rgba: Uint8Array }>;
 export type GlyphScene = Readonly<{
     view: Readonly<{ w: number; h: number }>;
@@ -94,6 +95,8 @@ export function markGlyphLayer(options: MarkGlyphOptions): MarkGlyphLayer;
 export function markGlyphTone(layer: Pick<MarkGlyphOptions, 'centre' | 'size'>, x: number, y: number): number;
 export function travellerGlyphLayer(options: TravellerGlyphOptions): TravellerGlyphLayer;
 export function frontGlyphLayer(options: FrontGlyphOptions): FrontGlyphLayer;
+/** Pre-positioned cells packed as CSS x, CSS y, atlas index, R, G, B, and opacity. */
+export function placedGlyphLayer(cells: Float32Array): PlacedGlyphLayer;
 export function inkMapFromBoxes(boxes: readonly (GlyphRect & { ink: GlyphInk })[], grid: GlyphGrid): GlyphInkMap;
 export function inkMapFromImage(pixels: Readonly<{ width: number; height: number; data: Uint8Array | Uint8ClampedArray }>, grid: GlyphGrid): GlyphInkMap;
 export function createGlyphFrameSampler(): (scene: GlyphScene, motion?: Readonly<{ time?: number }>) => GlyphFrame;

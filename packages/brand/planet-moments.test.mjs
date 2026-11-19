@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import * as moments from './planet-moments.mjs';
 import { createPlanetScene } from './planet.mjs';
+import { glyphFrame } from './glyph-scene.mjs';
 import { assertStructuralParity, captureRuntimeSkip } from './scripts/parityAssertions.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/planet-moments-parity.json', import.meta.url), 'utf8'));
@@ -13,11 +14,37 @@ const digest = (value) => createHash('sha256').update(JSON.stringify(value)).dig
 // No historical fixture is regenerated and no legacy look mode enters the product API.
 const historicalSource = readFileSync(new URL('./planet-moments.mjs', import.meta.url), 'utf8')
   .replace("from './planet.mjs'", `from '${new URL('./planet.mjs', import.meta.url).href}'`)
+  .replace("from './glyph-scene.mjs'", `from '${new URL('./glyph-scene.mjs', import.meta.url).href}'`)
   .replace('...o, ...PAIRING_PLANET_LOOK, field: 0', '...o, field: 0')
   .replace('planetCollapseCells({ R, theme: th })', 'planetCollapseCells({ R, theme: th, pitch: Math.max(2.6, Q.cell * 0.82) })')
   .replace('const look = PAIRING_PLANET_LOOK;', 'const look = { pitch: 2, dot: 0.72, jitter: 0.6 };')
   .replace('const look = { ...PAIRING_PLANET_LOOK, field: 0.9 };', 'const look = { field: 0.9 };');
 const capturedLook = await import(`data:text/javascript;base64,${Buffer.from(historicalSource).toString('base64')}`);
+test('a folding QR keeps its paper behind the glyph planet and its modules ahead of it', () => {
+  const size = 224;
+  const theme = 'dark';
+  const model = moments.qrMomentModel(fixture.matrices[0], size, 2);
+  const scan = moments.qrMomentFrame(model, 0.57, { size, theme, phase: 'scan' });
+  const glyphs = moments.createPairingGlyphSampler();
+  const view = { w: size, h: size };
+  const frame = glyphs(scan.commands, view, 2);
+  assert.ok(frame.behind.some(([command]) => command === 'roundRect'));
+  assert.ok(frame.ahead.some(([command]) => command === 'roundRect'));
+  assert.ok(frame.planet.opacity > 0 && frame.planet.opacity < 1);
+  const settledScan = glyphs(moments.qrMomentFrame(model, 0.9, { size, theme, phase: 'scan' }).commands, view, 2);
+  const pair = glyphs(moments.pairingMomentFrame(0, { w: size, h: size, theme, layout: 'square', phase: 'handoff' }), view, 2);
+  const countDots = ({ layer }) => {
+    let count = 0;
+    for (let i = 0; i < layer.cells.length; i += 7) {
+      if (layer.cells[i + 2] >= 21 && Math.hypot(layer.cells[i] - size / 2, layer.cells[i + 1] - size / 2) < size * 0.29) count++;
+    }
+    return count;
+  };
+  assert.equal(pair.planet.opacity, settledScan.planet.opacity);
+  assert.ok(countDots(pair.planet) > 3000);
+  assert.equal(countDots(pair.planet), countDots(settledScan.planet));
+  assert.equal(frame.planet.layer, settledScan.planet.layer);
+});
 test('QR scan and pairing paint the same full Balanced fine-pitch scene and fold targets', () => {
   for (const theme of ['light', 'dark']) for (const dpr of [1, 2]) {
     const size = 224;
@@ -158,4 +185,16 @@ test('the theme switch digits take the destination ink they are given, and leave
     assert.ok(texts > 0);
     assert.equal(alpha, 1);
   }
+});
+test('the live theme horizon keeps the original reveal and paints its digits with the shared glyph atlas', () => {
+  const view = { w: 390, h: 844 };
+  const options = { ...view, dir: 'night', kind: 'horizon' };
+  const original = moments.themeSwitchFrame(0.6, options);
+  const live = moments.createThemeHorizonGlyphSampler()(0.6, options, [224, 200, 192]);
+  assert.equal(live.clipPath, original.clipPath);
+  assert.equal(live.commands.some(([op]) => op === 'fillText'), false);
+  const glyphs = glyphFrame({ view, dpr: 2, theme: 'dark', layers: [live.glyphs], cell: moments.themeHorizonGlyphCell });
+  assert.equal(glyphs.sprites.glyph.length, original.commands.filter(([op, , x, y]) => op === 'fillText' && x < view.w && y < view.h).length);
+  assert.deepEqual([...glyphs.sprites.rgba.slice(0, 3)], [224, 200, 192]);
+  assert.ok(glyphs.sprites.glyph.every(glyph => glyph < 10));
 });

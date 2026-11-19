@@ -18,6 +18,7 @@ export const planetGlyphLayer = (options) => ({ kind: 'planet', ...options });
 export const markGlyphLayer = (options) => ({ kind: 'mark', ...options });
 export const travellerGlyphLayer = (options) => ({ kind: 'traveller', ...options });
 export const frontGlyphLayer = (options) => ({ kind: 'front', ...options });
+export const placedGlyphLayer = (cells) => ({ kind: 'placed', cells });
 
 function cellHash(x, y) {
     let bits = Math.imul(x, 374761393) + Math.imul(y, 668265263) | 0;
@@ -308,6 +309,7 @@ export function createGlyphFrameSampler() {
         const grid = { cell, cols, rows, origin: [0, 0] };
         const capacity = layers.reduce((sum, layer) => {
             if (layer.kind === 'field') return sum;
+            if (layer.kind === 'placed') return sum + layer.cells.length / 7;
             if (layer.kind === 'traveller') return sum + layer.particles.length / 8;
             if (layer.kind === 'mark' && layer.cellTimeline) return sum + layer.cellTimeline.length / 4;
             return sum + cols * rows * ((layer.kind === 'front' && layer.cover) || (layer.kind === 'planet' && layer.ring) ? 2 : 1);
@@ -319,6 +321,13 @@ export function createGlyphFrameSampler() {
         let field;
         for (const layer of layers) {
             if (layer.kind === 'field') field = layer;
+            if (layer.kind === 'placed') {
+                const { cells } = layer;
+                for (let p = 0; p < cells.length; p += 7) {
+                    ink[0] = cells[p + 3]; ink[1] = cells[p + 4]; ink[2] = cells[p + 5];
+                    writeSprite(out, cells[p] * dpr, cells[p + 1] * dpr, cells[p + 2], ink, cells[p + 6]);
+                }
+            }
             if (layer.kind === 'planet') body = samplePlanet(out, grid, layer, time, theme, palette, previousBody);
             if (layer.kind === 'mark') sampleMark(out, grid, layer, time, palette);
             if (layer.kind === 'traveller') sampleTravellers(out, layer, layer.presentationTimeS ?? time, palette);

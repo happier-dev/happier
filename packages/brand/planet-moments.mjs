@@ -1,6 +1,7 @@
 // Frame arithmetic extracted from the atmosphere lab mo-scenes.js / mo-scenes2.js.
 // Frames describe paint operations only. Platform owners supply drawing, matrices, images and clocks.
-import { PLANET_PALETTES, PLANET_SCENE_RENDERER } from './planet.mjs';
+import { createPlanetScene, PLANET_PALETTES, PLANET_SCENE_RENDERER } from './planet.mjs';
+import { glyphDotRadii, placedGlyphLayer } from './glyph-scene.mjs';
 const { resolve, brandDots, sceneHash: hash, digitOf, sstep, easeOut, easeInOut, crit } = PLANET_SCENE_RENDERER;
 const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const mix = (a, b, t) => a + (b - a) * t;
@@ -29,6 +30,44 @@ const M = { BODY, COOL, MONO, ramp, digitOf, planet: (c, o) => c.planet(o) };
 const INK = [20, 18, 24];
 /** The full fine-pitch planet shared by QR folding, scan end and pairing handoff/rest. */
 export const PAIRING_PLANET_LOOK = Object.freeze({ fullness: 1, style: 'balanced', pitch: 2 });
+export const pairingGlyphCell = Object.freeze([6, 7]);
+
+/** Keep the paper and modules on their original sides of the planet during the scan fold. */
+export function createPairingGlyphSampler() {
+  let previousKey, layer;
+  return (commands, view, dpr) => {
+    const index = commands.findIndex(([kind]) => kind === 'planet');
+    if (index < 0) return { behind: commands, planet: null, ahead: [] };
+    const { alpha = 1, ...look } = commands[index][1];
+    const key = JSON.stringify([look, view.w, view.h, dpr]);
+    if (key !== previousKey) {
+      const { body, haze, cells } = createPlanetScene({ ...look, view, dpr });
+      const packed = new Float32Array((body.length + haze.length + cells.length) * 7);
+      let offset = 0;
+      const append = (x, y, glyph, rgb, opacity) => {
+        packed[offset++] = x; packed[offset++] = y; packed[offset++] = glyph;
+        packed[offset++] = rgb[0]; packed[offset++] = rgb[1]; packed[offset++] = rgb[2]; packed[offset++] = opacity;
+      };
+      const dotTile = (r) => glyphDotRadii.reduce((best, radius, i) => Math.abs(radius - r) < Math.abs(glyphDotRadii[best] - r) ? i : best, 0);
+      const dots = (points) => {
+        for (const dot of points) {
+          const tile = dotTile(dot.r);
+          append(dot.x, dot.y, 21 + tile, dot.rgb, Math.min(1, dot.opacity * (dot.r / glyphDotRadii[tile]) ** 2));
+        }
+      };
+      const digits = (over) => {
+        for (const digit of cells) {
+          if (digit.over !== over) continue;
+          append(digit.x, digit.y, Number(digit.ch), digit.rgb, over ? Math.min(1, digit.a * (digit.cut ? 1.6 : 3.2)) : digit.a);
+        }
+      };
+      dots(body); digits(true); dots(haze); digits(false);
+      layer = placedGlyphLayer(packed);
+      previousKey = key;
+    }
+    return { behind: commands.slice(0, index), planet: { layer, opacity: alpha }, ahead: commands.slice(index + 1) };
+  };
+}
 export function planetCollapseCells(o) {
   const P = resolve({ cx: 0, cy: 0, ...o, ...PAIRING_PLANET_LOOK, field: 0 }, 1, { w: 1e5, h: 1e5 }); P.x0 = -Math.ceil(P.R * 1.1); P.y0 = P.x0; P.W = P.H = -2 * P.x0; P.CX = 0; P.CY = 0; P.cx = 0; P.cy = 0;
   return brandDots(P).filter((d) => !d.halo).map((d) => ({ x: d.x, y: d.y, e: 1, col: d.rgb, i: d.i + 4096, j: d.j + 4096, r: Math.hypot(d.px, d.py) }));
@@ -214,7 +253,24 @@ function boundary(kind, dir, k, w, h) {
   const sl = 0.35 * h; const x = mix(-sl - 40, w + sl + 40, k);
   return { clip: `polygon(0 0, ${x + sl}px 0, ${x - sl}px ${h}px, 0 ${h}px)`, d: (px, py) => (px - (x + sl - (py / h) * 2 * sl)) * 0.94, line: true };
 }
-export function themeSwitchFrame(t, o) {
+const THEME_HORIZON_PITCH = 13;
+export const themeHorizonGlyphCell = Object.freeze([THEME_HORIZON_PITCH * 0.62, THEME_HORIZON_PITCH * 0.8 / 0.94]);
+export function createThemeHorizonGlyphSampler() {
+  let cells = new Float32Array(0);
+  return function themeHorizonGlyphFrame(t, o, ink) {
+    const pitch = o.dp || THEME_HORIZON_PITCH;
+    const capacity = Math.ceil(o.w / (pitch * 0.62)) * Math.ceil(o.h / pitch) * 7;
+    if (capacity > cells.length) cells = new Float32Array(capacity);
+    let end = 0;
+    const frame = themeSwitchFrame(t, o, (x, y, digit, colour, alpha) => {
+      cells[end++] = x; cells[end++] = y; cells[end++] = digit;
+      cells[end++] = colour[0]; cells[end++] = colour[1]; cells[end++] = colour[2]; cells[end++] = alpha;
+    }, ink);
+    return { ...frame, glyphs: placedGlyphLayer(cells.subarray(0, end)) };
+  };
+}
+
+export function themeSwitchFrame(t, o, placeGlyph, glyphInk) {
     const { c, commands } = recording(); const { w: W, h: H } = o; const dir = o.dir || 'sunrise';
     const u = clamp(t / TH.DUR); const k = easeInOut(u);
     const B = boundary(o.kind || 'horizon', dir, k, W, H);
@@ -233,20 +289,27 @@ export function themeSwitchFrame(t, o) {
         const tt = clamp(0.06 + (x / w) * 0.45); c.fillStyle = rgba(M.ramp(stops, warm ? 0.5 - tt : tt), 0.9 * band); c.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2); } }
     // 3 · the wavefront of typewriter digits on a fixed grid, densest just inside the new theme
     // With the destination theme's ink the digits read on whatever it paints; without it, the lab's planet colours.
-    const dp = o.dp || 13, cw = dp * 0.62; c.font = `500 ${dp * 0.8}px ${M.MONO}`; c.textAlign = 'center'; c.textBaseline = 'middle';
-    if (o.ink) c.fillStyle = o.ink;
+    const dp = o.dp || THEME_HORIZON_PITCH, cw = dp * 0.62;
+    if (!placeGlyph) { c.font = `500 ${dp * 0.8}px ${M.MONO}`; c.textAlign = 'center'; c.textBaseline = 'middle'; }
+    if (o.ink && !placeGlyph) c.fillStyle = o.ink;
     const nx = Math.ceil(w / cw), ny = Math.ceil(h / dp); const depth = o.depth || 120;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       if (i & 1) continue; // digit, space: single digits on the typewriter grid, like the engine's field (no clumps)
       const x = (i + 0.5) * cw, y = (j + 0.5) * dp; const d = B.d(x, y); if (d > 26 || d < -depth) continue;
       const f = d > 0 ? Math.exp(-d / 9) : Math.exp(d / (depth * 0.38)); const dens = 0.24 + 0.7 * f; if (hash(i, j + 77) > dens) continue;
       const a = band * f * (0.45 + 0.55 * hash(i + 9, j)); if (a < 0.03) continue;
-      if (o.ink) c.globalAlpha = clamp(a);
-      else { const tc = clamp(warm ? 0.08 + (-d / depth) * 0.55 + hash(i, j) * 0.12 : (-d / depth) * 0.8 + hash(i, j) * 0.15);
-        c.fillStyle = rgba(M.ramp(stops, tc), clamp(a)); }
-      c.fillText(String(M.digitOf(i, j, t, 14)), x, y);
+      const digit = M.digitOf(i, j, t, 14);
+      if (placeGlyph && glyphInk) { placeGlyph(x, y, digit, glyphInk, clamp(a)); continue; }
+      if (o.ink && !placeGlyph) c.globalAlpha = clamp(a);
+      else {
+        const tc = clamp(warm ? 0.08 + (-d / depth) * 0.55 + hash(i, j) * 0.12 : (-d / depth) * 0.8 + hash(i, j) * 0.15);
+        const colour = M.ramp(stops, tc);
+        if (placeGlyph) { placeGlyph(x, y, digit, colour, clamp(a)); continue; }
+        c.fillStyle = rgba(colour, clamp(a));
+      }
+      c.fillText(String(digit), x, y);
     }
-    if (o.ink) c.globalAlpha = 1;
+    if (o.ink && !placeGlyph) c.globalAlpha = 1;
     return { commands, clipPath, visibility };
 }
 

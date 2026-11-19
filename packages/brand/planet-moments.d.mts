@@ -16,6 +16,7 @@ export interface PlanetCollapseCell { readonly x: number; readonly y: number; re
 export function qrMomentModel(matrix: QrMomentMatrix, sizeCssPx: number, dpr?: number): QrMomentModel;
 /** Prepare these targets once for the model size and theme; pass them to scan frames to avoid recomputation. */
 export const PAIRING_PLANET_LOOK: Readonly<{ fullness: 1; style: 'balanced'; pitch: 2 }>;
+export const pairingGlyphCell: readonly [number, number];
 export function planetCollapseCells(options: Pick<PlanetSceneOptions, 'R' | 'theme'>): readonly PlanetCollapseCell[];
 
 export type MomentPlanetOptions = Omit<PlanetSceneOptions, 'view'> & Readonly<{
@@ -23,7 +24,7 @@ export type MomentPlanetOptions = Omit<PlanetSceneOptions, 'view'> & Readonly<{
 }>;
 
 /** Ordered, serializable paint data in CSS pixels. The drawing owner interprets these on Canvas/Skia.
- * `planet` delegates to the existing planet painter; `happier-mark` is supplied by the drawing owner.
+ * `planet` is projected to atlas cells; `happier-mark` is supplied by the drawing owner.
  * Gradient ids are local to one frame. Fonts are lab references; platform font aliases belong to the painter.
  */
 export type MomentPaintCommand =
@@ -45,6 +46,12 @@ export type MomentPaintCommand =
   | readonly ['addColorStop', number, number, string]
   | readonly ['drawImage', 'happier-mark', number, number, number, number]
   | readonly ['planet', MomentPlanetOptions];
+export type MomentVectorCommand = Exclude<MomentPaintCommand, readonly ['planet', MomentPlanetOptions]>;
+export function createPairingGlyphSampler(): (commands: readonly MomentPaintCommand[], view: Readonly<{ w: number; h: number }>, dpr: number) => Readonly<{
+    behind: readonly MomentVectorCommand[];
+    planet: Readonly<{ layer: import('./glyph-scene.mjs').PlacedGlyphLayer; opacity: number }> | null;
+    ahead: readonly MomentVectorCommand[];
+}>;
 interface QrFrameBase {
   readonly size: number; readonly theme?: PlanetTheme;
   readonly collapseTargets?: readonly PlanetCollapseCell[];
@@ -73,6 +80,11 @@ export interface ThemeSwitchOptions {
 }
 export function themeSwitchFrame(timeSeconds: number, options: ThemeSwitchOptions): Readonly<{
   commands: readonly MomentPaintCommand[]; clipPath: string; visibility: 'hidden' | 'visible';
+}>;
+export const themeHorizonGlyphCell: readonly [number, number];
+export function createThemeHorizonGlyphSampler(): (timeSeconds: number, options: ThemeSwitchOptions, ink?: PlanetRgb) => Readonly<{
+  commands: readonly MomentVectorCommand[]; clipPath: string; visibility: 'hidden' | 'visible';
+  glyphs: import('./glyph-scene.mjs').PlacedGlyphLayer;
 }>;
 export interface SessionFinishedRippleOptions { readonly w: number; readonly theme?: PlanetTheme; readonly px?: number; readonly py?: number; readonly R?: number }
 export function sessionFinishedRippleFrame(timeSeconds: number, options: SessionFinishedRippleOptions): Readonly<{
