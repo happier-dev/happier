@@ -35,7 +35,7 @@ it('links Session findings by saved Review comment identity and leaves unbound d
 });
 
 it('uses a durable finding root once across reviewers and rounds, then writes its current decision by comment identity', async () => {
-    const round = { reviewId: 'review-1', roundOrdinal: 2, reviewerIds: ['first', 'second'], state: 'completed' } as const;
+    const round = { reviewId: 'review-1', roundOrdinal: 2, reviewerIds: ['first', 'second'], state: 'completed' as const };
     const root = {
         ...buildReviewCommentFixture({ id: 'durable-root', body: 'An older projection', engineId: 'codex' }),
         reviewId: round.reviewId,

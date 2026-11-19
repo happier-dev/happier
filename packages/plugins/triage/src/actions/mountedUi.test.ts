@@ -59,6 +59,9 @@ it('opens its reviewable draft directly without a second host input form', async
 
 it.each([
   { name: 'explicit draft', fromMessage: false, input: { title: 'Fix reconnect handling', body: 'Explicit body' }, expected: { title: 'Fix reconnect handling', body: 'Explicit body' } },
+  { name: 'selected Review findings', fromMessage: false,
+    input: { originReview: { reviewId: 'review-selected', findingIds: ['saved-root-first', 'saved-root-second'] } },
+    expected: { originReview: { reviewId: 'review-selected', findingIds: ['saved-root-first', 'saved-root-second'] } } },
   { name: 'selected message', fromMessage: true, input: {}, expected: { title: 'Selected answer' } },
   { name: 'paragraph message', fromMessage: true, input: {},
     selectedText: 'Read-only inspection complete. The investigation found several follow-up items that belong in their own task.\n\n- Check the affected flow\n- Retain the original evidence',
@@ -138,6 +141,12 @@ it.each([
     const received = readTriageTaskDraftLaunch(pageScope, launch);
     expect(received).toMatchObject({ status: 'ready', fields: expected });
     if (received.status !== 'ready') throw new Error('Missing draft');
+    if ('originReview' in input) {
+      // Review selection transfers references only; unselected findings and private bodies stay with the Review.
+      expect(received.fields).toEqual(input);
+      expect(received.fields.originReview?.findingIds).not.toContain('saved-root-unselected');
+      expect(opened[0]).not.toHaveProperty('originReview');
+    }
     if ('noProposedTitle' in testCase) expect(received.fields).not.toHaveProperty('title');
     // Full evidence stays in origin; Notes contains only deliberate draft input.
     if (fromMessage && !('body' in input)) expect(received.fields).not.toHaveProperty('body');
