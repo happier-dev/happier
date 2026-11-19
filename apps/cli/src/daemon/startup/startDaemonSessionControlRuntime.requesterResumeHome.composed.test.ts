@@ -8,6 +8,12 @@ import { requesterSessionCredentialPath } from '../sessionEncryption/requesterSe
 import { createOnChildExited } from '../sessions/onChildExited';
 import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { createRunnerIsolationIdentity } from '../agentRuntime/runnerIsolationIdentity';
+import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
+import { createManagedActivityInventory } from '../lifecycle/managedActivity';
+import { createDeferred } from '@/testkit/async/deferred';
+import { registerManagedActivityRpcHandlers } from '@/api/machine/rpcHandlers.managedActivity';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
 // The listener is an OS boundary. Retained custody, Account admission, runtime
@@ -106,6 +112,68 @@ it.each(['unchanged', 'renewed', 'other-account', 'other-daemon-account'] as con
     .resolves.toMatchObject({ type: 'error', errorCode: signIn === 'other-account' || signIn === 'other-daemon-account'
       ? 'DAEMON_RPC_UNAVAILABLE' : 'INVALID_ENVIRONMENT_VARIABLES' });
 });
+
+it.each(['activity read', 'idle Stop confirmation', 'shutdown during read', 'cancellation during read'] as const)(
+  'holds cold Resume during %s and settles it from the daemon admission outcome', async cause => {
+    const home = 'srv_ordinary_resume';
+    const drain = createDaemonAdmissionDrain();
+    const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
+      ordinaryAccountSession: true, externalActionAccountId: 'requester', homeServerIdentityId: home,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: home, machineId: 'machine' }),
+      admissionDrain: drain, isShuttingDown: drain.isQuiescing,
+    });
+    h.trackedSessionsByKey.clear();
+    const readEntered = createDeferred();
+    const releaseRead = createDeferred();
+    const activity = createManagedActivityInventory({ producers: [{
+      read: async () => { readEntered.resolve(); await releaseRead.promise; return { items: [], coverage: 'complete' }; },
+      subscribe: () => () => {},
+    }] });
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+    registerManagedActivityRpcHandlers({ rpcHandlerManager: rpc, activity, admissionDrain: drain });
+    const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
+      installationId: 'guest-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const target = { homeId: home, managedId: 'guest', expectedRevision: 1 };
+    const rpcContext = { machineAdmission, verifyMachineAdmissionCurrent: async () => true };
+    const activityResult = cause === 'idle Stop confirmation'
+      ? rpc.invokeLocal(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'begin' }, { rpcContext })
+      : rpc.invokeLocal(MANAGED_ACTIVITY_READ_RPC_METHOD, target, { rpcContext });
+    try {
+      await readEntered.promise;
+      let settled = false;
+      const requester = new AbortController();
+      const resume = h.daemon.spawnSession({ existingSessionId: h.sessionId, directory: h.cwd,
+        environmentVariables: { 'INVALID=KEY': 'fixture' } }, requester.signal);
+      void resume.then(() => { settled = true; }, () => { settled = true; });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+      if (cause === 'shutdown during read') drain.beginShutdown();
+      if (cause === 'cancellation during read') {
+        requester.abort();
+        await expect(resume).resolves.toMatchObject({ errorCode: 'cancelled' });
+        expect(drain.isQuiescing()).toBe(true);
+      }
+      releaseRead.resolve();
+      if (cause === 'activity read') {
+        await expect(activityResult).resolves.toMatchObject({ kind: 'idle' });
+        await expect(resume).resolves.toMatchObject({ errorCode: 'INVALID_ENVIRONMENT_VARIABLES' });
+      } else if (cause !== 'cancellation during read') {
+        await expect(resume).resolves.toMatchObject({ errorCode: 'DAEMON_RPC_UNAVAILABLE',
+          errorDetail: { code: cause === 'shutdown during read' ? 'daemon_shutting_down' : 'daemon_draining' } });
+        if (cause === 'idle Stop confirmation') {
+          await expect(activityResult).resolves.toMatchObject({ kind: 'idle' });
+          await rpc.invokeLocal(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'resume' }, { rpcContext });
+          await expect(h.daemon.spawnSession({ existingSessionId: h.sessionId, directory: h.cwd,
+            environmentVariables: { 'INVALID=KEY': 'fixture' } }))
+            .resolves.toMatchObject({ errorCode: 'INVALID_ENVIRONMENT_VARIABLES' });
+        }
+      }
+    } finally {
+      releaseRead.resolve();
+      await activityResult;
+      activity.dispose();
+    }
+  });
 
 it('keeps persisted requester birth through Stop, physical exit and cold Resume', async () => {
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control);

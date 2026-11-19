@@ -2882,7 +2882,6 @@ export async function startDaemon(
         connectedAccountPurposeBindingRuntime.activatePurposeBindings,
       readBindingObservation:
         connectedAccountPurposeBindingRuntime.readBindingObservation,
-      isShuttingDown: isDaemonQuiescing,
       processEnv: process.env,
     });
 

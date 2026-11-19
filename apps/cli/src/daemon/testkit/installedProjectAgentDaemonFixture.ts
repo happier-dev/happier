@@ -53,7 +53,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
   & { reattachedFromDiskMarker?: true }
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'resolveSessionSpawnDirectTargetTransport' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'resolveSessionSpawnDirectTargetTransport' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'admissionDrain' | 'isShuttingDown'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
       | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods' | 'agentIsolationEnabled'>
@@ -154,6 +154,8 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     resolveSessionSpawnDirectTargetTransport: requesterOptions?.resolveSessionSpawnDirectTargetTransport,
     externalSessionHostOperationOwner: requesterOptions?.externalSessionHostOperationOwner,
     agentIsolation: requesterOptions?.agentIsolation,
+    admissionDrain: requesterOptions?.admissionDrain,
+    isShuttingDown: requesterOptions?.isShuttingDown,
     managedProviderOperationAuthority: requesterOptions?.managedProviderOperationAuthority,
     skillStore,
     resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,

@@ -86,7 +86,7 @@ import { createSessionBrokerApplicationEvidence, recordSessionBrokerApplicationE
 import { readMcpRequestAuthFailureCode, readMcpRequestAuthDiagnosticCode } from '@/mcp/runtime/mcpRequestAuth';
 import { createDaemonRunnerPluginMcp } from '../agentRuntime/runnerPluginMcp';
 import { createGuardLeftBehindActionExecutor } from '../guard/actions';
-import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
+import { waitForSessionSpawnAdmission, type DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { createSessionLiveWorkProducer } from '../lifecycle/sessionLiveWorkProducer';
 import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher';
 import { createObservedAccountRunFollowRoutes } from '@/agent/runtime/session/follow/accountRunFollowRoutes';
@@ -1479,7 +1479,7 @@ export async function startDaemonSessionControlRuntime(
       typeof createDaemonManagedMachineActionAdapter
     >;
     externalActionIngressOwner?: ExternalActionIngressOwner;
-    spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+    spawnSession: (options: SpawnSessionOptions, admissionSignal?: AbortSignal) => Promise<SpawnSessionResult>;
     spawnSessionForInternalResume: PendingSessionResumePort;
     stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult>;
     stopRequesterSessionForHandoff: (sessionId: string, expectedSpawnNonce: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
@@ -4609,14 +4609,29 @@ export async function startDaemonSessionControlRuntime(
   const spawnSessionWithAdmission = async (
     options: SpawnSessionOptions,
     behavior: Readonly<{ freshExplicitResume: boolean; freshLaunchRequest?: boolean; completingPlannedRestart?: boolean;
-      pendingActivation?: PendingSessionResumeAdmission }>,
+      pendingActivation?: PendingSessionResumeAdmission; admissionSignal?: AbortSignal }>,
   ): Promise<SpawnSessionResult> => {
     const canCompletePlannedRestart = () => behavior.completingPlannedRestart === true
       && !controlRuntimeResourcesDisposed
       && !shutdownCancellationDomains.daemonWorkSignal.aborted;
     const mayCompletePlannedRestart = canCompletePlannedRestart();
-    if (params.isShuttingDown?.() === true && !mayCompletePlannedRestart) {
-      return projectDaemonSpawnUnavailable('daemon_shutting_down', 'Daemon is shutting down');
+    if (!mayCompletePlannedRestart) {
+      const signal = behavior.admissionSignal ?? options.resumeActionContext?.signal ?? options.spawnActionContext?.signal;
+      if (signal?.aborted) return { type: 'error', errorCode: 'cancelled', errorMessage: 'cancelled' };
+      const drain = params.admissionDrain;
+      if (drain?.isQuiescing()) {
+        try {
+          const refusal = await waitForSessionSpawnAdmission(drain, signal);
+          if (signal?.aborted) return { type: 'error', errorCode: 'cancelled', errorMessage: 'cancelled' };
+          if (refusal) return projectDaemonSpawnUnavailable(refusal,
+            refusal === 'daemon_shutting_down' ? 'Daemon is shutting down' : 'Daemon is draining');
+        } catch (error) {
+          if (signal?.aborted) return { type: 'error', errorCode: 'cancelled', errorMessage: 'cancelled' };
+          throw error;
+        }
+      } else if (!drain && params.isShuttingDown?.() === true) {
+        return projectDaemonSpawnUnavailable('daemon_shutting_down', 'Daemon is shutting down');
+      }
     }
     // The one sessions-role refusal for every Session start (Machine RPC, control route, workflow
     // start, host Action ingress, CLI). Completing a running Session's planned restart is not a
@@ -4756,9 +4771,11 @@ export async function startDaemonSessionControlRuntime(
   };
   const spawnSession = async (
     options: SpawnSessionOptions,
+    admissionSignal?: AbortSignal,
   ): Promise<SpawnSessionResult> =>
     await spawnSessionWithAdmission(options, {
       freshLaunchRequest: true,
+      admissionSignal,
       freshExplicitResume: options.resumeActionContext?.actionCaller?.kind === 'session'
         || options.executionAuthorization?.provenance === 'user_request',
     });

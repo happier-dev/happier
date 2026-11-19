@@ -17,7 +17,7 @@ export type SessionLifecycleActionHandler = (
 ) => Promise<unknown>;
 
 export type SessionLifecycleMachineHandlers = Readonly<{
-    spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+    spawnSession: (options: SpawnSessionOptions, admissionSignal?: AbortSignal) => Promise<SpawnSessionResult>;
     stopSession: (sessionId: string, options?: StopSessionOptions) => Promise<StopSessionResult | boolean>;
 }>;
 

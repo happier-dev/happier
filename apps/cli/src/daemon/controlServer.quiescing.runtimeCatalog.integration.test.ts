@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/testkit/async/deferred';
 
 import { createDaemonControlApp } from './controlServer';
 import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
@@ -51,11 +52,11 @@ describe('daemon control server quiescing producer routes', () => {
       expect((await app.inject({ method: 'POST', url: '/execution-run/admission',
         headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} })).json())
         .toEqual({ admitted: false, reason: 'daemon_draining' });
-      expect((await app.inject({ method: 'POST', url: '/spawn-session',
-        headers: { 'x-happier-daemon-token': 'test-token' }, payload: { directory: '/repo' } })).json())
-        .toMatchObject({ errorCode: 'daemon_draining' });
+      const spawn = app.inject({ method: 'POST', url: '/spawn-session',
+        headers: { 'x-happier-daemon-token': 'test-token' }, payload: { directory: '/repo' } }).then(response => response.json());
       expect(admissionDrain.isFinalShutdown()).toBe(false);
       releaseOtherDrain();
+      expect(await spawn).toMatchObject({ success: true, sessionId: 'unexpected-start' });
       expect((await app.inject({ method: 'POST', url: '/execution-run/admission',
         headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} })).json()).toEqual({ admitted: true });
     } finally { await app.close(); }
@@ -77,6 +78,10 @@ describe('daemon control server quiescing producer routes', () => {
         turnCustody: await applyTrackedSessionTurnLifecycle({ trackedSessions: [tracked], ...request,
           // Marker persistence is the filesystem boundary; turn custody stays real.
           updateSessionMarkerActiveTurn: async () => true }) }),
+    });
+    const spawnReachedControl = createDeferred();
+    app.addHook('preHandler', async (request) => {
+      if (request.url === '/spawn-session') spawnReachedControl.resolve();
     });
     try {
       await app.listen({ host: '127.0.0.1', port: 0 });
@@ -101,6 +106,23 @@ describe('daemon control server quiescing producer routes', () => {
         payload: { sessionId: 'happy-test-123', turnId: 'turn-next', event: 'task_started' } })).json())
         .toMatchObject({ ok: true, result: { status: 'continue', turnCustody: { status: 'recorded', activeTurnId: 'turn-next' } } });
       expect(tracked.activeTurnId).toBe('turn-next');
+      await expect(admitDaemonForegroundAgentRuntime(foregroundRequest, clientOptions))
+        .rejects.toMatchObject({ code: 'daemon_draining' });
+      await expect(releaseDaemonForegroundAgentRuntime({ v: 1, attemptId: 'attempt-1', sessionId: 'session-1' }, clientOptions))
+        .rejects.toMatchObject({ code: 'daemon_draining' });
+      expect(admissionDrain.isPublicationQuiescing()).toBe(false);
+      let spawnSettled = false;
+      const parked = spawn().then(response => { spawnSettled = true; return response.json(); });
+      try {
+        await spawnReachedControl.promise;
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(spawnSettled).toBe(false);
+      } finally {
+        releaseDrain();
+      }
+      expect((await runAdmission()).json()).toEqual({ admitted: true });
+      expect(await parked).toMatchObject({ success: true, sessionId: 'happy-test-123' });
+      admissionDrain.beginUnusedStopDrain();
       const refused = await spawn();
       expect(refused.statusCode).toBe(503);
       expect(refused.json()).toMatchObject({ errorCode: 'daemon_draining' });
@@ -109,14 +131,7 @@ describe('daemon control server quiescing producer routes', () => {
       if (failure.status !== 'error') throw new Error('Expected typed spawn refusal');
       expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure(failure)))
         .toMatchObject({ code: 'spawn_failed', launchError: { code: 'daemon_draining' } });
-      await expect(admitDaemonForegroundAgentRuntime(foregroundRequest, clientOptions))
-        .rejects.toMatchObject({ code: 'daemon_draining' });
-      await expect(releaseDaemonForegroundAgentRuntime({ v: 1, attemptId: 'attempt-1', sessionId: 'session-1' }, clientOptions))
-        .rejects.toMatchObject({ code: 'daemon_draining' });
-      expect(admissionDrain.isPublicationQuiescing()).toBe(false);
-      releaseDrain();
-      expect((await runAdmission()).json()).toEqual({ admitted: true });
-      expect((await spawn()).json()).toMatchObject({ success: true, sessionId: 'happy-test-123' });
+      admissionDrain.resumeUnusedStop();
       admissionDrain.beginShutdown();
       releaseDrain();
       expect((await runAdmission()).json()).toEqual({ admitted: false, reason: 'daemon_shutting_down' });
@@ -238,11 +253,10 @@ describe('daemon control server quiescing producer routes', () => {
       await app.ready();
       const headers = { 'x-happier-daemon-token': 'test-token' };
       const requests = [
-        {
-          url: '/spawn-session',
-          payload: {},
-        },
-        { url: '/continue-with-replay', payload: {} },
+        ...(cause === 'temporary' || cause === 'plugin handoff' ? [] : [
+          { url: '/spawn-session', payload: {} },
+          { url: '/continue-with-replay', payload: {} },
+        ]),
         { url: FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH, payload: foregroundRequest },
         { url: FOREGROUND_AGENT_RUNTIME_RELEASE_PATH, payload: { v: 1, attemptId: 'attempt-1', sessionId: 'session-1' } },
         {

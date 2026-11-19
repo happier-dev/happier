@@ -7,7 +7,11 @@ export const ExecutionRunDaemonAdmissionResponseSchema = z.discriminatedUnion('a
     z.strictObject({ admitted: z.literal(false), reason: DaemonAdmissionRefusalCodeSchema }),
 ]);
 
+type DaemonAdmissionRefusalCode = z.infer<typeof DaemonAdmissionRefusalCodeSchema>;
+type AdmissionDecision = 'wait' | DaemonAdmissionRefusalCode | undefined;
+
 export type DaemonAdmissionDrain = Readonly<{
+    readSessionSpawnAdmission(): AdmissionDecision;
     isQuiescing(): boolean;
     isFinalShutdown(): boolean;
     isPublicationQuiescing(): boolean;
@@ -37,6 +41,11 @@ export function createDaemonAdmissionDrain(params: Readonly<{
         isQuiescing,
         isFinalShutdown,
         isPublicationQuiescing,
+        readSessionSpawnAdmission: () => {
+            if (isFinalShutdown()) return 'daemon_shutting_down';
+            if (unusedStop) return 'daemon_draining';
+            if (temporaryDrains > 0 || params.isPluginHandoffQuiescing?.() === true) return 'wait';
+        },
         beginTemporaryDrain: () => {
             if (isFinalShutdown()) return () => {};
             const wasQuiescing = isQuiescing();
@@ -73,21 +82,34 @@ export function createDaemonAdmissionDrain(params: Readonly<{
     };
 }
 
-/** Park new claimed leaf starts without releasing their incumbent custody. */
-export async function waitForDaemonAdmission(drain: DaemonAdmissionDrain, signal?: AbortSignal): Promise<void> {
-    signal?.throwIfAborted();
-    if (!drain.isQuiescing()) return;
-    await new Promise<void>((resolve, reject) => {
+function waitForAdmissionDecision(drain: DaemonAdmissionDrain, read: () => AdmissionDecision, signal?: AbortSignal) {
+    return new Promise<DaemonAdmissionRefusalCode | undefined>((resolve, reject) => {
         const cleanup = () => { unsubscribe(); signal?.removeEventListener('abort', abort); };
         const check = () => {
-            if (drain.isFinalShutdown()) {
-                cleanup();
-                reject(Object.assign(new Error('Daemon is shutting down'), { code: 'daemon_shutting_down' }));
-            } else if (!drain.isQuiescing()) { cleanup(); resolve(); }
+            const decision = read();
+            if (decision === 'wait') return;
+            cleanup();
+            resolve(decision);
         };
         const abort = () => { cleanup(); reject(signal?.reason); };
         const unsubscribe = drain.subscribe(check);
         signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort(); else check();
     });
+}
+
+/** Park new claimed leaf starts without releasing their incumbent custody. */
+export async function waitForDaemonAdmission(drain: DaemonAdmissionDrain, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    if (!drain.isQuiescing()) return;
+    const refusal = await waitForAdmissionDecision(drain,
+        () => drain.isFinalShutdown() ? 'daemon_shutting_down' : drain.isQuiescing() ? 'wait' : undefined, signal);
+    if (refusal) throw Object.assign(new Error('Daemon is shutting down'), { code: refusal });
+}
+
+/** A reversible read can finish normally. A committed Stop owns the guest until explicit reopen. */
+export async function waitForSessionSpawnAdmission(drain: DaemonAdmissionDrain, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const decision = drain.readSessionSpawnAdmission();
+    return decision === 'wait' ? await waitForAdmissionDecision(drain, drain.readSessionSpawnAdmission, signal) : decision;
 }

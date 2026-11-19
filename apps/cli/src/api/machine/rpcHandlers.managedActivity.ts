@@ -39,35 +39,35 @@ export function registerManagedActivityRpcHandlers(params: ManagedActivityRpcOwn
         probe: boolean): Promise<ManagedActivityBridgeResultV1> => {
         // The ingress verifier already admits this exact target at Home.
         if (context.signal.aborted || params.admissionDrain.isFinalShutdown()) return refused();
-        // A read owns a reversible probe only. Never borrow or release a
-        // concurrent final native-effect confirmation's retained drain.
-        const ownsDrain = !probe || drainedTarget === null;
-        if (ownsDrain) {
-            drainedTarget = target;
-            params.admissionDrain.beginUnusedStopDrain();
-        }
-        const releaseOwned = () => { if (ownsDrain && drainedTarget === target) release(target); };
+        // Each read holds a reversible drain. Only a successful native-effect
+        // confirmation can retain the Stop gate, and probes cannot release it.
+        const releaseRead = params.admissionDrain.beginTemporaryDrain();
+        if (!probe) drainedTarget = target;
+        const releaseOwned = () => {
+            releaseRead();
+            if (!probe && drainedTarget === target) release(target);
+        };
         const onAbort = () => releaseOwned();
         context.signal.addEventListener('abort', onAbort, { once: true });
         try {
             if (context.signal.aborted) { releaseOwned(); return refused(); }
             const decision = await params.activity.readDecision();
-            if (context.signal.aborted) {
+            if (context.signal.aborted || params.admissionDrain.isFinalShutdown() || (!probe && drainedTarget !== target)) {
                 releaseOwned(); return refused();
             }
-            if (decision.kind !== 'idle') releaseOwned();
-            else if (params.commitIdleEvidence) {
-                const evidence = params.commitIdleEvidence(target, decision, context);
-                if (!evidence || context.signal.aborted) {
-                    releaseOwned(); return refused();
-                }
-                return { ...decision, evidence };
+            if (decision.kind !== 'idle') {
+                releaseOwned(); return decision;
             }
-            return decision;
+            const evidence = params.commitIdleEvidence?.(target, decision, context);
+            if ((params.commitIdleEvidence && !evidence) || context.signal.aborted) {
+                releaseOwned(); return refused();
+            }
+            if (!probe) params.admissionDrain.beginUnusedStopDrain();
+            return evidence ? { ...decision, evidence } : decision;
         } catch (error) { releaseOwned(); throw error; }
         finally {
             context.signal.removeEventListener('abort', onAbort);
-            if (probe) releaseOwned();
+            releaseRead();
         }
     };
     params.rpcHandlerManager.registerHandler(MANAGED_ACTIVITY_READ_RPC_METHOD, async (raw: unknown, context) => {

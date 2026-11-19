@@ -22,7 +22,7 @@ import { configuration } from '@/configuration';
 import { ScmDiffSummaryResultPublisherHintSchema, type ScmDiffSummaryResultPublisherHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
-import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, waitForDaemonAdmission, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
+import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, waitForDaemonAdmission, waitForSessionSpawnAdmission, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { logger } from '@/ui/logger';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1060,10 +1060,19 @@ export function createDaemonControlApp({
     ok: false as const,
     ...daemonAdmissionRefusal(),
   });
-  const spawnDaemonAdmissionRefusedResponse = () => ({
-    success: false as const,
-    ...daemonAdmissionRefusal(),
-  });
+  const awaitSpawnAdmission = async (request: FastifyRequest, reply: FastifyReply) => {
+    const lifetime = createDaemonControlRequestLifetime(request, reply);
+    try {
+      const errorCode = await waitForSessionSpawnAdmission(admissionDrain, lifetime.signal);
+      lifetime.signal.throwIfAborted();
+      if (!errorCode) return;
+      reply.code(503);
+      return { success: false as const, errorCode,
+        error: errorCode === 'daemon_shutting_down' ? 'Daemon is shutting down' : 'Daemon is draining' };
+    } finally {
+      lifetime.dispose();
+    }
+  };
 
   const pruneSpawnNonceCorrelation = (nowMs: number = Date.now()): void => {
     for (const [spawnNonce, record] of spawnNonceCorrelationByNonce.entries()) {
@@ -4071,8 +4080,8 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
       }, async (request, reply) => {
         if (isDaemonQuiescing()) {
-          reply.code(503);
-          return spawnDaemonAdmissionRefusedResponse();
+          const refusal = await awaitSpawnAdmission(request, reply);
+          if (refusal) return refusal;
         }
         const parsedRequest = SpawnDaemonSessionRequestSchema.safeParse(request.body);
         if (!parsedRequest.success) {
@@ -4330,8 +4339,8 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request, reply) => {
     if (isDaemonQuiescing()) {
-      reply.code(503);
-      return spawnDaemonAdmissionRefusedResponse();
+      const refusal = await awaitSpawnAdmission(request, reply);
+      if (refusal) return refusal;
     }
     const parsedRequest = parseSessionContinueWithReplayRpcParamsCompatIngress(request.body);
     if (!parsedRequest.success) {
