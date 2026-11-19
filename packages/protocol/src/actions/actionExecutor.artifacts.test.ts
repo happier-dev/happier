@@ -86,6 +86,33 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
+  it('opens an addressed Review for its owner and shared recipient while preserving transport refusal', async () => {
+    const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'control' };
+    const context: ActionExecutorContext = { surface: 'ui' };
+    const control = createActionExecutor({ artifactAction: openedArtifactBoundary(initial).action });
+    expect(await control.execute('artifact.get', { artifactId: initial.artifactId }, context))
+      .toMatchObject({ ok: true, result: { artifact: { body: 'control' } } });
+
+    const review = { ...initial, header: ArtifactHeaderMetadataV1Schema.parse({
+      kind: 'review.v1', v: 1, reviewId: initial.artifactId, title: 'Private Review title',
+    }), body: JSON.stringify({ v: 1, rounds: [] }) };
+    for (const access of ['owner', 'view'] as const) {
+      const executor = createActionExecutor({ artifactAction: openedArtifactBoundary({ ...review, access }).action });
+      expect(await executor.execute('artifact.get', { artifactId: review.artifactId }, context))
+        .toMatchObject({ ok: true, result: { artifact: { access, header: { title: 'Private Review title' } } } });
+    }
+    const withdrawn = createActionExecutor({ artifactAction: async () => ({
+      ok: false, errorCode: 'artifact_permission_denied', error: 'artifact_permission_denied',
+    }) });
+    expect(await withdrawn.execute('artifact.get', { artifactId: review.artifactId }, context))
+      .toEqual({ ok: false, errorCode: 'artifact_permission_denied', error: 'artifact_permission_denied' });
+    const hidden = createActionExecutor({ artifactAction: openedArtifactBoundary({ ...initial,
+      header: ArtifactHeaderMetadataV1Schema.parse({ kind: 'home-hub-layout.v1', title: 'Private layout' }),
+    }).action });
+    expect(await hidden.execute('artifact.get', { artifactId: initial.artifactId }, context))
+      .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+  });
+
   it('publishes and reads schema-valid shared setup through the ordinary Artifact Action after a document control', async () => {
     const initial = { ...usageNoticeArtifact(), header: ArtifactHeaderMetadataV1Schema.parse({ title: 'Notes' }), body: 'control' };
     const boundary = openedArtifactBoundary(initial);

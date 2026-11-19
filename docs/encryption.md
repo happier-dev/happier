@@ -693,6 +693,10 @@ unavailable for Reviews in Plain and E2EE modes. The server applies the canonica
 kind policy to the stored kind even when it cannot open E2EE content. Review
 metadata contains identifiers, enum values and lifecycle timestamps; titles,
 comparisons, summaries and round/run evidence remain in the Artifact content.
+The kind policy permits addressed `artifact.get` reads for authorized recipients
+while keeping Reviews out of the generic document browser. Triage opens the
+recipient's title through that same Artifact reader; `review.get` returns only
+the server-readable Review and human-request facts.
 
 Team-visible schedule summaries use the selected Run audience, not personal
 definition-sharing access. The Account recipe-seal owner also writes optional

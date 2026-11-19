@@ -4928,7 +4928,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             try { acceptedSetupRead = ProjectSetupContentV1Schema.safeParse(JSON.parse(opened.artifact.body) as unknown).success; }
             catch { acceptedSetupRead = false; }
           }
-          if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).browserListed
+          if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).addressedReadAllowed
             && !isSharedSetupArtifact(opened.artifact) && !readOwnedNotice(opened.artifact) && !acceptedSetupRead) return internalKindRefusal;
           return { ok: true, result: opened };
         }

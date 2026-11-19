@@ -85,6 +85,8 @@ export type ArtifactUseTargetV1 = Readonly<{
 /** Kind admission is shared by browser, grant and publication consumers. */
 export type ArtifactKindPolicyV1 = Readonly<{
   browserListed: boolean;
+  /** Addressed ordinary reads; authentication, grants and content opening stay at the store. */
+  addressedReadAllowed: boolean;
   ownerDeleteAllowed: boolean;
   publicLinkAllowed: boolean;
   peopleSharingAllowed: boolean;
@@ -192,8 +194,8 @@ export const widgetDefinitionArtifactSharingAdapterV1 = {
   },
 } as const satisfies ArtifactSharingKindAdapterV1;
 
-const documentPolicy = { browserListed: true, ownerDeleteAllowed: true, publicLinkAllowed: true, peopleSharingAllowed: true, grantInspection: 'all' } as const;
-const privatePolicy = { browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false, peopleSharingAllowed: false, grantInspection: 'all' } as const;
+const documentPolicy = { browserListed: true, addressedReadAllowed: true, ownerDeleteAllowed: true, publicLinkAllowed: true, peopleSharingAllowed: true, grantInspection: 'all' } as const;
+const privatePolicy = { browserListed: false, addressedReadAllowed: false, ownerDeleteAllowed: false, publicLinkAllowed: false, peopleSharingAllowed: false, grantInspection: 'all' } as const;
 export const reviewArtifactSharingAdapterV1 = {
   kind: REVIEW_ARTIFACT_KIND_V1,
   canShare: (resource: ArtifactSharingResourceV1) => {
@@ -221,15 +223,15 @@ const kindPolicies: readonly Readonly<Omit<ArtifactKindPolicyV1, keyof ArtifactC
   ].map(policy => ({ ...documentPolicy, ...policy, kind: policy.adapter.kind, requiresTextBody: true })),
   ...Object.values(APPROVAL_ARTIFACT_KINDS_V1).map(kind => ({ ...privatePolicy, kind, useKind: 'approval' as const, requiresTextBody: true })),
   { ...documentPolicy, kind: botTemplateArtifactSharingAdapterV1.kind, adapter: botTemplateArtifactSharingAdapterV1,
-    useKind: 'open', requiresTextBody: true, browserListed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
+    useKind: 'open', requiresTextBody: true, browserListed: false, addressedReadAllowed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
   { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,
-    browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false },
+    browserListed: false, addressedReadAllowed: false, ownerDeleteAllowed: false, publicLinkAllowed: false },
   { ...privatePolicy, kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1,
     get adapter() { return approvalProfileArtifactSharingAdapterV1; },
     peopleSharingAllowed: true, useKind: 'approval_profile', requiresTextBody: true },
   { ...privatePolicy, kind: THEME_PROFILE_ARTIFACT_KIND_V1, ownerDeleteAllowed: true, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: REVIEW_ARTIFACT_KIND_V1, adapter: reviewArtifactSharingAdapterV1,
-    ownerDeleteAllowed: true, peopleSharingAllowed: true, useKind: 'review', requiresTextBody: true },
+    addressedReadAllowed: true, ownerDeleteAllowed: true, peopleSharingAllowed: true, useKind: 'review', requiresTextBody: true },
   { ...privatePolicy, kind: HOME_HUB_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false },
   { ...privatePolicy, kind: WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
