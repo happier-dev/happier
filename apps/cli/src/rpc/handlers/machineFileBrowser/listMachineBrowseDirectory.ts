@@ -1,5 +1,5 @@
 import type { DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol'
-import { DaemonFilesystemListDirectoryRequestSchema } from '@happier-dev/protocol/machines/fileBrowser';
+import { DaemonFilesystemListDirectoryRequestSchema, type DaemonFilesystemListDirectoryRequest } from '@happier-dev/protocol/machines/fileBrowser';
 
 import type { ScmBackendRegistry } from '@/scm/registry'
 
@@ -16,7 +16,7 @@ export async function listMachineBrowseDirectory(input: Readonly<{
   scmRegistry?: ScmBackendRegistry
 }>): Promise<DaemonFilesystemListDirectoryResponse> {
   const parsed = DaemonFilesystemListDirectoryRequestSchema.safeParse(input.raw)
-  if (!parsed.success) {
+  if (!parsed.success || typeof parsed.data.path !== 'string') {
     return { ok: false, error: 'Invalid machine file browser directory request', errorCode: 'invalid_request' }
   }
 
@@ -29,19 +29,27 @@ export async function listMachineBrowseDirectory(input: Readonly<{
     return { ok: false, error: validation.error, errorCode: 'invalid_path' }
   }
 
+  return listMachineDirectoryAt(validation.resolvedPath, parsed.data, input)
+}
+
+export async function listMachineDirectoryAt(
+  directoryPath: string,
+  request: DaemonFilesystemListDirectoryRequest,
+  limits: Readonly<{ maxEntries: number; statConcurrency: number; scmRegistry?: ScmBackendRegistry }>,
+): Promise<DaemonFilesystemListDirectoryResponse> {
   try {
     const result = await listDirectoryEntries({
-      directoryPath: validation.resolvedPath,
-      includeFiles: parsed.data.includeFiles !== false,
-      maxEntries: parsed.data.maxEntries ?? input.maxEntries,
-      statConcurrency: input.statConcurrency,
-      includeGitIgnore: parsed.data.includeGitIgnore === true,
-      scmRegistry: input.scmRegistry,
+      directoryPath,
+      includeFiles: request.includeFiles !== false,
+      maxEntries: request.maxEntries ?? limits.maxEntries,
+      statConcurrency: limits.statConcurrency,
+      includeGitIgnore: request.includeGitIgnore === true,
+      scmRegistry: limits.scmRegistry,
     })
 
     return {
       ok: true,
-      path: validation.resolvedPath,
+      path: directoryPath,
       entries: result.entries.map((entry) => ({
         name: entry.name,
         path: entry.absolutePath,

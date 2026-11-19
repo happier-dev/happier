@@ -1,4 +1,5 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types'
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily'
 
 import { resolveMachineFileBrowserConfig } from './machineFileBrowserConfig'
 import { listMachineBrowseDirectory } from './listMachineBrowseDirectory'
@@ -8,7 +9,9 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers'
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter'
 import { MACHINE_FILE_BROWSER_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration'
-import { assertFilesystemEffectCurrent, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission'
+import { addressesManagedBrowseDirectory, assertFilesystemEffectCurrent, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission'
+import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject'
+import { browseManagedWorkspaceDirectory } from './browseManagedWorkspaceDirectory'
 
 type RegisterMachineFileBrowserHandlersParams = Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar
@@ -20,6 +23,7 @@ type RegisterMachineFileBrowserHandlersParams = Readonly<{
     maxEntries?: number
     statConcurrency?: number
     platform?: NodeJS.Platform
+    openManagedProjectWorkspace?: ProjectOpenRuntime['openManagedProjectWorkspace']
   }>
   actionExecutor?: RpcActionExecutor
   effectAdmission?: FilesystemEffectAdmission
@@ -46,7 +50,12 @@ export function registerMachineFileBrowserHandlers(params: RegisterMachineFileBr
           result,
         }
       }
-      if (actionId === 'daemon.filesystem.browseDirectory') {
+      if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory) {
+        if (addressesManagedBrowseDirectory(input)) {
+          const result = await browseManagedWorkspaceDirectory({ raw: input, context,
+            openTarget: params.deps?.openManagedProjectWorkspace, limits: { maxEntries, statConcurrency } })
+          return { ok: true, result }
+        }
         const roots = await resolveRoots({ platform, workingDirectory, accessPolicy })
         await assertFilesystemEffectCurrent(context)
         const result = await listMachineBrowseDirectory({ raw: input, roots, platform, maxEntries, statConcurrency })

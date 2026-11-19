@@ -145,7 +145,21 @@ export type FilesystemActionInputById = {
     };
     readonly "daemon.filesystem.browseDirectory": {
         [x: string]: unknown;
-        path: string;
+        path: string | {
+            workspace: {
+                kind: 'managed';
+                serverId: string;
+                v: 2;
+                rootPath: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                managedId: string;
+                machineId?: undefined;
+            };
+            directory: string;
+        };
         includeFiles?: boolean | undefined;
         includeGitIgnore?: boolean | undefined;
         maxEntries?: null | number | undefined;

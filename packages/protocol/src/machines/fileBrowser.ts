@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { FilesystemEffectFailureDetailsV1Schema } from './filesystemFailure.js';
+import { ManagedWorkspaceLocatorV2Schema } from '../workspaces/workspaceRefV1.js';
 
 export const MachineFileBrowserRootSchema = lazyZodSchema(() => z.looseObject({
   id: z.string().check(z.minLength(1)),
@@ -34,7 +35,11 @@ export const DaemonFilesystemListRootsResponseSchema = lazyZodSchema(() => z.dis
 export type DaemonFilesystemListRootsResponse = z.infer<typeof DaemonFilesystemListRootsResponseSchema>;
 
 export const DaemonFilesystemListDirectoryRequestSchema = lazyZodSchema(() => z.looseObject({
-  path: z.string().check(z.minLength(1)),
+  // Old daemons require a string here, so a guest request cannot be read as a controller path.
+  path: z.union([
+    z.string().check(z.minLength(1)),
+    z.strictObject({ workspace: ManagedWorkspaceLocatorV2Schema, directory: z.string().check(z.minLength(1)) }),
+  ]),
   includeFiles: z.optional(z.boolean()),
   includeGitIgnore: z.optional(z.boolean()),
   maxEntries: z.optional(z.nullable(z.number().check(z.int(), z.positive()))),

@@ -55,6 +55,11 @@ export function readFilesystemEffectRequesterAccountId(context: FilesystemEffect
     ?? context?.callerInputAuthorization?.binding.accountId;
 }
 
+/** Object paths belong to the finite managed browser, including malformed requests that it must refuse. */
+export function addressesManagedBrowseDirectory(input: unknown): boolean {
+  return typeof input === 'object' && input !== null && 'path' in input && typeof input.path === 'object';
+}
+
 /** Placement of an admitted request: its Session (through the one origin reader) and addressed root. */
 function readFilesystemEffectPlacement(context: FilesystemEffectSessionContext | undefined, input: unknown): WorkspaceSourcePlacement {
   const placement = readWorkspaceSourcePlacement({ sessionActionOrigin: readSessionActionOrigin(context), authorization: context?.authorization }, input);
@@ -243,6 +248,10 @@ export function createFilesystemEffectRpcRegistrar(
 ): RpcHandlerRegistrar {
   return { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>): void {
     registrar.registerHandler<TRequest, unknown>(method, async (input, context) => {
+      if (method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY && addressesManagedBrowseDirectory(input)) {
+        // The finite managed browser admits its own source before reading the directory.
+        return handler(input, context);
+      }
       // The source is chosen once here; every consumer the handler reaches reads it.
       const source = await admission.selectWorkspaceSource(context, input);
       const ownerEffect = () => runWithWorkspaceSourceDemand(source, () => handler(input, context));

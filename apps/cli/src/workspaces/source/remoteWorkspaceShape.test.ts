@@ -15,7 +15,6 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { createDirectoryRpcActionExecutor } from '@/rpc/handlers/fileSystem/directoryHandlers';
 import { registerPathMutationHandlers } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
 import { createReadFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/readFileHandler';
-
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 
@@ -43,8 +42,8 @@ describe('remote workspace shape contracts', () => {
 
   const holderPath = resolveSessionHolderExecutablePath();
   const helperPath = resolveProcessCustodySupportExecutable('linux');
-  it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
-    'F1: each folder chooser page opens one channel and one holder that exits on EOF', async () => {
+  it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath).each(['accepted', 'pre-save'] as const)(
+    'F1: each %s folder chooser page opens one channel and one holder that exits on EOF', async selection => {
       const fixture = await mkdtemp(join(tmpdir(), 'guest-folder-chooser-'));
       const controllerRoot = join(fixture, 'controller');
       const rootPath = join(fixture, 'guest');
@@ -75,19 +74,32 @@ describe('remote workspace shape contracts', () => {
             return channel;
           },
         } };
-        expect(registerManagedWorkspaceTarget(registration)).toBe(true);
+        if (selection === 'accepted') expect(registerManagedWorkspaceTarget(registration)).toBe(true);
         const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => workspace.serverId,
           resolveWorkspaceTarget: resolveSessionTargetWorkspace });
         const handlers = new Map<string, RpcHandler>();
         registerMachineFileBrowserHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
           workingDirectory: controllerRoot, effectAdmission: admission,
-          deps: { resolveRoots: async () => [{ id: rootPath, path: rootPath, label: 'Controller' }] } });
+          deps: { resolveRoots: async () => [{ id: rootPath, path: rootPath, label: 'Controller' }],
+            openManagedProjectWorkspace: async request => {
+              expect(request.requesterAccountId).toBe('owner');
+              expect(request.workspace).toMatchObject({ serverId: workspace.serverId, controller: workspace.controller,
+                managedId: workspace.managedId, rootPath });
+              return { ...registration.target, lifetime: request.lifetime };
+            },
+          } });
         const list = handlers.get(RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY)!;
         const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
           machineAdmission: { ...workspace.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
             role: 'manage' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true };
+        const browseInput = (directory: string, installationId = workspace.controller.installationId) => {
+          const { workspaceId, ...locator } = workspace;
+          const controller = { ...workspace.controller, installationId };
+          return selection === 'pre-save' ? { path: { workspace: { ...locator, controller }, directory }, includeFiles: false }
+            : { path: directory, workspace: { ...locator, controller, workspaceId }, includeFiles: false };
+        };
         for (const [page, [directory, next]] of [['', 'repo'], ['repo', 'nested'], ['repo/nested', 'leaf']].entries()) {
-          await expect(list({ path: join(rootPath, directory), workspace, includeFiles: false }, context)).resolves.toMatchObject({
+          await expect(list(browseInput(join(rootPath, directory)), context)).resolves.toMatchObject({
             ok: true, entries: [{ name: next, type: 'directory' }],
           });
           expect(channels).toHaveLength(page + 1);
@@ -96,8 +108,11 @@ describe('remote workspace shape contracts', () => {
           await expect(exits[page]).resolves.toEqual({ code: 0, signal: null });
           expect(liveHolders.size).toBe(0);
         }
-        await expect(list({ path: rootPath, workspace: { ...workspace, controller: { ...workspace.controller,
-          installationId: 'replacement' } } }, context)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+        if (selection === 'accepted') {
+          await expect(list(browseInput(rootPath, 'replacement'), context)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+        } else {
+          await expect(list(browseInput(rootPath, 'replacement'), context)).resolves.toMatchObject({ ok: false });
+        }
         expect(channels).toHaveLength(3);
       } finally {
         lifetime.abort();
@@ -126,7 +141,8 @@ describe('remote workspace shape contracts', () => {
         const input = { workspace: managedWorkspace, rootPath: managedWorkspace.rootPath, path,
           ...(actionId === 'daemon.filesystem.getDirectoryTree' ? { maxDepth: 2 } : {}) };
         const source = await createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace })
-          .selectWorkspaceSource(undefined, input);
+          .selectWorkspaceSource({ machineAdmission: { ...managedWorkspace.controller, actorAccountId: 'owner',
+            custodianAccountId: 'owner', role: 'manage', encryptionMode: 'plain' } }, input);
         const filesystem = {
           workingDirectory: '/controller', accessPolicy: { kind: 'osUser' as const },
           getAdditionalAllowedReadDirs: () => [], getAdditionalAllowedWriteDirs: () => [],

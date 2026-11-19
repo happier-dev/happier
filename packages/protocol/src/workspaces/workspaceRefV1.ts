@@ -100,7 +100,8 @@ export const WorkspaceAddressV2Schema = lazyZodSchema(() => z.union([
 ]));
 export type WorkspaceAddressV2 = z.infer<typeof WorkspaceAddressV2Schema>;
 /** Exact native namespace lookup when no logical workspace row id is available. */
-export type ManagedWorkspaceLocatorV2 = Omit<z.infer<typeof ManagedWorkspaceAddressV2Schema>, 'workspaceId'>;
+export const ManagedWorkspaceLocatorV2Schema = lazyZodSchema(() => z.omit(ManagedWorkspaceAddressV2Schema, { workspaceId: true }));
+export type ManagedWorkspaceLocatorV2 = z.infer<typeof ManagedWorkspaceLocatorV2Schema>;
 /** Feature protocols embed the canonical accepted-checkout address. */
 export const WorkspaceAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceAddressV1Schema));
 

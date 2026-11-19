@@ -256,6 +256,7 @@ import { deliverScmFileAtRevision, prepareScmFileBytesExport } from '@/scm/actio
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
+import { browseManagedWorkspaceDirectory } from '@/rpc/handlers/machineFileBrowser/browseManagedWorkspaceDirectory';
 import { registerWorkspaceAnchorHandlers } from '@/rpc/handlers/workspaceAnchors/registerWorkspaceAnchorHandlers';
 import { registerWorkspaceFaviconHandlers } from '@/rpc/handlers/workspaceFavicon/registerWorkspaceFaviconHandlers';
 import { backoff } from '@/utils/time';
@@ -387,7 +388,7 @@ import {
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
-import { isAgentInventoryRead, assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, readFilesystemEffectRequesterAccountId } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { addressesManagedBrowseDirectory, isAgentInventoryRead, assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, readFilesystemEffectRequesterAccountId } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createActiveDaemonComposerMediaStageStore } from '@/transfers/staging/composerMediaStageStore';
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { Socket } from 'socket.io-client';
@@ -2158,6 +2159,7 @@ export class ApiMachineClient {
             effectAdmission: this.filesystemEffectAdmission,
             workingDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
+            deps: { openManagedProjectWorkspace: this.lifecycleDependencies.openManagedProjectWorkspace },
         });
         registerWorkspaceAnchorHandlers(createFilesystemEffectRpcRegistrar(this.rpcHandlerManager, this.filesystemEffectAdmission), {
             defaultDirectory: this.machineRpcWorkingDirectory,
@@ -2986,7 +2988,8 @@ export class ApiMachineClient {
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs }) : null;
         // The workspace source is chosen once per admitted Action; every effect below reads it.
-        return async (request) => runWithWorkspaceSourceDemand(await this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
+        const executeOnSelectedSource: NonNullable<ActionExecutorDeps['filesystemActionExecute']> = async (request) =>
+            runWithWorkspaceSourceDemand(await this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
             const requester = await this.filesystemEffectAdmission.resolveActionRequester?.(request.context);
             const source = currentWorkspaceSource();
             // A member of a target Session is served by the target's source (owner ruling 2026-11-12);
@@ -3108,6 +3111,14 @@ export class ApiMachineClient {
                 await deploymentArchive?.readFile?.handle.close().catch(() => undefined);
             }
         });
+        return async (request) => {
+            if (request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory && addressesManagedBrowseDirectory(request.input)) {
+                const result = await browseManagedWorkspaceDirectory({ raw: request.input, context: request.context,
+                    openTarget: this.lifecycleDependencies.openManagedProjectWorkspace });
+                return { ok: true, result };
+            }
+            return executeOnSelectedSource(request);
+        };
     }
 
     /** Machine role entries register their RPC families here (daemon/roles/machineRoleRuntime.ts). */
