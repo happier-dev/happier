@@ -33,34 +33,40 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   accountActionCredentials?: StoredCredentials;
   requesterCredentials?: StoredCredentials;
   serverId?: string;
+  serverUrl?: string;
   homeServerIdentityId?: string;
   boundSessionId?: string;
   prepareProject?: boolean;
   preserveLaunchEnvironment?: boolean;
+  nativeEnvironment?: Readonly<Record<string, string>>;
   machineAccess?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['machineAccess'];
   agentIsolationEnabled?: boolean;
   agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   mcpCatalog?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['mcpCatalog'];
   additionalAccountCredentials?: readonly StoredCredentials[];
+  readAdditionalHttpResponse?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['readAdditionalHttpResponse'];
   accountSettings?: Readonly<Record<string, unknown>>;
   machineRpcMethods?: readonly string[];
   resolveCurrentMachineExecutionOriginContext?: Parameters<typeof createInstalledProjectFiniteRuntime>[0]['resolveCurrentMachineExecutionOriginContext'];
 }> = {}) {
   const serverId = options.serverId ?? 'session-home';
+  const serverUrl = options.serverUrl ?? 'https://session-home.test';
   const homeServerIdentityId = options.homeServerIdentityId ?? 'srv_session_home';
   const f = await createProjectSessionRuntimeFixture(options.accountActionCredentials
     ? { serverId, homeServerIdentityId, boundSessionId: options.boundSessionId,
-      serverUrl: 'https://session-home.test', machineAccess: options.machineAccess,
+      serverUrl, machineAccess: options.machineAccess,
       agentIsolationEnabled: options.agentIsolationEnabled, mcpCatalog: options.mcpCatalog,
+      readAdditionalHttpResponse: options.readAdditionalHttpResponse,
       additionalAccountCredentials: options.additionalAccountCredentials,
       // Account decision ingress may proceed directly over RPC. Original
       // CLI Run ingress remains unwaived and must retain setup review.
       accountSettings: { ...options.accountSettings, actionsSettingsV1: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(options.accountSettings?.actionsSettingsV1),
         actionId: 'projects.prepare', surface: 'rpc', approvalRequired: false }) } }
     : { serverId, homeServerIdentityId, boundSessionId: options.boundSessionId,
-      serverUrl: 'https://session-home.test', credentials: options.requesterCredentials, machineAccess: options.machineAccess,
+      serverUrl, credentials: options.requesterCredentials, machineAccess: options.machineAccess,
       agentIsolationEnabled: options.agentIsolationEnabled, mcpCatalog: options.mcpCatalog,
       accountSettings: options.accountSettings,
+      readAdditionalHttpResponse: options.readAdditionalHttpResponse,
       additionalAccountCredentials: options.additionalAccountCredentials });
   let accountActionCredentials: StoredCredentials | undefined;
   let accountActionSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>> | undefined;
@@ -164,7 +170,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
       const environment = options.preserveLaunchEnvironment
         ? { ...request.env, NATIVE: 'active' }
         : { PATH: '/native/bin', NATIVE: 'active' };
-      return { exitCode: 0, stdout: Object.entries(environment).map(([key, value]) => `${key}=${value}\0`).join('') };
+      return { exitCode: 0, stdout: Object.entries({ ...environment, ...options.nativeEnvironment }).map(([key, value]) => `${key}=${value}\0`).join('') };
     },
     createInvocation: () => environmentIo,
   };
@@ -173,7 +179,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   const finite = createInstalledProjectFiniteRuntime({ api: await ApiClient.create(accountActionCredentials ?? f.bootstrap.credentials),
     credentials: accountActionCredentials ?? { token: 'custodian-token', encryption: null },
     externalActionAccountId: options.accountActionCredentials ? 'requester' : 'custodian',
-    finiteServerId: serverId, finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
+    finiteServerId: serverId, finiteServerHttpBaseUrl: serverUrl, registeredMachineId: 'machine',
     admission,
     nativeIo: { commandIo: { resolveTool }, environmentIo },
     successHomeDir: join(f.directory, 'success'), isCurrent: async () => true,
@@ -197,11 +203,11 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   if (options.prepareProject !== false) {
     const runtime = await machine.resolveProjectFiniteRuntime({ signal, requesterSessionBootstrap: f.bootstrap });
     if (!runtime) throw new Error('Missing installed requester Project runtime');
-    const reviewed = await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId, serverHttpBaseUrl: 'https://session-home.test',
+    const reviewed = await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId, serverHttpBaseUrl: serverUrl,
       account: projectRuntimeAccountRowsInput(runtime), nativeIo: runtime.nativeIo, successHomeDir: runtime.successHomeDir,
       platform: { os: 'linux', arch: 'x64' }, signal });
     if (reviewed.kind !== 'prepared') throw new Error(`Project review failed: ${JSON.stringify(reviewed)}`);
-    await createProjectSetupTrustClient({ credentials: f.bootstrap.credentials, serverHttpBaseUrl: 'https://session-home.test' })
+    await createProjectSetupTrustClient({ credentials: f.bootstrap.credentials, serverHttpBaseUrl: serverUrl })
       .approveReviewedEffect({ project: reviewed.outcome.plan.project, expectedRevision: 'absent', authority: 'present_user',
         reviewedEffectDigest: reviewed.outcome.plan.reviewedEffectDigest, currentEffectDigest: reviewed.outcome.plan.reviewedEffectDigest, approvedAtMs: 1 });
   }

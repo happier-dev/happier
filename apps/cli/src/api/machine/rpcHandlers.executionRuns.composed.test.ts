@@ -1,9 +1,11 @@
 import axios from 'axios';
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
-import { chmod, copyFile, mkdir, readFile } from 'node:fs/promises';
+import { createServer, request as httpRequest } from 'node:http';
+import { createRequire } from 'node:module';
+import { Readable } from 'node:stream';
+import { appendFile, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
-import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -37,7 +39,99 @@ import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { observeAgentIsolationNativeReadiness, type AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
 const ptyBoundary = vi.hoisted(() => ({ spawns: [] as Array<{ launch: PtySpawnParams; finish(): void }> }));
+const nativeBoundary = vi.hoisted(() => ({ home: '', adapter: '' }));
+// Only the OS identity switch and ACL commands are substituted. The real
+// readiness owner, frame reader, materialization and native child remain live.
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>();
+  return { ...actual,
+    spawn: ((command: string, args?: readonly string[], options?: import('node:child_process').SpawnOptions) => command === 'sudo' && nativeBoundary.adapter
+      ? actual.spawn(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), nativeBoundary.adapter], options)
+      : actual.spawn(command, [...args ?? []], options)) as typeof actual.spawn,
+    execFile: (...args: unknown[]) => {
+      if (args[0] === 'setfacl') {
+        const callback = args.at(-1);
+        if (typeof callback === 'function') callback(null, '', '');
+        return undefined;
+      }
+      if (args[0] === 'getent' && nativeBoundary.home) return Reflect.apply(actual.execFile, undefined,
+        [process.execPath, ['-e', 'process.stdout.write(process.argv[1])', nativePasswd()], ...args.slice(2)]);
+      return Reflect.apply(actual.execFile, undefined, args);
+    },
+  };
+});
+vi.mock('cross-spawn', async original => {
+  const actual = await original<{ default: typeof import('cross-spawn') }>();
+  const native = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  return { ...actual, default: (command: string, args?: readonly string[], options?: import('node:child_process').SpawnOptions) =>
+    command === 'sudo' && nativeBoundary.adapter
+      ? native.spawn(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), nativeBoundary.adapter], options)
+      : actual.default(command, [...args ?? []], options) };
+});
+vi.mock('@happier-dev/cli-common/process', async original => {
+  const actual = await original<typeof import('@happier-dev/cli-common/process')>();
+  return { ...actual, execFileWithDeadline: async (...args: Parameters<typeof actual.execFileWithDeadline>) => {
+    if (args[0] === 'getent' && nativeBoundary.home) return { stdout: args[1]?.includes('group')
+      ? `${args[1].at(-1)}:x:${(process.getgid?.() ?? 1) + 1}:\n` : nativePasswd(), stderr: '' };
+    if (args[0] === 'sudo' && nativeBoundary.adapter) return actual.execFileWithDeadline(process.execPath,
+      ['--import', createRequire(import.meta.url).resolve('tsx'), nativeBoundary.adapter], args[2]);
+    return actual.execFileWithDeadline(...args);
+  } };
+});
+
+function nativePasswd() {
+  return `happier-agent:x:${(process.getuid?.() ?? 1) + 1}:${(process.getgid?.() ?? 1) + 1}::${nativeBoundary.home}:/usr/sbin/nologin\n`;
+}
+
+async function prepareNativeIsolationBoundary(directory: string, cwd: string) {
+  nativeBoundary.home = join(directory, 'native-home');
+  await mkdir(nativeBoundary.home, { mode: 0o700 });
+  nativeBoundary.adapter = join(directory, 'native-identity-boundary.mjs');
+  await writeFile(nativeBoundary.adapter, `
+    import { readAgentLaunchFrame } from ${JSON.stringify(new URL('../../daemon/agentIsolation/agentLaunchFrame.ts', import.meta.url).href)};
+    import { executeAgentLaunchPayload } from ${JSON.stringify(new URL('../../daemon/agentIsolation/agentLaunchShim.ts', import.meta.url).href)};
+    const frame = await readAgentLaunchFrame(process.stdin, undefined, true);
+    const result = await executeAgentLaunchPayload(frame, { agentHome: ${JSON.stringify(nativeBoundary.home)},
+      input: process.stdin, stdout: process.stdout, stderr: process.stderr });
+    process.exitCode = result.code ?? 1;
+  `);
+  const system: AgentIsolationReadinessSystem = { run: async (command, args, options) => {
+    if (command === 'getent') return { stdout: args.includes('group')
+      ? `${args.at(-1)}:x:${(process.getgid?.() ?? 1) + 1}:\n` : nativePasswd(), stderr: '' };
+    if (command !== 'sudo' || !options?.inputBytes) throw new Error('Unexpected native readiness OS operation');
+    const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }));
+    if ('action' in frame) throw new Error('Expected native readiness launch');
+    const header = Buffer.from(frame.selectedMaterials.find(file => file.relativePath === 'files/headers')!.contentBase64,
+      'base64').toString('utf8').trim().slice('Authorization: '.length);
+    for (const authorization of [header, undefined]) await new Promise<void>((resolve, reject) => {
+      const request = httpRequest({ socketPath: frame.args[7], path: '/readiness',
+        ...(authorization ? { headers: { authorization } } : {}) }, response => {
+        response.resume(); response.once('end', resolve);
+      });
+      request.once('error', reject); request.end();
+    });
+    for (const root of frame.args.slice(10)) {
+      await appendFile(join(root, 'daemon'), 'agent');
+      await writeFile(join(root, 'agent'), 'agent');
+    }
+    return { stdout: Buffer.from(frame.selectedMaterials.find(file => file.relativePath === 'files/challenge')!.contentBase64,
+      'base64'), stderr: Buffer.alloc(0) };
+  } };
+  const status = await observeAgentIsolationNativeReadiness({ installedCli: process.execPath, roots: [cwd], privateRoots: [], system });
+  expect(status).toMatchObject({ kind: 'effective' });
+  const policy = readMachineAgentIsolationPolicyV1({ agentIsolation: { enabled: true } });
+  if (policy.status !== 'ready') throw new Error('Fixture isolation policy unavailable');
+  expect(policy.policy.enabled).toBe(true);
+  return { ...policy.policy, status, workspaceRoots: [cwd, nativeBoundary.home] };
+}
+
 const requesterAccountToken = `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
   provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
 })).toString('base64url')}.signature`;
@@ -56,7 +150,8 @@ vi.mock('@/terminal/pty/provider', async importOriginal => ({
 }));
 
 describe('detached execution-run Machine composition', () => {
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); ptyBoundary.spawns.length = 0; });
+  // Network boundaries stay installed until every real Run/Account owner closes.
+  beforeEach(() => onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); ptyBoundary.spawns.length = 0; }));
 
   it('refuses detached reads without requester custody on the installed Machine transport', async () => {
     const rpc = new RpcHandlerManager({ scopePrefix: 'machine-detached', encryptionMode: 'plain' });
@@ -152,13 +247,27 @@ describe('detached execution-run Machine composition', () => {
     const memberCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member',
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
     })).toString('base64url')}.signature`, encryption: null };
+    // Each fixture owns a different Home transport, including detached cleanup.
+    const serverHttpBaseUrl = `https://${randomUUID()}.session-home.test`;
     let phase = 'Project fixture admission';
+    const homeReads: string[] = [];
     let readFailedRun: (() => Promise<unknown>) | undefined;
     onTestFailed(async () => {
-      console.error(`Machine composition failed during: ${phase}`, readFailedRun ? await readFailedRun() : undefined);
+      console.error(`Machine composition failed during: ${phase}`, { homeReads: homeReads.slice(-8), ...(readFailedRun ? { run: await readFailedRun() } : {}) });
     });
+    onTestFinished(() => { nativeBoundary.home = ''; nativeBoundary.adapter = ''; });
+    let isolationSnapshot: ReturnType<HostAgentIsolationLaunchContext['read']>;
+    const agentIsolation: HostAgentIsolationLaunchContext = { managedHappierBinaryPath: process.execPath, read: () => isolationSnapshot };
     const h = await createInstalledProjectAgentLaunchFixture({ accountActionCredentials: { token: requesterAccountToken, encryption: null },
-      ...(selectedMcp ? { homeServerIdentityId: 'srv_session_home', agentIsolationEnabled: false,
+      serverUrl: serverHttpBaseUrl, agentIsolation, agentIsolationEnabled: true,
+      nativeEnvironment: { HAPPIER_DAEMON_TOKEN: 'custodian-token-sentinel', HAPPIER_SESSION_CREDENTIAL_FILE: '/private/source-credential-sentinel' },
+      readAdditionalHttpResponse: async url => {
+        const path = new URL(url).pathname;
+        homeReads.push(path);
+        return path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1
+          ? { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) } : undefined;
+      },
+      ...(selectedMcp ? { homeServerIdentityId: 'srv_session_home',
         ...(selectedMcp === 'foreign-requester' ? { additionalAccountCredentials: [memberCredentials] } : {}),
         machineAccess: { custodianAccountId, role: 'manage' }, mcpCatalog: { v: 1, servers: [{ id: 'selected', name: 'selected', title: 'Selected fixture',
           transport: 'stdio', stdio: { command: process.execPath, args: ['-e', 'process.stdin.resume()'] },
@@ -166,6 +275,7 @@ describe('detached execution-run Machine composition', () => {
           target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] } } : {}),
     });
     const { f, cwd, finite } = h;
+    isolationSnapshot = await prepareNativeIsolationBoundary(f.directory, cwd);
     if (roleId) {
       // The Home rows are the storage boundary. Seed the current empty library
       // so Role admission does not require unrelated legacy history migration.
@@ -181,13 +291,15 @@ describe('detached execution-run Machine composition', () => {
     const toolName = process.platform === 'win32' ? 'fixture-project-agent.exe' : 'fixture-project-agent';
     await copyFile(process.execPath, join(bin, toolName));
     if (process.platform !== 'win32') await chmod(join(bin, toolName), 0o755);
-    const env = createEnvKeyScope(['PATH']);
-    env.patch({ PATH: `${bin}${delimiter}${process.env.PATH ?? ''}` });
+    const env = createEnvKeyScope(['PATH', 'HAPPIER_TEST_UNSELECTED_ACCESS_TOKEN']);
+    env.patch({ PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`, HAPPIER_TEST_UNSELECTED_ACCESS_TOKEN: 'ambient-secret-sentinel' });
     onTestFinished(() => env.restore());
     const receipt = join(f.directory, 'native-child.json');
     const child = `require('node:fs').writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({
       executable: process.execPath, cwd: process.cwd(), native: process.env.NATIVE, original: process.env.ORIGINAL,
-      owner: process.env[${JSON.stringify(PROCESS_OWNER_ENV_KEY)}], args: process.argv.slice(1) }));`;
+      owner: process.env[${JSON.stringify(PROCESS_OWNER_ENV_KEY)}], args: process.argv.slice(1),
+      custodianToken: process.env.HAPPIER_DAEMON_TOKEN, sourceCredential: process.env.HAPPIER_SESSION_CREDENTIAL_FILE,
+      ambientSecret: process.env.HAPPIER_TEST_UNSELECTED_ACCESS_TOKEN }));`;
     const pluginId = 'acme.detached-project';
     const backendTarget = roleId ? { kind: 'agent' as const, identity: { pluginId, localId: 'agent' } }
       : { kind: 'backend' as const, backendId: `${pluginId}/agent` };
@@ -275,7 +387,7 @@ describe('detached execution-run Machine composition', () => {
     // Observe the resolver built by the actual ApiMachine constructor, rather
     // than authoring an Agent-context callback in this receiving transport fixture.
     const installedSnapshot = Reflect.get(h.machine, 'executionRunAccountSnapshots') as AccountSettingsSnapshotResolver | undefined;
-    const readRunSnapshot = selectedMcp ? installedSnapshot : readSnapshot;
+    const readRunSnapshot = installedSnapshot;
     if (typeof readRunSnapshot !== 'function') throw new Error('Missing installed Machine Account snapshot owner');
     const actionOperations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'requester',
       custodyBinding: { serverId: 'session-home', installationId: f.installation.installationId } });
@@ -285,8 +397,11 @@ describe('detached execution-run Machine composition', () => {
       handlers: { spawnSession: async () => { throw new Error('No replacement Session expected'); },
         stopSession: async () => true, requestShutdown() {} },
       deps: { currentMachineId: 'machine', currentServerId: 'session-home', workingDirectory: cwd,
-        executionRunRuntimeAccountId: 'requester', createProjectFiniteRuntime: finite, actionOperations, actionsSettingsProvider,
-        executionRunAccountSettings: { serverUrl: 'https://session-home.test', resolveAccountSettings: () => readSnapshot().settings,
+        executionRunRuntimeAccountId: 'requester', createProjectFiniteRuntime: finite, actionOperations, actionsSettingsProvider, agentIsolation,
+        nativeOperationRuntime: { prepareNativeOperation: input => h.machine.prepareNativeOperation(input),
+          readMemberFolderOwner: path => h.machine.readMemberFolderOwner(path) },
+        resolveHostHomeServerIdentityId: async () => 'srv_session_home',
+        executionRunAccountSettings: { serverUrl: serverHttpBaseUrl, resolveAccountSettings: () => readSnapshot().settings,
           resolveAccountSettingsSnapshot: readRunSnapshot,
           actionsSettingsProvider } } });
     onTestFinished(() => registration.dispose());
@@ -295,7 +410,7 @@ describe('detached execution-run Machine composition', () => {
     // before creating a Run; it cannot borrow this daemon's Account custody.
     const unscopedCli = createCliActionDeps({ sessionId: 'cli-global', token: f.bootstrap.credentials.token,
       mode: 'plain', ctx: null, credentials: f.bootstrap.credentials, serverId: 'session-home',
-      serverHttpBaseUrl: 'https://session-home.test', machineActionDirectTargetTransport: {
+      serverHttpBaseUrl, machineActionDirectTargetTransport: {
         machineId: 'machine', invoke: (method, request, options) => rpc.invokeLocal(method, request, options),
       } });
     expect(await unscopedCli.executionRunStart(null, { intent: 'agent', ...(roleId ? { roleId } : {}),
@@ -314,13 +429,13 @@ describe('detached execution-run Machine composition', () => {
         actionId: rootActionId, requestId: randomUUID(), requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
       } }), credentials: callerCredentials,
       serverId: 'session-home', serverIdentityId: 'srv_session_home',
-      serverHttpBaseUrl: 'https://session-home.test', isCurrent: async () => f.isHomeCurrent(), isCustodyCurrent: async () => f.isHomeCurrent(),
+      serverHttpBaseUrl, isCurrent: async () => f.isHomeCurrent(), isCustodyCurrent: async () => f.isHomeCurrent(),
     }) : null;
     if (requesterKind === 'account' && !accountRequester) throw new Error('Account requester admission failed');
     if (accountRequester) onTestFinished(() => accountRequester.dispose());
     const accountAuthorization = accountRequester ? await projectExternalActionRequesterHttpAuthorization({
       authorization: accountRequester.authorization, serverId: 'session-home', serverIdentityId: 'srv_session_home',
-      serverHttpBaseUrl: 'https://session-home.test', target: { kind: 'machine', machineId: 'machine' },
+      serverHttpBaseUrl, target: { kind: 'machine', machineId: 'machine' },
       installationId: f.installation.installationId, privateKey: decodeBase64(f.installation.privateKey, 'base64url'),
       isCurrent: accountRequester.isCustodyCurrent,
     }) : null;
@@ -328,7 +443,7 @@ describe('detached execution-run Machine composition', () => {
     const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: actorAccountId, custodianAccountId,
       machineId: 'machine', installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' });
     const deps = createCliActionDeps({ sessionId: 'cli-global', token: callerCredentials.token, mode: 'plain', ctx: null,
-      credentials: callerCredentials, serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
+      credentials: callerCredentials, serverId: 'session-home', serverHttpBaseUrl,
       externalActionMachineInstallationId: f.installation.installationId,
       externalActionMachineRequestPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),
       ...(requesterKind === 'session' ? { requesterSessionBootstrap: f.bootstrap } : {}),
@@ -353,6 +468,16 @@ describe('detached execution-run Machine composition', () => {
       executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
       ...(accountRequester ? { externalActionExecutionAuthorization: accountRequester.authorization,
         externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) });
+    if (rootActionId !== 'execution.run.start') {
+      // A signed SCM root is not a reviewed Workflow child admission. This
+      // direct Run hop must refuse; SCM success belongs to its real producer path.
+      expect(action).toMatchObject({ ok: false, errorCode: 'target_unavailable', effectAttempted: false,
+        failureCause: { phase: 'action.automations.admission', nativeErrorReason: 'action_automation_owner_unavailable' },
+        details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+      expect(await deps.executionRunList(null, {}, options)).toMatchObject({ runs: [] });
+      expect(h.nativeEffects()).toBe(0);
+      return;
+    }
     if (selectedMcp === 'member' || selectedMcp === 'foreign-requester') {
       // The registered Action owner refuses this authority before creating a
       // Run. Do not bypass that owner merely to exercise a deeper MCP callee.
@@ -367,26 +492,36 @@ describe('detached execution-run Machine composition', () => {
     const started = action.result;
     expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
     const runId = ExecutionRunStartResponseSchema.parse(started).runId;
+    onTestFinished(async () => {
+      await deps.executionRunStop(null, { runId: runId }, options);
+      await deps.executionRunWait(null, { runId: runId }, options);
+    });
     if (roleId) {
       phase = 'admitted Role Run projection';
       expect(await deps.executionRunGet(null, { runId }, options)).toMatchObject({ run: {
         runId, intent: 'task', permissionMode: 'read-only', retentionPolicy: 'ephemeral', runClass: 'bounded',
       } });
-      // The real persisted Run records the canonical admission output even if
-      // this fixture's custom Agent cannot complete its later native launch.
+      // The real persisted Run records the canonical admission output.
       await vi.waitFor(async () => {
         expect(await readRetainedExecutionRunRecord(runId)).toMatchObject({ state: {
           runId, sessionId: null, roleId: 'scout', intent: 'task', depth: 0,
           permissionMode: 'read-only', workspaceWrites: 'deny',
         } });
       });
+      await deps.executionRunStop(null, { runId }, options);
+      await deps.executionRunWait(null, { runId }, options);
       return;
     }
     if (selectedMcp) {
       phase = 'bounded Machine selected-MCP settlement';
       const settled = await deps.executionRunWait(null, { runId, timeoutSeconds: 30 }, options);
-      expect(settled).toMatchObject({ ok: true, status: 'succeeded', result: { run: { status: 'succeeded' } } });
-      expect(h.nativeEffects()).toBe(1);
+      // Agent requester custody under enabled isolation cannot own SDK stdio.
+      // Preserve that typed refusal rather than fabricating Account automation.
+      expect(settled).toMatchObject({ ok: true, status: 'failed', result: { run: {
+        status: 'failed', error: { code: 'agent_isolation_unavailable' },
+      } } });
+      expect(h.nativeEffects()).toBe(0);
+      await expect(readFile(receipt)).rejects.toMatchObject({ code: 'ENOENT' });
       return;
     }
     // The original Account Action returns before the native Run opens. Its
@@ -397,13 +532,8 @@ describe('detached execution-run Machine composition', () => {
     readFailedRun = async () => ({
       run: latestRunSnapshot,
       nativeEffects: h.nativeEffects(),
-      nativeChild: latestNativeChild,
+      nativeChild: latestNativeChild ?? await readFile(receipt, 'utf8').then(value => JSON.parse(value)).catch(() => undefined),
     });
-    phase = 'initial native Project launch';
-    await vi.waitFor(async () => {
-      latestRunSnapshot = await deps.executionRunGet(null, { runId }, options);
-      expect(h.nativeEffects(), JSON.stringify(latestRunSnapshot)).toBe(1);
-    }, { timeout: 30_000 });
     phase = 'initial native child execution';
     const observedChild = await vi.waitFor(async () => {
       latestRunSnapshot = await deps.executionRunGet(null, { runId }, options);
@@ -411,6 +541,7 @@ describe('detached execution-run Machine composition', () => {
       return latestNativeChild;
     }, { timeout: 30_000 });
     expect(observedChild).toEqual({ executable: join(bin, toolName), cwd, native: 'active', args: ['--cold-run', 'create'], owner: expect.any(String) });
+    expect(h.nativeEffects()).toBe(1);
     if (!observedChild || typeof observedChild !== 'object' || !('owner' in observedChild)) throw new Error('Missing native process owner');
     expect(parseProcessOwnerTag(String(observedChild.owner))?.owner).toEqual({ kind: 'run', runId });
     if (accountRequester) {
@@ -420,9 +551,13 @@ describe('detached execution-run Machine composition', () => {
       expect(await accountRequester.isCurrent()).toBe(true);
       expect(h.accountReads()).not.toContain('Bearer custodian-token');
       expect(await deps.executionRunStop(null, { runId }, options)).toMatchObject({ ok: true });
-      await deps.executionRunWait(null, { runId }, options);
-      await vi.waitFor(async () => { expect(await accountRequester.isCurrent()).toBe(false); });
-      phase = 'retired requester refuses replacement native launch';
+      expect(await deps.executionRunWait(null, { runId }, options)).toMatchObject({ ok: true, status: 'cancelled' });
+      expect(h.nativeEffects()).toBe(1);
+      // Stop owns terminal truth; detached plugin disposal does not promise
+      // requester retirement. Withdraw the actual source before a new start.
+      f.retire();
+      expect(await accountRequester.isCurrent()).toBe(false);
+      phase = 'withdrawn requester refuses replacement native launch';
       expect(await deps.executionRunStart(null, { intent: 'agent',
         backendTarget: { kind: 'backend', backendId: `${pluginId}/agent` },
         instructions: 'Must not launch with released requester custody.', cwd,
@@ -443,6 +578,10 @@ describe('detached execution-run Machine composition', () => {
       instructions: 'Prepare the retained native Run.', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' }, options);
     expect(retainedStart, JSON.stringify(retainedStart)).toMatchObject({ runId: expect.any(String) });
     const retainedRunId = ExecutionRunStartResponseSchema.parse(retainedStart).runId;
+    onTestFinished(async () => {
+      await deps.executionRunStop(null, { runId: retainedRunId }, options);
+      await deps.executionRunWait(null, { runId: retainedRunId }, options);
+    });
     phase = 'retained native Run checkpoint and idle';
     await vi.waitFor(async () => {
       expect(await deps.executionRunGet(null, { runId: retainedRunId }, options)).toMatchObject({
@@ -472,7 +611,7 @@ describe('detached execution-run Machine composition', () => {
     await h.requireSetup();
     const projectRuntime = await h.machine.resolveProjectFiniteRuntime({ signal: h.signal, requesterSessionBootstrap: f.bootstrap });
     if (!projectRuntime) throw new Error('Missing original Project runtime');
-    expect(await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId: 'session-home', serverHttpBaseUrl: 'https://session-home.test',
+    expect(await prepareProjectAgentLaunch({ cwd, machineId: 'machine', serverId: 'session-home', serverHttpBaseUrl,
       account: projectRuntimeAccountRowsInput(projectRuntime), nativeIo: projectRuntime.nativeIo, successHomeDir: projectRuntime.successHomeDir,
       platform: { os: 'linux', arch: 'x64' }, signal: h.signal })).toMatchObject({ kind: 'prepared', outcome: { kind: 'pendingApproval' } });
     phase = 'original setup-held Run admission';
@@ -480,6 +619,10 @@ describe('detached execution-run Machine composition', () => {
       instructions: 'Continue this same Run after setup.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
       runClass: 'bounded', ioMode: 'request_response' }, options);
     const heldRunId = ExecutionRunStartResponseSchema.parse(heldStart).runId;
+    onTestFinished(async () => {
+      await deps.executionRunStop(null, { runId: heldRunId }, options);
+      await deps.executionRunWait(null, { runId: heldRunId }, options);
+    });
     let heldSnapshot: unknown;
     readFailedRun = async () => ({ operation: heldSnapshot, run: await deps.executionRunGet(null, { runId: heldRunId }, options),
       reservations: h.admission.dependencies(), nativeEffects: h.nativeEffects() });

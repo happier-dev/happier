@@ -576,7 +576,6 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 currentSession: bound.currentSession,
                 executionRunServices,
                 ...(happierBridge ? { readSessionMcpContext: happierBridge.readContext } : {}),
-                ...(placement?.kind === 'prepared' ? { nativeOperation: placement.nativeAdmission } : {}),
                 ...(placement ? { nativeAdmission: placement.nativeAdmission } : {}),
                 ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
                 ...(params.resolveAcpHostLaunch || params.transformAgentRequest || params.acpRuntimeDefinition
@@ -885,7 +884,6 @@ function createNativeAgentInvocationContext(params: Readonly<{
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
     executionRunServices?: AgentExecutionRunHostServicesV1;
     readSessionMcpContext?: () => SessionMcpLocalContext | undefined;
-    nativeOperation?: HostAgentIsolationLaunchContext;
     nativeAdmission?: HostAgentIsolationLaunchContext;
 }>): AgentExecutionRunRuntimeContextV1 {
     const interactions = params.currentSession
@@ -902,7 +900,7 @@ function createNativeAgentInvocationContext(params: Readonly<{
         ? Object.freeze({ ...params.services, interactions })
         : params.services;
     const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec, params.readSessionMcpContext, undefined,
-        params.nativeOperation, 'auxiliary', params.nativeAdmission);
+        undefined, 'auxiliary', params.nativeAdmission);
     const base = Object.freeze({
         plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
         contribution: Object.freeze({

@@ -48,7 +48,7 @@ import { classifySpawnFailure, spawnFailureMessage, type SpawnFailureLimitsReade
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import type { ProjectNativeToolchainInput, ProjectNativeToolchainIo, ProjectNativePluginAdapterInput } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
-import { formatProcessOwnerTag, readHostProcessOwnerTag, withHostProcessOwnerEnvironment, withProcessOwnerEnvironment, type ProcessOwnerRef } from '@/processes/ownerTag';
+import { PROCESS_OWNER_ENV_KEY, formatProcessOwnerTag, readHostProcessOwnerTag, withHostProcessOwnerEnvironment, withProcessOwnerEnvironment, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type LinuxProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
@@ -1084,7 +1084,12 @@ async function finalizeHostExecLaunch(input: Readonly<{
             }) : { args, environment: { ...environment, ...material.environment }, selectedMaterials: material.selectedMaterials };
             assertCurrent();
             const launch = createUnixAgentIdentityLaunch({ ...material, ...selectedFiles, executable: command, cwd: isolated.cwd,
-                selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(launchEnvironmentKeys ?? [])],
+                environment: withHostProcessOwnerEnvironment(selectedFiles.environment,
+                    input.launch.processOwnerTag ?? readHostProcessOwnerTag()),
+                // The admitted Project result is a complete environment. The
+                // identity adapter still excludes source/control credentials.
+                selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(launchEnvironmentKeys ?? []),
+                    ...(input.projectLaunch?.status === 'ready' ? Object.keys(environment) : []), PROCESS_OWNER_ENV_KEY],
                 nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
                 sessionMcpContext: material.sessionMcpContext });
@@ -1904,6 +1909,7 @@ export function createStablePluginExecService(params: Readonly<{
             launch,
         });
         const originalInput: ResolvedHostExecLaunch = {
+                ...(processOwnerTag ? { processOwnerTag } : {}),
                 command: resolved.command,
                 args: [...(resolved.args ?? []), ...(request.args ?? [])],
                 ...(request.requiredFiles ? { requiredFiles: [...request.requiredFiles] } : {}),
