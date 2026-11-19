@@ -366,6 +366,39 @@ describe('workflow document mount scope', () => {
     expect(reran).toEqual([]);
   }, 120_000);
 
+  // Opening a step to edit it must not move its card: the card hangs the same distance under the
+  // step's heading at rest (its summary row) and while edited (WF-ACCEPT-1119B fix 8).
+  it('keeps a step card the same distance under its heading at rest and while it is edited', async () => {
+    const { screen, control } = await renderLongDocument();
+    type Node = ReturnType<typeof screen.findAllByType>[number];
+    const firstHost = (node: Node): Node =>
+      typeof node.type === 'string' ? node : node.findAll((child) => typeof child.type === 'string')[0]!;
+    const hostChain = (node: Node): Node[] => {
+      const chain: Node[] = [];
+      for (let at: Node | null = node; at !== null; at = at.parent) if (typeof at.type === 'string') chain.push(at);
+      return chain;
+    };
+    const flat = (style: unknown): Record<string, unknown> => Array.isArray(style)
+      ? style.reduce<Record<string, unknown>>((all, entry) => ({ ...all, ...flat(entry) }), {})
+      : (style && typeof style === 'object' ? style as Record<string, unknown> : {});
+    const headingToCardGap = () => {
+      const heading = firstHost(screen.findAllByType(WorkflowBlockHeading)
+        .find((node) => node.props.testID === 'workflow-editor-step-b248-label')!);
+      const card = screen.findHostByTestId('workflow-editor-step-b248-card')!;
+      const cardChain = new Set(hostChain(card));
+      const shared = hostChain(heading).find((node) => cardChain.has(node))!;
+      const style = flat(shared.props.style);
+      return style.rowGap ?? style.gap ?? 0;
+    };
+    const atRest = headingToCardGap();
+    await act(async () => {
+      control.select('b248');
+      control.edit('b248');
+    });
+    expect(screen.findAllByType(ScopedAuthoringComposer)).toHaveLength(1);
+    expect(headingToCardGap()).toBe(atRest);
+  }, 120_000);
+
   it('mounts complete rows only where the viewport reaches and retains editing continuity as it scrolls', async () => {
     const intersections: Array<(visible: boolean) => void> = [];
     vi.stubGlobal('window', { getComputedStyle: () => ({ overflowY: 'visible' }), addEventListener() {}, removeEventListener() {} });

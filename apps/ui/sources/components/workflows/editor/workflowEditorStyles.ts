@@ -311,6 +311,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flex: 1,
         gap: theme.space.s8,
     },
+    /**
+     * A block's heading and the card under it, while it is edited: the same gap as its summary row at rest
+     * (`summaryBody`), so opening a step does not move its card (WF-ACCEPT-1119B fix 8).
+     */
+    blockHead: {
+        gap: theme.space.s2,
+    },
     /** A block's card (an Agent step's composer, a typed step's card): on the name column on the wide grid. */
     blockCard: {
         minWidth: 0,

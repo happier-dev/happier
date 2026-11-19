@@ -286,6 +286,7 @@ export function WorkflowStepEditor(props: Readonly<{
             testID={`${testIDPrefix}-step-${step.id}`}
             style={workflowEditorStyles.blockBody}
         >
+            <View style={workflowEditorStyles.blockHead}>
             <WorkflowBlockHeading
                 nameEditor={props.nameEditor}
                 ordinal={ordinal}
@@ -380,6 +381,7 @@ export function WorkflowStepEditor(props: Readonly<{
                 </View>
                 </WorkflowKindCard>
             </WorkflowStepSessionDropZone>
+            </View>
             </View>
 
             {props.slots?.reviewedCard ?? null}
