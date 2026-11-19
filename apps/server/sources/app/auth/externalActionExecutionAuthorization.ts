@@ -73,7 +73,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     isDeploymentCandidatePublicationEffect,
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, readProjectSetupSetChildRpcEffectV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
@@ -368,13 +368,53 @@ export function readExternalActionSessionSpawnAdmission(
 }
 
 /** Native effects consume their existing admission; new work uses C41 policy. */
-export async function resolveExternalActionExecutionMachineAdmissionInTx(reader: Tx,
-    input: ExternalActionManagedAdmissionContext & Partial<MachineOperationRequesterContext> & Readonly<{ actorAccountId: string; machineId: string; actionId: string; requireOnline?: boolean;
+type ExternalActionExecutionMachineAdmissionInput = ExternalActionManagedAdmissionContext
+    & Partial<MachineOperationRequesterContext> & Readonly<{
+        actorAccountId: string;
+        machineId: string;
+        actionId: string;
+        requireOnline?: boolean;
         workflowAdmission?: WorkflowExternalActionAdmission;
         managedCreationAdmission?: ManagedCreationChildAdmission;
         capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
-        nativePurpose?: 'machine_npm_profile_acquisition' }>): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
-            & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts> {
+        nativePurpose?: 'machine_npm_profile_acquisition';
+        carrier?: 'select' | 'home_relay';
+    }>;
+
+export function isExternalActionHomeRelayAccountEligible(
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'custodianAccountId' | 'sessionActionOrigin'>,
+): boolean {
+    return !binding.sessionActionOrigin || binding.accountId === binding.custodianAccountId;
+}
+
+export async function resolveExternalActionExecutionMachineAdmissionInTx(
+    reader: Tx, input: ExternalActionExecutionMachineAdmissionInput,
+): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
+    & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts> {
+    const admission = await resolveExternalActionExecutionMachineAccessInTx(reader, input);
+    if (admission.kind !== 'admitted' || !input.carrier) return admission;
+    const origin = input.sessionActionOrigin ?? input.executionBinding?.sessionActionOrigin;
+    if (origin && input.carrier === 'select') {
+        const source = input.sessionActionSource;
+        const target = input.envelope?.target;
+        // Cross-Machine Session Actions can use a different carrier only when
+        // the daemon has a registered Action RPC or an existing native port.
+        if (!source || target?.kind !== 'machine' || target.machineId !== input.machineId
+            || source.machineId === input.machineId || input.actionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1
+            || isOriginalAccountProjectAction(input.actionId)) return admission;
+        const action = SignedRootActionIdSchema.safeParse(input.actionId);
+        const spec = action.success ? getActionSpec(action.data) : null;
+        if (spec?.surfaces.rpc && spec.bindings?.rpcMethod) return admission;
+    }
+    return isExternalActionHomeRelayAccountEligible({ accountId: input.actorAccountId,
+        custodianAccountId: admission.custodianAccountId, sessionActionOrigin: origin })
+        ? admission : { kind: 'denied', code: 'access_denied' };
+}
+
+async function resolveExternalActionExecutionMachineAccessInTx(
+    reader: Tx, input: ExternalActionExecutionMachineAdmissionInput,
+): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
+    & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts> {
     if (input.nativePurpose) {
         const action = SignedRootActionIdSchema.safeParse(input.actionId);
         if (!action.success || getActionSpec(action.data).originalExecution?.nativePurpose !== input.nativePurpose) {

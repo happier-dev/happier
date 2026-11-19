@@ -59,7 +59,7 @@ import { readCurrentManagedFiniteWakeCustodyInTx } from '@/app/machines/managed/
 import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrincipalInTx,
     isOriginalAccountExecutionAction, isOriginalAccountHandoffAction, resolveExternalActionExecutionMachineAdmissionInTx,
     readExternalActionSessionSpawnAdmission,
-    readCurrentExternalActionHandoffBindingInTx, hasCurrentExternalActionSessionSource,
+    readCurrentExternalActionHandoffBindingInTx, hasCurrentExternalActionSessionSource, isExternalActionHomeRelayAccountEligible,
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal,
     readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
     verifyWorkflowExternalActionRequesterAuthorization,
@@ -289,13 +289,17 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) {
     const authorization = body.executionAuthorization;
     if (!authorization || body.sessionActionOrigin || body.sessionActionSource || body.installationProof
-        || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return null;
+        || body.workflowActionOrigin || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return null;
     const root = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     if (!root || root.serverIdentityId !== await getOrCreateServerIdentityId() || root.accountId !== request.userId
-        || !sameManagedInput(root, authorization.binding)
+        || !sameManagedInput(root, authorization.binding) || !isExternalActionHomeRelayAccountEligible(root)
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: body.machineId, envelope: body.envelope })
         || request.externalActionExecutionAuthorized === true
             && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token) return null;
+    if (request.authTokenLegacy === true && !(isExternalActionWorkflowActionIdV1(actionId) && root.workflowActionOrigin)
+        && (request.authTokenKind !== 'account' || !root.sessionActionOrigin || !root.sessionActionSource
+            || !('authentication' in root) || root.authentication.kind !== 'account'
+            || root.authentication.tokenEpoch !== request.authTokenEpoch)) return null;
     // Every presentation of a root to the Home, daemon-signed or person-presented,
     // is new work: it passes full admission here before any dispatch.
     // This front door has already authenticated this Account and checked login
@@ -322,7 +326,8 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
     // A signed Account root proves credential provenance, not a higher
     // invocation authority than this authenticated request's lowering ceiling.
-    return principal ? { principal, authorization } : null;
+    const { kind: _kind, ...machineAdmission } = admission;
+    return principal ? { principal, authorization, machineAdmission, authenticationEvidence: current.authenticationEvidence } : null;
 }
 
 /** Child phases retain the Home-issued root, never the submitting daemon's Account. */
@@ -798,7 +803,7 @@ export function registerExternalActionRoutes(
                 : handoffAdmission
                 ? await resolveMachineAdmission({ actorAccountId: principal.accountId, machineId: receivingMachineId })
                 : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: principal.accountId,
-                    machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope,
+                    machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope, carrier: 'select',
                     ...(workflowAdmission ? { workflowAdmission } : {}),
                     ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
                     ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
@@ -979,10 +984,10 @@ export function registerExternalActionRoutes(
             // These Account roots need their strict body claim. Authenticate
             // before parsing, then finish admission in the existing handler.
             if (request.authTokenKind === 'account' && isPluginProvenanceOnlyActionId(request.params.actionId)) return;
-            // A legacy credential can propose an installed Workflow, not an
-            // ordinary root. Its signed origin is available only after strict
-            // body parsing; the handler below still verifies the current Run.
-            if (request.authTokenLegacy === true && isExternalActionWorkflowActionIdV1(request.params.actionId)) return;
+            // Installed Workflow and same-Account Session roots carry proof
+            // in the body. Their scope is decided after strict parsing.
+            if (request.authTokenLegacy === true && (request.authTokenKind === 'account'
+                || isExternalActionWorkflowActionIdV1(request.params.actionId))) return;
             const principal = readExternalActionRequestPrincipal(request, request.params.actionId);
             if (principal === 'present_user_required') return sendExternalActionHttpError(reply, principal);
             if (!principal) {
@@ -1013,6 +1018,8 @@ export function registerExternalActionRoutes(
 
             const wrapped = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);
             const rawEnvelope = wrapped.success ? null : ExternalActionRequestEnvelopeSchema.safeParse(request.body);
+            if (request.authTokenLegacy === true && !isExternalActionWorkflowActionIdV1(actionId.data)
+                && (!wrapped.success || !wrapped.data.executionAuthorization)) return sendExternalActionHttpError(reply, 'credential_scope_denied');
             let principal = readExternalActionRequestPrincipal(request, request.params.actionId,
                 wrapped.success ? wrapped.data : rawEnvelope?.success ? { envelope: rawEnvelope.data } : undefined);
             if (principal === 'present_user_required') return sendExternalActionHttpError(reply, principal,
@@ -1020,16 +1027,16 @@ export function registerExternalActionRoutes(
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let admittedRoot: Awaited<ReturnType<typeof readAdmittedRootRelay>> = null;
             let workflowAdmission: WorkflowExternalActionAdmission | undefined;
-            if (principal && wrapped.success && wrapped.data.workflowActionOrigin) {
-                const installedWorkflow = await readInstalledWorkflowRequestPrincipal(actionId.data, wrapped.data, principal);
-                principal = installedWorkflow?.principal ?? null;
-                workflowAdmission = installedWorkflow?.workflowAdmission;
-            } else if (wrapped.success && wrapped.data.executionAuthorization) {
+            if (wrapped.success && wrapped.data.executionAuthorization) {
                 admittedRoot = await readAdmittedRootRelay(app, request, actionId.data, wrapped.data);
                 if (admittedRoot && admittedRoot.refusalCode !== undefined) {
                     return sendExternalActionHttpError(reply, admittedRoot.refusalCode, wrapped.data.envelope.requestId);
                 }
                 principal = admittedRoot?.principal ?? null;
+            } else if (principal && wrapped.success && wrapped.data.workflowActionOrigin) {
+                const installedWorkflow = await readInstalledWorkflowRequestPrincipal(actionId.data, wrapped.data, principal);
+                principal = installedWorkflow?.principal ?? null;
+                workflowAdmission = installedWorkflow?.workflowAdmission;
             } else if (wrapped.success && wrapped.data.managedContinuation) {
                 try { continuation = await readManagedGuestContinuation(request, actionId.data, wrapped.data, principal); }
                 catch (error) {
@@ -1096,6 +1103,8 @@ export function registerExternalActionRoutes(
                 principal,
                 ...(workflowAdmission ? { workflowAdmission } : {}),
                 ...(admittedRoot ? { executionAuthorization: admittedRoot.authorization,
+                    admittedMachine: admittedRoot.machineAdmission,
+                    admittedAuthenticationEvidence: admittedRoot.authenticationEvidence,
                     ...(admittedRoot.authorization.binding.sessionActionSource
                         ? { sessionActionSource: admittedRoot.authorization.binding.sessionActionSource } : {}) } : {}),
                 ...(continuation ? { managedContinuation: continuation.managedContinuation,
