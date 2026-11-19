@@ -24,7 +24,6 @@ export {
   createClaudeWorkflowActivityTracker,
   type ClaudeWorkflowActivityTracker,
 } from './tracker.js';
-export { filterWorkflowOwnedWorkStateItems } from './ownedWorkState.js';
 export {
   createClaudeUnifiedWorkflowRuntime,
   type ClaudeUnifiedWorkflowRuntime,

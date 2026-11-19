@@ -795,6 +795,7 @@ export type ClaudeAgentSdkTurnOperationsParams = Readonly<{
      * file-only `goal_status` attachments. Execution runs leave it off (no session work-state).
      */
     enableSessionWorkState?: boolean;
+    observeTodoWrite?: (row: unknown) => void;
     /**
      * Session-bound runtimes install authenticated Claude lifecycle hooks and only promote the
      * native transcript after the submitted prompt is proven as provider-accepted and materialized.
@@ -1372,6 +1373,7 @@ export function createClaudeAgentSdkTurnOperations(
             historicalReplay: isReplayClaudeAgentSdkMessage(message),
         });
         goalRuntime?.source.observeTranscriptMessage(message);
+        params.observeTodoWrite?.(message);
     }
 
     function publishRuntimeEvent(event: ClaudeProviderEvent | null): void {
@@ -2595,6 +2597,7 @@ export function createClaudeAgentSdkTurnOperations(
                 if (event) publishRuntimeEvent({ ...event, emittedAtMs });
             }
             workflowRuntime?.observeTranscriptMessage(input.row, { historicalReplay: true });
+            params.observeTodoWrite?.(input.row);
         },
         compact: compactionControl.compact,
         isTurnInFlight: () => turnInFlight,

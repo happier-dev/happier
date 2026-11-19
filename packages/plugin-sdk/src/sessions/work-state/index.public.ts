@@ -25,6 +25,7 @@ export type { SessionWorkflowRunStatusReasonV1 } from '../workState.js';
 export type { SessionWorkflowRunStatusV1 } from '../workState.js';
 export type { WorkStateItem } from '../../services/sessions.js';
 export type { WorkStatePublisher } from '../../services/sessions.js';
+export { createSessionTaskSnapshotPublisher, type SessionTaskSnapshotEntry } from '../taskSnapshotPublisher.js';
 export type { WorkStateService } from '../../services/sessions.js';
 export type { WorkStateTruncation } from '../../services/sessions.js';
 export { boundSessionWorkStateItemsV1 } from '../workState.js';

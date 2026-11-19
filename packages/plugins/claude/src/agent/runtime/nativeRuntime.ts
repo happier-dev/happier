@@ -53,6 +53,7 @@ import {
   createClaudeNativeAgentSdkContext,
   createClaudeNativeExecutionRunAgentSdkContext,
   createClaudeNativeGoalWorkStatePublisher,
+  createClaudeTodoWriteObserver,
 } from './nativeServices.js';
 import { createClaudeNativeGoalControl } from './goalControl/nativeControl.js';
 import { createClaudeSessionSkillCatalog } from './skillCatalog.js';
@@ -1508,6 +1509,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
     enableSessionWorkState: true,
     enableSessionResumability: true,
     publishGoalWorkState: createClaudeNativeGoalWorkStatePublisher(input.context),
+    observeTodoWrite: createClaudeTodoWriteObserver(input.context),
   });
 }
 

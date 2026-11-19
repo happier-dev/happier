@@ -453,6 +453,7 @@ export type ClaudeUnifiedTerminalTurnOperationsParams = Readonly<{
   }>;
   /** Native AgentRuntime work-state projection; omitting it preserves the legacy metadata owner. */
   publishGoalWorkState?: (snapshot: SessionWorkStateV1) => void;
+  observeTodoWrite?: (row: unknown) => void;
 }>;
 
 /**
@@ -1014,6 +1015,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         observeProviderTaskActivity(row, observation.providerSessionId);
       }
       goalRuntime.source.observeTranscriptMessage(row);
+      params.observeTodoWrite?.(row);
       const workflowObservation = workflowRuntime.observeTranscriptMessage(row, { historicalReplay: observation.historicalReplay });
       if (workflowObservation.terminalRunIds.length > 0
         || (pendingStopReply?.turnId === state.activeTurnId

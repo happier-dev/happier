@@ -10,7 +10,9 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions';
 import type { WorkStateItem } from '@happier-dev/plugin-sdk/sessions/work-state';
 import {
+  createSessionTaskSnapshotPublisher,
   SessionActivityHeadlineBundleV1Schema,
+  type SessionTaskSnapshotEntry,
   type SessionWorkStateV1,
 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
@@ -22,6 +24,8 @@ import { readClaudeCodeNativeCredentialPayload } from '../auth/services/native/c
 import {
   createClaudeWorkflowSystemRecordBridge,
 } from '../workflowRecords/workflowRuntime.js';
+import { isClaudeSidechainRuntimeEvidence } from '../hooks/sidechain.js';
+import { extractToolUseBlocksFromSdkMessage } from './remote/sdk/streamEvents.js';
 import type {
   ClaudeAgentSdkContext,
   ClaudeAgentSdkExecutionRunContext,
@@ -92,6 +96,34 @@ function toNativeGoalWorkStateItem(
     ...(item.startedAt === undefined ? {} : { startedAtMs: item.startedAt }),
     ...(item.completedAt === undefined ? {} : { completedAtMs: item.completedAt }),
     updatedAtMs: item.updatedAt,
+  };
+}
+
+export function createClaudeTodoWriteObserver(
+  context: Pick<AgentSessionRuntimeContext, 'workState'> & Readonly<{
+    services: Readonly<{ logger: Pick<AgentSessionRuntimeContext['services']['logger'], 'warn'> }>;
+  }>,
+): (row: unknown) => void {
+  const publish = createSessionTaskSnapshotPublisher(context.workState.publisher('todos'), { kind: 'todo', origin: 'vendor' });
+  return row => {
+    if (isClaudeSidechainRuntimeEvidence(row)) return;
+    for (const { name, input } of extractToolUseBlocksFromSdkMessage(row)) {
+      if (name !== 'TodoWrite' || !input || typeof input !== 'object' || !('todos' in input)) continue;
+      if (!Array.isArray(input.todos)) continue;
+      const entries = input.todos.flatMap((todo: unknown): SessionTaskSnapshotEntry[] => {
+        if (!todo || typeof todo !== 'object' || !('content' in todo) || typeof todo.content !== 'string') return [];
+        const title = todo.content.trim();
+        if (!title) return [];
+        const status = 'status' in todo ? todo.status : undefined;
+        return [{
+          title,
+          status: status === 'completed' ? 'complete' : status === 'in_progress' ? 'active' : 'pending',
+          ...('priority' in todo && typeof todo.priority === 'string' ? { priority: todo.priority } : {}),
+        }];
+      });
+      if (entries.length === 0 && input.todos.length > 0) continue;
+      void publish(entries).catch(() => context.services.logger.warn('[Claude] TodoWrite work-state publication failed'));
+    }
   };
 }
 

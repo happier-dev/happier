@@ -436,7 +436,7 @@ export const CLAUDE_PLUGIN = definePlugin({
               source: 'goals',
             },
             runtimeActivitySnapshots: true,
-            workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
+            workStateSources: [{ id: 'goals', itemKinds: ['goal'] }, { id: 'todos', itemKinds: ['todo'] }],
           },
         }),
         providerRequirements: {

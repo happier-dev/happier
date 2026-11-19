@@ -19,6 +19,7 @@ import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js
 import {
   createClaudeNativeAgentSdkContext,
   createClaudeNativeGoalWorkStatePublisher,
+  createClaudeTodoWriteObserver,
 } from '../../nativeServices.js';
 import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
 import {
@@ -230,5 +231,6 @@ export async function openClaudeNativeUnifiedTerminalSession(
     workspaceTrustPolicy: normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy(workspaceTrustSetting)
       ?? DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
     publishGoalWorkState: createClaudeNativeGoalWorkStatePublisher(input.context),
+    observeTodoWrite: createClaudeTodoWriteObserver(input.context),
   });
 }

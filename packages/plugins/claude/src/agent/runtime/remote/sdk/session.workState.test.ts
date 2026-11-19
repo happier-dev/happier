@@ -13,6 +13,7 @@ import {
   SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
   type SessionActivityHeadlineBundleV1,
   type SessionWorkStateV1,
+  type WorkStatePublisher,
 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
 import {
@@ -25,6 +26,7 @@ import {
 } from '../../engine.testkit.js';
 import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 import { createClaudeNativeSessionRuntimeFromOperations } from '../../nativeRuntime.js';
+import { createClaudeTodoWriteObserver } from '../../nativeServices.js';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createClaudeAgentSdkTurnOperations as createClaudeAgentSdkProviderOperations } from './session.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -48,6 +50,50 @@ const TWO_AGENT_PROGRESS: unknown[] = [
 ];
 
 describe('Claude agent-SDK session work-state ingress', () => {
+  it('publishes a replacement TodoWrite list and its clear through the SDK stream', async () => {
+    const exec = createSdkExecFixture();
+    const publications: Parameters<WorkStatePublisher['publish']>[0][] = [];
+    const publisher: WorkStatePublisher = {
+      async publish(snapshot) {
+        publications.push(snapshot);
+        return { status: 'applied', sourceSequence: snapshot.sourceSequence, revision: String(snapshot.sourceSequence) };
+      },
+    };
+    const operations = createClaudeAgentSdkProviderOperations({
+      observeTodoWrite: createClaudeTodoWriteObserver({
+        workState: { publisher: () => publisher },
+        services: { logger: { warn: vi.fn() } },
+      }),
+      ctx: createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service }),
+      directory: '/tmp/claude-todo-write',
+      launchEnv: {},
+      permissionMode: 'default',
+      happierSessionId: 'claude-todo-write',
+      enableSessionWorkState: true,
+    });
+    const todoWrite = (id: string, todos: unknown[]) => ({
+      type: 'assistant', session_id: 'claude-todo-session', uuid: id, parent_tool_use_id: null,
+      message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'TodoWrite', input: { todos } }] },
+    });
+    try {
+      await operations.sendProviderTurnPrompt('Track work');
+      const first = todoWrite('list', [{ content: 'Write tests', status: 'completed' }]);
+      const clear = todoWrite('clear', []);
+      await exec.emit(first);
+      await exec.emit(todoWrite('repeated', [{ content: 'Write tests', status: 'completed' }]));
+      await exec.emit({ ...todoWrite('child', [{ content: 'Child work', status: 'pending' }]), parent_tool_use_id: 'child-parent' });
+      await exec.emit(clear);
+      await exec.emit({ type: 'result', subtype: 'success', session_id: 'claude-todo-session' });
+      await operations.waitForProviderTurnCompletion();
+      expect(publications.map(publication => publication.items)).toEqual([
+        [expect.objectContaining({ kind: 'todo', origin: 'vendor', title: 'Write tests', status: 'complete' })],
+        [],
+      ]);
+    } finally {
+      await operations.disposeProviderSession();
+    }
+  });
+
   it('refuses a native Goal command while the person turn still owns the SDK transport', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
