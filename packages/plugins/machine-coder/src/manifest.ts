@@ -29,6 +29,8 @@ export const MACHINE_PROVISIONER = {
   prerequisites: [{ kind: 'managedDependency', id: DEPENDENCY_ID }], billing: BILLING, retention: RETENTION,
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
+  workspaceAttachment: { when: { op: 'truthy', path: 'existingWorkspaceId' },
+    optionsWhen: { op: 'eq', path: 'attachExisting', value: true } },
   reconciliation: { nativeOperationSchema: CoderOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'cleanup' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 

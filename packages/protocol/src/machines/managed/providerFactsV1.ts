@@ -53,6 +53,12 @@ export const ManagedGuestCliBuildTargetV1Schema = lazyDefinition(() => z.strictO
   os: z.enum(['linux', 'darwin']), arch: z.enum(['x64', 'arm64']),
 }));
 export type ManagedGuestCliBuildTargetV1 = z.infer<typeof ManagedGuestCliBuildTargetV1Schema>;
+/** Observed platform of an existing guest that supports Session holder placement. */
+export const ManagedGuestPlatformV1Schema = lazyDefinition(() => z.strictObject({
+  ...ManagedGuestCliBuildTargetV1Schema.shape,
+  home: z.string().check(z.startsWith('/'), z.refine(value => !value.includes('\0'))),
+}));
+export type ManagedGuestPlatformV1 = z.infer<typeof ManagedGuestPlatformV1Schema>;
 /** Labelled native choices are disclosure, not executable selectors or measured headroom. */
 export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictObject({
   /** Provider-selected image/host facts; absence supplies no installation target. */

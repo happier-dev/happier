@@ -37,6 +37,8 @@ export function createManagedOneOffSelectionV1Schema<Choices extends z.core.$Zod
   return z.strictObject({
     kind: z.literal('one-off'), homeId: id(), launch: createValidatedLaunchSnapshotV1Schema(choices),
     controller: z.optional(ManagedControllerV1Schema), retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
+    /** Selects the provider's declared read-only workspace attachment variant. */
+    attachWorkspace: z.optional(z.literal(true)),
   });
 }
 export const ManagedOneOffSelectionV1Schema = lazyZodSchema(() => createManagedOneOffSelectionV1Schema(PluginJsonValueV2Schema));

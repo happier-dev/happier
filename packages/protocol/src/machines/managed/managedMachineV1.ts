@@ -9,7 +9,7 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema, type ConnectedAccountActionFormSelectionV1 } from '../../connect/connectedAccountPurposeBindings.js';
 import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
-import { ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
+import { ManagedGuestPlatformV1Schema, ManagedResourceV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
 import { DevcontainerChildProjectionV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
 import { MachineSetupV1Schema } from './machineSetupV1.js';
 import { MachineSetupSourceFactsMapV1Schema } from '../setup/machineSetupSourceFactsV1.js';
@@ -152,6 +152,8 @@ export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, 
     guestCli: z.optional(GuestCliIdentityV1Schema),
     /** Installed-controller admission provenance for a local Session sandbox. */
     acquisitionMode: z.optional(z.literal('resource-bound')),
+    /** Existing guest probed by the installed custodian before Home admission. */
+    workspaceAttachment: z.optional(ManagedGuestPlatformV1Schema),
     /** Captured author mode for a preset snapshot; readers must not use their own Account mode. */
     preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)),
       configurationRevision: z.optional(z.int().check(z.gte(0))), setupRevision: z.optional(z.int().check(z.gte(0))),

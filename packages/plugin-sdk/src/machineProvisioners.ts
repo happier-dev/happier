@@ -41,6 +41,7 @@ export type MachineProvisionerContributionV1 = Readonly<{
   /** Where the provider's own id lives in the resource value (the id its console shows); display only. */
   resourceIdPath?: string;
   bootstrapTransport?: canonical.MachineProvisionerContributionV1['bootstrapTransport'];
+  workspaceAttachment?: canonical.MachineProvisionerContributionV1['workspaceAttachment'];
   bootstrapCredential?: Readonly<{ kind: 'ssh' | 'native-token' }>;
   nativeCredentialDelivery?: Readonly<{ apply: string; transports: readonly ['https_headers'];
     preservesEndpoint: true; perBindingMatching: true }>;

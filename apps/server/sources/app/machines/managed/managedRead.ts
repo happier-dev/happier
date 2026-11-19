@@ -297,6 +297,7 @@ export async function cancelManagedCreation(params: Readonly<{ actorAccountId: s
             || row.creationState !== 'active' || row.intentRevision !== input.expectedIntentRevision)) {
             return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
         }
+        if (readManagedAdmissionState(row.admittedInput).workspaceAttachment) throw new ManagedMachineError('native_intent_unsupported');
         if (row.intentRevision !== input.expectedIntentRevision) throw new ManagedMachineError("intent_changed");
         if (row.creationState !== "active") return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
         if (row.enrolledMachineId) throw new ManagedMachineError("intent_changed");

@@ -277,7 +277,10 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         if (acquiring && input.envelope && !projected) return denied;
         // One-off work keeps the caller's existing Manage admission; only
         // presets have a separate admitted custody/review fact to qualify.
-        if (acquiring && projected?.input.selection.kind === 'one-off' && input.ordinaryAdmission) return input.ordinaryAdmission;
+        if (acquiring && projected?.input.selection.kind === 'one-off' && input.ordinaryAdmission) {
+            return projected.input.selection.attachWorkspace === true && input.actorAccountId !== input.ordinaryAdmission.custodianAccountId
+                ? denied : input.ordinaryAdmission;
+        }
         const binding = input.executionBinding;
         const recovery = acquiring ? undefined : input.envelope ? readExternalActionManagedRecoveryAdmission(input.actionId, input.envelope)
             : binding?.managedAdmission;

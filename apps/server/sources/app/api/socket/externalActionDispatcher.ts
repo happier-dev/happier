@@ -788,7 +788,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 // An opaque request with unresolved public policy is inserted by
                 // the same signed native admission after the custodian opens it.
                 // The unchanged root envelope binds that first write to this proof.
-                if (review.retention !== undefined && review.wakeOnAcceptedMessage !== undefined) managedAdmission = await admitManagedAcquire({ custodianAccountId: executionAuthorization.binding.custodianAccountId,
+                const attaching = projected.input.selection.kind === 'one-off' && projected.input.selection.attachWorkspace === true;
+                if (!attaching && review.retention !== undefined && review.wakeOnAcceptedMessage !== undefined) managedAdmission = await admitManagedAcquire({ custodianAccountId: executionAuthorization.binding.custodianAccountId,
                     requesterAccountId: request.principal.accountId,
                     managedAcquireDelegation: executionAuthorization.binding.managedAcquireDelegation,
                     authentication: { authenticationAuthority: principal.authority,

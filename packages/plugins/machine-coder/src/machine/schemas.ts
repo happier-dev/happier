@@ -12,8 +12,10 @@ const workspaceHost = defineProtocolUnion([defineProtocolLiteral('controller-loc
 export const CoderLaunchSchema = defineProtocolObject({
   organizationId: text, templateId: text, templateVersionId: text, agentName,
   parameterValues: ParameterValuesSchema, presetId: text.optional(), workspaceHost: workspaceHost.optional(),
+  existingWorkspaceId: text.optional(),
 }, closed);
 export const CoderOptionsSchema = defineProtocolObject({
+  attachExisting: defineProtocolLiteral(true).optional(),
   organizationId: text.optional(), templateId: text.optional(), templateVersionId: text.optional(),
   agentName: agentName.optional(), parameterValues: ParameterValuesSchema.optional(), presetId: text.optional(), workspaceHost: workspaceHost.optional(),
 }, closed);

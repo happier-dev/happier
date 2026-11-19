@@ -27,7 +27,7 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1, managedWorkspaceAttachmentIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -36,6 +36,7 @@ import {
     defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema,
     MachineProvisionerPowerResultV1Schema, MachineProvisionerResizeResultV1Schema,
+    MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema, MachineProvisionerNativeStreamResultV1Schema,
 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { Fastify as AppFastify } from '@/app/api/types';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
@@ -117,6 +118,8 @@ import { createManagedServicesOwner } from '../../../../../../cli/src/plugins/ru
 import { createManagedServiceProcessSupervisorHost } from '../../../../../../cli/src/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { createEnrollmentJourneyProviderAuthority } from '../../../../../../cli/src/machines/managed/enrollmentJourney.testkit';
 import { createHostActionOperationRuntime } from '../../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime';
+import { admitManagedControl, requireManagedPolicyPurposeInTx } from '@/app/machines/managed/managedMutations';
+import { cancelManagedCreation } from '@/app/machines/managed/managedRead';
 
 const nativeVendor = vi.hoisted(() => ({ request: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>() }));
 // Terminal input is the OS boundary; keep the real presenter and approval decision.
@@ -168,7 +171,7 @@ describe('composed CLI managed Action origination', () => {
         finally { restoreEnv(initialEnv); }
     });
 
-    function createFixtureManifest(nativeControls: boolean) {
+    function createFixtureManifest(nativeControls: boolean, workspaceAttachment = false) {
         const launch = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
         const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
         const roles = defineMachineProvisionerSchemas({ launch, resource: native });
@@ -180,6 +183,11 @@ describe('composed CLI managed Action origination', () => {
             { id: 'power', inputSchema: roles.powerInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
             ...(nativeControls ? [{ id: 'resize', inputSchema: roles.resizeInput.jsonSchema, resultSchema: MachineProvisionerResizeResultV1Schema.jsonSchema }] : []),
             { id: 'destroy', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
+            ...(workspaceAttachment ? [
+                { id: 'exec', inputSchema: roles.execInput.jsonSchema, resultSchema: MachineProvisionerNativeExecResultV1Schema.jsonSchema },
+                { id: 'put', inputSchema: roles.putFileInput.jsonSchema, resultSchema: MachineProvisionerPutFileResultV1Schema.jsonSchema },
+                { id: 'stream', inputSchema: roles.streamInput.jsonSchema, resultSchema: MachineProvisionerNativeStreamResultV1Schema.jsonSchema },
+            ] : []),
         ];
         return PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'fixture.origination', version: '1.0.0',
             displayName: 'Compute', description: 'Managed origination fixture', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
@@ -190,6 +198,10 @@ describe('composed CLI managed Action origination', () => {
                     launchSchema: launch.jsonSchema, resourceSchema: native.jsonSchema, platforms: ['linux'], prerequisites: [],
                     billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
                     actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', ...(nativeControls ? { resize: 'resize' } : {}) },
+                    ...(workspaceAttachment ? {
+                        workspaceAttachment: { when: { op: 'eq', path: 'image', value: 'linux' } },
+                        bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put', stream: 'stream' },
+                    } : {}),
                     ...(nativeControls ? { resize: { cpuCores: { kind: 'supported', requiresRestart: false, changes: 'any' },
                         memoryBytes: { kind: 'unsupported', code: 'unsupported' }, diskBytes: { kind: 'unsupported', code: 'unsupported' } } } : {}) }],
                 actions: actions.map(action => ({ ...action, title: action.id, execution: nativeControls
@@ -201,7 +213,7 @@ describe('composed CLI managed Action origination', () => {
     const fixtureManifests = { daemon: createFixtureManifest(false), native: createFixtureManifest(true) };
     let nativeRelease: Awaited<ReturnType<typeof buildAuthoredAccountActionRelease>>;
 
-    async function fixture(online: boolean, mode: 'plain' | 'e2ee' = 'plain', qb56 = false, nativeControls = false) {
+    async function fixture(online: boolean, mode: 'plain' | 'e2ee' = 'plain', qb56 = false, nativeControls = false, workspaceAttachment = false) {
         const signing = mode === 'e2ee' ? tweetnacl.sign.keyPair() : null;
         const content = signing ? tweetnacl.box.keyPair() : null;
         const account = await db.account.create({ data: { encryptionMode: mode,
@@ -239,7 +251,8 @@ describe('composed CLI managed Action origination', () => {
             if (parsed.selection.kind !== 'one-off') throw new Error('QB56 replay must retain one-off selection');
             return { account, controller, keys, token, input: { ...parsed, selection: parsed.selection }, requestId: managedQb56RequestId };
         }
-        const manifest = nativeControls ? fixtureManifests.native : fixtureManifests.daemon;
+        const manifest = workspaceAttachment ? createFixtureManifest(false, true)
+            : nativeControls ? fixtureManifests.native : fixtureManifests.daemon;
         const declaration = createReleaseLessDeclarationV1(manifest);
         await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id, enabled: true,
             writableCollections: [], releaseLessDeclaration: declaration } });
@@ -1048,6 +1061,67 @@ describe('composed CLI managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
+    it('binds a probed workspace only from its exact signed installed controller before retention', async () => {
+        const selected = await fixture(true, 'plain', false, false, true);
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const input = { ...selected.input, selection: { ...selected.input.selection, attachWorkspace: true as const,
+            retention: { kind: 'unused' as const, afterMs: 60_000, effect: 'delete' as const }, wakeOnAcceptedMessage: true } };
+        const envelope = { v: 1 as const, requestId: selected.requestId, target, input };
+        const path = '/v1/machines/managed/controller/admit';
+        const rows = () => db.managedMachine.count({ where: { homeId, admittedActionRequestId: envelope.requestId } });
+        const instance = await app(async () => { throw new Error('Only signed native admission is exercised'); }, () => {}, []);
+        try {
+            const issued = await instance.inject({ method: 'POST',
+                url: '/v1/actions/machines.managed.acquire/execution-authorization',
+                headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'chosen' } };
+            const preparedAttachment = { resource, platform: { os: 'linux', arch: 'x64', home: '/home/guest' } };
+            const body = { requestId: envelope.requestId, input, continuationPresent: false, originalActionEnvelope: envelope, preparedAttachment };
+            const post = (payload: unknown, privateKey = selected.keys.secretKey) => instance.inject({
+                method: 'POST', url: path, payload: JSON.stringify(payload),
+                headers: { 'content-type': 'application/json', ...createExternalActionAuthorizedRequestHeaders({
+                    authorization, effectActionId: 'machines.managed.acquire', target,
+                    installationId: selected.controller.installationId, method: 'POST', path, body: payload, privateKey,
+                }) },
+            });
+            expect(await rows()).toBe(0);
+            expect((await post(body, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(401);
+            expect((await post({ ...body, input: { ...input, selection: { ...input.selection,
+                launch: { ...input.selection.launch, choices: { image: 'different' } } } } })).statusCode).toBe(403);
+            expect((await post({ requestId: envelope.requestId, input,
+                continuationPresent: false, originalActionEnvelope: envelope })).statusCode).toBe(403);
+            expect(await rows()).toBe(0);
+            const bound = await post(body);
+            expect(bound.statusCode, bound.body).toBe(200);
+            const accepted = ManagedAdmissionOutputV1Schema.parse(bound.json());
+            expect(accepted).toMatchObject({ replayed: false, machine: {
+                id: managedWorkspaceAttachmentIdV1(homeId, selected.account.id, envelope.requestId), allocation: 'bound', resource,
+                workspaceAttachment: preparedAttachment.platform, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+            expect(accepted.machine).not.toHaveProperty('guestCli');
+            expect(accepted.machine).not.toHaveProperty('enrolledMachineId');
+            const replay = await post(body);
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toMatchObject({ replayed: true, machine: { id: accepted.machine.id } });
+            expect(await rows()).toBe(1);
+            const row = await db.managedMachine.findUniqueOrThrow({ where: { id: accepted.machine.id } });
+            const selection = { homeId, managedId: row.id };
+            await expect(requireManagedPolicyPurposeInTx(db, row, { kind: 'retention' }, { admission: true }))
+                .rejects.toMatchObject({ code: 'permission_denied' });
+            await expect(cancelManagedCreation({ actorAccountId: selected.account.id, input: { ...selection, expectedIntentRevision: 0 } }))
+                .rejects.toMatchObject({ code: 'native_intent_unsupported' });
+            await expect(admitManagedControl({ actorAccountId: selected.account.id, custodianAccountId: selected.account.id,
+                input: { action: 'machines.managed.delete', requestId: crypto.randomUUID(),
+                    input: { ...selection, intent: 'delete', when: 'now', reviewedDependencies: true, expectedRevision: 0 } } }))
+                .rejects.toMatchObject({ code: 'native_intent_unsupported' });
+            const retired = await admitManagedControl({ actorAccountId: selected.account.id, custodianAccountId: selected.account.id,
+                input: { action: 'machines.managed.retire', requestId: crypto.randomUUID(),
+                    input: { ...selection, expectedIntentRevision: 0, manualResponsibility: true } } });
+            expect(retired.machine).toMatchObject({ archivedAt: expect.any(Number), allocation: 'bound', resource });
+        } finally { await instance.close(); }
+    });
+
     it('preserves foreign controller Manage for one-off acquire admission', async () => {
         const selected = await fixture(true);
         const requester = await fixture(true);
@@ -1062,6 +1136,12 @@ describe('composed CLI managed Action origination', () => {
             expect(issued.statusCode, issued.body).toBe(200);
             let authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
             expect(authorization.binding.managedAcquireDelegation).toBeUndefined();
+            const attach = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire/execution-authorization',
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId,
+                    envelope: { ...envelope, requestId: crypto.randomUUID(), input: { ...selected.input,
+                        selection: { ...selected.input.selection, attachWorkspace: true } } } } });
+            expect(attach.statusCode, attach.body).toBe(409);
+            expect(attach.json()).toMatchObject({ code: 'target_unavailable' });
             const body = { requestId: envelope.requestId, input: selected.input, continuationPresent: false };
             const admitted = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: body,
                 headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: 'machines.managed.acquire', target,

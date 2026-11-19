@@ -8,6 +8,7 @@ export { waitForMachineSetupOperationV1 } from '../setup/waitForMachineSetupOper
 import * as mini from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
@@ -19,7 +20,7 @@ import { SharedSavedSecretCreateInputV1Schema } from '../../account/settings/sav
 import { MachineRetentionPolicyV1Schema } from '../../account/settings/machineRetentionDefaultsV1.js';
 import { ManagedAcquireAgentStartV1Schema } from './agentStartV1.js';
 import { isManagedOpaquePresetMachineV1, ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachinePublicFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema, type ManagedMachineV1 } from './managedMachineV1.js';
-import { AcquireResultV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema, type AcquireResultV1 } from './providerFactsV1.js';
+import { AcquireResultV1Schema, ManagedGuestPlatformV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema, type AcquireResultV1 } from './providerFactsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 export { MANAGED_CONTROL_ACTION_IDS_V1, type ManagedControlActionIdV1 } from './actionIdsV1.js';
 import { ManagedConfigurationFactsV1Schema, ManagedOneOffSelectionV1Schema, ManagedPresetSelectionV1Schema } from './managedConfigurationV1.js';
@@ -52,6 +53,10 @@ import { ManagedMachinePresetLaunchNameOverrideV1Schema, ManagedMachinePresetRec
 export { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
 export * from './credentialDeliveryV1.js';
 export { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
+/** The pre-row native probe and Home replay use the same scoped request identity. */
+export function managedWorkspaceAttachmentIdV1(homeId: string, custodianAccountId: string, requestId: string): string {
+    return `attachment_${computeCanonicalDomainSeparatedDigest('happier.managed.workspace-attachment.v1', [homeId, custodianAccountId, requestId])}`;
+}
 
 export { isMachineSetupPlanRpcChildV1,
   SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from './actionIdsV1.js';
@@ -643,6 +648,8 @@ export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject(
   /** Native-qualified defaults are separate from the unchanged signed requester input. */
   presetPolicy: z.optional(MachineRetentionPolicyV1Schema),
   originalActionEnvelope: z.optional(ExternalActionRequestEnvelopeSchema),
+  /** Result of the installed custodian's read-only native acquisition and platform probe. */
+  preparedAttachment: z.optional(z.strictObject({ resource: ManagedResourceV1Schema, platform: ManagedGuestPlatformV1Schema })),
 }).check(z.refine(value => value.reuseIdle !== true || value.acquisitionMode === 'resource-bound',
   { message: 'Idle reuse requires local resource-bound admission.' })));
 /**

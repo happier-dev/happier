@@ -1,4 +1,4 @@
-import type { ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { JsonValue } from '@happier-dev/protocol';
 import type { ManagedNativeBootstrapIO } from '../../systemTasks/kinds/managedMachineEnrollment.js';
 import type { ManagedNativeInvocation } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
@@ -6,7 +6,8 @@ import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileRe
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
-import type { ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { AcquireResultV1Schema, type ManagedBootstrapCarrierV1, type ManagedGuestPlatformV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { REMOTE_SHA256_FILE_FUNCTION } from '../../ssh/shellSha256.js';
 import { buildRemoteHappierInvocationCommand } from '../../systemTasks/ssh/remoteBootstrapCommandBuilder.js';
@@ -44,7 +45,7 @@ export async function startManagedNativeGuestDaemon(input: Readonly<{
 }
 
 /** Adapt the provider's native byte/exec roles to the one shared enrollment recipe. */
-export function createManagedNativeBootstrapIO(correlation: Pick<ManagedEnrollmentFullCorrelationV1, 'resource'>, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
+export function createManagedNativeBootstrapIO(correlation: Readonly<{ resource: Readonly<{ value: JsonValue }> }>, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
     return {
         exec: async request => {
             const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
@@ -86,7 +87,7 @@ export function createManagedNativeBootstrapIO(correlation: Pick<ManagedEnrollme
     };
 }
 
-export type ManagedGuestPlatform = Readonly<{ os: 'linux' | 'darwin'; arch: 'x64' | 'arm64'; home: string }>;
+export type ManagedGuestPlatform = Readonly<ManagedGuestPlatformV1>;
 
 /** The one guest platform probe (enrollment and Session holder bootstrap). */
 export async function probeManagedNativeGuestPlatform(
@@ -106,6 +107,29 @@ export async function probeManagedNativeGuestPlatform(
     }
     if (!home?.startsWith('/')) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest home could not be observed.');
     return { ...platformIdentity, home };
+}
+
+/** Prepares an existing guest for Home admission without starting it or delivering artifacts. */
+export async function prepareManagedWorkspaceAttachment(input: Readonly<{
+    managedId: string;
+    launch: Pick<ValidatedLaunchSnapshotV1, 'provider' | 'schemaVersion' | 'choices'>;
+    invoke: ManagedNativeInvocation;
+    signal?: AbortSignal;
+}>) {
+    const { launch, signal, invoke } = input;
+    signal?.throwIfAborted();
+    const result = AcquireResultV1Schema.parse(await invoke('acquire', { managedId: input.managedId, launch: launch.choices }, { signal }));
+    if (result.kind === 'rejected') throw new ManagedMachineControllerError(result.code, undefined,
+        result.nativeCause ? { kind: 'managedNative', nativeCause: result.nativeCause } : undefined);
+    if (result.kind !== 'bound' || result.startPending || result.resource.origin === 'created'
+        || result.resource.contributionRef.pluginId !== launch.provider.pluginId
+        || result.resource.contributionRef.localId !== launch.provider.localId
+        || result.resource.schemaVersion !== launch.schemaVersion) throw new ManagedMachineControllerError('resource_mismatch');
+    const { resource } = result;
+    const io = createManagedNativeBootstrapIO({ resource }, invoke);
+    const platform = await probeManagedNativeGuestPlatform(request => io.exec({ ...request, allowWake: false }), signal, 'session-holder');
+    signal?.throwIfAborted();
+    return { resource, platform };
 }
 
 export type SessionHolderArtifact = Readonly<{ bytes: Uint8Array; sha256: string }>;
@@ -129,11 +153,12 @@ const SESSION_HOLDER_FILES = { holder: 'happier-session-holder', helper: 'happie
 export async function ensureManagedGuestSessionHolder(input: Readonly<{
     io: Pick<ManagedNativeBootstrapIO, 'exec' | 'putFile'>;
     version: string;
+    platform?: ManagedGuestPlatform;
     resolveArtifacts(platform: ManagedGuestPlatform): Promise<Readonly<{ holder: SessionHolderArtifact; helper: SessionHolderArtifact }>>;
     signal?: AbortSignal;
 }>): Promise<ManagedGuestSessionHolder> {
     if (!/^[A-Za-z0-9._+-]+$/u.test(input.version)) throw new SystemTaskExecutionError('invalid_request', 'Session holder version is not a plain name.');
-    const platform = await probeManagedNativeGuestPlatform(input.io.exec, input.signal, 'session-holder');
+    const platform = input.platform ?? await probeManagedNativeGuestPlatform(input.io.exec, input.signal, 'session-holder');
     const artifacts = await input.resolveArtifacts(platform);
     const q = safeBashSingleQuote;
     const directory = `${platform.home}/.happier/holder/${input.version}`;

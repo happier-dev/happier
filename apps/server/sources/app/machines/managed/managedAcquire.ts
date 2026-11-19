@@ -1,13 +1,14 @@
 import type { ExternalActionSessionPresetAcquisitionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
-import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, isManagedPresetAcquireInputV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, isManagedPresetAcquireInputV1, managedWorkspaceAttachmentIdV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineFullV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
+import { isMachineProvisionerWorkspaceAttachmentV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import {
     ManagedMachineError, invalidateManagedMachineInTx, publishManagedMachinePolicyChangeInTx,
     requireManagedControllerInTx, requireManagedHomeInTx, sameManagedInput,
@@ -75,6 +76,11 @@ export async function admitManagedAcquire(params: Readonly<{
             && sameManagedInput({ selection: params.sessionPresetAcquisition.selection, controller: params.sessionPresetAcquisition.controller },
                 { selection: request.input.selection, controller: review.controller });
         const crossAccount = params.custodianAccountId !== params.requesterAccountId;
+        const attaching = request.input.selection.kind === 'one-off' && request.input.selection.attachWorkspace === true;
+        const prepared = request.preparedAttachment;
+        if (attaching ? !prepared || !review.controller || request.continuationPresent
+            || request.acquisitionMode || request.input.creationScopeRetention || prepared.resource.origin === 'created'
+            : prepared !== undefined) throw new ManagedMachineError('permission_denied');
         const custodianPolicyPreset = crossAccount && request.acquisitionMode === 'resource-bound' && params.machinePolicySandbox === true;
         if (request.acquisitionMode && (!isManagedPresetAcquireInputV1(request.input) || !review.controller
             || crossAccount && !admittedSessionPreset && !custodianPolicyPreset)) {
@@ -123,10 +129,11 @@ export async function admitManagedAcquire(params: Readonly<{
         // KEY SHARE content admission (including provider-usage record work).
         // Account authority changes still take the conflicting exclusive intent.
         const execute = () => inTx(async (tx) => {
-            const declarationBodies = isManagedPresetAcquireInputV1(request.input) ? undefined
-                : (await readManagedProjectionFactsInTx(tx, [{ homeId: review.homeId,
-                    custodianAccountId: params.custodianAccountId, controller: review.controller,
-                    provider: request.input.selection.launch.provider }])).declarationBodies;
+            const declarationInput = isManagedPresetAcquireInputV1(request.input) ? undefined
+                : { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller,
+                    provider: request.input.selection.launch.provider };
+            const projection = declarationInput ? await readManagedProjectionFactsInTx(tx, [declarationInput]) : undefined;
+            const attachmentDeclaration = attaching && declarationInput ? projection?.declarationFor(declarationInput) : undefined;
             await acquireManagedMachinePublicationAccountsInTx(tx, { controllerMachineId: review.controller?.machineId },
                 { intent: 'serializing', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId] });
             await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
@@ -134,7 +141,7 @@ export async function admitManagedAcquire(params: Readonly<{
             if (existing) return existing;
             // This enrolling admission captures Home's producer, never a
             // requester descriptor. Retained admissions return above unchanged.
-            const guestCli = request.acquisitionMode === 'resource-bound' ? undefined : readServerGuestCliIdentity();
+            const guestCli = attaching || request.acquisitionMode === 'resource-bound' ? undefined : readServerGuestCliIdentity();
             if (isManagedPresetAcquireInputV1(request.input)) {
                 const snapshot = admittedSessionPreset ? params.sessionPresetAcquisition?.admission : undefined;
                 const selected = snapshot ? { kind: 'ready' as const,
@@ -240,18 +247,26 @@ export async function admitManagedAcquire(params: Readonly<{
             let launch: ValidatedLaunchSnapshotV1;
             let declaration: ManagedDeclaration;
             launch = request.input.selection.launch;
-            const validated = await validateManagedLaunchInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication },
-                { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts, declarationBodies);
-            if (!validated.declaration) throw new ManagedMachineError('invalid_request');
-            declaration = validated.declaration;
+            // The attached guest's read-only native roles already spent the selected
+            // credential through custody. Home uses the declared schemas and binds
+            // the row here without the enrolled launch/credential read under lock.
+            const qualified = attaching ? attachmentDeclaration
+                : (await validateManagedLaunchInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication },
+                    { homeId: review.homeId, controller: review.controller, launch }, request.input.reviewedFacts, projection?.declarationBodies)).declaration;
+            if (!qualified || qualified.schemaVersion !== launch.schemaVersion) throw new ManagedMachineError('invalid_request');
+            declaration = qualified;
+            if (attaching !== isMachineProvisionerWorkspaceAttachmentV1(declaration.provisioner, launch.choices)) {
+                throw new ManagedMachineError('invalid_request');
+            }
             if (!review.controller && request.input.reviewedFacts?.provisioner?.id !== launch.provider.localId) throw new ManagedMachineError('invalid_request');
-            const parsedFacts = request.input.reviewedFacts === undefined ? undefined
+            const parsedFacts = attaching || request.input.reviewedFacts === undefined ? undefined
                 : createManagedConfigurationFactsV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)).safeParse(request.input.reviewedFacts);
             if (parsedFacts && !parsedFacts.success) throw new ManagedMachineError("invalid_request");
             // Retained native authority comes from admission's declaration, not requester presentation facts.
             const reviewedFacts = parsedFacts?.success ? { ...parsedFacts.data, provisioner: declaration.provisioner,
                 ...(review.controller ? { retentionCapabilities: declaration.retention, billing: declaration.billing } : {}) } : undefined;
-            const policy = qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
+            const policy = attaching ? { retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false }
+                : qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
             const scopeChoice = request.input.creationScopeRetention;
             if (scopeChoice && !resolveMachineRetentionNativeIntentV1(scopeChoice.effect, declaration.retention.supportedIntents)) {
                 throw new ManagedMachineError('invalid_request');
@@ -266,16 +281,25 @@ export async function admitManagedAcquire(params: Readonly<{
                 throw new ManagedMachineError("invalid_request");
             }
             const candidate = {
-                id: "admission", homeId: review.homeId, custodianAccountId: params.custodianAccountId,
+                id: prepared ? managedWorkspaceAttachmentIdV1(review.homeId, params.custodianAccountId, request.requestId) : "admission",
+                homeId: review.homeId, custodianAccountId: params.custodianAccountId,
                 enrollmentAccountId: params.requesterAccountId,
                 launch, controller: review.controller,
                 enrollmentIdentity: request.input.enrollmentIdentity,
-                allocation: "unsubmitted", creationState: "active", desired: "start", desiredWhen: "now", intentRevision: 0,
+                allocation: prepared ? 'bound' : 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+                ...(prepared ? { resource: prepared.resource, workspaceAttachment: prepared.platform } : {}),
                 retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage,
                 ...(reviewedFacts ? { reviewedFacts } : {}),
             };
-            const canonical = ManagedMachineFullV1Schema.parse(createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema).parse(candidate));
+            const declared = createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema);
+            const parsed = declared.safeParse(candidate);
+            if (!parsed.success) {
+                if (prepared) throw new ManagedMachineError('resource_mismatch');
+                throw parsed.error;
+            }
+            const canonical = ManagedMachineFullV1Schema.parse(parsed.data);
             const row = await tx.managedMachine.create({ data: {
+                ...(prepared ? { id: canonical.id } : {}),
                 homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,
                 controllerMachineId: canonical.controller?.machineId ?? null, controllerInstallationId: canonical.controller?.installationId ?? null,
                 admittedActionRequestId: request.requestId, admittedInput: { ...admittedInputIdentity,
@@ -283,8 +307,10 @@ export async function admitManagedAcquire(params: Readonly<{
                     enrollmentAccountId: params.requesterAccountId,
                     ...(creationScopeRetention ? { creationScopeRetention } : {}),
                     requestEnvelopeDigest: params.requestEnvelopeDigest,
+                    ...(canonical.workspaceAttachment ? { workspaceAttachment: canonical.workspaceAttachment } : {}),
                     },
                 launch: canonical.launch, retention: canonical.retention, wakeOnAcceptedMessage: canonical.wakeOnAcceptedMessage,
+                ...(canonical.resource ? { allocation: 'bound', resource: canonical.resource } : {}),
                 ...(canonical.reviewedFacts ? { reviewedFacts: canonical.reviewedFacts } : {}),
                 ...(canonical.machineSetup ? { machineSetup: canonical.machineSetup } : {}),
             } });

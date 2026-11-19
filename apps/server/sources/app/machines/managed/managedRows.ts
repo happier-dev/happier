@@ -15,7 +15,7 @@ import { ManagedAdmissionComputeInputV1Schema, ManagedAdmissionPresetContentV1Sc
 import { ManagedMachinePresetLaunchNameOverrideV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ExternalActionRetainedWorkflowRootV1Schema } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedResourceV1, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { SupportedNativeIntentSchema, ManagedResourceV1Schema, ManagedGuestPlatformV1Schema, type ManagedResourceV1, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
@@ -136,6 +136,7 @@ const StoredManagedComputeInputSchema = z.union([
 const StoredManagedAdmissionSchema = z.strictObject({
     guestCli: z.optional(GuestCliIdentityV1Schema),
     acquisitionMode: z.optional(z.literal('resource-bound')),
+    workspaceAttachment: z.optional(ManagedGuestPlatformV1Schema),
     reuseIdle: z.optional(z.literal(true)),
     resourceBoundSessionEnded: z.optional(z.literal(true)),
     bootstrapInstalled: z.optional(z.literal(true)),

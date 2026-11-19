@@ -20,6 +20,25 @@ const emptyDimensions = () => ({ size: [], image: [], location: [], network: [],
 /** Coder templates are images in the existing options model. Rich values use
  * the ordinary JSON editor; Terraform's conditional forms remain Coder-owned. */
 export async function coderOptions(client: CoderClient, query: CoderOptions): Promise<MachineProvisionerOptionsResultV1> {
+  if (query.attachExisting) {
+    const workspaces = await client.listOwnWorkspaces();
+    return {
+      base: {
+        launch: { parameterValues: [], ...(query.agentName ? { agentName: query.agentName } : {}) },
+        billing: BILLING, retention: RETENTION,
+      },
+      dimensions: { ...emptyDimensions(), image: workspaces.map(workspace => ({
+        id: workspace.id,
+        title: workspace.name,
+        assignments: [
+          { path: 'existingWorkspaceId', value: workspace.id },
+          { path: 'organizationId', value: workspace.organization_id },
+          { path: 'templateId', value: workspace.template_id },
+          { path: 'templateVersionId', value: workspace.latest_build.template_version_id },
+        ],
+      })) },
+    };
+  }
   if (!query.organizationId) return { dimensions: emptyDimensions() };
   const templates = templatesSchema.parse(await client.request('/organizations/' + encodeURIComponent(query.organizationId) + '/templates'));
   if (templates.some(template => template.organization_id !== query.organizationId)) throw new PluginError({ code: 'resource_mismatch' });

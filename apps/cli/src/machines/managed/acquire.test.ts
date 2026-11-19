@@ -5036,6 +5036,41 @@ describe('managed acquisition durable custody', () => {
         }, { requestId: 'options' })).resolves.toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
         expect(post).not.toHaveBeenCalled();
     });
+    it('keeps existing-workspace options in the requesting Account on a shared controller', async () => {
+        const base = nativeFixture({ streamRole: true, credentialPurposes: [] }).manifest;
+        const { defineProtocolObject, defineProtocolString } = await import('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
+        const { defineMachineProvisionerSchemas } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
+        const selectorSchema = defineProtocolObject({ image: defineProtocolString().optional() }, { policy: 'closed' });
+        const resourceSchema = defineProtocolObject({ guest: defineProtocolString({ minLength: 1 }).optional() }, { policy: 'closed' });
+        const { acquireInput } = defineMachineProvisionerSchemas({ launch: selectorSchema, resource: resourceSchema });
+        const options = { dimensions: { size: [], image: [{ id: 'guest', title: 'Private guest',
+            assignments: [{ path: 'image', value: 'guest' }] }],
+            location: [], network: [], duration: [] } };
+        const manifest = normalizePluginManifestV2({ ...base, contributes: { ...base.contributes,
+            machineProvisioners: base.contributes.machineProvisioners.map(descriptor => ({
+                ...descriptor, launchSchema: selectorSchema.jsonSchema, workspaceAttachment: {
+                    when: { op: 'truthy', path: 'image' }, optionsWhen: { op: 'truthy', path: 'image' },
+                },
+            })),
+            actions: base.contributes.actions.map(action => action.id === 'acquire'
+                ? { ...action, inputSchema: acquireInput.jsonSchema }
+                : action.id === 'options' ? { ...action, inputSchema: selectorSchema.jsonSchema } : action),
+        } });
+        const native = nativeFixture({ streamRole: true, credentialPurposes: [], fixtureManifest: manifest,
+            nativeRoleResults: { options } });
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token, serverUrl: 'https://home.example',
+            homeId: 'home', controller, credentials: { token, encryption: null }, runtimeRegistry: native.runtimeRegistry });
+        const invoke = (actorAccountId: string, selectors: Record<string, string>) => driver.execute('machines.provisioners.options', {
+            homeId: 'home', controller, contribution: input.selection.launch.provider, selectors,
+        }, { requestId: 'workspace-options', context: { surface: 'ui', runtimeAccountId: 'owner',
+            machineAdmission: { ...controller, actorAccountId, custodianAccountId: 'owner', role: 'manage', encryptionMode: 'plain' },
+        } });
+        await expect(invoke('grantee', { image: 'existing' })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        expect(native.effects()).toBe(0);
+        await expect(invoke('owner', { image: 'existing' })).resolves.toEqual(options);
+        await expect(invoke('grantee', {})).resolves.toEqual(options);
+    });
     it('runs Account-declared provisioner options on an explicitly selected Machine controller', async () => {
         const service = { pluginId: 'acme.accounts', localId: 'cloud' };
         const credentialOwner = createConnectedAccountPurposeBindingOwner({

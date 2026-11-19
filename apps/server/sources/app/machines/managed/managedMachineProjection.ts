@@ -140,12 +140,12 @@ function projectManagedMachineStructural(row: StoredManagedMachine) {
         ...(admission.creationScopeRetention ? { creationScopeRetention: admission.creationScopeRetention } : {}),
         ...(row.cleanup !== null ? { cleanup: row.cleanup } : {}),
     };
-    return { structural, enrollmentIdentity };
+    return { structural, enrollmentIdentity, workspaceAttachment: admission.workspaceAttachment };
 }
 
 /** Project an already selected raw row through the established full stored reader. */
 export function projectManagedMachineFull(row: StoredManagedMachine): ManagedMachineFullV1 {
-    const { structural, enrollmentIdentity } = projectManagedMachineStructural(row);
+    const { structural, enrollmentIdentity, workspaceAttachment } = projectManagedMachineStructural(row);
     const resource = row.resource === null ? undefined : row.resource as ManagedMachineFullV1['resource'];
     const controller = structural.controller;
     const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
@@ -154,6 +154,7 @@ export function projectManagedMachineFull(row: StoredManagedMachine): ManagedMac
         ...structural,
         ...(structural.preset ? { preset: { ...structural.preset, contentEncryptionMode: 'plain' } } : {}),
         ...(enrollmentIdentity ? { enrollmentIdentity } : {}),
+        ...(workspaceAttachment ? { workspaceAttachment } : {}),
         ...(resource ? { resource } : {}),
         ...(devcontainerChild ? { devcontainerChild } : {}),
         ...(row.nativeOperationRef !== null ? { nativeOperationRef: row.nativeOperationRef } : {}),

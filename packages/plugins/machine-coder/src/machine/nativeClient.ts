@@ -20,6 +20,7 @@ const buildSchema = defineProtocolObject({ id: text, workspace_id: text, templat
 const workspaceSchema = defineProtocolObject({ id: text, owner_id: text, owner_name: text, organization_id: text, template_id: text, name: text,
   latest_build: buildSchema, dormant_at: nullableText.optional(),
 }, open);
+const workspaceListingSchema = defineProtocolObject({ workspaces: defineProtocolArray(workspaceSchema) }, open);
 const buildFailed = (build: ReturnType<typeof buildSchema.parse>) => build.job.status === 'failed' || build.job.status === 'canceled' || build.status === 'failed' || build.status === 'canceled';
 type Workspace = ReturnType<typeof workspaceSchema.parse>;
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
@@ -39,8 +40,8 @@ function projectCoderFailure<T>(error: unknown, fallback: () => T | PromiseLike<
 export const coderWorkspaceName = (managedId: string) => 'hm-' + createHash('sha256').update(managedId).digest('hex').slice(0, 29);
 const pending = (operation: CoderAcquireOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
 const unknown = (operation: CoderAcquireOperation, reason: string): Acquisition => ({ kind: 'unknown', recovery: { reference: operation.workspaceId ?? `${operation.ownerId}/${operation.workspaceName}`, reason } });
-const resourceFor = (operation: CoderAcquireOperation, native: Workspace): CoderResource => ({ workspaceId: native.id, ownerId: native.owner_id, ownerName: native.owner_name,
-  workspaceName: native.name, organizationId: native.organization_id, templateId: native.template_id, agentName: operation.launch.agentName, managedId: operation.managedId });
+const resourceFor = (native: Workspace, managedId: string, agentName: string): CoderResource => ({ workspaceId: native.id, ownerId: native.owner_id, ownerName: native.owner_name,
+  workspaceName: native.name, organizationId: native.organization_id, templateId: native.template_id, agentName, managedId });
 const powerOf = (native: Workspace) => native.latest_build.status === 'running' ? 'running' as const : native.latest_build.status === 'stopped' ? 'stopped' as const : 'unknown' as const;
 const inProgress = (status: string) => status === 'pending' || status === 'starting' || status === 'stopping' || status === 'deleting' || status === 'canceling';
 
@@ -78,13 +79,20 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
   function matches(native: Workspace, expected: Pick<CoderResource, 'ownerId' | 'organizationId' | 'templateId'>) {
     return native.owner_id === expected.ownerId && native.organization_id === expected.organizationId && native.template_id === expected.templateId;
   }
-  async function read(resource: CoderResource) {
+  async function read(resource: Pick<CoderResource, 'workspaceId' | 'ownerId' | 'organizationId' | 'templateId'>) {
     await principal(resource.ownerId);
     const value = await request('/workspaces/' + encodeURIComponent(resource.workspaceId) + '?include_deleted=true', 'GET', undefined, true);
     if (value === null) return null;
     const native = parseWorkspace(value);
     if (native.id !== resource.workspaceId || !matches(native, resource)) fail('coder_resource_mismatch');
     return native.latest_build.status === 'deleted' ? null : native;
+  }
+  async function bindExistingWorkspace(launch: CoderLaunch, workspaceId: string, managedId: string): Promise<Acquisition> {
+    const owner = await user();
+    const native = await read({ ...launch, workspaceId, ownerId: owner.id });
+    return native
+      ? { kind: 'bound', resource: reference(resourceFor(native, managedId, launch.agentName)) }
+      : { kind: 'rejected', code: 'managed_not_found' };
   }
   async function operationFor(launch: CoderLaunch, managedId: string): Promise<CoderAcquireOperation> {
     const owner = await user();
@@ -98,7 +106,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
     if (native.latest_build.status === 'deleted') return { kind: 'rejected', code: 'managed_not_found' };
     // Allocation is real even when an agent is disconnected or Start failed.
     // Bind only after native creation settles; the shared bootstrap owns guest IO.
-    if (!inProgress(native.latest_build.status)) return { kind: 'bound', resource: { ...reference(resourceFor(retained, native)), origin: 'created' as const } };
+    if (!inProgress(native.latest_build.status)) return { kind: 'bound', resource: { ...reference(resourceFor(native, retained.managedId, retained.launch.agentName)), origin: 'created' as const } };
     return pending(retained);
   }
   async function observeRetainedAcquisition(operation: CoderAcquireOperation): Promise<Acquisition> {
@@ -114,7 +122,12 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
   async function recover(raw: unknown): Promise<Acquisition> {
     const operation = CoderOperationSchema.parse(raw);
     if (operation.kind === 'delete') return { kind: 'bound', resource: reference(operation.resource) };
-    try { return await observeRetainedAcquisition(operation); }
+    try {
+      const workspaceId = operation.launch.existingWorkspaceId;
+      return workspaceId
+        ? await bindExistingWorkspace(operation.launch, workspaceId, operation.managedId)
+        : await observeRetainedAcquisition(operation);
+    }
     catch (error) { return projectCoderFailure(error, () => unknown(operation, coderFailureCode(error))); }
   }
   async function buildObservation(resource: CoderResource, buildId: string) {
@@ -188,7 +201,12 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
   return {
     request, read, operationFor, recover, inspect, destroy, cleanup, qualifyTemplateVersion,
     async check() { await user(); return { available: true }; },
+    async listOwnWorkspaces(): Promise<readonly Workspace[]> {
+      const listing = workspaceListingSchema.safeParse(await request('/workspaces?q=owner:me'));
+      return listing.success ? listing.data.workspaces : fail('coder_invalid_response');
+    },
     async acquire(launch: CoderLaunch, managedId: string): Promise<Acquisition> {
+      if (launch.existingWorkspaceId) return bindExistingWorkspace(launch, launch.existingWorkspaceId, managedId);
       await qualifyTemplateVersion(launch);
       const operation = await operationFor(launch, managedId);
       let retained = operation;

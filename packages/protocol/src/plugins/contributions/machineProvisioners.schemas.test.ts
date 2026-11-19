@@ -55,6 +55,21 @@ it('specializes preparation build choices without widening the canonical closed 
   }
 });
 
+it('declares read-only workspace acquisition for a specific launch variant', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  const workspaceAttachment = { when: { op: 'truthy', path: 'existingWorkspaceId' } };
+  const launch = defineProtocolObject({ existingWorkspaceId: defineProtocolString().optional() }, { policy: 'closed' });
+  const parsed = provisioners.MachineProvisionerContributionV1Schema.parse({
+    ...descriptor, nativeDurationInput: undefined, launchSchema: launch.jsonSchema, workspaceAttachment,
+    bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put', stream: 'stream' },
+  });
+  expect(provisioners.isMachineProvisionerWorkspaceAttachmentV1(parsed, { existingWorkspaceId: 'selected-guest' })).toBe(true);
+  expect(provisioners.isMachineProvisionerWorkspaceAttachmentV1(parsed, {})).toBe(false);
+  expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({
+    ...parsed, workspaceAttachment: { when: { op: 'truthy', path: 'undeclared' } },
+  }).success).toBe(false);
+});
+
 it('admits optional preparation declarations and resolves their three same-plugin roles', () => {
   const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
   const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' }).jsonSchema;

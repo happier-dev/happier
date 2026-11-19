@@ -3,7 +3,7 @@ import type { JsonValue } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { createManagedNativeBootstrapIO, ensureManagedGuestSessionHolder } from './nativeBootstrap.js';
+import { createManagedNativeBootstrapIO, ensureManagedGuestSessionHolder, prepareManagedWorkspaceAttachment } from './nativeBootstrap.js';
 import { openManagedNativeChannel } from './nativeChannel.js';
 import type { ManagedNativeBootstrapIO } from '../../systemTasks/kinds/managedMachineEnrollment.js';
 import type { ManagedNativeInvocationIO } from './reconcile.js';
@@ -94,6 +94,34 @@ describe('native stream channel', () => {
 });
 
 describe('Session holder bootstrap in a managed guest', () => {
+    it.each(['supported', 'unsupported', 'created'] as const)('probes only the selected existing guest before admitting attachment (%s)', async mode => {
+        const calls: string[] = [];
+        const launch = correlation.resource.contributionRef;
+        const prepare = prepareManagedWorkspaceAttachment({
+            managedId: 'request', launch: { provider: launch, schemaVersion: 1, choices: { existing: 'same-resource' } },
+            invoke: async (role, body) => {
+                calls.push(role);
+                if (role === 'acquire') {
+                    expect(body).toEqual({ managedId: 'request', launch: { existing: 'same-resource' } });
+                    return { kind: 'bound', resource: { ...correlation.resource, ...(mode === 'created' ? { origin: 'created' } : {}) } };
+                }
+                expect(role).toBe('exec');
+                expect(body).toMatchObject({ resource: { id: 'same-resource' }, allowWake: false });
+                return { stdoutBase64: encodeBase64(new TextEncoder().encode(mode === 'unsupported'
+                    ? 'Windows_NT\nAMD64\nC:/Users/guest\n' : 'Linux\nx86_64\n/home/guest\n')),
+                    stderrBase64: '', stdoutTruncated: false, stderrTruncated: false,
+                    termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } } };
+            },
+        });
+        if (mode === 'supported') {
+            await expect(prepare).resolves.toMatchObject({ resource: correlation.resource,
+                platform: { os: 'linux', arch: 'x64', home: '/home/guest' } });
+        } else {
+            await expect(prepare).rejects.toMatchObject({ code: mode === 'unsupported' ? 'session_holder_unavailable' : 'resource_mismatch' });
+        }
+        expect(calls).toEqual(mode === 'created' ? ['acquire'] : ['acquire', 'exec']);
+    });
+
     it.each([
         'Windows_NT\nAMD64\nC:/Users/guest\n',
         'FreeBSD\nx86_64\n/home/guest\n',

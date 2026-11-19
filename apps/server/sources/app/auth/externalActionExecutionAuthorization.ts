@@ -1870,6 +1870,10 @@ async function verifyCommon(
             return refuse('managed_control_purpose');
         }
     }
+    if (acquireAdmissionRequest && !boundMachineSigned) {
+        const admission = ManagedAdmissionInputV1Schema.safeParse(proof.body);
+        if (admission.success && admission.data.preparedAttachment) return refuse('machine_signature');
+    }
     // Target currentness and the captured source both sign the exact destination
     // tuple. Only the accepted continuation survives its publisher stopping.
     const managedGuestMetadata = proof.method.toUpperCase() === 'GET'

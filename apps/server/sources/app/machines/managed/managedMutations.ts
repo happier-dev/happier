@@ -252,6 +252,10 @@ export async function admitManagedControl(params: Readonly<{
             throw new ManagedMachineError('credential_unavailable');
         }
         const admitted = readManagedAdmissionState(row.admittedInput);
+        if (admitted.workspaceAttachment && (request.action === 'machines.managed.delete'
+            || request.action === 'machines.managed.rebuild' || request.action === 'machines.managed.retention.update')) {
+            throw new ManagedMachineError('native_intent_unsupported');
+        }
         const currentAdmission = { kind: 'control' as const, request };
         const opaqueResize = request.action === MANAGED_RESIZE_ACTION_ID_V1
             && 'presetContentOverride' in request.input;
@@ -947,7 +951,7 @@ export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollm
     const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority:
         canonical.requestId === retained.admittedActionRequestId ? 'creation' : 'intent' });
     const admission = readManagedAdmissionState(row.admittedInput);
-    if (admission.submittedEffect?.intent === 'rebuild') throw new ManagedMachineError('enrollment_retired');
+    if (admission.workspaceAttachment || admission.submittedEffect?.intent === 'rebuild') throw new ManagedMachineError('enrollment_retired');
     const accountMatches = typeof authority === 'string'
         ? readManagedEnrollmentAccountId(row) === authority
         : row.custodianAccountId === authority.controllerCustodianAccountId;

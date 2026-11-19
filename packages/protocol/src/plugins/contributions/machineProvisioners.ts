@@ -128,6 +128,8 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   })),
   /** Native source effects that the author reviews when saving a reusable preset. */
   effectReview: z.optional(z.strictObject({ requiredWhen: InputPredicateSchema })),
+  /** Launch variants that resolve an existing guest without mutating it. */
+  workspaceAttachment: z.optional(z.strictObject({ when: InputPredicateSchema, optionsWhen: z.optional(InputPredicateSchema) })),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
   actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), resize: z.optional(local()), snapshot: z.optional(local()), renew: z.optional(local()) }),
@@ -162,6 +164,12 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   if (descriptor.effectReview && readInputPredicatePaths(descriptor.effectReview.requiredWhen)
     .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
     context.addIssue({ code: 'custom', path: ['effectReview', 'requiredWhen'], message: 'Effect review predicates require declared launch selector paths.' });
+  }
+  if (descriptor.workspaceAttachment && (!descriptor.bootstrapTransport?.stream
+    || readInputPredicatePaths(descriptor.workspaceAttachment.when)
+      .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length))) {
+    context.addIssue({ code: 'custom', path: ['workspaceAttachment'],
+      message: 'Workspace attachment requires native streaming and declared launch selectors.' });
   }
   if (descriptor.sessionPlacement?.when && readInputPredicatePaths(descriptor.sessionPlacement.when)
     .some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
@@ -203,6 +211,13 @@ export type MachineProvisionerContributionV1 = z.infer<typeof MachineProvisioner
 /** The declaration owns which launch variants need source effects admitted by their author. */
 export function requiresMachineProvisionerEffectReviewV1(provisioner: Pick<MachineProvisionerContributionV1, 'effectReview'>, launchInput: unknown): boolean {
   return provisioner.effectReview !== undefined && evaluateInputPredicate(provisioner.effectReview.requiredWhen, launchInput);
+}
+
+export function isMachineProvisionerWorkspaceAttachmentV1(provisioner: Pick<MachineProvisionerContributionV1, 'workspaceAttachment'>,
+  input: unknown, role: 'acquire' | 'options' = 'acquire'): boolean {
+  const attachment = provisioner.workspaceAttachment;
+  const predicate = role === 'options' ? attachment?.optionsWhen : attachment?.when;
+  return predicate !== undefined && evaluateInputPredicate(predicate, input);
 }
 
 /** Placement is declared by the provider, independently of billing and transport. */
@@ -296,6 +311,14 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
   value.machineProvisioners.forEach((descriptor, index) => {
     if (seen.has(descriptor.id)) context.addIssue({ code: 'custom', path: ['machineProvisioners', index, 'id'], message: 'Duplicate machine provisioner id.' });
     seen.add(descriptor.id);
+    const optionsWhen = descriptor.workspaceAttachment?.optionsWhen;
+    if (optionsWhen) {
+      const optionsInput = value.actions.find(action => action.id === descriptor.actions.options)?.inputSchema;
+      if (!optionsInput || readInputPredicatePaths(optionsWhen).some(path => !resolveDeclaredInputLeaves(optionsInput, path)?.length)) {
+        context.addIssue({ code: 'custom', path: ['machineProvisioners', index, 'workspaceAttachment', 'optionsWhen'],
+          message: 'Workspace attachment options require declared options selectors.' });
+      }
+    }
     for (const binding of readMachineProvisionerActionRolesV1(descriptor)) {
       const action = value.actions.find(candidate => candidate.id === binding.action);
       const path = ['machineProvisioners', index, ...readMachineProvisionerActionRolePathV1(descriptor, binding.role)];

@@ -412,7 +412,19 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         const requestEnvelopeDigest = request.externalActionExecutionRequestEnvelopeDigest ?? request.body.requestEnvelopeDigest;
         if (!requestEnvelopeDigest || (request.externalActionExecutionRequestEnvelopeDigest && request.body.requestEnvelopeDigest
             && request.externalActionExecutionRequestEnvelopeDigest !== request.body.requestEnvelopeDigest)) throw new ManagedMachineError('permission_denied');
-        if (!reviewedCreationAcquire && (request.body.presetPolicy !== undefined || request.body.originalActionEnvelope !== undefined)) {
+        if (request.body.preparedAttachment) {
+            const root = request.body.originalActionEnvelope;
+            const projected = root && readExternalActionManagedAcquireAdmission(root);
+            if (!controller || !rootBinding || !root || !projected || reviewedCreationAcquire
+                || rootBinding.accountId !== custodianAccountId
+                || rootBinding.installationId !== controller.installationId || rootBinding.managedAcquireDelegation
+                || rootBinding.workflowActionOrigin || rootBinding.sessionActionOrigin || rootBinding.target.kind !== 'machine'
+                || rootBinding.serverIdentityId !== request.body.input.selection.homeId
+                || !isExternalActionAuthorizationBoundToEnvelope(rootBinding, {
+                    actionId: MANAGED_ACQUIRE_ACTION_ID_V1, machineId: controller.machineId, envelope: root,
+                }) || !sameManagedInput(projected.input, request.body.input)
+                || projected.continuationPresent) throw new ManagedMachineError('permission_denied');
+        } else if (!reviewedCreationAcquire && (request.body.presetPolicy !== undefined || request.body.originalActionEnvelope !== undefined)) {
             const root = request.body.originalActionEnvelope;
             const projected = root && readExternalActionManagedAcquireAdmission(root);
             const binding = request.externalActionExecutionAuthorizationBinding;

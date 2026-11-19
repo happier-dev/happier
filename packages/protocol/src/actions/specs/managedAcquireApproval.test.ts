@@ -4,8 +4,20 @@ import { describeApprovalActionFields, projectApprovalReviewInput } from '../act
 import { getActionSpec } from '../actionSpecs.js';
 import type { ManagedMachineEnrollmentIdentityV1 } from '../../machines/managed/enrollmentIdentityV1.js';
 import { describeManagedSize } from '../../machines/managed/configurationPresentation.js';
+import { ManagedAdmissionComputeInputV1Schema } from '../../machines/managed/actionsV1.js';
 
 describe('managed acquire review', () => {
+  it('retains the workspace attach variant in the exact admission input', () => {
+    const selection = { kind: 'one-off', homeId: 'home',
+      controller: { machineId: 'controller', installationId: 'installed' },
+      launch: { provider: { pluginId: 'happier.machine.coder', localId: 'coder' }, schemaVersion: 1,
+        name: 'Attached workspace', choices: { existingWorkspaceId: 'my-coder-workspace' } },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, attachWorkspace: true };
+    const input = { selection, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
+    expect(ManagedAdmissionComputeInputV1Schema.parse(input)).toEqual(input);
+    expect(ManagedAdmissionComputeInputV1Schema.safeParse({ ...input, preparedAttachment: { resource: {} } }).success).toBe(false);
+  });
+
   it('reads the reviewed local Lima configuration without raw native records, in pending and retained review', () => {
     const spec = getActionSpec('machines.managed.acquire');
     const launch = { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1,

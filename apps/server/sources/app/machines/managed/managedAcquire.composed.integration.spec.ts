@@ -885,6 +885,23 @@ describe("managed acquisition durable authority", () => {
         return { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native };
     }
 
+    it('refuses attachment before the installed custodian has probed the selected guest', async () => {
+        const fixture = await createManagedComputeFixture('workspace-attach-without-probe');
+        const request = {
+            ...fixture.request,
+            input: {
+                ...fixture.request.input,
+                continuationPresent: false,
+                input: {
+                    ...fixture.input,
+                    selection: { ...fixture.input.selection, attachWorkspace: true as const },
+                },
+            },
+        };
+        await expect(admitManagedAcquire(request)).rejects.toMatchObject({ code: 'permission_denied' });
+        expect(await db.managedMachine.count({ where: { custodianAccountId: fixture.account.id } })).toBe(0);
+    });
+
     it.each(['account', 'daemon'] as const)('clears only a portable %s cloud controller and retains its admitted descriptor', async target => {
         const selected = await createManagedComputeFixture(`clear-${target}`, { location: 'cloud', stoppedBilling: 'not-billed' });
         const { homeId, account, controller, input } = selected;
