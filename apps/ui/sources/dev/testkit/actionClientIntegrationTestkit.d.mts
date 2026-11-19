@@ -81,7 +81,7 @@ export function connectUiTriageActionClient(params: Parameters<typeof connectUiP
     additionalPlugins?: readonly Readonly<{
         packageName: string;
         manifest: import('@happier-dev/plugin-sdk/manifest').PluginManifest;
-        activate(api: import('@happier-dev/plugin-sdk').PluginAccountApi): void | Promise<void>;
+        activate: import('@happier-dev/plugin-sdk').PluginAccountActivationModule['activate'];
     }>[];
 }>): Promise<Awaited<ReturnType<typeof connectUiActionClient>> & Readonly<{
     collectionClients(contracts: readonly import('@happier-dev/protocol/plugins/data/collectionsV1').NormalizedPluginAccountCollectionContractV1[]):

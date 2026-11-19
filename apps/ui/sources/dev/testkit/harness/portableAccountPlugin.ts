@@ -19,7 +19,7 @@ import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plu
 import { validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActivationModule, PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { mergeInstalledPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -36,7 +36,7 @@ import { readPluginAccountAvailability, replacePluginAccountAvailabilityProjecti
 
 export type PortableAccountPluginFixture = Readonly<{
     manifest: PluginManifest;
-    activate(api: PluginAccountApi): void | Promise<void>;
+    activate: PluginAccountActivationModule['activate'];
     prepareRegistration?: PluginUiClientExecutableActivation['prepareRegistration'];
 }>;
 
@@ -248,10 +248,7 @@ export async function installPortableAccountPluginForTest(input: Parameters<type
     return { ...prepared, async dispose() { unpublish(); await prepared.dispose(); } };
 }
 
-async function preparePortableAccountPluginForTest(input: Readonly<{
-    manifest: PluginManifest;
-    activate(api: PluginAccountApi): void | Promise<void>;
-    prepareRegistration?: PluginUiClientExecutableActivation['prepareRegistration'];
+async function preparePortableAccountPluginForTest(input: PortableAccountPluginFixture & Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     origin?: PluginUiAccountExecutableOrigin;
     /** A source fixture consumes the complete projection admitted by Availability. */
