@@ -129,7 +129,9 @@ describe('portable managed enrollment', () => {
           return { status: 1, stdout: JSON.stringify({ ok: false, error: 'service_manager_unavailable', serviceStep: 'preflight', serviceStepStatus: 'unavailable' }), stderr: '' };
         }
         if (invocation.includes('daemon restart')) running = true;
-        if (invocation.includes('daemon start') || invocation.includes('service start') || invocation.includes('service restart')) running = true;
+        // The real installer starts a normally enabled service. A second explicit start
+        // can restart it before Home has acknowledged machine-control readiness.
+        if (invocation.includes('daemon start') || invocation.includes('service install') || invocation.includes('service restart')) running = true;
         const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined',
           services: [], service: { installed: dedicatedRetry }, daemon: { running, healthy: running }, auth: { needsAuth: false, machineId: 'joined' },
           server: { activeServerId: 'guest-home' } };
@@ -165,7 +167,7 @@ describe('portable managed enrollment', () => {
       expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service restart'))).toBe(false);
     }
     expect(rowReads).toBe(1);
-    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(dedicatedRetry && !retainedEnrollment && !('noServiceManager' in availability));
+    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(false);
     expect(JSON.stringify(events)).not.toContain(pairing.secretB64Url);
   });
 

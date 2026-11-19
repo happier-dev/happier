@@ -1125,8 +1125,12 @@ async function runRemoteMachineBootstrapRecipe({
           await flowExecutor.installDaemonService?.();
         } }) === 'process';
         if (!processManaged) {
-          ctx.emit({ type: 'progress', stepId: 'daemon.service.start', message: 'Starting background service' });
-          await flowExecutor.startDaemonService?.();
+          // The dedicated user's install activates its new unit. A second lifecycle
+          // command can restart the daemon while its first Home registration is in flight.
+          if (parsedRemote.enrollmentIdentity?.kind !== 'dedicatedDaemonUser') {
+            ctx.emit({ type: 'progress', stepId: 'daemon.service.start', message: 'Starting background service' });
+            await flowExecutor.startDaemonService?.();
+          }
           ctx.emit({ type: 'progress', stepId: 'daemon.service.verify', message: 'Verifying background service' });
           daemonStatus = await flowExecutor.waitForReadyDaemon?.({ signal: ctx.signal });
           if (daemonStatus && (!daemonStatus.serviceInstalled || !daemonStatus.daemonRunning || daemonStatus.needsAuth)) {

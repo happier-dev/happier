@@ -268,8 +268,10 @@ development, initial remote enrollment and retained native updates share the
 remote daemon lifecycle selector. If service installation's existing preflight
 reports `service_manager_unavailable` with `preflight`/`unavailable`, setup uses
 the daemon process lifecycle instead. Other install/start failures remain fatal;
-bootstrap progress identifies service install and start separately. This adds no
-availability probe or install retry.
+bootstrap progress identifies service installation before readiness verification.
+For initial dedicated-user enrollment, service installation activates the unit
+and the controller then waits for Home to acknowledge machine control. This
+avoids restarting a daemon that is still completing its first registration.
 
 Approval replay in 0.3 development retains the credentialed executor's captured
 Account and Home. A mutable default profile cannot replace that identity: the
