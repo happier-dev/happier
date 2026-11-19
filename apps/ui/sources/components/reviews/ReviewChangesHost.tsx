@@ -33,7 +33,7 @@ import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { t } from '@/text';
 
 import { reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
-import { CodeBlockViewFrame } from '@/components/ui/code/blocks/CodeBlockViewFrame';
+import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
 
@@ -94,7 +94,7 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
                         {reviewSeverityLabel(comment.findingSeverity)}</Text> : null}
                 </HappierPressable>
                 {snapshot?.kind === 'text' ? (
-                    <CodeBlockViewFrame code={[...snapshot.beforeContext, ...snapshot.selectedLines, ...snapshot.afterContext].join('\n')}
+                    <CodeBlockView code={[...snapshot.beforeContext, ...snapshot.selectedLines, ...snapshot.afterContext].join('\n')}
                         headerLeft={path ? <View style={excerptStyles.fileHead}>
                             <Icon name="file" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
                             <Text numberOfLines={1} style={excerptStyles.filePath}>{line ? `${path}:${line}` : path}</Text>

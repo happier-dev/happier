@@ -52,11 +52,12 @@ it('reads only the opened pinned comparison, preserves its failure, and does no 
 it('keeps sealed finding excerpts readable without a capture or Machine read', async () => {
     fixture = await createSessionFilesViewFixture({ machine: null });
     const { ReviewChangesHost } = await import('./ReviewChangesHost');
-    const comment = buildReviewCommentFixture({ id: 'sealed-finding' });
+    const comment = buildReviewCommentFixture({ id: 'sealed-finding', snapshot: { kind: 'text', selectedLinesHash: 'sealed-lines', contextWindowHash: 'sealed-context', capturedAt: 1, fileLength: 1, source: 'workingTree', isUncommitted: false, isUntracked: false, beforeContext: [], selectedLines: ['sealed text remains readable'], afterContext: [], truncated: false, hasBidiControls: false, likelyMinified: false } });
     const screen = await fixture.render(<ReviewChangesHost reviewId="shared-review" roundOrdinal={2}
         scope={{ serverId: fixture.scope.serverId, accountId: 'alice' }} capture={null} comments={[comment]}
         view="files" onSelectView={() => {}} onOpenComment={() => {}} />);
     expect(screen.findHostByTestId('review-changes-sealed-excerpts')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('sealed text remains readable');
     expect(fixture.requests).toEqual([]);
     await screen.unmount();
 });
