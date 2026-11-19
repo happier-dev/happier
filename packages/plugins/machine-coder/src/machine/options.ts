@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { CoderClient } from './nativeClient.js';
+import { coderWorkspaceStatus, type CoderClient } from './nativeClient.js';
 import { BILLING, RETENTION, type CoderOptions } from './schemas.js';
 
 const open = { policy: 'additive-open/drop' } as const;
@@ -27,16 +27,23 @@ export async function coderOptions(client: CoderClient, query: CoderOptions): Pr
         launch: { parameterValues: [], ...(query.agentName ? { agentName: query.agentName } : {}) },
         billing: BILLING, retention: RETENTION,
       },
-      dimensions: { ...emptyDimensions(), image: workspaces.map(workspace => ({
-        id: workspace.id,
-        title: workspace.name,
-        assignments: [
-          { path: 'existingWorkspaceId', value: workspace.id },
-          { path: 'organizationId', value: workspace.organization_id },
-          { path: 'templateId', value: workspace.template_id },
-          { path: 'templateVersionId', value: workspace.latest_build.template_version_id },
-        ],
-      })) },
+      dimensions: { ...emptyDimensions(), image: workspaces.map(workspace => {
+        const template = workspace.template_display_name?.trim() || workspace.template_name?.trim();
+        return {
+          id: workspace.id,
+          title: workspace.name,
+          nativeFacts: {
+            ...(template ? { image: { id: workspace.template_id, title: template } } : {}),
+            workspaceStatus: coderWorkspaceStatus(workspace),
+          },
+          assignments: [
+            { path: 'existingWorkspaceId', value: workspace.id },
+            { path: 'organizationId', value: workspace.organization_id },
+            { path: 'templateId', value: workspace.template_id },
+            { path: 'templateVersionId', value: workspace.latest_build.template_version_id },
+          ],
+        };
+      }) },
     };
   }
   if (!query.organizationId) return { dimensions: emptyDimensions() };

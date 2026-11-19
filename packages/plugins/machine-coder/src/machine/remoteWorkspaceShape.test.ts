@@ -57,7 +57,11 @@ describe('remote workspace provider shape contracts', () => {
         const url = new URL(path, 'https://coder.example');
         expect(url.pathname).toBe('/api/v2/workspaces');
         expect(url.searchParams.get('q')).toBe('owner:me');
-        return response({ workspaces: [workspace(resource.workspaceName)], count: 1 });
+        return response({ workspaces: [
+          { ...workspace(resource.workspaceName), template_name: 'api', template_display_name: 'API Development' },
+          { ...workspace('stopped-api', 'start', 'stopped'), id: 'stopped', template_name: 'api', template_display_name: '' },
+          { ...workspace('starting-api', 'start', 'starting'), id: 'starting' },
+        ], count: 3 });
       },
     });
     const query = { attachExisting: true, agentName: resource.agentName } as const;
@@ -67,6 +71,13 @@ describe('remote workspace provider shape contracts', () => {
     expect(options.dimensions.image).toEqual([expect.objectContaining({
       id: resource.workspaceId,
       title: resource.workspaceName,
+      nativeFacts: { image: { id: resource.templateId, title: 'API Development' }, workspaceStatus: 'running' },
+    }), expect.objectContaining({
+      id: 'stopped',
+      nativeFacts: { image: { id: resource.templateId, title: 'api' }, workspaceStatus: 'stopped' },
+    }), expect.objectContaining({
+      id: 'starting',
+      nativeFacts: { workspaceStatus: 'starting' },
     })]);
     expect(projectMachineProvisionerSelectionV1({ options, selection: { image: resource.workspaceId },
       launchSchema: CoderLaunchSchema.jsonSchema })).toMatchObject({

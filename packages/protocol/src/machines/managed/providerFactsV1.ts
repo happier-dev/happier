@@ -63,6 +63,8 @@ export type ManagedGuestPlatformV1 = z.infer<typeof ManagedGuestPlatformV1Schema
 export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictObject({
   /** Provider-selected image/host facts; absence supplies no installation target. */
   preparationGuest: z.optional(z.strictObject({ target: ManagedGuestCliBuildTargetV1Schema, remoteHomeDir: id() })),
+  /** Observed status for an existing workspace option. It supplies no power authority. */
+  workspaceStatus: z.optional(z.enum(['running', 'stopped', 'starting', 'unknown'])),
   size: z.optional(z.strictObject({
     id: id(), title: PluginLocalizedStringV2Schema,
     cpuCores: z.optional(z.number().check(z.gte(0))),

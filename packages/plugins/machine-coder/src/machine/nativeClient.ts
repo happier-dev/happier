@@ -18,6 +18,7 @@ const buildSchema = defineProtocolObject({ id: text, workspace_id: text, templat
   resources: defineProtocolArray(defineProtocolObject({ agents: defineProtocolArray(agentSchema).nullable().optional() }, open)).nullable().optional(),
 }, open);
 const workspaceSchema = defineProtocolObject({ id: text, owner_id: text, owner_name: text, organization_id: text, template_id: text, name: text,
+  template_name: defineProtocolString().optional(), template_display_name: defineProtocolString().optional(),
   latest_build: buildSchema, dormant_at: nullableText.optional(),
 }, open);
 const workspaceListingSchema = defineProtocolObject({ workspaces: defineProtocolArray(workspaceSchema) }, open);
@@ -42,7 +43,14 @@ const pending = (operation: CoderAcquireOperation): Acquisition => ({ kind: 'pen
 const unknown = (operation: CoderAcquireOperation, reason: string): Acquisition => ({ kind: 'unknown', recovery: { reference: operation.workspaceId ?? `${operation.ownerId}/${operation.workspaceName}`, reason } });
 const resourceFor = (native: Workspace, managedId: string, agentName: string): CoderResource => ({ workspaceId: native.id, ownerId: native.owner_id, ownerName: native.owner_name,
   workspaceName: native.name, organizationId: native.organization_id, templateId: native.template_id, agentName, managedId });
-const powerOf = (native: Workspace) => native.latest_build.status === 'running' ? 'running' as const : native.latest_build.status === 'stopped' ? 'stopped' as const : 'unknown' as const;
+export function coderWorkspaceStatus(native: Workspace): 'running' | 'stopped' | 'starting' | 'unknown' {
+  const status = native.latest_build.status;
+  return status === 'running' || status === 'stopped' || status === 'starting' ? status : 'unknown';
+}
+function powerOf(native: Workspace) {
+  const status = coderWorkspaceStatus(native);
+  return status === 'starting' ? 'unknown' : status;
+}
 const inProgress = (status: string) => status === 'pending' || status === 'starting' || status === 'stopping' || status === 'deleting' || status === 'canceling';
 
 export function createCoderClient(input: { request: (path: string, init?: RequestInit) => Promise<Response>; signal: AbortSignal; observedAt: number; waitForObservation: () => Promise<void> }) {
