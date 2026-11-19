@@ -36,6 +36,9 @@ import { SessionStopResultSchema } from '@happier-dev/protocol/sessions/control/
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createNativeSessionDeleteAction } from '@/daemon/sessions/sessionDeleteAction';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 
 const boundary = vi.hoisted(() => ({ socket: null as unknown, mode: 'timeout', connections: 0 }));
 vi.mock('socket.io-client', () => ({ io: () => { boundary.connections++; return boundary.socket; } }));
@@ -78,6 +81,10 @@ describe('requestSessionStop machine transport', () => {
 
   function mockDeleteHttp() {
     return vi.spyOn(axios, 'request').mockImplementation(async request => {
+      // 8727ea15d419 + 72aafe1653c6: real Action admission reads its Account index before review.
+      if (request.method === 'GET' && String(request.url).endsWith('/v1/automations/actions/index')) {
+        return { status: 200, data: { v: 1, rows: [] } };
+      }
       expect(request.method).toBe('DELETE');
       expect(request.url).toBe(`https://delete.test/v1/sessions/${sessionId}`);
       calls.push('delete');
@@ -251,7 +258,7 @@ describe('requestSessionStop machine transport', () => {
     },
   );
 
-  it.each(['agent', 'stop-require'] as const)('keeps one real Delete review for %s before HTTP or Stop', async variant => {
+  it.each(['agent', 'stop-require'] as const)('keeps one real Delete review for %s before Delete or Stop', async variant => {
     active = true;
     boundary.mode = 'delete_stopped';
     const http = mockDeleteHttp();
@@ -296,9 +303,28 @@ describe('requestSessionStop machine transport', () => {
       approvalWaivedSurfaces: { 'session.delete': ['ui'] } });
     const settings = variant === 'stop-require' ? requiringStop : normalizeActionsSettingsV1({ v: 1 });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'delete-owner', session: 'delete-signin' })).toString('base64url')}.signature`;
+    const operations = createHostActionOperationRuntime({ machineId: 'owning-machine',
+      resolveAccountId: async () => 'delete-owner' });
+    const nativeDelete = createNativeSessionDeleteAction({ ingress: { signal: new AbortController().signal },
+      // This Session has no managed directory or member process to retire.
+      resolveRuntime: async () => { throw new Error('Unexpected Project runtime for an unmanaged Session'); },
+      isSessionActive: async () => active,
+      retireRequesterCustody: async () => true,
+      nativeOperationRuntime: { readMemberFolderOwner: async () => null,
+        prepareNativeOperation: async () => { throw new Error('Unexpected member process for an unmanaged Session'); } },
+    });
     const executor = createCliActionExecutorFromCredentials({ credentials: { ...credentials, token, credentialProvenance: 'stored_session' },
       serverId: configuration.activeServerId, serverApiUrl: 'https://delete.test', serverIdentityId: 'srv_delete_home',
       pluginActionExecutionOwner: 'current_process',
+      // 041b59b1086d: Delete runs at its exact native Machine, under its real operation owner.
+      machineActionDirectTargetTransport: { machineId: 'owning-machine',
+        sessionDelete: request => operations.runActionOperation({ actionId: 'session.delete', input: request.input,
+          context: request.context, execute: context => nativeDelete({ ...request, context }) }),
+        invoke: (method, request, options) => callMachineRpc({ credentials, machineId: 'owning-machine',
+          serverUrl: 'https://delete.test', method, request, timeoutMs: null,
+          ...(options?.signal ? { signal: options.signal } : {}),
+        }),
+      },
       actionsSettingsProvider: { getActionsSettings: () => settings,
         getAccountSettings: () => accountSettingsParse({ actionsSettingsV1: settings }) },
     });
@@ -310,18 +336,22 @@ describe('requestSessionStop machine transport', () => {
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     if (!pending.ok || !pending.result || typeof pending.result !== 'object' || !('artifactId' in pending.result)
       || typeof pending.result.artifactId !== 'string') throw new Error('Missing Delete review');
-    expect(http).not.toHaveBeenCalled();
+    expect(http.mock.calls.filter(([request]) => request.method === 'DELETE')).toEqual([]);
     expect(issuedMethods).toEqual([]);
     const deciding = { ...deleteContext(false), surface: 'cli' as const,
       ...(variant === 'stop-require' ? { actionsSettings: requiringStop } : {}) };
     const decision = executor.execute('approval.request.decide', { artifactId: pending.result.artifactId, decision: 'approve' }, deciding);
     await vi.advanceTimersByTimeAsync(0);
     const settled = await decision;
-    expect(settled, JSON.stringify(settled))
+    expect(settled, JSON.stringify({ settled, issuedMethods, calls }))
       .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
     expect(reviews).toBe(1);
-    expect(http).toHaveBeenCalledTimes(2);
+    // The native owner observes the active runner before Home deletion, so Stop precedes the sole DELETE.
+    expect(http.mock.calls.filter(([request]) => request.method === 'DELETE')).toHaveLength(1);
     expect(issuedMethods).toEqual(['owning-machine:stop-session']);
+    expect(calls.filter(event => event === 'delete' || event === SOCKET_RPC_EVENTS.CALL))
+      .toEqual([SOCKET_RPC_EVENTS.CALL, 'delete']);
+    expect(readPersistedStop()).toMatchObject({ cause: 'explicit_stop' });
   });
 
   it.each([
