@@ -1,3 +1,4 @@
+export { REVIEW_ARTIFACT_KIND_V1 } from './projections.js';
 export type { CreateReviewCommentFingerprintInput } from './comments.js';
 export { REVIEW_SCM_SCOPE_INPUT_KEY } from './scope.js';
 export type { ReviewCommentAnchorV1 } from './comments.js';

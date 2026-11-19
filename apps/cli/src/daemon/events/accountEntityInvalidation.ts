@@ -17,6 +17,9 @@ export function projectAccountEntitiesInvalidationForHost(body: Extract<UpdateBo
     const dataKvChanges: NonNullable<HostEventEnvelopeV1<'@happier/account/entities-invalidated'>['payload']['dataKvChanges']> = [];
     const accountKvChanges: NonNullable<HostEventEnvelopeV1<'@happier/account/entities-invalidated'>['payload']['accountKvChanges']> = [];
     const reviewIds = new Set<string>();
+    const artifactKinds = new Set<string>();
+    let artifactsChanged = false;
+    let unclassifiedArtifacts = false;
     for (const row of body.rows?.page.changes ?? []) {
         if (row.kind === 'pluginDomain') {
             const hint = PluginDomainDataKvChangeHintSchema.safeParse(row.hint);
@@ -24,9 +27,12 @@ export function projectAccountEntitiesInvalidationForHost(body: Extract<UpdateBo
         } else if (row.kind === 'kv') {
             const hint = AccountKvChangeHintV1Schema.safeParse(row.hint);
             if (hint.success) accountKvChanges.push(hint.data);
-        } else if (row.kind === 'artifact' && artifactKindsMayIncludeKindV1(
-            readArtifactKindsChangeHintV1(row.hint), [REVIEW_ARTIFACT_KIND_V1])) {
-            reviewIds.add(row.entityId);
+        } else if (row.kind === 'artifact') {
+            artifactsChanged = true;
+            const kinds = readArtifactKindsChangeHintV1(row.hint);
+            if (kinds === null) unclassifiedArtifacts = true;
+            else for (const kind of kinds) artifactKinds.add(kind);
+            if (artifactKindsMayIncludeKindV1(kinds, [REVIEW_ARTIFACT_KIND_V1])) reviewIds.add(row.entityId);
         }
     }
     if (mcpCatalogs && entityIds.delete(MCP_SERVER_CATALOG_ACCOUNT_KEY_V1)) {
@@ -41,10 +47,11 @@ export function projectAccountEntitiesInvalidationForHost(body: Extract<UpdateBo
             if (!previous.has(id) || !next.has(id) || !isDeepStrictEqual(previous.get(id), next.get(id))) entityIds.add(id);
         }
     }
-    return entityIds.size || dataKvChanges.length || accountKvChanges.length || reviewIds.size
+    return entityIds.size || dataKvChanges.length || accountKvChanges.length || artifactsChanged
         ? { eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' }, payload: {
             entityIds: [...entityIds], ...(dataKvChanges.length ? { dataKvChanges } : {}),
             ...(accountKvChanges.length ? { accountKvChanges } : {}),
             ...(reviewIds.size ? { reviewIds: [...reviewIds] } : {}),
+            ...(artifactsChanged ? { artifactKinds: unclassifiedArtifacts ? null : [...artifactKinds] } : {}),
         } } : null;
 }

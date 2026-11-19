@@ -3,6 +3,8 @@ import { subscribePluginAccountCollectionWatchInvalidation } from '../../context
 import type { ActivationTarget, PluginContributionActivationDemand } from './targets';
 import { logger } from '@/ui/logger';
 import { projectPluginFailureText } from '../utils';
+import { artifactKindsMayIncludeKindV1 } from '@happier-dev/protocol/changes';
+import type { AutomationEventSourcesInvalidatedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 
 /**
  * Configuration is positive activation demand only. The activated plugin still
@@ -13,8 +15,9 @@ export async function observePluginConfigurationActivation(params: Readonly<{
     targets: readonly ActivationTarget[];
     accountStorage: AccountPluginDataStorageHost;
     readAutomationEventSourceDemand(pluginId: string, signal: AbortSignal): Promise<boolean>;
-    /** `pluginIds` scopes an invalidation to those plugins' definitions; absent means every plugin. */
-    subscribeAutomationEventSources(listener: (pluginIds?: readonly string[]) => void): () => void;
+    readArtifactKindDemand(kinds: readonly string[], signal: AbortSignal): Promise<boolean>;
+    subscribeArtifactKinds(listener: (kinds: readonly string[] | null) => void): () => void;
+    subscribeAutomationEventSources(listener: (event: AutomationEventSourcesInvalidatedHostEventV1) => void): () => void;
     activate(demands: readonly PluginContributionActivationDemand[]): Promise<unknown>;
     isActivated(pluginId: string): boolean;
     isTargetCurrent(pluginId: string): boolean;
@@ -72,6 +75,14 @@ export async function observePluginConfigurationActivation(params: Readonly<{
             }
         }
         for (const target of selected) {
+            const kinds = target.manifest.activation?.configuration?.artifactKinds;
+            if (kinds?.length && !demands.has(target.pluginId)) {
+                try {
+                    if (await params.readArtifactKindDemand(kinds, params.signal)) demands.add(target.pluginId);
+                } catch {
+                    demands.add(target.pluginId);
+                }
+            }
             if (!target.manifest.activation?.configuration?.automationEventSources || demands.has(target.pluginId)) continue;
             try {
                 if (await params.readAutomationEventSourceDemand(target.pluginId, params.signal)) demands.add(target.pluginId);
@@ -113,10 +124,20 @@ export async function observePluginConfigurationActivation(params: Readonly<{
         params.signal.removeEventListener('abort', dispose);
     };
     params.signal.addEventListener('abort', dispose, { once: true });
-    if (targets.some(target => target.manifest.activation?.configuration?.automationEventSources)) {
-        disposers.push(params.subscribeAutomationEventSources(pluginIds => enqueue(targets.filter(target =>
-            target.manifest.activation?.configuration?.automationEventSources
-            && (pluginIds === undefined || pluginIds.includes(target.pluginId))))));
+    if (targets.some(target => target.manifest.activation?.configuration?.artifactKinds?.length)) {
+        disposers.push(params.subscribeArtifactKinds(kinds => enqueue(targets.filter(target => {
+            const selected = target.manifest.activation?.configuration?.artifactKinds;
+            return selected?.length && artifactKindsMayIncludeKindV1(kinds, selected);
+        }))));
+    }
+    if (targets.some(target => target.manifest.activation?.configuration?.automationEventSources
+        || target.manifest.activation?.configuration?.artifactKinds?.length)) {
+        disposers.push(params.subscribeAutomationEventSources(event => enqueue(targets.filter(target => {
+            const configuration = target.manifest.activation?.configuration;
+            return configuration?.automationEventSources
+                && (event.pluginIds === undefined || event.pluginIds.includes(target.pluginId))
+                || configuration?.artifactKinds?.length && event.reason === 'reconnect';
+        }))));
     }
     try {
         await flush();

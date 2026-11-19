@@ -1,5 +1,6 @@
 import { TRIAGE_ACCOUNT_ACTIONS, TRIAGE_ACCOUNT_RESOURCES, TRIAGE_ACCOUNT_DEFINITION, type TriageAccountActionSchemas } from './accountDefinition.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/plugin-sdk/reviews';
 
 import {
   SessionPullRequestLinkCompletionsContributionProtocolV1,
@@ -261,8 +262,8 @@ function createTriagePlugin(): TriagePlugin {
       },
     },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
-    // Source attention follows configured source instances only (D1, LEAN-DAEMON).
-    activation: { events: [], configuration: { accountCollections: [
+    // Built-in Reviews have no persisted source row; their Artifact presence is demand.
+    activation: { events: [], configuration: { artifactKinds: [REVIEW_ARTIFACT_KIND_V1], accountCollections: [
       { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION_ID },
     ] } },
     hostAccess: {

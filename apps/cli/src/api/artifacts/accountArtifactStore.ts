@@ -1329,6 +1329,13 @@ export function createAccountArtifactStore(params: Readonly<{
       }
       return parsed.data;
     },
+    /** Positive lifecycle demand only; neither content keys nor Artifact bodies are acquired. */
+    hasAny: async (kinds: readonly string[], signal?: AbortSignal): Promise<boolean> => {
+      const page = await fetchHeaderPage({ kinds, limit: 1, signal });
+      // The exact-kind census excludes unclassified rows. Its coverage witness
+      // does not establish positive presence of any requested kind.
+      return page.rows.length > 0;
+    },
     list: async (options?: ArtifactListPageOptionsV1,
       readAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
       authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<Readonly<{ items: readonly AccountArtifactHeader[]; nextCursor?: string; hasUnclassified?: boolean; kindCoverage?: ArtifactKindCoverageV1; coverage: 'complete' | 'partial' }>> => {

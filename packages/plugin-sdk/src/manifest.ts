@@ -18,6 +18,7 @@ export { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugin
 import { createPluginContributionIdentity as canonicalCreatePluginContributionIdentity, PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
+import type { PluginManifest as ProtocolPluginManifest } from '@happier-dev/protocol/plugins/manifest';
 import { isValidPluginJsonSchemaValue as canonicalIsValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { PluginIdJsonSchema as canonicalPluginIdJsonSchema, PluginIdSchema as canonicalPluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import type {
@@ -539,6 +540,7 @@ export interface PluginManifest {
     configuration?: Readonly<{
       accountCollections?: readonly Readonly<{ pluginId: string; collectionId: string }>[];
       automationEventSources?: true;
+      artifactKinds?: Readonly<NonNullable<NonNullable<ProtocolPluginManifest['activation']>['configuration']>['artifactKinds']>;
     }>;
   }>;
   readonly hostAccess?: Readonly<{

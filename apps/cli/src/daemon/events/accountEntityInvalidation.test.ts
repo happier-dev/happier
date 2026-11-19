@@ -18,8 +18,25 @@ describe('Account retained-fact invalidation addresses', () => {
         } } });
         if (body.t !== 'account-change') throw Error('Expected Account change');
         const event = projectAccountEntitiesInvalidationForHost(body);
-        expect(event?.payload).toEqual({ entityIds: [], reviewIds: ['review', 'legacy'] });
+        expect(event?.payload).toEqual({ entityIds: [], reviewIds: ['review', 'legacy'], artifactKinds: null });
         expect(AccountEntitiesInvalidatedHostEventV1Schema.parse(event?.payload)).toEqual(event?.payload);
+    });
+
+    it('retains exact content-free Artifact kinds for lazy activation and excludes non-Artifact rows', () => {
+        const kinds = [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 }), deriveArtifactStoredKindV1({ kind: 'bot_template.v1' })];
+        const body = UpdateBodySchema.parse({ t: 'account-change', rows: { v: 1, after: 0, page: {
+            nextCursor: 3, changes: [
+                { cursor: 1, kind: 'artifact', entityId: 'review', changedAt: 1, hint: { artifactKinds: kinds, private: 'sealed' } },
+                { cursor: 2, kind: 'artifact', entityId: 'review', changedAt: 2, hint: { artifactKinds: [kinds[0]] } },
+                { cursor: 3, kind: 'session', entityId: 'session', changedAt: 3, hint: { artifactKinds: ['ignored'] } },
+            ],
+        } } });
+        if (body.t !== 'account-change') throw Error('Expected Account change');
+        const event = projectAccountEntitiesInvalidationForHost(body);
+        expect(event?.payload).toEqual({ entityIds: [], reviewIds: ['review'], artifactKinds: kinds });
+        expect(AccountEntitiesInvalidatedHostEventV1Schema.parse(event?.payload)).toEqual(event?.payload);
+        expect(projectAccountEntitiesInvalidationForHost({ t: 'account-change', entityIds: ['session'] })?.payload)
+            .toEqual({ entityIds: ['session'] });
     });
 
     it('preserves canonical plugin KV hints and native Account KV keys from the authorized change page', () => {

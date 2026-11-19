@@ -35,6 +35,8 @@ export const AccountEntitiesInvalidatedHostEventV1Schema = lazyZodSchema(() => z
   entityIds: z.array(z.string().check(z.minLength(1))),
   dataKvChanges: z.optional(z.array(PluginDomainDataKvChangeHintSchema)),
   accountKvChanges: z.optional(z.array(AccountKvChangeHintV1Schema)),
+  /** Canonical encoded Artifact kinds; null preserves coarse legacy recovery. */
+  artifactKinds: z.optional(z.nullable(z.array(z.string().check(z.minLength(1))))),
   /** Review candidates from canonical Artifact kind routing; legacy hints may be coarse. */
   reviewIds: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));

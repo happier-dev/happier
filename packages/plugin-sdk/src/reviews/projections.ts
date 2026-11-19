@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+export { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 export { ReviewFindingSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
 export { ReviewFindingsV2Schema, parseReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 export { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';

@@ -2778,6 +2778,7 @@
 | `./resources` | `ResourcesService` | type | any |
 | `./resources` | `isPluginTranscriptActivityContentTypeV1` | value | any |
 | `./reviews` | `CreateReviewCommentFingerprintInput` | type | any |
+| `./reviews` | `REVIEW_ARTIFACT_KIND_V1` | value | daemon |
 | `./reviews` | `REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1` | value | daemon |
 | `./reviews` | `REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1` | value | daemon |
 | `./reviews` | `REVIEW_SCM_SCOPE_INPUT_KEY` | value | daemon |

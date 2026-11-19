@@ -8382,11 +8382,32 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 targets: activationTargets.filter(target => !isAutomaticActivationSuppressedByMachineRoles(target)),
                 accountStorage: accountStorageHost,
                 readAutomationEventSourceDemand: readConfiguredAutomationEventSourceDemand,
+                async readArtifactKindDemand(kinds, signal) {
+                    const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+                    const credentials = await readSessionCredentials();
+                    signal.throwIfAborted();
+                    if (!credentials) throw new Error('artifact_presence_unavailable');
+                    const present = await createCredentialedAccountArtifactStore(credentials).hasAny(kinds, signal);
+                    if (getActiveAccountSettingsSnapshotLifetimeToken() !== lifetime) throw new Error('artifact_presence_unavailable');
+                    return present;
+                },
+                subscribeArtifactKinds(listener) {
+                    const subscription = invocationServiceOwners.stableEventsBroker.subscribeHost({
+                        target: { eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' } },
+                        listener: event => {
+                            if (event.eventId === '@happier/account/entities-invalidated' && event.payload.artifactKinds !== undefined) {
+                                listener(event.payload.artifactKinds);
+                            }
+                        },
+                        isCurrent: () => declaredEventSubscriptionsPublished && consumerAssembly.isOccurrenceCurrent(),
+                    });
+                    return () => { void subscription.dispose(); };
+                },
                 subscribeAutomationEventSources(listener) {
                     const subscription = invocationServiceOwners.stableEventsBroker.subscribeHost({
                         target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
                         listener: event => {
-                            if (event.eventId === '@happier/automation/event-sources-invalidated') listener(event.payload.pluginIds);
+                            if (event.eventId === '@happier/automation/event-sources-invalidated') listener(event.payload);
                         },
                         isCurrent: () => declaredEventSubscriptionsPublished && consumerAssembly.isOccurrenceCurrent(),
                     });

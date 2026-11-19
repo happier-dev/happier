@@ -333,7 +333,9 @@ export const PluginManifestActivationV2Schema = lazyZodSchema(() => z.optional(z
       collectionId: asProtocolZod(PluginContributionLocalIdSchema),
     })).check(z.minLength(1))),
     automationEventSources: z.optional(z.literal(true)),
-  }).check(z.refine(value => Boolean(value.accountCollections?.length || value.automationEventSources),
+    /** Existing authenticated Artifact census; no content is opened to establish demand. */
+    artifactKinds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))),
+  }).check(z.refine(value => Boolean(value.accountCollections?.length || value.automationEventSources || value.artifactKinds?.length),
     'Configuration activation requires a declared demand source.'))),
 })));
 export type PluginManifestActivationV2 = z.infer<typeof PluginManifestActivationV2Schema>;
