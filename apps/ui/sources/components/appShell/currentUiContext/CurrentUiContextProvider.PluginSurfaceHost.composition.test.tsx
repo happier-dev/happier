@@ -910,7 +910,8 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
         { packed: true, ephemeral: false, coreBackground: false },
         { packed: false, ephemeral: true, coreBackground: false },
         { packed: false, ephemeral: true, coreBackground: true },
-    ])('publishes only the visible plugin picker through its real modal Host API (%j)', async ({ packed, ephemeral, coreBackground }) => {
+        { packed: false, ephemeral: true, coreBackground: true, missingArtifact: true },
+    ])('presents the visible plugin input surface through its real modal Host API (%j)', async ({ packed, ephemeral, coreBackground, missingArtifact }) => {
         const profile = await upsertServerProfile({ serverUrl: 'https://composer-context-modal.test', name: 'Composer context modal' });
         await establishActiveServer(profile.id, 'composer-context-modal-account');
         storage.getState().activateProfileScope({ serverId: profile.id, accountId: 'composer-context-modal-account' });
@@ -930,7 +931,7 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             selectedRenderer: {
                 identity: { pluginId: placement.pluginId, localId: 'panel' },
                 renderer: { kind: 'hostedWeb', contributionId: 'panel', source: { kind: 'artifact', artifact: 'panel' }, requiredHostMethods: [] },
-                artifactProjection: projection.hostedWebById[`hostedWeb:${placement.pluginId}:panel`],
+                ...(missingArtifact ? {} : { artifactProjection: projection.hostedWebById[`hostedWeb:${placement.pluginId}:panel`] }),
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
             executionOrigin: CLIENT_ACTION_ORIGIN,
@@ -1002,6 +1003,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
                     Modal.show({ component: ParentDialog, commandBridge });
                 } else openPicker(commandBridge);
             });
+            if (missingArtifact) {
+                await vi.waitFor(() => expect(screen.findByTestId('plugin-surface-unavailable')).not.toBeNull());
+                expect(hostedRenderer.hostApi).toBeNull();
+                await act(async () => Modal.hideAll());
+                return;
+            }
             await vi.waitFor(() => expect(hostedRenderer.hostApi).not.toBeNull());
             expect(hostedRenderer.hostApi!.installedMethods).toContain('publishCurrentUiContext');
             expect(hostedRenderer.focusEligible).toBe(true);

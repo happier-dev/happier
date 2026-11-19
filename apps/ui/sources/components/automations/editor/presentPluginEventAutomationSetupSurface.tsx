@@ -163,7 +163,6 @@ function PluginEventAutomationSetupSurfaceModal(
         pluginProjectionV2: props.projection.pluginProjectionV2,
         pluginUiProjection: props.projection.pluginUiProjection,
         actionInputSelectionFactsKey,
-        fallback: null,
         binding,
     });
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
