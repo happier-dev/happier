@@ -1,12 +1,22 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/executor/types';
 import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { fetchJson } from './http';
+import { waitFor } from './timing';
+
+/** Keep Run admission and child startup inside one wait using Session's startup budget. */
+export async function waitForWorkflowChildSession(
+  predicate: () => boolean | Promise<boolean>,
+  context: string,
+): Promise<void> {
+  await waitFor(predicate, { timeoutMs: DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS, failFast: true, context });
+}
 
 /** Observe the ordinary Workflow's public child reference through invocation history.
- * Callers keep their existing wait; refusals and invalid content must fail it fast. */
+ * Refusals and invalid content must fail the containing wait fast. */
 export async function readWorkflowChildSession(params: Readonly<{
   execute: (actionId: 'workflow.run.invocations.list', input: Readonly<{
     runId: string; includeContent?: boolean;

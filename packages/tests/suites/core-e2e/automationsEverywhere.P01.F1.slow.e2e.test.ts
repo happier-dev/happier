@@ -18,7 +18,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
-import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
+import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 let setup: Awaited<ReturnType<typeof startAutomationsEverywhereDeploymentFixture>> | undefined;
 let endpoint: ReturnType<typeof createServer> | undefined;
@@ -175,9 +175,9 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   expect(await runs()).toEqual([]);
   await waitFor(() => retainedCheck(second.sourceInstanceId, 'up'), { context: 'Second resource probe is saved before its failure' });
   healthy.set('/first', false);
-  await waitFor(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
+  await waitForWorkflowChildSession(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
     return current.length === 1 && await hasDiagnosisSession(current[0]!.id);
-  }, { failFast: true, context: 'One saved transition starts the ordinary cause-bound diagnosis Session' });
+  }, 'One saved transition starts the ordinary cause-bound diagnosis Session');
   expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
     triggerId: linked.triggerId, evidence: { eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed } });
   await waitFor(async () => (await runs(exact)).length === 1, { context: 'Exact saved-check subject matches its failure' });
@@ -189,15 +189,15 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   healthy.set('/first', true);
   await waitFor(() => retainedCheck(saved.sourceInstanceId, 'up'), { context: 'Recovery is retained without replaying the failure' });
   healthy.set('/second', false);
-  await waitFor(async () => { const current = await runs();
+  await waitForWorkflowChildSession(async () => { const current = await runs();
     return current.length === 2 && (await Promise.all(current.map(run => hasDiagnosisSession(run.id)))).every(Boolean);
-  }, { failFast: true, context: 'Omitted subject also matches the second saved resource' });
+  }, 'Omitted subject also matches the second saved resource');
   expect(await runs(exact)).toHaveLength(1);
   expect(await runs(foreignLinked, foreign)).toEqual([]);
   healthy.set('/foreign', false);
-  await waitFor(async () => { const current = await runs(foreignLinked, foreign);
+  await waitForWorkflowChildSession(async () => { const current = await runs(foreignLinked, foreign);
     return current.length === 1 && await hasDiagnosisSession(current[0]!.id, foreign);
-  }, { failFast: true, context: 'Foreign saved health failure stays within its Account' });
+  }, 'Foreign saved health failure stays within its Account');
   expect(await runs()).toHaveLength(2);
   expect(await runs(exact)).toHaveLength(1);
   expect(new Set(diagnosisSessionIds.values()).size).toBe(3);

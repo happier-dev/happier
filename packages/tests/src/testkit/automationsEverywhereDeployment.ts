@@ -9,13 +9,17 @@ import { createOwnServerDockerBoundary } from '../../../../apps/cli/src/deployme
 
 /** Real CLI Actions and enrolled daemon with only external Docker substituted.
  * F2/F4 share actual deployment operands rather than fabricating admission or receipts. */
-export async function startAutomationsEverywhereDeploymentFixture(testDir: string, options?: Readonly<{ volumeBackup?: boolean }>) {
+export async function startAutomationsEverywhereDeploymentFixture(testDir: string, options?: Readonly<{
+  volumeBackup?: boolean;
+  observeAutomationWriteFailures?: boolean;
+}>) {
   const { startTeamSetupFFixture } = await import('./teamSetupF');
   // Docker alone is an external substitute. Its real executable is inherited
   // by the daemon; preparation, approval, Run custody and deployment stay real.
   const toolsDir = join(testDir, 'tools');
   const docker = await createOwnServerDockerBoundary(toolsDir);
   const fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true,
+    observeAutomationWriteFailures: options?.observeAutomationWriteFailures,
     serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
   try {
     const actor = await fixture.createAccount('deployer');

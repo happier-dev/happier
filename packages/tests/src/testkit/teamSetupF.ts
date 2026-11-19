@@ -20,6 +20,8 @@ export async function startTeamSetupFFixture(params: Readonly<{
   observeActionRequests?: boolean;
   /** Observe requested/returned saved-health Trigger locators without exposing envelopes. */
   observeSavedHealthSourceSelections?: boolean;
+  /** Retain responses for a caller's closed Automation-write failure projection. */
+  observeAutomationWriteFailures?: boolean;
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
   beforeForwardResponse?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
   captureRequestBody?: (request: RecordedHttpProxyRequest) => boolean;
@@ -28,7 +30,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
 }>) {
   const core = await startProjectDaemonFixture({ testDir: params.testDir,
     dbProvider: params.dbProvider, guestReachableHome: params.guestReachableHome, serverEnv: params.serverEnv,
-    ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.beforeHttpRequest || params.beforeForwardResponse || params.captureRequestBody)
+    ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.observeAutomationWriteFailures || params.beforeHttpRequest || params.beforeForwardResponse || params.captureRequestBody)
       ? { requestObservation: {
         onRequestStart: params.beforeHttpRequest,
         beforeForwardResponse: params.beforeForwardResponse,
@@ -36,7 +38,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
         captureRequestBody: (request: RecordedHttpProxyRequest) => request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1
           || (params.observeSavedHealthSourceSelections === true && request.path === '/v3/automations/query')
           || params.captureRequestBody?.(request) === true,
-        captureResponseBody: params.observeSavedHealthSourceSelections === true,
+        captureResponseBody: params.observeSavedHealthSourceSelections === true || params.observeAutomationWriteFailures === true,
       } } : {}),
   });
   const { server, serverId, sourceOptions, requestProxy } = core;

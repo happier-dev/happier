@@ -24,7 +24,7 @@ import type { TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchAccountId } from '../../src/testkit/socialFriends';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
-import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
+import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
 let fixture: TeamSetupFFixture | undefined;
 afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
@@ -135,11 +135,11 @@ it('P01.F3 observes a native backup failure before its first snapshot from a sec
     const boundaryEvents = await readFile(native.eventsFile, 'utf8');
     expect(boundaryEvents).not.toContain('BACKUP_PRIVATE_SENTINEL');
     for (const trigger of linked) {
-        await waitFor(async () => { const current = await runs(trigger.set.automationId); expect(current.length).toBeLessThanOrEqual(1);
+        await waitForWorkflowChildSession(async () => { const current = await runs(trigger.set.automationId); expect(current.length).toBeLessThanOrEqual(1);
             if (current.length !== 1) return false;
             return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
                 token: actor.credentials.token, runId: current[0]!.id, blockId: 'diagnose' }) !== null;
-        }, { failFast: true, context: 'A native failure before its first snapshot reaches the second Machine and one ordinary diagnosis Run' });
+        }, 'A native failure before its first snapshot reaches the second Machine and one ordinary diagnosis Run');
         expect((await runs(trigger.set.automationId))[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
             triggerId: trigger.triggerId, evidence: { eventRef: event.event.identity } });
     }
@@ -153,7 +153,7 @@ it('P01.F3 observes a native backup failure before its first snapshot from a sec
         env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     await fixture.assertKnownGoodMachineControl(actor, restarted);
     for (const [index, trigger] of linked.entries()) {
-        await waitFor(async () => {
+        await waitForWorkflowChildSession(async () => {
             const current = await runs(trigger.set.automationId);
             expect(current.length).toBeLessThanOrEqual(2);
             const status = await sourceStatus(trigger);
@@ -161,7 +161,7 @@ it('P01.F3 observes a native backup failure before its first snapshot from a sec
             const children = await Promise.all(current.map(run => readWorkflowChildSession({ execute: actor.execute,
                 serverBaseUrl: fixture!.server.baseUrl, token: actor.credentials.token, runId: run.id, blockId: 'diagnose' })));
             return children.every(child => child !== null);
-        }, { failFast: true, context: 'Reconnect recovers the offline native backup failure without replaying its prior Run' });
+        }, 'Reconnect recovers the offline native backup failure without replaying its prior Run');
         expect(await runs(trigger.set.automationId)).toHaveLength(2);
     }
     expect(machine.target.machineId).not.toBe(observer.target.machineId);

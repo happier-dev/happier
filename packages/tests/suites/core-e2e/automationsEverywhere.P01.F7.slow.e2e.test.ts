@@ -12,8 +12,7 @@ import { applyTrustedLocalPluginFixture, reloadTrustedLocalPluginFixture } from 
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { waitFor } from '../../src/testkit/timing';
-import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
+import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { installExternalTicketAutomationFixture } from '../../src/testkit/pluginPlatform/externalTicketAutomationFixture';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
@@ -140,7 +139,7 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     expect(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toEqual([]);
     expect(await close(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
-    await waitFor(async () => {
+    await waitForWorkflowChildSession(async () => {
       const observed = await runs();
       expect(observed.length).toBeLessThanOrEqual(2);
       if (observed.length !== 2) return false;
@@ -150,7 +149,7 @@ describe('Automations everywhere: qualified plugin subjects', () => {
         runId: run.id, blockId: 'review',
       })));
       return sessions.every(session => session !== null);
-    }, { failFast: true, context: 'Only the qualified ticket starts its before and after review Runs' });
+    }, 'Only the qualified ticket starts its before and after review Runs');
     expect(await close(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
     const readerContext = { externalActionTarget: { kind: 'machine' as const,
@@ -190,7 +189,7 @@ describe('Automations everywhere: qualified plugin subjects', () => {
     expect(await observe(pluginIds[0], 'another-ticket')).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(2);
     expect(await observe(pluginIds[0], 'ticket-1')).toMatchObject({ ok: true });
-    await waitFor(async () => {
+    await waitForWorkflowChildSession(async () => {
       const observed = await runs();
       expect(observed.length).toBeLessThanOrEqual(3);
       if (observed.length !== 3) return false;
@@ -200,7 +199,7 @@ describe('Automations everywhere: qualified plugin subjects', () => {
         runId: run.id, blockId: 'review',
       })));
       return sessions.every(session => session !== null);
-    }, { failFast: true, context: 'The declared Event subject selects only its qualified ticket' });
+    }, 'The declared Event subject selects only its qualified ticket');
     expect(await reader.executeAsPerson('action.invoke', { action: { pluginId: pluginIds[0], localId: 'observe-ticket' },
       input: { ticketId: 'ticket-1' } }, readerContext)).toMatchObject({ ok: true });
     expect(await runs()).toHaveLength(3);

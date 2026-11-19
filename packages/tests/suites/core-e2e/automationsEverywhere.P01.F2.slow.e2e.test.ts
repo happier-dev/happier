@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -14,7 +14,8 @@ import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibili
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
-import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
+import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
+import { createRunDirs } from '../../src/testkit/runDir';
 
 let fixture: TeamSetupFFixture | undefined;
 afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
@@ -34,7 +35,8 @@ function readQueryTraces(log: string): QueryTrace[] {
 }
 
 it('P01.F2 Session scopes and habit lifetime', async () => {
-  fixture = await startTeamSetupFFixture({ testDir: await mkdtemp(join(tmpdir(), 'automations-p01-f2-')),
+  const run = createRunDirs({ runLabel: 'automations-p01-f2' });
+  fixture = await startTeamSetupFFixture({ testDir: run.testDir('scopes-and-lifetime'),
     serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_WEB_LATENCY_TRACE: '1',
       HAPPIER_SERVER_LOG_LEVEL: 'trace', HAPPIER_SERVER_LOG_FORMAT: 'json' } });
   const actor = await fixture.createAccount('habit-owner');
@@ -227,13 +229,37 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   expect(await readRuns(0), 'A Session subject cannot match another Session in its Project').toEqual([]);
   const traceOffset = (await readFile(fixture.server.proc.stdoutPath, 'utf8')).length;
   expect(await actor.execute('session.archive', { sessionId: watched.sessionId })).toMatchObject({ ok: true });
-  await waitFor(async () => {
-    const runs = await readRuns(0);
-    expect(runs.length).toBeLessThanOrEqual(1);
-    if (runs.length !== 1) return false;
-    return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
-      token: actor.credentials.token, runId: runs[0]!.id, blockId: 'review' }) !== null;
-  }, { failFast: true, context: 'A habit attached to A starts one Workflow only when B is archived' });
+  let observedRuns: Awaited<ReturnType<typeof readRuns>> = [];
+  try {
+    await waitForWorkflowChildSession(async () => {
+      const runs = await readRuns(0);
+      observedRuns = runs;
+      expect(runs.length).toBeLessThanOrEqual(1);
+      if (runs.length !== 1) return false;
+      return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
+        token: actor.credentials.token, runId: runs[0]!.id, blockId: 'review' }) !== null;
+    }, 'A habit attached to A starts one Workflow only when B is archived');
+  } catch (cause) {
+    const runs = observedRuns.map(({ id, state, workflowRunState, attempt, errorCode,
+      executionDispatchState, producedSessionId }) => ({ id, state, workflowRunState, attempt, errorCode,
+      executionDispatchState, producedSessionId }));
+    const invocations = await Promise.all(observedRuns.map(async run => {
+      try {
+        const listed = await actor.execute('workflow.run.invocations.list', { runId: run.id, includeContent: true });
+        if (!listed.ok) return { runId: run.id, errorCode: listed.errorCode };
+        const page = WorkflowInvocationListResultV1Schema.parse(listed.result);
+        return { runId: run.id, nextCursor: page.nextCursor, rows: page.invocationDetails?.map(({ index, progress }) => ({
+          id: index.id, lifecycle: index.lifecycle, blockId: progress.invocationPath.blockId,
+          blockKind: progress.blockKind, reasonCode: progress.reason?.code,
+          execution: progress.execution && { kind: progress.execution.kind,
+            ...('sessionId' in progress.execution ? { sessionId: progress.execution.sessionId } : {}) },
+        })) };
+      } catch (error) {
+        return { runId: run.id, diagnosticError: error instanceof Error ? error.name : 'unknown' };
+      }
+    }));
+    throw new Error(`F2 exact-Session habit/child did not settle; observedRuns=${JSON.stringify(runs)}; invocations=${JSON.stringify(invocations)}`, { cause });
+  }
   expect((await readRuns(0))[0]!.cause).toMatchObject({ kind: 'trigger', triggerId: saved[0]!.triggerId,
     triggerKind: 'sessionLifecycle', evidence: { sourceSessionId: watched.sessionId, event: 'sessionArchived' } });
   await waitFor(async () => (await readRuns(1)).length === 2 && (await readRuns(2)).length === 3,
