@@ -93,6 +93,12 @@ it('coalesces populated mount and host reactivation demands with one queued manu
         expect(fixture.pages.map(page => page.kind)).toEqual(['initial']);
         const retained = fixture.store.getSnapshot().window;
         expect(retained?.rows.map(row => row.entryRef.entryId)).toEqual(['retained']);
+        await act(async () => {
+            window.dispatchEvent(new FocusEvent('focus'));
+            document.dispatchEvent(new Event('visibilitychange'));
+            window.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+        });
+        expect(fixture.pages.map(page => page.kind)).toEqual(['initial']);
         await render(false);
         const held = new Promise<void>(resolve => { release = resolve; });
         fixture.state.scan = async () => {

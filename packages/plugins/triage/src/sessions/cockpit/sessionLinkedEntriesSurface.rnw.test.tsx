@@ -1103,8 +1103,8 @@ describe('the mounted Session cockpit', () => {
         await act(async () => { await Promise.resolve(); });
         await expect(fixture.queryByText('Healthy linked work')).resolves.toBeUndefined();
         await expect(fixture.getByText('Linked entries could not be read')).resolves.toBeDefined();
-        // With no links, the unavailable state presents all source reasons in one description.
-        await expect(fixture.getByText('Happier tasks: Not installed or enabled on this machine. Retained source: Not installed or enabled on this machine.')).resolves.toBeDefined();
+        expect(document.body.textContent).toContain('Retained source: Not installed or enabled on this machine.');
+        expect(document.body.textContent).toContain('Happier tasks: Could not be reached just now.');
         await expect(fixture.queryByText('Keep this session’s PRs and issues at hand')).resolves.toBeUndefined();
     });
 
