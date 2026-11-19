@@ -356,6 +356,13 @@ it.each([
             return homes.request(input, init);
         } });
     await bootstrapMachineRead.promise;
+    if (publicClient !== undefined) {
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const snapshot = await getServerFeaturesSnapshot({ serverId, force: true });
+        expect(snapshot).toMatchObject({ status: 'ready', features: { capabilities: { connectedServices: {
+            publicOAuthClients: [{ service, clientId: publicClient }],
+        } } } });
+    }
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Missing cold Account lifetime');
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope,
@@ -453,11 +460,13 @@ it.each([
             const { revision } = outputs['connectedServices.configuration.replace'].parse(replacement.result);
             const connected = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
                 command: { operation: 'continueConnect', attemptId, expectedConfigurationRevision: revision } });
-            expect(connected.status).toBe('connected');
+            expect({ status: connected.status, code: 'code' in connected ? connected.code : undefined,
+                credentialWrite: savedConnection !== undefined }).toMatchObject({ status: 'connected', credentialWrite: true });
             expect(transactions.has(attemptId)).toBe(false);
             expect(savedConnection).toMatchObject({ ref: { service }, initialConfiguration: {
                 replacementContentEnvelope: { t: 'plain', v: { values: { teamId: 'team_fixture' } } },
             } });
+            expect(savedConnection).not.toHaveProperty('initialConfiguration.replacementContentEnvelope.v.values.projectId');
             expect(presentUserActionConfirmation).not.toHaveBeenCalled();
 
         }

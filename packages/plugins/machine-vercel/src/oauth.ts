@@ -552,19 +552,16 @@ export const vercelOAuthMode: Extract<
         signal,
       );
       const scope = scopeOf(context);
-      if (scope && scope.projectId === undefined
+      // Validate the scope before reading the choice marker. Reading it registers
+      // its team ID for redaction, and the probe requires the exact response URL.
+      const checked = await probe(token, scope, context, signal, true);
+      if (scope && checked.status === 'connected' && scope.projectId === undefined
         && await context.attemptCredentials.get(projectChoiceKey, { signal }) !== scope.teamId) {
-        // The chosen team is probed before its projects are offered.
-        const team = await probe(token, scope, context, signal, true);
-        if (team.status !== 'connected') return signedIn(team, identity);
         const offered = await offerProject(context, token, scope.teamId, null, signal);
         if (offered?.status === 'configurationRequired') return offered;
-        return signedIn(offered ?? team, identity);
+        return signedIn(offered ?? checked, identity);
       }
-      return signedIn(
-        await probe(token, scope, context, signal, true),
-        identity,
-      );
+      return signedIn(checked, identity);
     } catch (error) {
       return failure(error, signal);
     }
