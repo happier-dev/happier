@@ -70,6 +70,7 @@ import {
     uploadAttachmentDraftsToSession,
     type IssuedUploadedAttachment,
 } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { appendPictureStepNotes } from '@/components/sessions/attachments/pictureStepNotes';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import {
@@ -743,7 +744,8 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                     };
 
                     try {
-                        const outboundText = text;
+                        // Marked pictures send their numbered comments after the person's words (one projection owner).
+                        const outboundText = submittedTransferDrafts.length > 0 ? appendPictureStepNotes(text, submittedTransferDrafts) : text;
                         let transferMetaOverrides: Record<string, unknown> | undefined;
                         if (submittedTransferDrafts.length > 0) {
                             if (!composerAccountLifetime || props.sessionId === null) {

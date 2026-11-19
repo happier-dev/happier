@@ -33,6 +33,7 @@ import { insertComposerAttachmentReferences, removeMountedComposerAttachmentRefe
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { buildSessionAttachmentIngressMeta, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { appendPictureStepNotes } from '@/components/sessions/attachments/pictureStepNotes';
 import { blurActiveElementOnWeb, deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -403,6 +404,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                             ? launchAttempt.firstTurnLocalId
                             : (hasAttachments || hasReviewCommentDrafts ? attachmentMessageLocalId : undefined);
                     const trimmed = input.initialPrompt.trim();
+                    // Marked pictures send their numbered comments after the person's words (one projection owner).
+                    const prompt = hasAttachments ? appendPictureStepNotes(trimmed, draftSnapshot) : trimmed;
                     let attachmentsMetaOverrides: Record<string, unknown> | undefined;
 
                     if (hasAttachments) {
@@ -430,14 +433,14 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                         ? buildReviewCommentsOutboundMessage({
                             sessionId,
                             drafts: resolvedReviewCommentDrafts,
-                            additionalMessage: trimmed,
+                            additionalMessage: prompt,
                             metaOverrides: mergeMessageMetaOverrides(
                                 attachmentsMetaOverrides,
                                 input.structuredInputMetaOverrides,
                             ),
                         })
                         : {
-                            text: trimmed,
+                            text: prompt,
                             displayText: undefined,
                             metaOverrides: mergeMessageMetaOverrides(
                                 attachmentsMetaOverrides,
