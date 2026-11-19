@@ -43,7 +43,7 @@ import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protoco
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { DiscussionOpenedMessageV1Schema, DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import historicalReviewAndConvergeV1 from '../../../../../packages/protocol/src/workflows/fixtures/historicalReviewAndConvergeV1.json';
-import { createReviewRecordPortV1, ReviewMetadataV1Schema, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { createReviewRecordPortV1, ReviewMetadataV1Schema, ReviewRoundBindingV1Schema, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { projectReviewNeedsYouV1, type ReviewRequestedReviewerV1, type ReviewVerdictV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { reviewReviewerIdsForStartV1, reviewReviewerIdForSelectionV1, type ReviewStartInput } from '@happier-dev/protocol/reviews/reviewStart';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
@@ -71,10 +71,11 @@ function historicalReview(): WorkflowDefinitionV1 {
   return WorkflowDefinitionV1Schema.parse(historicalReviewAndConvergeV1);
 }
 
-async function accepted(definition: WorkflowDefinitionV1, evidence: Record<string, WorkflowJsonValue> = {}, origin = true, discussion = false) {
+async function accepted(definition: WorkflowDefinitionV1, evidence: Record<string, WorkflowJsonValue> = {}, origin = true, discussion = false,
+  options?: { source?: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'] }) {
   const inputs = bindAutomationWorkflowInputs({ definition, evidence });
   const result = await materializeWorkflowAcceptedSnapshotV1({ definition, context: {
-    source: { kind: 'inline' }, inputs, machineId: workspace.machineId, executionTarget: { kind: 'session' },
+    source: options?.source ?? { kind: 'inline' }, inputs, machineId: workspace.machineId, executionTarget: { kind: 'session' },
     workspaceTarget: { project: workspace }, origin: { kind: 'direct', ...(origin && !discussion ? { originSessionId: 'origin' } : {}),
       ...(discussion ? { discussion: { discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 2 } } : {}) },
     authorization: { principal: { kind: 'host' } },
@@ -404,7 +405,6 @@ function harness(fixtures: Fixtures = {}) {
     return {
     ...buildWorkflowActionContext(params),
     surface: 'agent', serverId: fixtures.serverId ?? 'home', authority: 'account_automation', callerPermissionMode: params.authorization.admittedPermissionCeiling,
-    actionCaller: { kind: 'workflowRun', runId: params.runId, authorization: params.authorization },
     ...(fixtures.actionsSettings ? { actionsSettings: fixtures.actionsSettings } : {}),
     defaultSessionId: params.originSessionId ?? null,
     sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -508,6 +508,7 @@ function harness(fixtures: Fixtures = {}) {
   });
   let goalInitialized = false;
   return { get store() { return store; }, events, launches, notifications, goals, removedTriggers, scmRequests, reviewReads, commentReads, sessionTargets, sessionInputs, sentMessages, aggregateReads,
+    readReviewMetadata: (reviewId: string) => reviewMetadata.get(reviewId),
     executeAction: executor.execute.bind(executor), readGoal: () => goalControl('get'),
     admitReview: (reviewInput: ReviewStartInput) => reviewRecords.start({ reviewId: 'review', title: 'Review',
       subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: 1 }),
@@ -533,6 +534,27 @@ function harness(fixtures: Fixtures = {}) {
 }
 
 describe('built-ins through accepted materialization and native leaf adapters', () => {
+  it.each([false, true])('retains saved Hunt lineage through real Review execution (composed: %s)', async composed => {
+    const reviewIds: string[] = [];
+    for (const runId of ['hunt-first-attempt', 'hunt-retry']) {
+      const h = harness({ reviewCounts: { total: 0, needsDecision: 0 } });
+      const snapshot = await accepted(builtin('repository-review'), { cwd: '/repo', instructions: 'Find repository issues.',
+        reviewers: [{ kind: 'engine', engineId: engine }, ...(composed ? [{ kind: 'engine', engineId: otherEngine }] : [])],
+      }, false, false, { source: { kind: 'saved', definitionId: 'saved-hunt',
+        revision: { headerVersion: 2, bodyVersion: 2 }, savedBy: null } });
+      const outcome = await h.runAccepted(snapshot, false, runId);
+      expect(outcome).toMatchObject({ state: 'succeeded' });
+      const reviews = h.launches.filter(launch => launch.request.intent === 'review');
+      expect(reviews).toHaveLength(composed ? 2 : 1);
+      for (const launch of reviews) {
+        const intentInput = launch.request.intentInput as Readonly<Record<string, unknown>>;
+        const round = ReviewRoundBindingV1Schema.parse(intentInput.reviewRound);
+        expect(h.readReviewMetadata(round.reviewId)).toMatchObject({ workflowId: 'saved-hunt', sourceKind: 'workflow' });
+        if (!reviewIds.includes(round.reviewId)) reviewIds.push(round.reviewId);
+      }
+    }
+    expect(reviewIds).toHaveLength(2);
+  });
   it.each(['bug', 'question', 'request'] as const)('preserves the original issue in the %s response after classification', async kind => {
     const issue = 'Write exactly FIXED_224 to the scoped issue file; preserve this instruction verbatim.';
     const h = harness({ agentResult: { kind, summary: 'A deliberately lossy summary' } });
