@@ -58,18 +58,37 @@ describe('Source availability at Environment creation', () => {
       }
       homes.answer(serverId, 'GET /v1/deployments/environments', { body: { ok: true,
         items: populated ? [environment] : [], nextCursor: null } });
-      if (definition) routerMock.module.router.setParams({ newDefinition: definition });
       const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
       const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
       primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { deployments: { enabled: true } }, capabilities: {} }) } });
       storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, deployments: true } });
-      const screen = await renderScreen(<ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
+      const project = <ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
         controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="alice" serverId={serverId}
-        actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
+        actions={createDeploymentActions(account.accountLifetime, 'source-app')} />;
+      const body = (newDefinition: string | null) => (
+        <DestinationInstanceContext.Provider value={{
+          tabId: 'project-tab', focused: true, visible: true, isFocused: () => true,
+          pathname: '/deployments/source-app', navigation: routerMock.module.router,
+          ref: { kind: 'deployments', params: { serverId, projectSourceId: 'source-app',
+            workspacePathname: '/deployments/source-app', ...(newDefinition ? { newDefinition } : {}) } },
+        }}>
+          {project}
+        </DestinationInstanceContext.Provider>
+      );
+      const screen = await renderScreen(body(definition));
       if (available) {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId(populated
           ? 'project-deployments.rail.add' : 'project-deployments.empty.deployApp'), node => node !== null);
         expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
+        if (!populated) {
+          await screen.update(body('compose'));
+          expect(screen.findByTestId('project-deployments.draft.composeDocument')).not.toBeNull();
+          await screen.update(body('image'));
+          expect(screen.findByTestId('project-deployments.draft.imageName')).not.toBeNull();
+          expect(screen.findByTestId('project-deployments.draft.composeDocument')).toBeNull();
+          await screen.update(body(null));
+          expect(screen.findByTestId('project-deployments.draft')).toBeNull();
+        }
       } else {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.sourceUnavailable'), node => node !== null);
         expect(screen.findByTestId('project-deployments.empty.deployApp')).toBeNull();

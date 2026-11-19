@@ -241,12 +241,14 @@ const ProjectDeploymentsPage = React.memo(
       () => resolveDeploymentEnvironmentDestinationV1({ tab: routeTab, section: routeSection }),
       [routeSection, routeTab],
     );
-    // Store → Apps opens the draft on a stored definition, Deploy an app on the Project's repository; the address is
-    // consumed by the first save or discard.
+    // The current address owns Store and Deploy an app drafts, even when the tab stays mounted.
     const routeNewDefinition = readProjectRouteStringParam(params.newDefinition);
     const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
-    const [drafting, setDrafting] = React.useState(newDefinition !== null || routeNewDefinition === DEPLOYMENT_NEW_REPOSITORY_DRAFT);
-    const [draftSource, setDraftSource] = React.useState<DeploymentEnvironmentDetailV1 | null>(null);
+    const routedDraft = newDefinition !== null || routeNewDefinition === DEPLOYMENT_NEW_REPOSITORY_DRAFT;
+    const initialMachineId = routedDraft ? readProjectRouteStringParam(params.deployMachine) : null;
+    // An in-page draft is empty (null), a copy, or absent (undefined).
+    const [draftSource, setDraftSource] = React.useState<DeploymentEnvironmentDetailV1 | null>();
+    const drafting = routedDraft || draftSource !== undefined;
     const selection = React.useMemo<Selection>(() => drafting && sourceAvailable ? DRAFTING : routeDefaults ? {
       environmentId: null, deploymentId: null, defaults: true,
     } : {
@@ -258,8 +260,11 @@ const ProjectDeploymentsPage = React.memo(
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {
       const current = selectionRef.current;
-      setDrafting(next.drafting === true);
-      if (next.drafting) return;
+      if (next.drafting) {
+        if (routedDraft) router.setParams({ newDefinition: undefined, deployMachine: undefined });
+        return;
+      }
+      setDraftSource(undefined);
       const sameEnvironment = next.environmentId === current.environmentId;
       router.setParams({
         newDefinition: undefined,
@@ -271,7 +276,7 @@ const ProjectDeploymentsPage = React.memo(
         // Another Environment opens on its Overview.
         ...(sameEnvironment ? {} : { deploymentTab: undefined, deploymentSection: undefined }),
       });
-    }, [router]);
+    }, [routedDraft, router]);
     const navigateEnvironment = React.useCallback((next: DeploymentEnvironmentDestinationV1) => {
       router.setParams({
         deploymentTab: next.tab === 'overview' ? undefined : next.tab,
@@ -428,10 +433,10 @@ const ProjectDeploymentsPage = React.memo(
     }
     const draft = selection.drafting ? (
       <DeploymentEnvironmentDraft
-        key={draftSource?.environment.id ?? 'new'}
-        copyFrom={draftSource}
+        key={routedDraft ? JSON.stringify([routeNewDefinition, initialMachineId]) : draftSource?.environment.id ?? 'new'}
+        copyFrom={routedDraft ? null : draftSource}
         definitionKind={newDefinition}
-        initialMachineId={readProjectRouteStringParam(params.deployMachine)}
+        initialMachineId={initialMachineId}
         lifetime={props.lifetime}
         sourceId={props.sourceId}
         phone={phone}
