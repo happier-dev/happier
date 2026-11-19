@@ -1246,6 +1246,7 @@ function ReviewsPanel({ input, locale, nowMs }: Readonly<{
   nowMs: number;
 }>): React.ReactElement {
   const proposals = useReviewCommentProposalsForEntry({
+    reviewId: input.admittedReview?.reviewId,
     linkedSessionIds: input.linkedSessions.map((session) => session.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });

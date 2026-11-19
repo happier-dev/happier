@@ -268,6 +268,7 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const proposals = useReviewCommentProposalsForEntry({
+    reviewId: input.admittedReview?.reviewId,
     linkedSessionIds: input.linkedSessions.map((session) => session.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });
@@ -379,6 +380,7 @@ export function AzureThreadReplyPublicationControl({ input, thread }: Readonly<{
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const proposals = useReviewCommentProposalsForEntry({
+    reviewId: input.admittedReview?.reviewId,
     linkedSessionIds: input.linkedSessions.map((session) => session.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });

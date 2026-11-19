@@ -4490,6 +4490,7 @@ function GithubDetailBody({
   }, [publishesPrimaryWrite, primaryWrite, publishPrimaryWrite]);
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
   const publicationProposals = useReviewCommentProposalsForEntry({
+    reviewId: kindId === 'pull-request' ? input.admittedReview?.reviewId : undefined,
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: kindId === 'issue'
       ? {

@@ -405,6 +405,7 @@ function BitbucketReviewPublicationControls({
   const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const { proposals, status } = useReviewCommentProposalsForEntry({
+    reviewId: input.admittedReview?.reviewId,
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });
@@ -526,6 +527,7 @@ export function BitbucketReviewCommentReplyControls({
   const { instance, localRef } = useTriageDetailRequest(input);
   const [replyExecution, setReplyExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const { proposals, status } = useReviewCommentProposalsForEntry({
+    reviewId: input.admittedReview?.reviewId,
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });

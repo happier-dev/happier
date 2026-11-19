@@ -14,11 +14,13 @@ export type ReviewCommentProposalWithBodyV1 = Omit<ReviewCommentV1, 'body' | 'sn
 export type ReviewCommentProposalReadV1 = Readonly<{
   status: 'loading' | 'ready' | 'failed';
   proposals: readonly ReviewCommentProposalWithBodyV1[];
-  /** Requests one more candidate page from each linked Session that has a continuation. */
+  /** Requests the next candidate page from the selected Review or linked Sessions. */
   loadMore?: () => void;
 }>;
 
 export type ReviewCommentProposalQueryV1 = Readonly<{
+  /** The admitted Review is the exact publication scope when present. */
+  reviewId?: string;
   linkedSessionIds: readonly string[];
   entry:
     | Readonly<{ kind: 'pullRequest'; url?: string }>
@@ -39,7 +41,8 @@ function hasPublishableContent(
  * Reads proposed canonical Review comments linked to one exact provider entry.
  *
  * The Reviews Action remains the sole data owner. This hook only owns one mounted read: it requests
- * one candidate page per linked Session, deduplicates the same comment linked through several Sessions,
+ * one candidate page from the selected Review, or per linked Session for legacy entry reads,
+ * deduplicates the same comment linked through several Sessions,
  * aborts on unmount/query replacement, and persists nothing. Provider surfaces then build only their
  * provider-specific frozen publication plans from the returned canonical comments. Continuation is
  * explicit even when a page has no matching comments for this entry.
@@ -52,7 +55,8 @@ export function useReviewCommentProposalsForEntry(
     status: 'loading',
     proposals: [],
   });
-  const linkedSessionIdsKey = JSON.stringify(query.linkedSessionIds);
+  const reviewId = query.reviewId;
+  const linkedSessionIdsKey = JSON.stringify(reviewId === undefined ? query.linkedSessionIds : []);
   const entryKey = JSON.stringify(query.entry);
 
   React.useEffect(() => {
@@ -62,7 +66,8 @@ export function useReviewCommentProposalsForEntry(
     const entry = JSON.parse(entryKey) as ReviewCommentProposalQueryV1['entry'];
 
     const byId = new Map<string, ReviewCommentProposalWithBodyV1>();
-    const cursors = new Map(linkedSessionIds.map(sessionId => [sessionId, undefined as string | undefined]));
+    const cursors = new Map((reviewId === undefined ? linkedSessionIds : [reviewId])
+      .map(scopeId => [scopeId, undefined as string | undefined]));
     let pending = false;
     const readNext = async () => {
       if (!current || pending || cursors.size === 0) return;
@@ -76,9 +81,9 @@ export function useReviewCommentProposalsForEntry(
           if (current) setState({ status: 'ready', proposals: [] });
           return;
         }
-        for (const [sessionId, cursor] of cursors) {
+        for (const [scopeId, cursor] of cursors) {
           const page = await host.executeAction('reviews.comments.list', {
-            sessionId,
+            ...(reviewId === undefined ? { sessionId: scopeId } : { reviewId: scopeId }),
             states: ['proposed'],
             taxonomyIds: [],
             includeHistory: false,
@@ -97,8 +102,8 @@ export function useReviewCommentProposalsForEntry(
             }
           }
           const next = page.cursor ?? undefined;
-          if (next === undefined || next === cursor) cursors.delete(sessionId);
-          else cursors.set(sessionId, next);
+          if (next === undefined || next === cursor) cursors.delete(scopeId);
+          else cursors.set(scopeId, next);
         }
         if (current) {
           setState({ status: 'ready', proposals: Object.freeze([...byId.values()]),
@@ -120,7 +125,7 @@ export function useReviewCommentProposalsForEntry(
       current = false;
       cancellation.abort();
     };
-  }, [entryKey, host, linkedSessionIdsKey]);
+  }, [entryKey, host, linkedSessionIdsKey, reviewId]);
 
   return state;
 }

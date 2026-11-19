@@ -39,6 +39,37 @@ const ISSUE_ID = createReviewCommentLinkedIssueIdV1({
 });
 
 describe('useReviewCommentProposalsForEntry', () => {
+  it('reads publication candidates from the selected Review without scanning linked Sessions', async () => {
+    const requests: unknown[] = [];
+    const hostApi = {
+      executeAction: async (_action: unknown, input: unknown) => {
+        requests.push(input);
+        const request = input as Readonly<{ reviewId?: string }>;
+        return { items: [{ ...PROPOSAL, id: request.reviewId === 'selected-review' ? 'selected-finding' : 'unselected-finding' }], cursor: null };
+      },
+      readResource: async () => { throw new Error('not used'); },
+    } as unknown as PluginUiHostApi; // Host Action transport is the plugin boundary.
+    const reads: ReviewCommentProposalReadV1[] = [];
+    const query = { reviewId: 'selected-review', linkedSessionIds: ['session-1', 'session-2'],
+      entry: { kind: 'pullRequest' as const, url: 'https://gitlab.com/group/project/-/merge_requests/42' } };
+    function Probe() {
+      reads.push(useReviewCommentProposalsForEntry(query));
+      return null;
+    }
+    let tree: renderer.ReactTestRenderer | undefined;
+    await act(async () => {
+      tree = renderer.create(<PluginHostApiProvider hostApi={hostApi}><Probe /></PluginHostApiProvider>);
+    });
+    try {
+      await vi.waitFor(() => expect(reads.at(-1)).toMatchObject({ status: 'ready' }));
+      expect(reads.at(-1)?.proposals.map(proposal => proposal.id)).toEqual(['selected-finding']);
+      expect(requests).toEqual([expect.objectContaining({ reviewId: 'selected-review' })]);
+      expect(requests[0]).not.toHaveProperty('sessionId');
+    } finally {
+      act(() => tree?.unmount());
+    }
+  });
+
   it('reads one candidate page per linked Session and continues only on explicit demand', async () => {
     const executeAction = vi.fn(async (_action: unknown, input: unknown) => {
       const request = input as Readonly<{ sessionId: string; cursor?: string }>;
