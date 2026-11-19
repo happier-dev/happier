@@ -7847,23 +7847,18 @@ channels and exits when the holder closes that connection.
   (`watch`: inotify, pushed JSON lines, new directories joined as they appear).
   The bootstrap's artifacts are the build's own target holders and helpers
   (`readSessionTargetHolderArtifacts`).
-- Placing a Session on a managed target (development only: requested through the
-  daemon spawn option `managedTargetPlacement {managedId, workspaceRoot}`; no UI or
-  Home-admitted path yet):
-  - Custody stays with the controller daemon under the row's existing managed
-    custody (no per-spawn managed operation). The managed driver's
-    `openSessionTarget` (`apps/cli/src/machines/managed/acquire.ts`) reads the
-    current row, admits the requester, and builds the Session authority of
-    `createManagedNativeInvocation` (`reconcile.ts`): only `exec`/`putFile`/`stream`,
-    only the row's own resource, `exec` never wakes a stopped target, and the row
-    is re-checked before every call (controller, installation, Home, bound, not
-    being deleted). The authority's `lifetime` signal aborts every running channel.
-  - Access: every Session on one target runs as the same guest user and can reach
-    the others' holder sockets and files, so placing a Session needs access to the
-    target row itself, not to a Project or Session. The daemon admits only the row's
-    custodian; a requester with a shared role is refused
-    (`managed_target_access_unavailable`) until the Home admits the placement with
-    the spawn (the Home owns share roles).
+- Placing a Session on a managed target in 0.3 development source uses the
+  daemon spawn option `managedTargetPlacement {managedId, workspaceRoot}`.
+  - The controller daemon keeps custody and opens the channel after Home returns
+    admission for the requester through the signed controller policy read.
+    `openSessionTarget` allows `exec`, `putFile` and `stream` against that resource.
+    Calling `exec` leaves a stopped target stopped.
+  - Every Session on one target runs as the same guest user and can reach the
+    others' holder sockets and files. Home resolves ordinary target access from
+    custody and current Machine grants, including Team grants. A requester
+    outside controller custody can use a resource-bound target through its
+    active committed Session. Relevant Home change events can withdraw open
+    access, at which point the controller aborts the channels.
   - Lifetime: `prepareSessionTargetPlacement` (`daemon/spawn/`) registers the
     placement on the spawn's launch resource scope: a refused spawn ends it at once;
     a launched Session's placement ends when its runner has exited, also when a Stop

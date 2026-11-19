@@ -28,7 +28,7 @@ import { settleManagedMachineResize } from '@happier-dev/cli-common/machines/man
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1, isManagedCreationCleanupV1,
-    ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+    ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1, type ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { ManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
@@ -97,6 +97,8 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     /** Classified changes from the controller's existing Account-feed owner. */
     subscribeManagedMachineChanges?: import('@/api/apiMachine').ApiMachineClient['onManagedMachinePolicyInvalidated'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
+    readTargetCurrent?: (managedId: string, target: ManagedTargetRequesterV1, signal: AbortSignal) => Promise<
+        Readonly<{ machine: ManagedMachineV1; admitted: boolean }> | null>;
     /** HTTP boundary shared by Home CLI identity and public release discovery. */
     guestCliFetch?: typeof fetch;
     /** Join the installed host's existing finite Prepare operation, including cleanup. */
@@ -646,16 +648,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const preparationSignal = request.operation
             ? AbortSignal.any([request.lifetime, request.operation.signal]) : request.lifetime;
         preparationSignal.throwIfAborted();
-        if (!input.readPolicyCurrent) throw new ManagedMachineControllerError('admission_unavailable');
-        const readCurrent = input.readPolicyCurrent;
-        const initial = await readCurrent(request.managedId, preparationSignal);
-        if (!initial || initial.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
-        const admitsRequester = (row: ManagedMachineV1): boolean => row.custodianAccountId === request.requesterAccountId
-            || (Boolean(session) && row.acquisitionMode === 'resource-bound' && Boolean(request.committedSessionId)
-                && row.enrollmentAccountId === request.requesterAccountId);
-        if (!admitsRequester(initial)) throw new ManagedMachineControllerError('managed_target_access_unavailable');
-        // The authority ends with its admitted lifetime, and when the row stops admitting this requester
-        // (custody handed over, row gone): every running channel is aborted then.
+        const readTargetCurrent = input.readTargetCurrent;
+        if (!readTargetCurrent) throw new ManagedMachineControllerError('admission_unavailable');
+        const target = { requesterAccountId: request.requesterAccountId, committedSessionId: request.committedSessionId };
+        const readCurrent = (signal: AbortSignal) => readTargetCurrent(request.managedId, target, signal);
         const revoked = new AbortController();
         const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
         const finiteSignal = AbortSignal.any([preparationSignal, revoked.signal]);
@@ -663,15 +659,18 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const options = { requestId: sync ? `workspace-sync-target:${sync.relationshipId}`
             : session ? `session-target:${session.sessionId}` : `project-workspace-target:${request.managedId}`,
             signal: lifetime, context: request.operation };
-        const admit = async (row: ManagedMachineV1 | null, signal = lifetime): Promise<ManagedMachineFullV1> => {
-            if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
-            if (!admitsRequester(row)) {
+        const admit = async (current: Awaited<ReturnType<typeof readCurrent>>, signal = lifetime): Promise<ManagedMachineFullV1> => {
+            if (!current || current.machine.id !== request.managedId) {
+                revoked.abort();
+                throw new ManagedMachineControllerError('admission_unavailable');
+            }
+            if (!current.admitted) {
                 revoked.abort();
                 throw new ManagedMachineControllerError('managed_target_access_unavailable');
             }
-            return await openPolicyMachine(row, { ...options, signal }, 'machines.managed.inspect', hydrator, request.committedSessionId);
+            return await openPolicyMachine(current.machine, { ...options, signal }, 'machines.managed.inspect', hydrator, request.committedSessionId);
         };
-        let current = await admit(initial, finiteSignal);
+        let current = await admit(await readCurrent(finiteSignal), finiteSignal);
         if (current.acquisitionMode === 'resource-bound' && request.operation && !request.committedSessionId) {
             throw new ManagedMachineControllerError('admission_unavailable');
         }
@@ -689,8 +688,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const unsubscribe = input.subscribeManagedMachineChanges?.(change => {
             if (observationLifetime.aborted) return;
             if (change?.kind === 'managed' && !change.managedIds.includes(request.managedId)) return;
-            if (change?.kind === 'machines' && !change.machineIds.includes(input.controller.machineId)) return;
-            return readCurrent(request.managedId, observationLifetime).then(async row => {
+            if (change?.kind === 'machines' && !change.machineIds.includes(input.controller.machineId)
+                && !(current.enrolledMachineId && change.machineIds.includes(current.enrolledMachineId))) return;
+            return readCurrent(observationLifetime).then(async decision => {
+                const row = decision?.machine;
                 if (observationLifetime.aborted) return;
                 if (request.onNativeAbsent && row?.id === request.managedId && row.allocation === 'confirmed-absent') {
                     revoked.abort();
@@ -698,7 +699,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     return;
                 }
                 if (lifetime.aborted) return;
-                try { current = await admit(row); authority.assertManagedTargetCurrent(correlation.resource.value); }
+                try { current = await admit(decision); authority.assertManagedTargetCurrent(correlation.resource.value); }
                 catch { revoked.abort(); }
             }, () => undefined);
         });

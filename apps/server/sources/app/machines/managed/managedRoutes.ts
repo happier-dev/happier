@@ -22,7 +22,7 @@ import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorCon
 import { admitManagedAcquire } from "./managedAcquire";
 import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy } from "./managedMutations";
 import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachineInTx, projectManagedMachinesInTx, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess } from "./managedRows";
-import { getManagedMachine, listManagedMachines, cancelManagedCreation } from "./managedRead";
+import { getManagedMachine, listManagedMachines, cancelManagedCreation, admitsManagedTargetInTx } from "./managedRead";
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
@@ -239,7 +239,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             return skipManagedMachineSetup({ actorAccountId: request.userId, input: request.body });
         }));
     app.post('/v1/machines/managed/controller/policies', { preHandler: app.authenticate, schema: { body: ManagedPolicyCensusInputV1Schema, response: { 200: ManagedPolicyCensusOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
-        const { homeId, controller, proof, managedId } = request.body;
+        const { homeId, controller, proof, managedId, target } = request.body;
         const targets = managedId ? [] : (await readManagedWakeTargets({ actorAccountId: request.userId,
             request: { homeId, controller } })).targets;
         const census = await inReadSnapshot(async tx => {
@@ -280,11 +280,12 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                     desiredBindingKeys: native.desiredBindings.map(binding => binding.safeFacet.bindingKey) };
             })) : undefined;
             return { machines: await projectManagedMachinesInTx(tx, rows), retentionContinuations,
+                ...(target ? { targetAdmitted: rows[0] ? await admitsManagedTargetInTx(tx, rows[0], target) : false } : {}),
                 ...(nativeCredentialPolicies ? { nativeCredentialPolicies } : {}) };
         });
         // Exact scheduling reads need the same accepted origins as reconnect.
         // Discover them only for a row admitted by the signed census above.
-        return { ...census, targets: managedId && census.machines.length > 0
+        return { ...census, targets: managedId && !target && census.machines.length > 0
             ? (await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller }, managedId })).targets
             : targets };
     }));

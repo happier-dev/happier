@@ -7,6 +7,7 @@ import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol
 import { SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { Prisma } from '@prisma/client';
+import type { ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { getActivePrismaRuntime } from '@/storage/prisma';
@@ -164,6 +165,19 @@ export async function requireManagedMachineAccessInTx(tx: Tx,
 export function isManagedMachineCreator(row: Pick<StoredManagedMachine, 'admittedInput'>, actorAccountId: string): boolean {
     const admission = readManagedAdmissionState(row.admittedInput);
     return admission.enrollmentAccountId === actorAccountId && !admission.resourceBoundSessionEnded;
+}
+/** The signed controller presents the requester at the lifetime boundary of native target IO. */
+export async function admitsManagedTargetInTx(tx: Tx, row: StoredManagedMachine, target: ManagedTargetRequesterV1): Promise<boolean> {
+    if (row.archivedAt || row.creationState !== 'active') return false;
+    const { requesterAccountId, committedSessionId } = target;
+    if (row.custodianAccountId === requesterAccountId) return true;
+    const admission = readManagedAdmissionState(row.admittedInput);
+    if (admission.acquisitionMode === 'resource-bound') {
+        if (!committedSessionId || !isManagedMachineCreator(row, requesterAccountId)) return false;
+        return Boolean(await tx.session.findFirst({ where: { id: committedSessionId, accountId: requesterAccountId,
+            managedCreationId: row.id, archivedAt: null }, select: { id: true } }));
+    }
+    return Boolean(await resolveManagedMachineRoleInTx(tx, row, requesterAccountId));
 }
 /** Creation recovery/cancellation does not grant native power or controller management. */
 export async function requireManagedCreationAccessInTx(tx: Tx,

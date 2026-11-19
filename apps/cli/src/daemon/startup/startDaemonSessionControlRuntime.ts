@@ -1168,6 +1168,9 @@ export async function startDaemonSessionControlRuntime(
     readManagedMachinePolicyCurrent?: Parameters<
       typeof createDaemonManagedMachineActionAdapter
     >[0]['readPolicyCurrent'];
+    readManagedMachineTargetCurrent?: Parameters<
+      typeof createDaemonManagedMachineActionAdapter
+    >[0]['readTargetCurrent'];
     prepareTeamCredentialNativeSource?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     /** Process-lifetime Workflow admission authority reused at every work-releasing control. */
     workflowAcceptedAuthorizationCurrentness?: Parameters<
@@ -11616,6 +11619,9 @@ export async function startDaemonSessionControlRuntime(
     ...(params.readManagedMachinePolicyCurrent
       ? { readPolicyCurrent: params.readManagedMachinePolicyCurrent }
       : {}),
+    ...(params.readManagedMachineTargetCurrent
+      ? { readTargetCurrent: params.readManagedMachineTargetCurrent }
+      : {}),
     acquireRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
     executeManagedPolicyAction: (machine, context, runApproved, purpose) => executeManagedMachinePolicyAction({
       machine, purpose, context, runApproved, serverId: params.serverId,
@@ -11730,6 +11736,7 @@ export async function startDaemonSessionControlRuntime(
                     managedProviderOperationAuthority: params.managedProviderOperationAuthority,
                     ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                     ...(params.readManagedMachinePolicyCurrent ? { readPolicyCurrent: params.readManagedMachinePolicyCurrent } : {}),
+                    ...(params.readManagedMachineTargetCurrent ? { readTargetCurrent: params.readManagedMachineTargetCurrent } : {}),
                     acquireRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
                     observeActionExecution: async request => {
                       const apiMachine = params.getApiMachineForSessions();

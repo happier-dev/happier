@@ -77,6 +77,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
     waitForActionOperationCompletion?: ApiMachineClient['waitForActionOperationCompletion'];
     findActionOperationByRequestIdentity?: ApiMachineClient['findActionOperationByRequestIdentity'];
+    readTargetCurrent?: Parameters<typeof import('@/machines/managed/acquire')['createManagedMachineAcquisitionDriver']>[0]['readTargetCurrent'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
@@ -168,6 +169,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 homeTarget,
                 readGuestHomeHostIdentity: params.readGuestHomeHostIdentity,
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
+                ...(params.readTargetCurrent ? { readTargetCurrent: params.readTargetCurrent } : {}),
                 ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),
             }), controllerCredentials, { homeId: origin.serverIdentityId, installationId: params.installationIdentity.installationId,

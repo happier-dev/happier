@@ -37,12 +37,19 @@ export const ManagedPolicyPurposeV1Schema = lazyZodSchema(() => z.discriminatedU
 export type ManagedPolicyPurposeV1 = z.infer<typeof ManagedPolicyPurposeV1Schema>;
 export const ManagedPolicyAdmissionInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { controller: ManagedControllerV1Schema, purpose: ManagedPolicyPurposeV1Schema })));
 export type ManagedPolicyAdmissionInputV1 = z.infer<typeof ManagedPolicyAdmissionInputV1Schema>;
+const ManagedTargetRequesterV1Schema = lazyZodSchema(() => z.strictObject({
+  requesterAccountId: z.string().check(z.minLength(1)),
+  committedSessionId: z.optional(z.string().check(z.minLength(1))),
+}));
+export type ManagedTargetRequesterV1 = z.infer<typeof ManagedTargetRequesterV1Schema>;
 export const ManagedPolicyCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: z.string().check(z.minLength(1)), controller: ManagedControllerV1Schema, proof: MachineInstallationProofV1Schema,
   managedId: z.optional(z.string().check(z.minLength(1))), includeNativeCredentialBindings: z.optional(z.literal(true)),
-}));
+  target: z.optional(ManagedTargetRequesterV1Schema),
+}).check(z.refine(input => !input.target || input.managedId !== undefined)));
 export const ManagedPolicyCensusOutputV1Schema = lazyZodSchema(() => z.strictObject({
   machines: z.array(ManagedMachineV1Schema), targets: z.array(ManagedWakeTargetV1Schema),
+  targetAdmitted: z.optional(z.boolean()),
   /** Private current-set read requested only by a consuming native controller. */
   nativeCredentialPolicies: z.optional(z.array(z.strictObject({ managedId: z.string().check(z.minLength(1)),
     bindings: z.array(ManagedNativeCredentialBindingV1Schema), desiredBindingKeys: z.array(z.string().check(z.minLength(1))),

@@ -9,7 +9,7 @@ import { logger } from '@/ui/logger';
 import { MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT,
     type createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
 import { createManagedPolicyCensusProofV1, isManagedCreationCleanupV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema,
-    type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+    type ManagedPolicyPurposeV1, type ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 
 export type ManagedMachinePolicyCensus = ReturnType<typeof ManagedPolicyCensusOutputV1Schema.parse>;
 
@@ -22,13 +22,14 @@ type PolicySchedulingFacts = Pick<ManagedMachineV1,
 export async function readManagedMachinePolicyCensus(input: Readonly<{
     homeId: string; controller: ManagedControllerV1; custodianAccountId: string;
     privateKey: string | Uint8Array; token: string; serverUrl: string; signal?: AbortSignal;
-    managedId?: string; nativeCredentialManagedId?: string;
+    managedId?: string; nativeCredentialManagedId?: string; target?: ManagedTargetRequesterV1;
 }>): Promise<ManagedMachinePolicyCensus> {
     input.signal?.throwIfAborted();
     const managedId = input.nativeCredentialManagedId ?? input.managedId;
     const body = ManagedPolicyCensusInputV1Schema.parse({ homeId: input.homeId, controller: input.controller,
         proof: createManagedPolicyCensusProofV1(input),
         ...(managedId ? { managedId } : {}),
+        ...(input.target ? { target: input.target } : {}),
         ...(input.nativeCredentialManagedId ? { includeNativeCredentialBindings: true } : {}) });
     const response = await axios.post<unknown>(`${input.serverUrl}/v1/machines/managed/controller/policies`, body,
         { headers: { Authorization: `Bearer ${input.token}`, 'Content-Type': 'application/json' },

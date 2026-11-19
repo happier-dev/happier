@@ -19,6 +19,7 @@ import { DaemonHomeReadinessError } from './peer/iroh/failureClassification';
 import { createManagedActivityInventory, createLiveWorkProducerGroup, type LiveWorkProducerV1 } from './lifecycle/managedActivity';
 import { projectDaemonRequesterWorkAttribution } from './lifecycle/requesterWorkAttribution';
 import { createExecutionRunLiveWorkProducer } from './executionRunRegistry';
+import type { ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from './startup/managedMachinePolicyRuntime';
 import { reconcileRecoveredSessionMachineControl } from './sessions/reconcileRecoveredSessionMachineControl';
 import { settleRequesterPendingSessionPreparationRefusal } from './sessions/pendingSessionActivationRecovery';
@@ -1853,16 +1854,20 @@ export async function startDaemon(
         custodianAccountId: externalActionAccountId, privateKey: installation.privateKey,
         token: credentials.token, serverUrl: readManagedPolicyServerHttpBaseUrl() };
     };
-    const readCurrentManagedMachinePolicies = async (signal?: AbortSignal, managedId?: string) => {
+    const readCurrentManagedMachinePolicies = async (signal?: AbortSignal, managedId?: string, target?: ManagedTargetRequesterV1) => {
       const origin = await resolveCurrentMachineExecutionOriginContext(signal);
       const controller = readCurrentManagedPolicyController();
       if (!controller || !origin || origin.serverIdentityId !== controller.homeId || origin.machineId !== controller.controller.machineId) {
         throw Object.assign(new Error('controller_unavailable'), { code: 'controller_unavailable' });
       }
-      return await readManagedMachinePolicyCensus({ ...controller, signal, managedId });
+      return await readManagedMachinePolicyCensus({ ...controller, signal, managedId, target });
     };
     const readCurrentManagedMachinePolicy = async (managedId: string, signal?: AbortSignal) =>
       (await readCurrentManagedMachinePolicies(signal, managedId)).machines[0] ?? null;
+    const readCurrentManagedMachineTarget = async (managedId: string, target: ManagedTargetRequesterV1, signal: AbortSignal) => {
+      const { machines: [machine], targetAdmitted } = await readCurrentManagedMachinePolicies(signal, managedId, target);
+      return machine && targetAdmitted !== undefined ? { machine, admitted: targetAdmitted } : null;
+    };
     const browserRuntimeActionExecute = api.createBrowserRuntimeActionExecutor({
       observeExecution: request => apiMachineForSessions
         ? apiMachineForSessions.observeActionExecution(request)
@@ -2628,6 +2633,7 @@ export async function startDaemon(
         return await producer.machineServices.prepareTeamCredentialNativeSource(request, signal);
       },
       readManagedMachinePolicyCurrent: readCurrentManagedMachinePolicy,
+      readManagedMachineTargetCurrent: readCurrentManagedMachineTarget,
       externalActionAccountId,
       resolveProjectWorkerAction: () => projectWorkerAction,
       resolveWorkspaceSyncHandoffAdapter: () => workspaceSyncRuntimeCustody.get()?.handoffAdapter ?? null,

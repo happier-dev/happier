@@ -104,7 +104,7 @@ export async function applyManagedCreationScopeEndInTx(tx: Tx, input: Readonly<{
                 ...(input.endedAt === null ? {} : { endedAt: input.endedAt }) } } : {}) },
     } });
     if (changedScope) await invalidateManagedMachineInTx(tx, row);
-    else await publishManagedMachinePolicyChangeInTx(tx, row, [input.accountId]);
+    else await publishManagedMachinePolicyChangeInTx(tx, row, [input.accountId, row.custodianAccountId]);
 }
 
 /** Exact non-content birth lookup shared by the public read and retention edit admission. */

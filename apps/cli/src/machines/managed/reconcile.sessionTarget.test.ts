@@ -497,7 +497,7 @@ describe('Session placement on a managed target (driver)', () => {
             resource: { ...machine.resource, ...(scenario.created ? { origin: 'created' } : {}) } });
         const lifetime = new AbortController();
         onTestFinished(() => lifetime.abort());
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 'root-permission-policy',
             requesterAccountId: 'owner', lifetime: lifetime.signal, holder });
         const launch = await deliverSessionTargetLaunch({ target, sessionKey: 'root-permission-policy',
@@ -518,7 +518,7 @@ describe('Session placement on a managed target (driver)', () => {
         let row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
         let reads = 0;
         let listener: Parameters<NonNullable<ManagedMachineAcquisitionDriverInput['subscribeManagedMachineChanges']>>[0] | undefined;
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => { reads++; return row; },
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async (_id, target) => { reads++; return { machine: row, admitted: target.requesterAccountId === 'owner' }; },
             subscribeManagedMachineChanges: next => { listener = next; return () => { listener = undefined; }; } });
         const request = { workspace: syncWorkspace, requesterAccountId: 'owner', lifetime: lifetime.signal, holder };
         await expect(driver.openProjectWorkspaceTarget({ ...request, workspace: { ...syncWorkspace,
@@ -571,7 +571,7 @@ describe('Session placement on a managed target (driver)', () => {
         const artifact = (contents: string) => ({ bytes: Buffer.from(contents), sha256: createHash('sha256').update(contents).digest('hex') });
         const artifacts = { holder: artifact('fixture native holder'), helper: artifact('fixture filesystem helper') };
         const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         const request = { managedId: row.id, relationshipId: 'account-sync', requesterAccountId: 'owner',
             workspace: { ...syncWorkspace, rootPath: join(guestHome, 'workspace') }, lifetime: lifetime.signal,
             holder: { version: 'sync-v1', resolveArtifacts: async () => artifacts } };
@@ -590,7 +590,7 @@ describe('Session placement on a managed target (driver)', () => {
         onTestFinished(() => { session.abort(); relationship.abort(); });
         const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
         let reads = 0;
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => { reads++; return row; } });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => { reads++; return { machine: row, admitted: true }; } });
         const sessionTarget = await driver.openSessionTarget({ managedId: row.id, sessionId: 'origin-session',
             requesterAccountId: 'owner', lifetime: session.signal, holder });
         const target = await driver.openWorkspaceSyncTarget({ managedId: row.id, relationshipId: 'account-sync',
@@ -620,7 +620,7 @@ describe('Session placement on a managed target (driver)', () => {
 
     it.each(['home', 'machine', 'installation', 'account', 'managed'] as const)('refuses a sync target outside the admitted %s scope before native IO', async mismatch => {
         const h = harness({ guest: true });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine, admitted: mismatch !== 'account' }) });
         const workspace = { ...syncWorkspace,
             ...(mismatch === 'home' ? { serverId: 'other-home' } : {}),
             ...(mismatch === 'managed' ? { managedId: 'other-target' } : {}),
@@ -637,7 +637,7 @@ describe('Session placement on a managed target (driver)', () => {
     it('opens the existing guest CLI for native workspace operations without enrolling a Machine', async () => {
         const h = harness({ guest: true });
         const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 'workspace-session',
             requesterAccountId: 'owner', lifetime: new AbortController().signal, holder });
         const opened = await target.ensureWorkspaceRuntime();
@@ -659,7 +659,7 @@ describe('Session placement on a managed target (driver)', () => {
                 kind: 'ssh', address: '192.0.2.7', user: 'guest',
             });
         } });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine, admitted: true }) });
         await expect(driver.openSessionTarget({ managedId: machine.id, sessionId: 'session',
             requesterAccountId: 'owner', lifetime: new AbortController().signal, holder,
             operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
@@ -682,7 +682,7 @@ describe('Session placement on a managed target (driver)', () => {
         vi.stubGlobal('fetch', fetch);
         const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('No installation report without installation'));
         onTestFinished(() => { vi.unstubAllGlobals(); post.mockRestore(); });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row,
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }),
             homeTarget: resolveHomeTargetFromDescriptor({ authority: 'current_connection', descriptor: {
                 v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'http://controller.localhost:3033', revision: 1,
                 endpoints: [{ kind: 'https', url: 'http://controller.localhost:3033' }],
@@ -739,7 +739,7 @@ describe('Session placement on a managed target (driver)', () => {
             return { status: 200, data: { machine: row } };
         });
         onTestFinished(() => post.mockRestore());
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null }, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null }, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce', committedSessionId: 'committed-session',
             requesterAccountId: 'owner', lifetime: new AbortController().signal, holder,
             operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
@@ -832,7 +832,7 @@ describe('Session placement on a managed target (driver)', () => {
         const driver = createManagedMachineAcquisitionDriver({ ...h.input,
             runtimeRegistry: { ...h.input.runtimeRegistry, contributes: { ...h.input.runtimeRegistry.contributes,
                 machineRecipes: [{ pluginId: 'guest.tools', definition: recipe }] } }, externalActionMachineRequestPrivateKey: keys.secretKey,
-            readPolicyCurrent: async () => retained });
+            readTargetCurrent: async () => ({ machine: retained, admitted: true }) });
         const operations = createHostActionOperationRuntime({ machineId: target.machineId, resolveAccountId: async () => 'owner', generateOperationId: () => 'startup-operation' });
         const outcome = await operations.observeExecution({ actionId: 'session.spawn_new', input: {}, execute: async operation => {
             const request = { managedId: machine.id, sessionId: 'holder-nonce', committedSessionId: 'committed-session', requesterAccountId: 'owner',
@@ -900,7 +900,7 @@ describe('Session placement on a managed target (driver)', () => {
         const fetch = vi.fn(async () => { throw new Error('Scripts do not use the CLI interpreter'); });
         vi.stubGlobal('fetch', fetch);
         onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null }, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null }, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         const request = { managedId: row.id, sessionId: 'holder-nonce', committedSessionId: 'committed-session', requesterAccountId: 'owner',
             lifetime: new AbortController().signal, holder, operation: { actionRequestId: 'setup-operation',
                 signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } };
@@ -921,7 +921,7 @@ describe('Session placement on a managed target (driver)', () => {
         const row = ManagedMachineV1Schema.parse({ ...machine, acquisitionMode: 'resource-bound', bootstrapInstalled: true,
             preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
             machineSetup: { setup: { scripts: [{ body: 'required-setup-script' }] }, state: 'pending' } });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         const request = { managedId: row.id, sessionId: 'holder-nonce', committedSessionId: 'committed-session', requesterAccountId: 'owner',
             lifetime: new AbortController().signal, holder, operation: { actionRequestId: 'startup-operation',
                 signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } };
@@ -929,8 +929,8 @@ describe('Session placement on a managed target (driver)', () => {
         onTestFinished(() => post.mockRestore());
         await expect(driver.openSessionTarget(request)).rejects.toMatchObject({ code: 'managed_controller_request_failed',
             details: { kind: 'managedControllerRequest', path: '/v1/machines/setup/report', category: 'transport' } });
-        const prepared = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => ({ ...row,
-            machineSetup: { ...row.machineSetup!, state: 'succeeded' } }) });
+        const prepared = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ admitted: true, machine: { ...row,
+            machineSetup: { ...row.machineSetup!, state: 'succeeded' } } }) });
         await expect(prepared.openSessionTarget(request)).resolves.toMatchObject({ id: `managed:${row.id}` });
         const { operation: _, ...heldRecovery } = request;
         await expect(driver.openSessionTarget(heldRecovery)).resolves.toMatchObject({ id: `managed:${row.id}` });
@@ -939,7 +939,7 @@ describe('Session placement on a managed target (driver)', () => {
     it('requires the committed Session carrier before preparing a fresh bound target', async () => {
         const h = harness({ guest: true });
         const row = ManagedMachineV1Schema.parse({ ...machine, acquisitionMode: 'resource-bound' });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
         await expect(driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce', requesterAccountId: 'owner',
             lifetime: new AbortController().signal, holder, operation: { actionRequestId: 'startup-operation',
                 signal: new AbortController().signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } },
@@ -949,7 +949,7 @@ describe('Session placement on a managed target (driver)', () => {
 
     it('cancels finite preparation with its Session operation before any guest effect', async () => {
         const h = harness({ guest: true });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine, admitted: true }) });
         const stopped = new AbortController();
         stopped.abort();
         const request = { managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
@@ -962,7 +962,7 @@ describe('Session placement on a managed target (driver)', () => {
 
     it('keeps live target authority after finite preparation ends and supports held recovery without another preparation operation', async () => {
         const h = harness({ guest: true });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine, admitted: true }) });
         const finished = new AbortController();
         const request = { managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
             lifetime: new AbortController().signal, holder,
@@ -981,7 +981,7 @@ describe('Session placement on a managed target (driver)', () => {
         const row = ManagedMachineV1Schema.parse({ ...machine, enrollmentAccountId: 'member',
             ...(scenario === 'unbound' ? {} : { acquisitionMode: 'resource-bound' }),
             preset: { id: 'team-preset', revision: 3, contentEncryptionMode: 'plain' } });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: scenario === 'admitted' }) });
         const lifetime = new AbortController();
         onTestFinished(() => lifetime.abort());
         const opening = driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce',
@@ -998,22 +998,22 @@ describe('Session placement on a managed target (driver)', () => {
         }
     });
 
-    it('places an ordinary target only for the row\'s custodian; another requester is refused before any native IO', async () => {
+    it('uses Home admission for an ordinary target before any native IO', async () => {
         const h = harness();
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async (_id, target) => ({ machine, admitted: target.requesterAccountId === 'team-member' }) });
         const session = new AbortController();
-        await expect(driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'someone-else',
+        await expect(driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
             lifetime: session.signal, holder })).rejects.toMatchObject({ code: 'managed_target_access_unavailable' });
         expect(h.calls).toEqual([]);
-        // The custodian prepares the admitted transport before the holder's platform probe.
-        await driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
+        // The admitted Team member uses the transport before the holder's platform probe.
+        await driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'team-member',
             lifetime: session.signal, holder }).catch(() => undefined);
         expect(h.calls.slice(0, 2)).toEqual(['bootstrap', 'exec']);
     });
 
     it('refuses a row this controller does not currently hold', async () => {
         const h = harness();
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => null });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => null });
         await expect(driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
             lifetime: new AbortController().signal, holder })).rejects.toMatchObject({ code: 'admission_unavailable' });
         expect(h.calls).toEqual([]);
@@ -1023,10 +1023,11 @@ describe('Session placement on a managed target (driver)', () => {
         const h = harness({ holdStream: true, guest: true });
         const session = new AbortController();
         onTestFinished(() => { session.abort(); });
-        let row = machine;
+        let admitted = true;
+        const row = { ...machine, enrolledMachineId: 'guest' };
         let reads = 0;
         let notify: ((change?: ManagedMachinePolicyInvalidation) => void | Promise<void>) | undefined;
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => { reads++; return row; },
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => { reads++; return { machine: row, admitted }; },
             subscribeManagedMachineChanges: listener => { notify = listener; return () => { notify = undefined; }; } });
         const target = await driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
             lifetime: session.signal, holder });
@@ -1041,9 +1042,9 @@ describe('Session placement on a managed target (driver)', () => {
         await notify!({ kind: 'machines', machineIds: ['unrelated-machine'] });
         expect(reads).toBe(1);
 
-        // Custody moves to another Account while the Session runs: the push revokes the open channel...
-        row = { ...machine, custodianAccountId: 'next-owner' };
-        await notify!({ kind: 'managed', managedIds: [machine.id] });
+        // Home withdraws access while custody stays the same. The push revokes the open channel.
+        admitted = false;
+        await notify!({ kind: 'machines', machineIds: ['guest'] });
         await closed;
         expect(reads).toBe(2);
         // ...and every later call is refused before native IO.
@@ -1066,10 +1067,10 @@ describe('Session placement on a managed target (driver)', () => {
         let settlementAvailable = false;
         const ended: string[] = [];
         const listeners = new Set<(change?: ManagedMachinePolicyInvalidation) => void | Promise<void>>();
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async id => {
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async id => {
             reads++;
             if (unavailable) throw new Error('Home transport disconnected');
-            return id === survivor.id ? survivor : row;
+            return { machine: id === survivor.id ? survivor : row, admitted: true };
         }, subscribeManagedMachineChanges: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; } });
         const target = await driver.openSessionTarget({ managedId: machine.id, sessionId: 'holder-nonce', committedSessionId: 'placed-session',
             requesterAccountId: 'owner', lifetime: session.signal, holder,
@@ -1133,7 +1134,10 @@ describe('Session placement on a managed target (driver)', () => {
         const replacement = { ...machine, id: 'replacement-target' };
         const rows = new Map([[machine.id, machine], [replacement.id, replacement]]);
         const listeners = new Set<(change?: ManagedMachinePolicyInvalidation) => void | Promise<void>>();
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async id => rows.get(id) ?? null,
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async id => {
+            const row = rows.get(id);
+            return row ? { machine: row, admitted: true } : null;
+        },
             subscribeManagedMachineChanges: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; } });
         const root = await mkdtemp(join(tmpdir(), 'placed-workspace-source-'));
         onTestFinished(() => rm(root, { recursive: true, force: true }));
@@ -1212,7 +1216,7 @@ describe('Session placement on a managed target (driver)', () => {
         try {
             const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null },
                 externalActionMachineRequestPrivateKey: keys.secretKey,
-                readPolicyCurrent: async () => row });
+                readTargetCurrent: async () => ({ machine: row, admitted: true }) });
             const opening = driver.openSessionTarget({ managedId: row.id, sessionId: 's1', committedSessionId: 'committed-session', requesterAccountId: 'owner',
                 lifetime: new AbortController().signal, holder,
                 operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
@@ -1251,7 +1255,7 @@ describe('Session placement on a managed target (driver)', () => {
 
     it('sends target commands as the provider exec input, never in its argv (host and guest process lists)', async () => {
         const h = harness({ guest: true });
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine, admitted: true }) });
         const target = await driver.openSessionTarget({ managedId: machine.id, sessionId: 's1', requesterAccountId: 'owner',
             lifetime: new AbortController().signal, holder });
         await target.exec("printf '%s' fixture-agent-arg", new AbortController().signal);

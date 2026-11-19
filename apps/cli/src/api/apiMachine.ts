@@ -7380,7 +7380,9 @@ export class ApiMachineClient {
                     || hasWebhookAdmissionChange || hasTeamChange) {
                     await this.notifyPluginWebhookInvalidated(signal);
                 }
-                if (reason !== 'live' || hasTeamChange) {
+                const machineIds = changes.filter(change => isMachineProjectionChangeKindV1(change.kind)
+                    && (change.kind !== 'machine' || change.entityId !== this.machine.id)).map(change => change.entityId);
+                if (reason !== 'live' || hasTeamChange || managedPolicyIds.length && machineIds.length) {
                     await this.notifyManagedMachinePolicyInvalidated(signal);
                 } else if (hasRelevantMachineChange) {
                     // Controller withdrawal applies to every held target. A
@@ -7389,10 +7391,8 @@ export class ApiMachineClient {
                         managedPolicyIds.length ? undefined : { kind: 'currentness' });
                 } else if (managedPolicyIds.length) {
                     await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'managed', managedIds: managedPolicyIds });
-                } else {
-                    const machineIds = changes.filter(change => change.kind === 'machine' && change.entityId !== this.machine.id)
-                        .map(change => change.entityId);
-                    if (machineIds.length) await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'machines', machineIds });
+                } else if (machineIds.length) {
+                    await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'machines', machineIds });
                 }
                 signal.throwIfAborted();
                 if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration)) return;

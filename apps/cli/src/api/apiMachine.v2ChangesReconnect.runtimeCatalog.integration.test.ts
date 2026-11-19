@@ -62,7 +62,7 @@ import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/m
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/accountUsage';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, ChangesResponseSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
+import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, ChangesResponseSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1 } from '@happier-dev/protocol/discussions';
 import { createLightSqliteHarness } from '../../../server/sources/testkit/lightSqliteHarness';
@@ -705,6 +705,13 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             changes = [{ ...entry, kind: 'machine', entityId: 'another-controller' }];
             await sync();
             expect(notifications).toEqual([{ kind: 'machines', machineIds: ['another-controller'] }]);
+            notifications.length = 0;
+            changes = [{ ...entry, kind: MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, entityId: 'guest', hint: null }];
+            await sync();
+            expect(notifications).toEqual([{ kind: 'machines', machineIds: ['guest'] }]);
+            changes = [entry, ...changes];
+            await sync();
+            expect(notifications.at(-1)).toBeUndefined();
             notifications.length = 0;
             changes = [entry];
             await sync();
