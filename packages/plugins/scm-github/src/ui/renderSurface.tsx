@@ -389,6 +389,7 @@ function describeGithubWriteFailure(
   failure: TriageSourceFailureV1,
   text: PluginTranslate,
   locale: string,
+  fallback: string,
 ): string {
   if (failure.class === 'rateLimit') {
     const title = text('plugins.github.releases.state.rate.title', 'GitHub is limiting requests');
@@ -396,7 +397,15 @@ function describeGithubWriteFailure(
     const time = formatTimestamp(locale, failure.retryNotBeforeMs, 'absolute', failure.retryNotBeforeMs);
     return `${title}. ${text('plugins.github.releases.state.rate.body', 'GitHub resets the limit at {time}.', { time })}`;
   }
-  return failureDescription(failure, text('plugins.github.ui.mutations.writeFailed', 'GitHub could not complete this change.'), text);
+  return failureDescription(failure, fallback, text);
+}
+
+function readGithubUncertainWriteAdvice(text: PluginTranslate): string {
+  return text(
+    'plugins.github.ui.mutations.uncertain.description',
+    'The request was accepted and its effect could not be confirmed. Open this entry'
+      + ' again to see what is true now rather than pressing again.',
+  );
 }
 
 function WriteOutcome({
@@ -419,13 +428,14 @@ function WriteOutcome({
   }, [host, rejection]);
   if ('presentation' in outcome) {
     const presentation = outcome.presentation;
-    const description = outcome.kind === 'failed' && outcome.failure.class === 'rateLimit'
-      ? describeGithubWriteFailure(outcome.failure, text, locale)
+    const description = (outcome.kind === 'failed' || outcome.kind === 'uncertain') && outcome.failure?.class === 'rateLimit'
+      ? describeGithubWriteFailure(outcome.failure, text, locale, '')
       : presentation.descriptionKey === undefined
       ? presentation.description : text(presentation.descriptionKey, presentation.description);
+    const advice = outcome.kind === 'uncertain' && outcome.failure?.class === 'rateLimit' ? [readGithubUncertainWriteAdvice(text)] : [];
     return <Banner tone={presentation.tone}
       title={presentation.titleKey === undefined ? presentation.title : text(presentation.titleKey, presentation.title)}
-      description={[description, ...(outcome.kind === 'refused' ? outcome.unmetRequirements?.map((requirement) => requirement.label) ?? [] : [])].join(' · ')} />;
+      description={[description, ...advice, ...(outcome.kind === 'refused' ? outcome.unmetRequirements?.map((requirement) => requirement.label) ?? [] : [])].join(' · ')} />;
   }
   if (outcome.kind === 'publication') {
     const fullyPublished = outcome.publishedCount === outcome.totalCount
@@ -463,7 +473,7 @@ function WriteOutcome({
             : text('plugins.github.ui.mutations.review.outcome.partial', 'Review partially published')}
         description={outcome.failure === null
           ? exact
-          : `${exact} ${failureDescription(outcome.failure, '', text)}`.trim()}
+          : `${exact} ${describeGithubWriteFailure(outcome.failure, text, locale, '')}`.trim()}
       />
     );
   }
@@ -522,19 +532,14 @@ function WriteOutcome({
   if (outcome.kind === 'uncertain') {
     // Never presented as a failure, and never beside a "try again": this request
     // may already have changed GitHub.
-    const stated = text(
-      'plugins.github.ui.mutations.uncertain.description',
-      'The request was accepted and its effect could not be confirmed. Open this entry'
-        + ' again to see what is true now rather than pressing again.',
-    );
+    const stated = readGithubUncertainWriteAdvice(text);
+    const reason = outcome.failure === null ? '' : describeGithubWriteFailure(outcome.failure, text, locale, '');
     return (
       <Banner
         tone="warning"
         title="Outcome unknown"
         titleKey="plugins.github.ui.mutations.uncertain"
-        description={outcome.failure === null
-          ? stated
-          : `${failureDescription(outcome.failure, stated, text)} ${stated}`}
+        description={reason ? `${reason} ${stated}` : stated}
       />
     );
   }
@@ -544,7 +549,8 @@ function WriteOutcome({
         tone="danger"
         title="Not carried out"
         titleKey="plugins.github.ui.mutations.notCarriedOut"
-        description={describeGithubWriteFailure(outcome.failure, text, locale)}
+        description={describeGithubWriteFailure(outcome.failure, text, locale,
+          text('plugins.github.ui.mutations.writeFailed', 'GitHub could not complete this change.'))}
       />
     );
   }

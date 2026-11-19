@@ -641,9 +641,9 @@ describe('the mounted GitHub Feedback plane', () => {
       failure: { class: 'rateLimit', retryNotBeforeMs: OBSERVED_AT_MS + 120_000 } });
   });
 
-  it('explains a rate-limited unsubscribe with the provider retry time and keeps the subscription', async () => {
+  it.each(['failed', 'uncertain'] as const)('explains a rate-limited unsubscribe (%s) and keeps the last observed subscription', async (kind) => {
     const retryNotBeforeMs = OBSERVED_AT_MS + 120_000;
-    subscriptionFailure = { kind: 'failed', failure: { class: 'rateLimit', code: 'github_rate_limited', retryNotBeforeMs } };
+    subscriptionFailure = { kind, failure: { class: 'rateLimit', code: 'github_rate_limited', retryNotBeforeMs } };
     const detail = await mountFeedback(launchInput('pull-request'));
     await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Re-read this overview from GitHub' })); });
     const toggle = await detail.getByRole('switch', { name: 'Subscribed' });
@@ -652,6 +652,7 @@ describe('the mounted GitHub Feedback plane', () => {
     expect((await detail.getByRole('switch', { name: 'Subscribed' })).state?.checked).toBe(true);
     expect(document.body.textContent).toContain('GitHub is limiting requests');
     expect(document.body.textContent).toContain(formatTriageTimestampV1(SURFACE_LOCALE, retryNotBeforeMs, 'absolute', retryNotBeforeMs));
+    if (kind === 'uncertain') expect(document.body.textContent).toContain('Outcome unknown');
   });
 
   it.each([
