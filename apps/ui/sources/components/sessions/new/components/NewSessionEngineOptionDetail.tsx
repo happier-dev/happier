@@ -161,7 +161,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         backendTarget: props.backendTarget,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId,
     }), [props.backendTarget, props.runtimeCarrierAgentId]);
-    const { usesNativeCatalog, modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
+    const { usesNativeCatalog, connectedAccountSelected, modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,
         providerConnectionId: props.selectedModelSelection ? readSessionModelSelectionProviderConnectionId(props.selectedModelSelection) : null,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
@@ -272,7 +272,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         ? false
         : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
     const selectedPickerValue = React.useMemo(() => sessionModelPickerValueFromRef(selectedModelSelection?.ref), [selectedModelSelection]);
-    const sourceModelSelected = Boolean((isTeamCredentialProviderModelPickerValue(selectedPickerValue) ? true : selectedPickerValue?.providerConnectionId) || props.teamModels?.selectedTeamCredentialModel);
+    const sourceModelSelected = connectedAccountSelected || Boolean((isTeamCredentialProviderModelPickerValue(selectedPickerValue) ? true : selectedPickerValue?.providerConnectionId) || props.teamModels?.selectedTeamCredentialModel);
     const inheritedModel = props.teamModels?.modelAttribution;
     const managedModelSelected = Boolean(inheritedModel
         && backendTargetKeysMatch(inheritedModel.agentTargetKey, formatBackendTargetKeyV2(props.backendTarget)));

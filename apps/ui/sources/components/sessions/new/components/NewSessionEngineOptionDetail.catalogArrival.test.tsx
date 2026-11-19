@@ -52,6 +52,30 @@ describe('NewSessionEngineOptionDetail Codex catalog arrival', () => {
         resetDynamicConfigOptionsProbeCacheForTests();
     });
 
+    it('keeps a personal connected-account model outside the native catalog', async () => {
+        machineRpc.mockImplementation(() => new Promise(() => undefined));
+        const backendTarget = { kind: 'backend' as const, backendId: 'codex' };
+        const agentTargetKey = resolveBackendTargetKeyV2(backendTarget);
+        const capabilityProbeContext = { capabilityParams: { connectedServices: ConnectedServiceBindingsV2Schema.parse({ v: 2,
+            bindingsByServiceId: { 'happier.agent.muse/muse-account': {
+                source: 'connected', selection: 'profile', profileId: 'work',
+            } },
+        }) } };
+        const cacheKey = buildDynamicModelProbeCacheKey({ machineId: 'machine-58f6', targetKey: agentTargetKey,
+            providerConnectionId: null, serverId: 'server-main', cwd: '/workspace',
+            extraKeySuffixParts: normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(capabilityProbeContext) })!;
+        writeDynamicModelProbeCacheSuccess(cacheKey, { source: 'dynamic',
+            availableModels: [{ id: 'gpt-6-luna', name: 'GPT 6 Luna' }], supportsFreeform: false });
+        const modelId = 'meta/muse-spark-1.3-contributor';
+        const onSelectionChange = vi.fn();
+        await renderScreen(<NewSessionEngineOptionDetail backendTarget={backendTarget} selectedMachineId="machine-58f6"
+            capabilityServerId="server-main" cwd="/workspace" capabilityProbeContext={capabilityProbeContext}
+            selectedModelId={modelId} selectedModelSelection={{ v: 1, updatedAt: 1,
+                ref: { agentTargetKey, providerConnectionId: null, modelId } }} onSelectionChange={onSelectionChange} />);
+        await flushHookEffects();
+        expect(onSelectionChange).not.toHaveBeenCalled();
+    });
+
     it.each(['source', 'model'] as const)('keeps a Team %s usable without native model or configuration probes', async (choice) => {
         machineRpc.mockResolvedValue({ ok: false, error: {
             code: 'connected-service-preflight-failed', message: 'Team probes require Session authority',

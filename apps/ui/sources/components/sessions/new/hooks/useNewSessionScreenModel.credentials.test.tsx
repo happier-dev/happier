@@ -123,6 +123,112 @@ afterEach(async () => { await standardCleanup(); await mountedConnection?.dispos
     rpc.mockReset(); storage.setState(initialState, true); authoringRoute.directory = '/repo'; authoringRoute.machineId = 'credential-devbox'; authoringRoute.dataId = undefined; authoringRoute.prompt = 'hello'; });
 
 describe('New Session selected credential launch gate', () => {
+    it.each(['connected', 'native'] as const)('reconciles a closed native catalog only for the %s model source', async (source) => {
+        await prepareSessionDraftPersistenceStorage();
+        mountedBridge = await loadSyncSingletonForTests();
+        const accountId = `credential-model-source-${source}`;
+        const museService = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const modelId = 'meta/muse-spark-1.3-contributor';
+        const profile = AccountProfileSchema.parse({ id: accountId, connectedAccountsV4: [{
+            ref: { service: museService, accountId: 'work' }, revisionSemantics: 'revisioned', credentialRevision: `csr_${'a'.repeat(22)}`,
+            status: 'connected', kind: 'oauth', authenticationModeId: 'oauth', configurationReady: true, configurationRevision: null,
+            displayName: 'Muse', providerIdentity: {}, expiresAt: null,
+        }] });
+        const http = createHomeHubArtifactHttpBoundary(accountId, profile, {
+            machines: [createPlainMachineRowFixture({ id: 'credential-devbox', accountId })],
+        });
+        const features = buildServerFeaturesResponse();
+        features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        const purposeValue = { v: 1 as const, bindings: [] };
+        const acpRecord = { v: 1 as const, definitions: [] };
+        mountedConnection = await restoreServerAccountForTest({ serverUrl: `https://${accountId}.test`, accountId,
+            request: (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/features') return Promise.resolve(Response.json(features));
+                if (path === '/v2/account/settings') return Promise.resolve(Response.json({ version: 1,
+                    content: { t: 'plain', v: { useEnhancedSessionWizard: true, lastUsedAgent: 'codex' } } }));
+                if (path === '/v1/account/entity-rows/connected-accounts/purposes') return Promise.resolve(Response.json({
+                    status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: purposeValue } } }));
+                if (path === '/v1/account/entity-rows/acp') return Promise.resolve(Response.json({ status: 'present', revision: 1,
+                    content: { t: 'plain', v: acpRecord } }));
+                return http.request(input, init);
+            } });
+        const scope = { serverId: mountedConnection.home.id, accountId };
+        rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'codex', lastUsedBackendTarget: null });
+        storage.setState({ profileScope: scope, settingsScope: scope, profile,
+            settings: { ...settingsDefaults, lastUsedAgent: 'codex', useEnhancedSessionWizard: true } });
+        const machine = createMachineFixture({ id: 'credential-devbox', activeAt: Date.now() });
+        storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1,
+            record: { key: 'purposes', value: purposeValue } }, true);
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: acpRecord }, true);
+        const { BUNDLED_CANONICAL_AGENT_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
+        const codex = BUNDLED_CANONICAL_AGENT_DECLARATIONS.codex;
+        const descriptor = ConnectedAccountUiProjectionEntryV1Schema.parse({ ...connectedDescriptor,
+            id: 'muse-account', serviceId: 'muse-account', pluginId: museService.pluginId, title: 'Muse' });
+        installConnectedAccountDescriptorProjection({ scopeKey: accountId, status: 'ready', conflicts: [], errorReason: null,
+            descriptors: [descriptor] });
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            familiesById: { connectedAccounts: { family: 'connectedAccounts', entriesById: {
+                'happier.agent.muse/muse-account': descriptor,
+            } } }, agentsById: { codex: { id: 'codex', identity: codex.identity, title: 'Codex', isBuiltIn: true,
+                providerRequirements: codex.providerRequirements,
+                capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+                connectedAccounts: codex.connectedAccounts.map(purpose => ({ ...purpose,
+                    service: typeof purpose.service === 'string' ? { pluginId: codex.identity.pluginId, localId: purpose.service } : purpose.service })),
+            } } });
+        rpc.mockImplementation(async ({ method, payload }: { method: string; payload?: { method?: string } }) => {
+            if (method.includes('contributionRegistryProjection.describe')) return { protocolVersion: 1, projection };
+            if (method === 'capabilities.detect') return { protocolVersion: 1, results: { 'cli.codex': {
+                ok: true, checkedAt: Date.now(), data: nativeFacts('signedIn'),
+            } } };
+            if (method === 'capabilities.invoke' && payload?.method === 'probeModels') return { ok: true, result: {
+                source: 'dynamic', availableModels: [{ id: 'gpt-6-luna', name: 'GPT 6 Luna' }], supportsFreeform: false,
+            } };
+            if (method === 'capabilities.invoke' && payload?.method === 'probeConfigOptions') return { ok: true, result: {
+                source: 'dynamic', configOptions: [],
+            } };
+            return { jobs: [] };
+        });
+        authoringRoute.agentType = 'codex';
+        const draftId = randomUUID();
+        writeNewSessionDraftToRepository({ scope, draftId, draft: {
+            input: 'hello', selectedMachineId: machine.id, selectedPath: '/repo', targetServerId: scope.serverId,
+            agentType: 'codex', selectedProfileId: null, selectedSecretId: null,
+            backendTarget: { kind: 'backend', backendId: 'codex' }, permissionMode: 'default', modelMode: 'default', updatedAt: 1,
+            backendNewSessionOptionStateByTargetKey: source === 'connected' ? { [agentTargetKey]: { connectedServices: {
+                v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': {
+                    source: 'connected', selection: 'profile', profileId: 'work',
+                } },
+            } } } : {},
+        } });
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId }));
+        try {
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                const model = hook.getCurrent();
+                if (model.variant !== 'wizard') throw new Error('Expected the enhanced launcher');
+                expect(model.wizardProps.agent.modelOptions.some(option => option.value === 'gpt-6-luna')).toBe(true);
+            });
+            const model = hook.getCurrent();
+            if (model.variant !== 'wizard') throw new Error('Expected the enhanced launcher');
+            const selection = { v: 1 as const, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId } };
+            await act(async () => {
+                model.wizardProps.agent.setModelSelection?.(selection);
+                model.wizardProps.agent.setAcpConfigOptionOverride?.('reasoning_effort', 'minimal');
+            });
+            await flushHookEffects();
+            const selected = hook.getCurrent();
+            if (selected.variant !== 'wizard') throw new Error('Expected the enhanced launcher');
+            expect(selected.wizardProps.agent.modelMode).toBe(source === 'connected' ? modelId : 'default');
+            if (source === 'connected') {
+                expect(selected.wizardProps.agent.modelSelection?.ref).toEqual(selection.ref);
+                expect(selected.wizardProps.agent.acpConfigOptionOverrides?.overrides.reasoning_effort?.value).toBe('minimal');
+            }
+        } finally { await hook.unmount(); authoringRoute.agentType = 'claude'; }
+    });
+
     it('does not probe native suggestions after inherited purpose authority withdraws', async () => {
         await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
         const bridge = await loadSyncSingletonForTests();

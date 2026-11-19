@@ -1978,6 +1978,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         teamCredentialProviderBinding,
     ]);
     const {
+        connectedAccountSelected,
         preflightModels,
         preflightModelsTargetKey,
         modelOptions,
@@ -2012,17 +2013,17 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
 
     React.useEffect(() => {
-        if (modelIsManagedDefault || modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
+        if (connectedAccountSelected || modelIsManagedDefault || modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
             || (modelSelection?.v === 2 ? modelSelection.ref.source === 'account_provider_connection' : modelSelection?.ref.providerConnectionId) || selectedTeamCredentialModel) return;
         const reconciled = resolveCanonicalModelOptionId(modelOptions, modelMode, preflightModels);
         if (reconciled === modelMode) return;
         setModelMode(reconciled);
         rememberCurrentEngineSelection({ modelMode: reconciled });
-    }, [modelIsManagedDefault, modelMode, modelOptions, modelOptionsProbeState.failed, modelOptionsProbeState.phase, modelSelection,
+    }, [connectedAccountSelected, modelIsManagedDefault, modelMode, modelOptions, modelOptionsProbeState.failed, modelOptionsProbeState.phase, modelSelection,
         preflightModels, rememberCurrentEngineSelection, selectedTeamCredentialModel, setModelMode]);
 
     React.useEffect(() => {
-        const acceptedSnapshot = preflightModels && preflightModels.unavailable !== true
+        const acceptedSnapshot = !connectedAccountSelected && preflightModels && preflightModels.unavailable !== true
             && modelOptionsProbeState.phase === 'idle' && !modelOptionsProbeState.failed
             && !acpConfigOptionsProbeState.failed && !acpConfigOptionsUnavailable
             && !(modelSelection?.v === 2 ? modelSelection.ref.source === 'account_provider_connection' : modelSelection?.ref.providerConnectionId) && !selectedTeamCredentialModel;
@@ -2042,7 +2043,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const next = retained.length ? buildAcpConfigOptionOverridesV1({ updatedAt: Date.now(), overrides: Object.fromEntries(retained) }) : null;
         setSessionConfigOptionOverrides(next);
         rememberCurrentEngineSelection({ sessionConfigOptionOverrides: next });
-    }, [acpConfigOptions, acpConfigOptionsUnavailable, acpConfigOptionsProbeState.failed, acpConfigOptionsProbeState.phase,
+    }, [connectedAccountSelected, acpConfigOptions, acpConfigOptionsUnavailable, acpConfigOptionsProbeState.failed, acpConfigOptionsProbeState.phase,
         acpConfigOptionsProbeState.rejectedConfigOptionOverrides, modelMode, modelOptions, modelOptionsProbeState.failed,
         modelOptionsProbeState.phase, modelSelection, preflightModels, rememberCurrentEngineSelection, selectedBackendTargetKey,
         selectedTeamCredentialModel, sessionConfigOptionOverrides, setSessionConfigOptionOverrides]);

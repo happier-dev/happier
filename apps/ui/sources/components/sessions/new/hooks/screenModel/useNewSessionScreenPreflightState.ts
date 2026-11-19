@@ -52,6 +52,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     machineProbesEnabled?: boolean;
     configOptionOverrides?: Readonly<Record<string, string>> | null;
 }>): Readonly<{
+    connectedAccountSelected: boolean;
     preflightModels: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModels'];
     preflightModelsTargetKey: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModelsTargetKey'];
     modelOptions: ReturnType<typeof useNewSessionPreflightModelsState>['modelOptions'];
@@ -108,7 +109,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         });
     }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.modelId, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
 
-    const { usesNativeCatalog, preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
+    const { usesNativeCatalog, connectedAccountSelected, preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId,
         selectedMachineId: params.selectedMachineId,
@@ -139,6 +140,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     });
 
     return {
+        connectedAccountSelected,
         preflightModels,
         preflightModelsTargetKey,
         modelOptions,
