@@ -139,6 +139,8 @@ import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 import { requirePresentUser } from '../../../../server/sources/app/api/utils/requirePresentUser';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { projectAdmittedExternalActionMachineContext } from '@/daemon/externalActions/execution';
+import { createSessionDaemonAuthorityFixture } from '@/mcp/runtime/sessionDaemonAuthority.testkit';
 
 const processIdentity = vi.hoisted(() => vi.fn());
 vi.mock('@/daemon/processIdentity', async importOriginal => ({
@@ -1381,7 +1383,7 @@ it('preserves an existing client Action at the credentialed native Agent entry',
   });
 });
 
-it('retains original Home authorization and direct committed execution for an actual Machine Action', async () => {
+it.each(['direct daemon', 'native agent'] as const)('retains original Home authorization for an actual Machine Action via %s', async entry => {
   const f = await fixture(1, undefined, false, true);
   vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } },
     capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } })));
@@ -1389,12 +1391,26 @@ it('retains original Home authorization and direct committed execution for an ac
   const machine = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
     manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { actions: [{ id: 'echo', title: 'Machine echo',
       scopes: ['global'], surfaces: ['agent', 'cli'], dangerLevel: 'safe', execution: { target: 'daemon' },
-      inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'], additionalProperties: false },
+      inputSchema: { type: 'object', properties: { key: { type: 'string' }, machineId: { type: 'string' } }, required: ['key'], additionalProperties: false },
       inputHints: { fields: [{ path: 'key', title: 'Key', widget: 'select', options: [{ value: 'machine', label: 'Machine' }] }] },
     }] } }),
     files: { 'daemon.mjs': `let effects = 0;
+function refuse(code) {
+  throw Object.assign(new Error(code), { name: 'PluginError', code, retryable: false, data: { name: 'PluginError', code } });
+}
 export function activate(api) {
-  api.actions.register('echo', async (input, context) => ({ key: input.key, surface: context.surface, effects: ++effects }));
+  api.actions.register('echo', async (input, context) => {
+    if (input.machineId) {
+      if (!context.chosenMachine || !context.requesterAccount) {
+        refuse('plugin_service_unavailable');
+      }
+      if (input.machineId !== context.chosenMachine.machineId) {
+        refuse('target_unavailable');
+      }
+      return { key: input.key, machine: context.chosenMachine, accountId: context.requesterAccount.accountId, agentCaller: context.agentCaller };
+    }
+    return { key: input.key, surface: context.surface, effects: ++effects };
+  });
 }` },
   }] });
   const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => machine.lease });
@@ -1409,11 +1425,50 @@ export function activate(api) {
   });
   const receiver = (authorized: boolean) => createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl,
     credentials: f.credentials, token: f.credentials.token, machineId: storage.state.machineId,
-    ...(authorized ? { prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }: Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) => f.prepare(operation, sessionActionOrigin) } : {}),
-    createExecutor: (_depth, _current, _post, options) => createExecutor(options),
+    ...(authorized ? { prepareExternalActionAuthorization: async ({ operation, sessionActionOrigin, isCallerCurrent }) => {
+      if (operation.actionId !== 'action.invoke') return undefined;
+      const admitted = await f.prepare(operation, sessionActionOrigin);
+      return admitted && { ...admitted, verifyMachineAdmissionCurrent: isCallerCurrent };
+    } } : {}),
+    createExecutor: (_depth, _current, _post, options) => ({
+      execute: (id, input, context) => createExecutor(options).execute(id, input,
+        projectAdmittedExternalActionMachineContext(context, storage.state.machineId, 'plain')),
+    }),
   });
   const operation = f.operation('action.invoke', { action: { pluginId, localId: 'echo' }, input: { key: 'machine' } });
   try {
+    if (entry === 'native agent') {
+      f.authoredAccount!.setBundledFallback();
+      const daemon = await createSessionDaemonAuthorityFixture({ sessionId,
+        execute: request => receiver(true)(request, { sessionId, isCurrent: async () => true }),
+      });
+      const witness = operation.witness;
+      const runtime = createHappierMcpServer({ sessionId,
+        getServerBinding: () => ({ serverId, serverUrl: serverHttpBaseUrl }),
+        rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
+        updateMetadata() {}, getActiveTurnAdmissionWitness: () => witness,
+      }, { authorityScope: 'session', actionsSettingsProvider: f.actionsSettingsProvider,
+        pluginRuntimeRegistryLease: machine.lease });
+      const invoke = (actionId: string, input: unknown) => runtime.executeTool({
+        toolName: 'action_execute', args: { actionId, input },
+      });
+      try {
+        const input = { key: 'machine', machineId: storage.state.machineId };
+        const result = await invoke(`${pluginId}/actions/echo`, input);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+          machine: { machineId: storage.state.machineId, installationId: storage.state.installationId },
+          accountId: storage.account.id, agentCaller: true,
+        } });
+        const action = { pluginId, localId: 'echo' };
+        expect(await invoke('action.invoke', { action, input })).toEqual(result);
+        expect(await invoke('action.invoke', { action, input: { ...input, machineId: 'foreign-machine' } }))
+          .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      } finally {
+        await runtime.mcp.close();
+        await daemon.close();
+      }
+      return;
+    }
     expect(await f.execute(f.operation('action.spec.get', { id: `${pluginId}/actions/echo` }),
       { sessionId, isCurrent: async () => true })).toMatchObject({ ok: true, result: { actionSpec: { executionPlacement: 'account' } } });
     // A real Account selection can disappear after classification while an

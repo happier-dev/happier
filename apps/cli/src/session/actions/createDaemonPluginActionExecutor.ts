@@ -8,7 +8,7 @@ import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/acti
 import { searchActionDefinitionSummaries } from '@happier-dev/protocol/actions/actionCatalog';
 
 
-type OccurrenceBoundActionExecutorContext = ActionExecutorContext & Readonly<{
+export type OccurrenceBoundActionExecutorContext = ActionExecutorContext & Readonly<{
   /** Host-stamped turn admission fence; never Action input or SDK surface. */
   expectedContributorOccurrenceId?: string;
 }>;

@@ -644,7 +644,7 @@ export function createHappierMcpServer(
         executeInCurrentProcess,
         getInitiatingActionCaller,
         ...(boundCallerSessionId ? { startedBy: 'agent' as const } : {}),
-        requestPluginActionExecution: async (request, options) => {
+        requestPluginActionExecution: async (request, options, invocation) => {
           const admission = resolveInitiatingActionCaller();
           if (!admission.ok) return { matched: true, result: admission.result };
           return await executeContributedAction({
@@ -652,6 +652,13 @@ export function createHappierMcpServer(
             actionId: request.actionId,
             input: request.input,
             actionsSettings: actionSettingsProvider.getActionsSettings(),
+            approvalContext: {
+              ...invocation?.context,
+              surface: request.surface,
+              authority: 'account_automation',
+              actionCaller: admission.caller,
+            },
+            ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
             ...(request.expectedContributorOccurrenceId
               ? { expectedContributorOccurrenceId: request.expectedContributorOccurrenceId }
               : {}),

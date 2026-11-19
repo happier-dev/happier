@@ -4313,6 +4313,14 @@ Agent-specific protocol leaves live in `packages/plugins/<agentId>/src/agent/**`
 
 ### Session Account-action authority (0.3 development)
 
+Daemon-bound Agent tools route Machine-placed contributed Actions through the
+existing Session capability. A qualified Action ID and an explicit
+`action.invoke` envelope both reach the daemon's contributed Action owner.
+The live turn witness supplies the Session caller. Home admits the Session's
+installed Machine under the existing `action.invoke` policy, and the daemon
+passes that admission to the plugin as the requester Account and chosen Machine.
+Plugin input can select a domain resource within that admission.
+
 Runner admission refusals retain `target_unavailable` and carry the refusing
 owner's code-only reason in `details: { code: 'target_unavailable', diagnostic:
 { reason } }`. The Session Account executor distinguishes absent authority path

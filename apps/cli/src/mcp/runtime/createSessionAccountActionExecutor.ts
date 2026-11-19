@@ -21,10 +21,11 @@ import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/
 import { readContributedActionExecutionPlacement } from '@/session/actions/readContributedActionExecutionPlacement';
 import { readActionSessionTargetField } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
-import type { CurrentProcessPluginActionExecutionAttempt } from '@/session/actions/createDaemonPluginActionExecutor';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { CurrentProcessPluginActionExecutionAttempt, OccurrenceBoundActionExecutorContext } from '@/session/actions/createDaemonPluginActionExecutor';
 
 type ActionExecutor = Readonly<{
-  execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
+  execute(actionId: ActionId, input: unknown, context?: OccurrenceBoundActionExecutorContext): Promise<ActionExecuteResult>;
 }>;
 
 export { sessionActionTargetUnavailable };
@@ -40,7 +41,7 @@ const BOUND_SESSION_RPC_READS: ReadonlySet<ActionId> = new Set([
 
 // The Session MCP composition supplies these ports from its bound runtime.
 // Memory retains the Session corpus, Runs retain the live host, and contributed
-// Actions retain their catalog owner (Account placement is resolved below).
+// Actions without a daemon-bound placement retain their local catalog owner.
 const BOUND_HOST_MACHINE_ACTIONS: ReadonlySet<ActionId> = new Set([
   ...ACTION_ID_FAMILIES_V1.memory,
   ...ACTION_ID_FAMILIES_V1.execution_run_control,
@@ -55,15 +56,18 @@ export function createSessionAccountActionExecutor(params: Readonly<{
   hasAccountAuthority?: boolean;
   executeInCurrentProcess?(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<CurrentProcessPluginActionExecutionAttempt>;
 }>): ActionExecutor {
-  const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
+  const execute = async (actionId: ActionId, input: unknown, context?: OccurrenceBoundActionExecutorContext,
     routingDescriptorRead = false): Promise<ActionExecuteResult> => {
       const voiceRun = params.client.getRunActionInvocation?.()?.surface === 'voice';
       const local = voiceRun ? undefined : await params.executeInCurrentProcess?.(actionId, input, context);
       if (local?.matched) return local.result;
+      const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+      const useDaemonDescriptor = Boolean(path && actionId === 'action.spec.get' && input
+        && typeof input === 'object' && 'id' in input && parseQualifiedPluginActionId(input.id));
       // These reads describe the bound host's admitted catalog, not Account data.
       // Keep its live Session policy (including memory choice) at the existing
       // executor rather than replacing it with the daemon's Account catalog.
-      if (!routingDescriptorRead && (actionId === 'action.spec.search' || actionId === 'action.spec.get')) {
+      if (!routingDescriptorRead && !useDaemonDescriptor && (actionId === 'action.spec.search' || actionId === 'action.spec.get')) {
         return await params.base.execute(actionId, input, context);
       }
       // Restricted child reads use the bound Session's admitted corpus reader.
@@ -75,22 +79,31 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       const builtIn = ActionIdSchema.safeParse(actionId);
       const spec = builtIn.success ? getActionSpec(builtIn.data) : null;
       if (!voiceRun && requiresExplicitScmMachineTarget(actionId)) return await params.base.execute(actionId, input, context);
-      let executionPlacement = spec ? resolveActionExecutionPlacementForInput(spec, input, context?.actionCaller, context?.surface ?? 'agent') : null;
-      if (!voiceRun && actionId === 'action.invoke' && !params.hasAccountAuthority) {
-        // Account-only releases need not exist in the bound Machine catalog.
-        // This host-private read uses the same capability, witness and lifetime;
-        // author-facing discovery above retains the bound Session policy.
-        const actual = await readContributedActionExecutionPlacement(input,
+      const executionPlacement = spec ? resolveActionExecutionPlacementForInput(spec, input, context?.actionCaller, context?.surface ?? 'agent') : null;
+      let daemonContributedAction = false;
+      const qualifiedAction = path && !builtIn.success ? parseQualifiedPluginActionId(actionId) : null;
+      const needsContributedPlacement = actionId === 'action.invoke'
+        ? !params.hasAccountAuthority || Boolean(path) : qualifiedAction !== null;
+      if (!voiceRun && needsContributedPlacement) {
+        const invocation = qualifiedAction ? { action: qualifiedAction, input,
+          ...(context?.expectedContributorOccurrenceId
+            ? { expectedContributorOccurrenceId: context.expectedContributorOccurrenceId } : {}),
+        } : input;
+        // The existing Session capability exposes the daemon's exact descriptor.
+        // The receiving Action owner applies Home admission when executing it.
+        const actual = await readContributedActionExecutionPlacement(invocation,
           request => execute('action.spec.get', request, context, true));
         if (!actual) return await params.base.execute(actionId, input, context);
         if (!actual.ok) return actual.failure;
-        // Only Account placement changes this wrapper's incumbent routing.
-        // A client handler still follows its existing Machine/UI corridor.
-        if (actual.placement === 'account') executionPlacement = 'account';
+        // Client handlers continue through their bound UI delivery path.
+        daemonContributedAction = actual.placement === 'account' || actual.placement === 'machine';
+        if (daemonContributedAction) {
+          actionId = 'action.invoke';
+          input = invocation;
+        }
       }
       const requestedSessionId = input && typeof input === 'object' && 'sessionId' in input
         && typeof input.sessionId === 'string' ? input.sessionId.trim() : params.client.sessionId;
-      const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
       let needsSessionTargetTransport = false;
       if ((!params.hasAccountAuthority || path) && spec?.sessionTarget && input && typeof input === 'object' && !Array.isArray(input)) {
         const operand = readActionSessionTargetField(input as Readonly<Record<string, unknown>>, spec.sessionTarget.field);
@@ -139,7 +152,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       // bound request store and its same canonical host-witness origin.
       const sessionOriginRpc = spec && isSessionActionRpcMethodV1(spec.bindings?.rpcMethod ?? actionId)
         && !(actionId === 'session.needs_you.raise' && requestedSessionId === params.client.sessionId);
-      if (!voiceRun && (!builtIn.success || (executionPlacement !== 'account'
+      if (!voiceRun && !daemonContributedAction && !useDaemonDescriptor && (!builtIn.success || (executionPlacement !== 'account'
         && executionPlacement !== 'client'
         && !sessionRead && !persistedRead && !sessionLifecycle && !nativeInventoryRead && !machineAction && !sessionOriginRpc && !needsSessionTargetTransport
         && builtIn.data !== 'session.spawn_new'
