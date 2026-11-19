@@ -499,6 +499,10 @@ native_command_policy_finish() {
   if { [ "$policy_entry" = 'remote_runtime_build.mjs' ]; }; then
     policy_heavyClass='compilation'
   fi
+  if { [ "$policy_entryRepositoryPath" = 'packages/tests/scripts/run-playwright-with-heartbeat.mjs' ]; } && { [ "$policy_component" = 'packages/tests' ]; } && { [ "$policy_config" = 'playwright.ui.config.mjs' ] || [ "$policy_config" = './playwright.ui.config.mjs' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
+    policy_kind='source-test'
+    policy_runnerKnown='1'
+  fi
   if { [ "$policy_validation" = '1' ]; }; then
     policy_commandClass='targeted-validation'
   fi

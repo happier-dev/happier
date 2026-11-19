@@ -335,6 +335,11 @@ const FINAL_COMMAND_RULES = [
   { when: { script: ['types:check'], component: ['apps/docs'] }, set: { ...validation, kind: 'typecheck', workerTool: 'typescript-native' } },
   { when: { bootstrap: ['1'], heavyClass: [''] }, set: { heavyClass: 'dependency-install' } },
   { when: { entry: ['remote_runtime_build.mjs'] }, set: { heavyClass: 'compilation' } },
+  // The UI E2E config registers source exports. Its global setup and each
+  // runtime launcher prepare the artifacts they actually consume.
+  { when: { entryRepositoryPath: ['packages/tests/scripts/run-playwright-with-heartbeat.mjs'],
+    component: ['packages/tests'], config: ['playwright.ui.config.mjs', './playwright.ui.config.mjs'],
+    resolverOverride: ['0'] }, set: { kind: 'source-test', runnerKnown: '1' } },
   { when: { validation: ['1'] }, set: { commandClass: 'targeted-validation' } },
   { when: { validation: ['1'], component: ['.'] }, set: { commandClass: 'full-validation' } },
   { when: { family: ['build'] }, set: { heavyClass: 'compilation' } },
