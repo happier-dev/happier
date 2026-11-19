@@ -77,7 +77,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
           agentCliSystemTool: { toolId: CODERABBIT_SYSTEM_TOOL_ID },
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
-        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' }, executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
+        capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' }, executionRuns: { open: ['create'], checkpoint: false, stop: true, workspaceWrites: 'deny' } }),
       },
       cliAuth: CODERABBIT_CLI_AUTH,
       factory: createCodeRabbitRuntime,

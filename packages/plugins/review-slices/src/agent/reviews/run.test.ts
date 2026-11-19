@@ -33,9 +33,10 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
   const controller = new AbortController();
   const state = join(directory, 'repository-a');
   const commands: string[][] = [];
+  const environments: unknown[] = [];
   let selected: string[] = [];
   const exec: Pick<ExecService, 'run' | 'spawn'> = { async run(request, options) {
-    const args = [...request.args ?? []]; commands.push(args);
+    const args = [...request.args ?? []]; commands.push(args); environments.push(request.env);
     expect(request.executable).toEqual({ kind: 'managedDependency', id: 'review-executable' });
     expect(options?.signal?.aborted).toBe(false);
     expect(args.slice(-5)).toEqual(['--root', directory, '--state-dir', state, '--json']);
@@ -83,12 +84,49 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
       },
     };
   } };
-  return { directory, state, commands, controller, exec, selected: () => selected,
+  return { directory, state, commands, environments, controller, exec, selected: () => selected,
     run: () => runSliceReview({ exec, fs: { getPluginDataDirectory: async () => state }, cwd: directory,
       stateRelativePath: 'repository-a', signal: controller.signal }) };
 }
 
 describe('native slice review', () => {
+  it.each([
+    { workspaceWrites: 'deny', unset: [], expected: 'read-only' },
+    { workspaceWrites: 'allow', unset: [], expected: 'bypass' },
+    { workspaceWrites: undefined, unset: [], expected: 'bypass' },
+  ] as const)('binds the admitted $workspaceWrites policy to the native Codex sandbox', async ({ workspaceWrites, unset, expected }) => {
+    const f = await fixture();
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const factory = activation.registration('agents', 'slices')?.factory;
+      if (!factory) throw new Error('Missing slice reviewer registration');
+      const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'slices' }, signal: f.controller.signal });
+      // Host OS/process services are the boundary; registered factory and finite flow remain real.
+      const context = { signal: f.controller.signal, services: {
+        exec: f.exec, fs: { getPluginDataDirectory: async () => f.state },
+      } } as unknown as AgentExecutionRunRuntimeContextV1;
+      const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'native-write-policy', cwd: f.directory,
+        profile: { pluginId: 'happier.review.slices', localId: 'review' },
+        configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+          permissionIntent: { value: null, updatedAtMs: 0 }, options: {}, ...(workspaceWrites ? { workspaceWrites } : {}) },
+        launchEnvironment: { values: { CLAWPATCH_CODEX_SANDBOX: 'bypass', NATIVE_REVIEW_MARKER: 'retained' }, unset: [...unset] },
+        input: { text: 'Review the repository', structuredInput: { scope: 'repository',
+          engines: { slices: { provider: 'mock' } }, scmReviewScope: {
+            scope: 'repository', status: 'supported', worktreeRoot: f.directory,
+          } } } };
+      const runtime = await agent.executionRuns!.open(request, context);
+      try {
+        const terminal = await new Promise<AgentExecutionRunEvent>(resolve => { runtime.watch(event => {
+          if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve(event);
+        }); });
+        expect(terminal.kind).toBe('run-complete');
+        expect(f.commands.map(args => args[0])).toEqual(['init', 'map', 'review']);
+        for (const environment of f.environments) expect(environment).toMatchObject({
+          CLAWPATCH_CODEX_SANDBOX: expected, NATIVE_REVIEW_MARKER: 'retained',
+        });
+      } finally { await runtime.dispose(); }
+    } finally { await activation.dispose(); }
+  });
   it('streams both native slice starts and completions before the finite result is available', async () => {
     let releaseReview = () => {};
     const reviewCompletion = new Promise<void>(resolve => { releaseReview = resolve; });

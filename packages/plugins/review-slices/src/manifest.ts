@@ -22,7 +22,7 @@ export const SLICES_PLUGIN = definePlugin({
     catalog: { vendorResume: { support: 'unsupported' } },
     capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
       skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' },
-      executionRuns: { open: ['create'], checkpoint: false, stop: true },
+      executionRuns: { open: ['create'], checkpoint: false, stop: true, workspaceWrites: 'deny' },
     }),
   }, factory: createRuntime } },
   executionRunProfiles: { review: {

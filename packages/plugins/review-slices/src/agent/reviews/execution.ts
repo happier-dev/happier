@@ -33,7 +33,10 @@ export function createSliceExecutionRunFactory(): AgentExecutionRunRuntimeFactor
             ...options, model: request.modelSelection?.modelId ?? options.model,
             instructions: review.instructions, signal,
             environment: { ...request.launchEnvironment?.values,
-              ...Object.fromEntries((request.launchEnvironment?.unset ?? []).map(key => [key, ''])) },
+              ...Object.fromEntries((request.launchEnvironment?.unset ?? []).map(key => [key, ''])),
+              // Native 0.8.4 map/review use read-only provider modes. Bind its
+              // supported Codex override to the host's already-admitted Role.
+              ...(request.configuration?.workspaceWrites === 'deny' ? { CLAWPATCH_CODEX_SANDBOX: 'read-only' } : {}) },
             onProgress: progress => {
               emit({ kind: 'run-progress' });
               if (progress) emit({ kind: 'output-delta', channel: 'reasoning',
