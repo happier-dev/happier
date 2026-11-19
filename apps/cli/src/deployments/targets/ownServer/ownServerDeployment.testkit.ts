@@ -267,10 +267,17 @@ else if (args[0] === 'container' && args[1] === 'ls' && args.includes('label=dev
 }
 else if (args[0] === 'image' && args[1] === 'ls') {
     const reference = args.at(-1);
-    if (args.length !== 6 || !args.includes('--all') || !args.includes('--quiet') || !args.includes('--no-trunc')
-        || reference.startsWith('-')) throw new Error('fixture_requires_exact_image_alias');
+    const referenceFilter = args[args.indexOf('--filter') + 1];
     if (state.imageAliasInventoryUnavailable) { process.stderr.write('native inventory unavailable\n'); process.exitCode = 1; }
-    else write((imageFor(reference)?.nativeId || '')+'\n');
+    else if (args.includes('--filter') && args.includes('--all') && reference === '{{.Repository}}:{{.Tag}}'
+        && /^reference=happier-deployment\/[a-f0-9]{64}\/\*:\*$/.test(referenceFilter)) {
+        const namespace = referenceFilter.slice('reference='.length, -3);
+        write(Object.keys(state.tags).filter(tag => tag.startsWith(namespace) && !tag.includes('@')).join('\n'));
+    } else {
+        if (args.length !== 6 || !args.includes('--all') || !args.includes('--quiet') || !args.includes('--no-trunc')
+            || reference.startsWith('-')) throw new Error('fixture_requires_exact_image_alias');
+        write((imageFor(reference)?.nativeId || '')+'\n');
+    }
 } else if (args[0] === 'container' && args[1] === 'ls' && args.includes('--all') && args.includes('--quiet')) {
     const ancestor = args[args.indexOf('--filter')+1];
     if (!ancestor?.startsWith('ancestor=')) throw new Error('fixture_unknown_container_filter');

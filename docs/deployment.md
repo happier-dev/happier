@@ -4461,8 +4461,12 @@ labelled with each exact owned project in that same teardown step. Networks with
 active endpoints cannot be removed; the receipt retains the unproved step and
 its typed reason. Successful empty container and owned-network inventory is an
 idempotent absence proof; an unavailable engine is not. Named data volumes remain
-unless explicitly selected for data removal; images and source files are kept.
-Stop and remove supplies `removeEnvironment: true`. Home admits the existing
+unless explicitly selected for data removal. Plain target teardown keeps
+images available for rollback and leaves source files in place.
+Stop and remove supplies `removeEnvironment: true`. Its native proof also
+requires the absence of private receipt and activation image tags belonging to
+that Environment on the admitted runtime Machines. Shared image tags, parent
+images, unselected volumes, backups and history stay. Home admits the existing
 manager permission once and captures that disposition on the admitted receipt.
 After native proof, the signed final transition invokes the canonical Environment
 removal writer in the same transaction and returns `environmentRemoved: true`.

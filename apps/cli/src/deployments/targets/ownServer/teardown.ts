@@ -12,6 +12,7 @@ import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/s
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { removeWitnessedContainers, resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
+import { readNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { removeUnusedNativeComposeNetworks } from '@/daemon/local/services/launch/nativeComposeNetworks';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createDeploymentTeardownExecutor, DeploymentTeardownObservationSchema, selectDeploymentTeardownStepResources, type DeploymentTeardownBoundary } from '../../actions/teardown';
@@ -146,6 +147,8 @@ export function createOwnServerTeardownForHost(host: Host) {
         const runtime = await host.runtime.acquireTeardown!({ request, ...member }, async () => {});
         try {
             const run = nativeRunner(runtime, request.context);
+            const removeImages = request.input.removeEnvironment === true;
+            const readImages = () => readNativeComposeDeploymentImageReferences(identity.environmentInstanceId, run);
             const boundary: DeploymentTeardownBoundary = {
                 async observe(operation) {
                     if (!operation.resources.length) return { kind: 'proved', resources: [] };
@@ -173,6 +176,11 @@ export function createOwnServerTeardownForHost(host: Host) {
                         if (networks.stdout.trim()) return { kind: 'needed' };
                     }
                     if (await observeOwnServerTeardownVolumes({ resources: operation.resources, run }) === 'needed') return { kind: 'needed' };
+                    if (removeImages) {
+                        const references = await readImages();
+                        if (references === null) return { kind: 'unknown', reason: 'image_observation_unavailable' };
+                        if (references.length) return { kind: 'needed' };
+                    }
                     return proved();
                 },
                 async execute(operation) {
@@ -203,6 +211,16 @@ export function createOwnServerTeardownForHost(host: Host) {
                             reason: networkFailure };
                         const volumeFailure = await settleOwnServerTeardownVolumes({ resources: operation.resources, run });
                         if (volumeFailure) return volumeFailure;
+                        if (removeImages) {
+                            const references = await readImages();
+                            if (references === null) return { kind: 'unknown' as const, reason: 'image_observation_unavailable' };
+                            for (const reference of references) {
+                                // Delete the admitted tag by name and preserve parent layers and other aliases.
+                                if ((await run(['image', 'rm', '--no-prune', reference])).exitCode !== 0) {
+                                    return { kind: 'failed' as const, reason: 'image_removal_failed' };
+                                }
+                            }
+                        }
                         return boundary.observe(operation);
                     });
                 },
@@ -362,7 +380,9 @@ export function createOwnServerTeardownForHost(host: Host) {
                     expectedRevision: input.expectedRevision, targetLinkId: link.id,
                     expectedTargetLinkRevision: input.expectedTargetLinkRevision, candidate: reference }),
                     preview: normalizeStrictJsonValue({ environmentId: input.environmentId, targetLinkId: input.targetLinkId,
-                        summary: 'Stop and remove this Environment’s containers and owned networks. Only explicitly selected named data volumes are deleted; other volumes and images are kept.',
+                        summary: removeEnvironment
+                            ? 'Remove this Environment’s containers, owned networks, private image tags, and selected named volumes. Shared image tags and unselected volumes stay.'
+                            : 'Remove this target’s containers, owned networks, and selected named volumes. Images and unselected volumes stay.',
                         machines: members.map(member => member.machineId), resources: content.teardown?.resources ?? [] }) };
             } catch (error) { return {
                 ...projectDeploymentException(error, { signal: context.signal, phase: 'deployment.teardown.prepare' }),

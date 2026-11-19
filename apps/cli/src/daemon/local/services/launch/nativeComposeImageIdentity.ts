@@ -232,8 +232,25 @@ export async function verifyNativeComposeImageArchive(file: string, image: Pick<
 
 /** Receipt custody and Compose convergence use different native image references.
  * The activation reference stays equal when another service alone is deployed. */
+function deploymentImageNamespace(environmentInstanceId: string): string {
+    return `happier-deployment/${createHash('sha256').update(environmentInstanceId).digest('hex')}/`;
+}
+
 function deploymentImageRepository(environmentInstanceId: string, service: string): string {
-    return `happier-deployment/${createHash('sha256').update(environmentInstanceId).digest('hex')}/${createHash('sha256').update(service).digest('hex')}`;
+    return `${deploymentImageNamespace(environmentInstanceId)}${createHash('sha256').update(service).digest('hex')}`;
+}
+
+/** List only the receipt and activation references minted in this Environment instance's namespace. */
+export async function readNativeComposeDeploymentImageReferences(environmentInstanceId: string,
+    run: (args: readonly string[]) => Promise<Readonly<{ stdout: string; exitCode: number }>>,
+): Promise<readonly string[] | null> {
+    const namespace = deploymentImageNamespace(environmentInstanceId);
+    const listed = await run(['image', 'ls', '--all', '--filter', `reference=${namespace}*:*`, '--format', '{{.Repository}}:{{.Tag}}']);
+    if (listed.exitCode !== 0) return null;
+    const references = listed.stdout.trim().split(/\r?\n/u).filter(Boolean);
+    if (references.some(value => !value.startsWith(namespace)
+        || !/^[a-f0-9]{64}:(?:config-)?[a-f0-9]{64}$/u.test(value.slice(namespace.length)))) return null;
+    return [...new Set(references)];
 }
 
 /** Build/export custody exists before the native CONFIG digest is known. */

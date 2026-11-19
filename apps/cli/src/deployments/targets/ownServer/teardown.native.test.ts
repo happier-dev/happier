@@ -9,6 +9,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } 
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
+import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { configuration } from '@/configuration';
 import * as persistence from '@/persistence';
 import * as installationStore from '@/daemon/identity/store';
@@ -147,13 +148,15 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
         const environment = createDeploymentEnvironmentDetailV1();
         const link = environment.targetLinks[0].targetLink;
         const remote = scenario.startsWith('remote-');
+        const removesEnvironment = scenario === 'local-remove-environment';
+        const auditsImages = removesEnvironment || scenario === 'local-native';
         if (remote) environment.environment.controllerMachineId = 'controller-machine';
         link.machines = ['machine-a'];
         link.members = [{ machineId: 'machine-a', installationId: 'installation-a', state: 'active' }];
@@ -186,7 +189,7 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
             ];
         }
         const credentials = { token: 'test-token', encryption: null };
-        const observesRetirement = scenario === 'local-native' || scenario === 'remote-already-absent'
+        const observesRetirement = auditsImages || scenario === 'remote-already-absent'
             || scenario === 'remote-native' || scenario === 'remote-observation-denied' || scenario === 'remote-caddy-other-endpoint';
         let mounted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
         let observerStops = 0;
@@ -216,7 +219,7 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
             const processFailure = scenario.endsWith('denied') || scenario === 'engine-unreachable';
             const caddy = scenario.startsWith('remote-caddy');
             const caddyId = 'c'.repeat(64);
-            const docker = scenario === 'local-native' || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent'
+            const docker = auditsImages || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent'
                 || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-reconcile' || scenario === 'remote-unknown' || caddy ? await createOwnServerDockerBoundary(tools, caddy ? {
                 nativeCaddy: { Id: caddyId, Name: '/happier-caddy',
                     Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
@@ -289,10 +292,22 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                     .toEqual({ ok: true, kind: 'preview', volumes: [] });
             }
             const remoteJobs: string[] = [];
+            let retainedImages: ReturnType<typeof resolveNativeComposeDeploymentImageReferences> | undefined;
+            let foreignEnvironmentTag: string | undefined;
             if (docker) {
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: 'home', environmentId: environment.environment.id });
                 await mkdir(identity.deploymentRoot, { recursive: true });
+                if (auditsImages) {
+                    const image = await docker.registerImage('web', 'retained');
+                    const deploymentId = 'prior-release';
+                    retainedImages = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: identity.environmentInstanceId,
+                        deploymentId, image });
+                    foreignEnvironmentTag = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: 'another-environment',
+                        deploymentId, image }).ownedTag;
+                    await docker.setImagePruneState(image.configDigest, { repoTags: [retainedImages.ownedTag,
+                        retainedImages.activationRef, foreignEnvironmentTag, 'nginx:alpine'], repoDigests: [] });
+                }
                 if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && scenario !== 'remote-reconcile') await docker.seedComposeGeneration(identity.projectName);
                 if (scenario === 'remote-native') {
                     await docker.seedVolume('app_data', identity.projectName);
@@ -380,12 +395,13 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
                 expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
                 requestKey: receipt.deployment.requestKey, reason: 'manual', contentArtifactId: receipt.deployment.contentArtifactId,
                 contentHeaderVersion: 1, contentBodyVersion: 1,
+                ...(removesEnvironment ? { removeEnvironment: true as const } : {}),
                 ...(scenario === 'remote-native' ? { volumes: [{ name: 'app_data', disposition: 'delete' as const, confirmation: 'app_data' },
                     { name: 'app_logs', disposition: 'keep' as const }] } : {}) }, receipt: { ok: true,
                 environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
                 context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
-            if (scenario === 'local-native' || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-reconcile' || scenario === 'remote-caddy') {
+            if (auditsImages || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || scenario === 'remote-reconcile' || scenario === 'remote-caddy') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
                 if (scenario === 'remote-fleet-absent') expect(receipt.content.teardown?.proofs.filter(proof => proof.step === 'removeTarget'))
                     .toMatchObject(link.members.map(({ machineId, installationId }) => ({ machineId, installationId, state: 'succeeded',
@@ -415,8 +431,17 @@ it.skipIf(process.platform === 'win32').each(['local-native', 'remote-already-ab
             }
             if (docker) {
                 if (scenario === 'remote-unknown') expect(writes).toBe(0);
+                if (retainedImages && foreignEnvironmentTag) {
+                    for (const reference of Object.values(retainedImages)) {
+                        const stored = await docker.readPruneReference(reference);
+                        if (removesEnvironment) expect(stored).toBeNull();
+                        else expect(stored).toMatch(/^sha256:/);
+                    }
+                    expect(await docker.readPruneReference(foreignEnvironmentTag)).toMatch(/^sha256:/);
+                    expect(await docker.readPruneReference('nginx:alpine')).toMatch(/^sha256:/);
+                }
                 if (scenario === 'remote-native') expect(await docker.readVolumeNames()).toEqual(['app_logs', 'foreign_data']);
-                expect(remoteJobs).toEqual(scenario === 'local-native' ? [] : scenario === 'remote-already-absent' || scenario === 'remote-reconcile'
+                expect(remoteJobs).toEqual(auditsImages ? [] : scenario === 'remote-already-absent' || scenario === 'remote-reconcile'
                     ? ['removeTarget:observe', 'verify:observe'] : scenario === 'remote-fleet-absent'
                         ? ['removeTarget:observe', 'verify:observe', 'removeTarget:observe', 'verify:observe'] : scenario === 'remote-unknown'
                         ? ['removeTarget:observe'] : scenario === 'remote-caddy-other-endpoint'
