@@ -127,6 +127,9 @@ it.each([false, true])('retains the logical view through a real profile restart 
     runtime.contextCapture.subscribeBrowserEvents?.(event => observed.push(event));
     const daemon = createBrowserDaemonRuntimeActionExecutor({ control, featureGate: { isEnabled: () => true, refresh: async () => {} } });
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: daemon }));
+    const discovery = createBrowserDaemonViewDiscovery({ broker, captureRegistry: registry });
+    // Park before replacement: native unbind wakes this Watch before the held reopen settles.
+    const inFlightWatch = discovery.watchViews({ browserSessionId: 'session', knownViewIds: ['view', 'other'], signal: watchAbort.signal });
     const selected = executor.execute('browser.profile.select', { machineId: 'machine', kind: 'openView', commandId: 'select',
       browserSessionId: 'session', viewId: 'view', platform: 'web', target, profileId: 'work' },
     { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'account',
@@ -137,7 +140,10 @@ it.each([false, true])('retains the logical view through a real profile restart 
     expect.soft(errors).toHaveLength(2);
     expect.soft(observed.filter(event => event.kind === 'viewClosed').map(event => event.viewId)).toEqual(['other']);
     expect.soft(control.listViews('session').map(view => view.viewId)).toEqual(['view']);
-    const discovery = createBrowserDaemonViewDiscovery({ broker, captureRegistry: registry });
+    const inFlightViews = await inFlightWatch;
+    expect.soft(inFlightViews.filter(current => current.viewId === 'view')).toHaveLength(1);
+    expect.soft(inFlightViews.flatMap(current => current.events)
+      .filter(event => event.kind === 'viewClosed' && event.viewId === 'view')).toEqual([]);
     let replacementSnapshot: Awaited<ReturnType<typeof discovery.watchViews>> | undefined;
     const watched = discovery.watchViews({ browserSessionId: 'session', knownViewIds: ['view'], signal: watchAbort.signal })
       .then(views => { replacementSnapshot = views; }).catch(error => { if (!watchAbort.signal.aborted) throw error; });
@@ -184,7 +190,11 @@ it.each([false, true])('retains the logical view through a real profile restart 
       await expect.poll(() => commands.some(command => command.targetId === 'page-3' && command.method === 'Emulation.setDeviceMetricsOverride')).toBe(true);
       await expect.poll(() => metadata.some(batch => batch.editableTarget?.editable === true)).toBe(true);
       expect(receipts.filter(receipt => receipt.reasonCode === 'human_input_failed')).toEqual([]);
+      const closingSnapshot = discovery.watchViews({ browserSessionId: 'session', knownViewIds: ['view'], signal: watchAbort.signal });
       expect(await control.dispatchCommand({ kind: 'closeView', commandId: 'close-selected', ...view })).toMatchObject({ status: 'dispatched' });
+      expect(await closingSnapshot).toEqual(expect.arrayContaining([expect.objectContaining({ viewId: 'view',
+        events: expect.arrayContaining([expect.objectContaining({ kind: 'viewClosed', viewId: 'view' })]),
+      })]));
       expect(replacementSource.source.retirementSignal?.aborted).toBe(true);
       expect(errors).toHaveLength(4);
     }
