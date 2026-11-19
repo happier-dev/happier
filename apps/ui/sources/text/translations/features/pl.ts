@@ -11344,6 +11344,7 @@ const machineDetailPageTranslations = { pl: translated({
                 reading: 'Odczytywanie najnowszych wierszy…',
                 approval: 'Czekam na zgodę na odczyt tych logów.',
                 error: { title: 'Nie udało się odczytać logów', machineNotAnswering: ({ machine }) => `${machine} nie odpowiada` },
+                needMachineOnline: ({ machine }) => `Aby odczytać logi na żywo, ${machine} musi być online.`,
                 remedy: {
                     redeployEnvironment: 'Wdróż Środowisko ponownie, aby przywrócić maskowanie sekretów, a następnie odczytaj logi jeszcze raz.',
                 },

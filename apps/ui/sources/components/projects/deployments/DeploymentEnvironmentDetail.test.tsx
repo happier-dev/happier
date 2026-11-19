@@ -2189,6 +2189,7 @@ describe('Project deployments page', () => {
       expect(text).toContain('ECONNREFUSED');
       // The incumbent is named by its own identity; there is no #N ordinal to invent.
       expect(text).toContain('b'.repeat(7));
+      expect(screen.findByTestId('project-deployments.receipt.rollback')).toBeNull();
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
       expect(rollback).toHaveBeenCalledWith({ environmentId: detail.environment.id, deploymentId: 'last-good' });
     } finally { controller.retire(); }
@@ -2999,6 +3000,47 @@ describe('Deployment receipt step logs', () => {
   };
   const settle = (screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) => act(async () => {
     await waitForTestEvent(screen.subscribe, () => screen.findByTestId(testID), node => node !== null);
+  });
+
+  it('reads a failed Receipt’s recorded cause even when its live logs need the Machine online', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { t } = await import('@/text');
+    const previousRuntime = runtime.getAppliedActiveServerSnapshot();
+    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+    const base = withStepLogs('failed');
+    const receipt = createDeploymentReceiptDetailV1({
+      deployment: base.deployment,
+      content: { ...base.content, steps: [], failure: { code: 'native_activate_failed', phase: 'activate', failureCause: {
+        phase: 'deployment.native.activate', errorClass: 'HttpStatusError', errorCode: 'upstream_error', httpStatus: 503,
+      } } },
+    });
+    const { controller, detail } = controllerFor({ receipt });
+    const readLogs = vi.fn<DeploymentReadLogs>(async () => ({ ok: false, error: 'action_failed' }));
+    runtime.publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+    try {
+      await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'machine-a', active: false, activeAt: 1 })]);
+      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps}
+        environmentId={detail.environment.id} deploymentId={receipt.deployment.id} readLogs={readLogs} />);
+      try {
+        await settle(screen, 'project-deployments.receipt.outcome.failed');
+        const banner = screen.findByTestId('project-deployments.receipt.outcome.failed')!;
+        const bannerText = banner.findAll(node => typeof node.type === 'string')
+          .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        expect.soft(bannerText).toContain(t('errors.serverError'));
+        const log = 'project-deployments.receipt.steps.log';
+        await waitForHomeGovernance(() => {
+          expect(screen.findByTestId(`${log}.offline`)).not.toBeNull();
+          expect(screen.getTextContent()).toContain('Live logs need');
+        });
+        expect(screen.findByTestId(`${log}.error`)).toBeNull();
+      } finally { await screen.unmount(); }
+    } finally {
+      controller.retire();
+      runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+    }
   });
 
   it.each([false, true])('shows the running deploy in Build logs with a serving deployment: %s', async (hasServing) => {

@@ -11267,6 +11267,7 @@ const machineDetailPageTranslations = { ja: translated({
                 reading: '最新の行を読み取り中…',
                 approval: 'これらのログを読むための承認を待っています。',
                 error: { title: 'ログを読み取れませんでした', machineNotAnswering: ({ machine }) => `${machine} が応答していません` },
+                needMachineOnline: ({ machine }) => `ライブ ログを読むには ${machine} がオンラインである必要があります。`,
                 remedy: {
                     redeployEnvironment: '環境を再デプロイして秘密値のマスキングを復元し、ログを再度読み取ってください。',
                 },

@@ -11314,6 +11314,7 @@ const machineDetailPageTranslations = { ca: translated({
                 reading: 'S’estan llegint les darreres línies…',
                 approval: 'S’espera l’aprovació per llegir aquests logs.',
                 error: { title: 'No s’han pogut llegir els logs', machineNotAnswering: ({ machine }) => `${machine} no respon` },
+                needMachineOnline: ({ machine }) => `Per llegir els registres en directe, ${machine} ha d’estar en línia.`,
                 remedy: {
                     redeployEnvironment: 'Torna a desplegar l’Entorn per restablir l’emmascarament dels secrets i després torna a llegir els logs.',
                 },

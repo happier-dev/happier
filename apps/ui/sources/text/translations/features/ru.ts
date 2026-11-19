@@ -11342,6 +11342,7 @@ const machineDetailPageTranslations = { ru: translated({
                 reading: 'Чтение последних строк…',
                 approval: 'Ожидается разрешение на чтение этих логов.',
                 error: { title: 'Не удалось прочитать логи', machineNotAnswering: ({ machine }) => `${machine} не отвечает` },
+                needMachineOnline: ({ machine }) => `Для чтения журналов в реальном времени ${machine} должна быть в сети.`,
                 remedy: {
                     redeployEnvironment: 'Разверните Окружение заново, чтобы восстановить маскирование секретов, затем прочитайте логи ещё раз.',
                 },

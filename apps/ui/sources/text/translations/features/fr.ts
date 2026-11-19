@@ -11330,6 +11330,7 @@ const machineDetailPageTranslations = { fr: translated({
                 reading: 'Lecture des dernières lignes…',
                 approval: 'En attente d’approbation pour lire ces logs.',
                 error: { title: 'Impossible de lire les logs', machineNotAnswering: ({ machine }) => `${machine} ne répond pas` },
+                needMachineOnline: ({ machine }) => `Pour lire les journaux en direct, ${machine} doit être en ligne.`,
                 remedy: {
                     redeployEnvironment: 'Redéployez l’Environnement pour rétablir le masquage des secrets, puis relisez les logs.',
                 },

@@ -11207,6 +11207,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 reading: '正在讀取最新幾行…',
                 approval: '正在等待核准以讀取這些日誌。',
                 error: { title: '無法讀取日誌', machineNotAnswering: ({ machine }) => `${machine} 沒有回應` },
+                needMachineOnline: ({ machine }) => `查看即時記錄需要 ${machine} 在線。`,
                 remedy: {
                     redeployEnvironment: '重新部署環境以恢復機密值遮蔽，然後重新讀取日誌。',
                 },

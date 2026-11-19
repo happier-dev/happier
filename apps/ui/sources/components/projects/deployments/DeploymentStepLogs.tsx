@@ -31,6 +31,7 @@ import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider'
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { Modal } from '@/modal';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { t } from '@/text';
 
 import {
@@ -122,6 +123,11 @@ export function DeploymentStepLogs(
   );
   const openId = chosen === undefined ? (automatic?.id ?? null) : chosen;
   const open = rows.find((row) => row.id === openId && row.log) ?? null;
+  const logMachineId = props.readLogs ? open?.log?.machineId : undefined;
+  const [logMachine] = useMachinePresenceSummaries(props.serverId, logMachineId ? [logMachineId] : [], lifetime);
+  const offlineLogMachine = logMachine?.reachability === 'unreachable'
+    ? logMachine.sentenceName ?? (logMachineId ? machineNames[logMachineId] : undefined) ?? props.machineName
+    : null;
   const visible =
     filter === 'failed' && hasFailed
       ? rows.filter((row) => row.step && isFailedStep(row.step))
@@ -192,8 +198,8 @@ export function DeploymentStepLogs(
       );
   };
   const renderLog = React.useCallback(
-    () => <StepLogBody testID={props.testID} logs={logs} machineName={props.machineName} />,
-    [logs, props.machineName, props.testID],
+    () => <StepLogBody testID={props.testID} logs={logs} machineName={props.machineName} offlineLogMachine={offlineLogMachine} />,
+    [logs, props.machineName, props.testID, offlineLogMachine],
   );
   const checklist = React.useMemo(() => ({
     items: visible.map((row): PlanChecklistItem => ({
@@ -335,6 +341,7 @@ function StepLogBody(
     testID: string;
     logs: ReturnType<typeof useDeploymentStepLog>;
     machineName: string;
+    offlineLogMachine: string | null;
   }>,
 ) {
   const { logs, machineName } = props;
@@ -372,7 +379,10 @@ function StepLogBody(
   if (!logs.index || !viewer) {
     const first = logs.first;
     let state: React.ReactNode;
-    if (first.kind === 'failed') {
+    if (props.offlineLogMachine !== null) {
+      state = <SurfaceStateCard testID={`${id}.offline`} kind="unavailable" size="line"
+        title={t('machineServices.logs.needMachineOnline', { machine: props.offlineLogMachine })} />;
+    } else if (first.kind === 'failed') {
       state = ADMISSION_CODES.has(first.error.code) ? (
         <SurfaceStateCard
           testID={`${id}.unavailable`}

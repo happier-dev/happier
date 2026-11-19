@@ -11209,6 +11209,7 @@ const machineDetailPageTranslations = { es: translated({
                 reading: 'Leyendo las últimas líneas…',
                 approval: 'Esperando aprobación para leer estos logs.',
                 error: { title: 'No se pudieron leer los logs', machineNotAnswering: ({ machine }) => `${machine} no responde` },
+                needMachineOnline: ({ machine }) => `Para leer los registros en directo, ${machine} debe estar en línea.`,
                 remedy: {
                     redeployEnvironment: 'Vuelve a desplegar el Entorno para restaurar el enmascaramiento de secretos y después vuelve a leer los logs.',
                 },

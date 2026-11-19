@@ -42,6 +42,7 @@ import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { resolvePublicShareApplicationBaseUrl } from '@/components/sessions/sharing/publicShareApplicationUrl';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { Modal } from '@/modal';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
@@ -231,10 +232,13 @@ export const DeploymentReceiptDetail = React.memo(
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
       ? readDeploymentRefusalRecoveryV1(facts.failure.code, facts.failure) : null;
+    const failureCode = facts.failure?.failureCause?.errorCode ?? facts.failure?.code;
+    const recordedCause = deployment.state !== 'failed' ? null : facts.failure
+      ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
+      : t('workflows.recovery.causeNotRecorded');
     const { rollback, deploy, teardown, promote, environmentId, phone } = props;
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
-    const canRollBack = retainedTarget !== null && rollback !== null;
     const { review } = props;
     const rollingBack = rollbackPress.running;
     const reviewPending = rollbackPress.reviewPending;
@@ -320,6 +324,7 @@ export const DeploymentReceiptDetail = React.memo(
     // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.
     // Without one, Investigate leads and Deploy again stays quiet (K12-6).
     const recoveryLeads = rollbackTarget !== null || retryRollbackTo !== null;
+    const bannerRollbackId = pressAttention ? null : rollbackTarget?.deploymentId ?? retryRollbackTo;
     const investigateEmphasis = recoveryLeads ? 'secondary' : 'primary';
     // A narrow banner stacks its ways forward; the split controls stack with them at the same width.
     const investigateControl = ({ stacked }: Readonly<{ stacked: boolean }>) => (
@@ -358,14 +363,14 @@ export const DeploymentReceiptDetail = React.memo(
     ];
     // One Machine reads as one list of steps; several Machines each get their own section, in rollout order.
     const perMachine = content.machineResults.length > 1;
-    const rollbackButton = canRollBack ? (
+    const rollbackButton = retainedTarget && rollback && retainedTarget.deploymentId !== bannerRollbackId ? (
       <RoundButton
         testID="project-deployments.receipt.rollback"
         display="inverted"
-        title={t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(retainedTarget!.revision) })}
+        title={t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(retainedTarget.revision) })}
         loading={rollingBack}
         disabled={rollingBack || reviewPending}
-        onPress={() => { rollBack(retainedTarget!.deploymentId); }}
+        onPress={() => { rollBack(retainedTarget.deploymentId); }}
       />
     ) : null;
     // The running receipt's one action (lab d3 `live`): Cancel in the header, or spanning a phone's pinned bar.
@@ -516,9 +521,8 @@ export const DeploymentReceiptDetail = React.memo(
                 tone="danger"
                 iconName="x-circle"
                 title={deploymentFailureTitle(facts.failure, deployment.operation)}
-                // What is serving now (the receipt's own facts), then the canonical remedy for its recorded cause.
-                description={[failureConsequence(facts, firstMachine), recovery?.remedy ?? null]
-                  .filter(Boolean).join(' ') || undefined}
+                description={[recordedCause, failureConsequence(facts, firstMachine), recovery?.remedy]
+                  .filter((line, index, lines) => Boolean(line) && lines.indexOf(line) === index).join(' ')}
                 // The row's place is settled from first paint: the banner's own buttons are known then, beside the agent control.
                 actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || (recovery && props.onOpenRecoveryDestination) ? 'below' : undefined}
                 action={rollbackTarget ? {
@@ -546,7 +550,7 @@ export const DeploymentReceiptDetail = React.memo(
                 moreActions={rollbackTarget || retryRollbackTo ? (recoveryNext ? [recoveryNext] : undefined)
                   : recoveryNext && againAction ? [{ ...againAction, testID: 'project-deployments.receipt.outcome.failed.deployAgain' }]
                   : undefined}
-                details={facts.failure ? [facts.failure.code] : undefined}
+                details={failureCode ? [failureCode] : undefined}
               />
             ) : deployment.state === 'succeeded' ? (
               <SucceededOutcome

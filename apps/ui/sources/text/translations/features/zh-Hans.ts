@@ -11207,6 +11207,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 reading: '正在读取最新几行…',
                 approval: '正在等待批准以读取这些日志。',
                 error: { title: '无法读取日志', machineNotAnswering: ({ machine }) => `${machine} 没有响应` },
+                needMachineOnline: ({ machine }) => `查看实时日志需要 ${machine} 在线。`,
                 remedy: {
                     redeployEnvironment: '重新部署环境以恢复机密值遮盖，然后重新读取日志。',
                 },

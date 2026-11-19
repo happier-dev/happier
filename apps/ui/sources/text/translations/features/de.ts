@@ -11325,6 +11325,7 @@ const machineDetailPageTranslations = { de: translated({
                 reading: 'Die neuesten Zeilen werden gelesen…',
                 approval: 'Warte auf Freigabe, um diese Logs zu lesen.',
                 error: { title: 'Logs konnten nicht gelesen werden', machineNotAnswering: ({ machine }) => `${machine} antwortet nicht` },
+                needMachineOnline: ({ machine }) => `Für Live-Logs muss ${machine} online sein.`,
                 remedy: {
                     redeployEnvironment: 'Stelle die Umgebung erneut bereit, um Geheimnisse wieder zu maskieren, und lies dann die Logs erneut.',
                 },

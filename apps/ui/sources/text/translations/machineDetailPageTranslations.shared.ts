@@ -2510,6 +2510,7 @@ export const english = {
             reading: 'Reading the latest lines…',
             approval: 'Waiting for approval to read these logs.',
             error: { title: 'Couldn’t read logs', machineNotAnswering: ({ machine }: { machine: string }) => `${machine} isn’t answering` },
+            needMachineOnline: ({ machine }: { machine: string }) => `Live logs need ${machine} online.`,
             remedy: {
                 redeployEnvironment: 'Redeploy the Environment to restore secret masking, then read the logs again.',
             },
