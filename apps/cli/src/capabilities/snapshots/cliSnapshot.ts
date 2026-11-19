@@ -77,7 +77,7 @@ export interface DetectCliEntry {
     available: boolean;
     /** Internal observation failure; capability projection emits the existing typed error result. */
     detectionError?: { code: 'cli-detection-timeout' | 'cli-detection-failed'; message: string };
-    /** Own CLI execution, never inferred from an installed dependency. */
+    /** Admitted native runtime or own CLI execution, never inferred from an installed dependency. */
     installed?: boolean;
     signIn?: MachineAgentInventoryItem['signIn'];
     platform?: MachineAgentInventoryItem['platform'];

@@ -235,7 +235,7 @@ describe('machine agent inventory on the daemon', () => {
             }).items).toMatchObject([{ agentId: 'codex', installed: true, version: '1.2.3' }]);
             expect(snapshot.clis['custom-acp']).toMatchObject({
                 available: true, installed: true,
-                signIn: { status: 'unknown', loginSupport: 'unsupported', required: false },
+                signIn: { status: 'unknown', loginSupport: 'unsupported', required: true },
             });
             const publication = publishSnapshot(snapshot);
             expect(publication.agentInventory).toEqual({ checkedAt: 2,
@@ -258,7 +258,7 @@ describe('machine agent inventory on the daemon', () => {
         }
     });
 
-    it.each([true, false])('reports the installed ACP dependency separately when the Antigravity CLI is missing (includeVersion=%s)', async includeVersion => {
+    it.each([true, false])('does not treat an installed alternate ACP server as required by the native Antigravity runtime (includeVersion=%s)', async includeVersion => {
         const fixture = await createProbeTempDir('happier-agent-inventory');
         try {
             vi.stubEnv('HAPPIER_HOME_DIR', fixture.dir);
@@ -292,7 +292,7 @@ describe('machine agent inventory on the daemon', () => {
             expect(inventory.items[0]).toMatchObject({
                 installed: false,
                 update: { supported: false, command: null },
-                dependencies: [{ key: source.installId, installed: true, version: includeVersion ? source.version : null }],
+                dependencies: [],
                 platform: { supported: true },
                 install: { available: true, mode: 'vendor_recipe' },
                 signIn: { status: 'unknown', loginSupport: 'login_terminal' },
