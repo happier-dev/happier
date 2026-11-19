@@ -456,3 +456,40 @@ it('mounts Ask with a real warmed summary and reads calm from canonical attentio
         && /Cannot update a component.*while rendering/.test(arg)))).toEqual([]);
     await screen.unmount();
 });
+
+// F21 (BL2-RENDER-1118): the page's Start session opens the shell dock, and the Ask block kept its own composer, so two
+// composers stood on the page and the agent picker of one covered both. One draft, one editor: while the dock is shown,
+// the page's composer yields to it, as Home's does.
+it('yields its composer to the New Session dock while the dock is shown, and returns when it closes', async () => {
+    const { NewSessionShellHostProvider, useNewSessionShellHost } = await import('@/components/sessions/new/navigation/newSessionEntry');
+    const { Pressable } = await import('react-native');
+    await prepareSessionDraftPersistenceStorage();
+    // The machine RPC is the transport boundary: an opened draft announces its creation intent and ignores the answer.
+    rpc.mockImplementation(async () => ({}));
+    onTestFinished(() => rpc.mockReset());
+    const serverId = 'srv_dock_yield';
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://dock-yield.example.test', serverIdentityId: serverId });
+    onTestFinished(() => connection.dispose());
+    storage.setState({ settings: settingsParse({ ...storage.getState().settings, newSessionPresentationModeV1: 'docked' }) });
+    const machine = createMachineFixture({ id: 'machine-dock-yield', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+    await publishMachineInventoryForTest(captureActiveServerAccountScopeLifetime()!.scope, [machine]);
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true });
+    function DockControls() {
+        const shell = useNewSessionShellHost();
+        return <>
+            <Pressable testID="open-dock" onPress={() => shell?.open()} />
+            <Pressable testID="close-dock" onPress={() => shell?.close()} />
+        </>;
+    }
+    const screen = await renderScreen(<NewSessionShellHostProvider>
+        <DockControls />
+        <MachineResourcesAskBlock serverId={serverId} machineId={machine.id} machineName="Docker container" />
+    </NewSessionShellHostProvider>);
+    const pageComposers = () => screen.root.findAll(node => node.props?.testID === 'machine-resources-ask.composer');
+    expect(pageComposers()).toHaveLength(1);
+    await screen.pressByTestIdAsync('open-dock');
+    expect(pageComposers()).toHaveLength(0);
+    await screen.pressByTestIdAsync('close-dock');
+    expect(pageComposers()).toHaveLength(1);
+    await screen.unmount();
+});

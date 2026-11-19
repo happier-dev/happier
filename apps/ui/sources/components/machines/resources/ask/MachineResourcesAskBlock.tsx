@@ -10,6 +10,7 @@ import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBa
 import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
 import { NewSessionEmbeddedHostProvider } from '@/components/sessions/new/navigation/newSessionHost';
 import { useNewSessionEmbeddedHostState } from '@/components/sessions/new/navigation/useNewSessionEmbeddedHostState';
+import { useNewSessionShellHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { readHappierStorageBytes } from '@/components/machines/storage/storageViewModel';
@@ -116,23 +117,33 @@ const AskComposer = React.memo(function AskComposer(
       ? host.params.draftId
       : `machine-ask:${props.machineId}`;
   const demand = markDemanded;
+  // One draft, one editor (F21, as Home's composer): while the New Session dock is shown on this page (the header's
+  // Start session opens it), the page's own composer yields to it and the prompts fill the dock instead.
+  const shell = useNewSessionShellHost();
+  const docked = shell?.visible === true;
   const fill = React.useCallback(
     (suggestion: HomeComposerSuggestionFill) => {
-      markDemanded();
-      setHostParams({
+      const params = {
         prompt: suggestion.prompt,
         spawnServerId: suggestion.placement?.serverId ?? props.serverId,
         machineId: suggestion.placement?.machineId ?? props.machineId,
         ...(suggestion.placement?.directory
           ? { directory: suggestion.placement.directory }
           : {}),
-      });
+      };
+      if (docked && shell) {
+        shell.host.setParams(params);
+        shell.open();
+        return;
+      }
+      markDemanded();
+      setHostParams(params);
     },
-    [markDemanded, props.machineId, props.serverId, setHostParams],
+    [docked, markDemanded, props.machineId, props.serverId, setHostParams, shell],
   );
   return (
     <>
-      <View
+      {docked ? null : <View
         testID="machine-resources-ask.composer"
         onFocus={demand}
         onPointerEnter={demand}
@@ -148,7 +159,7 @@ const AskComposer = React.memo(function AskComposer(
             />
           </ComposerBannerCollapseProvider>
         </NewSessionEmbeddedHostProvider>
-      </View>
+      </View>}
       <AskSuggestions {...props} online={true} onFill={fill} />
     </>
   );
