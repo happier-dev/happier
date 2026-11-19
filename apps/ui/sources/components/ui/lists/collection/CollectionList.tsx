@@ -39,6 +39,7 @@ import { useHeaderControlMetrics, type HeaderControlMetrics } from '@/components
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -647,6 +648,16 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     return <CollectionColumnRow {...props} icon={icon} />;
 });
 
+/**
+ * A described row's end sits on its title's line (`contentAlign="start"`), so a row with nothing at its end collapsed
+ * the ⋯'s band to that line's top and drew the ⋯ on the row's top hairline (LABPARITY-ACCEPT-G4 fix 5). Its band spans
+ * the row's two text lines from the title's top instead, so the ⋯ stands on the middle of the text block.
+ */
+const DESCRIBED_ROW_MENU_BAND = {
+    bottom: undefined,
+    height: ITEM_TITLE_TEXT_METRICS.compact.lineHeight + ITEM_SUBTITLE_TEXT_METRICS.compact.lineHeight,
+} as const;
+
 const CollectionColumnRow = React.memo(function CollectionColumnRow(props: CollectionNavigationRowProps) {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
@@ -703,7 +714,7 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
                     <View style={engaged ? styles.restingEndHidden : styles.restingEnd}
                         {...(engaged ? { 'aria-hidden': true } : {})}>{trailing}</View>
                 ) : null}
-                <View style={styles.rowMenuBand}>
+                <View style={props.subtitle ? [styles.rowMenuBand, DESCRIBED_ROW_MENU_BAND] : styles.rowMenuBand}>
                     <CollectionRowMenuEngagementContext.Provider value={engagement}>{props.rowMenu}</CollectionRowMenuEngagementContext.Provider>
                 </View>
             </View>
