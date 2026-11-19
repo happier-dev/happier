@@ -3229,7 +3229,7 @@ async function serveDeclarativeDaemonSettings(input: Readonly<{
 
 describe('PluginSurfacePlacementHost', () => {
 
-    it('mounts the real Triage Composer picker and keeps SCM raw evidence in its List scroll owner', async () => {
+    it('mounts the real Triage Composer picker and loads GitLab Files through the mounted Action port', async () => {
         const { renderSurface } = await import('../../../../../../packages/plugins/triage/src/composer/entryPicker');
         const { projectPluginUiTargetedContributionsV1 } = await import('@happier-dev/protocol/plugins/ui/targetedContributions');
         const { ComposerPluginSurface } = await import('@/components/sessions/presentation/ComposerPluginSurface');
@@ -3305,6 +3305,8 @@ describe('PluginSurfacePlacementHost', () => {
         realResourceTransport.actionsEnabled = true;
         applyPluginSurfaceConnectivity();
         const scmRequests: string[] = [];
+        const scmActions: string[] = [];
+        const rawDiffAction = `${GITLAB_PLUGIN_ID}/${GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff}`;
         realResourceTransport.request = async (method, payload) => {
             scmRequests.push(method);
             if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
@@ -3315,11 +3317,10 @@ describe('PluginSurfacePlacementHost', () => {
                 return { ok: true, inputSchema: { type: 'object' }, outputSchema: { type: 'object' } };
             if (method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
                 const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(payload);
-                return { ok: true, result: request.qualifiedActionId === `${GITLAB_PLUGIN_ID}/${GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff}`
-                    ? { kind: 'rawDiff', text: 'diff --git a/src/provider.ts b/src/provider.ts', truncated: false }
-                    : { kind: 'changes', rows: [{ path: 'src/provider.ts', newFile: false, renamedFile: false,
-                        deletedFile: false, collapsed: false, tooLarge: false }], diffLimitStatus: 'reported',
-                        omittedRowCount: 0, projectionTruncated: false } };
+                scmActions.push(request.qualifiedActionId);
+                return { ok: true, result: { kind: 'changes', rows: [{ path: 'src/provider.ts', newFile: false, renamedFile: false,
+                    deletedFile: false, lines: { additions: 1, deletions: 1 } }], diffLimitStatus: 'unknown',
+                    omittedRowCount: 0, projectionTruncated: false } };
             }
             throw new Error(`Unexpected SCM fixture transport method: ${method}`);
         };
@@ -3355,13 +3356,11 @@ describe('PluginSurfacePlacementHost', () => {
             const changes = scmScreen.root.findAll(node => node.props.accessibilityRole === 'tab'
                 && node.props.accessibilityLabel === 'Changes')[0]!;
             await act(async () => { changes.props.onPress(); });
-            await vi.waitFor(() => expect(scmScreen.root.findAll(node => node.props.accessibilityLabel === 'Load raw diff evidence'
-                && typeof node.props.onPress === 'function')).not.toHaveLength(0));
-            await act(async () => { scmScreen.root.findAll(node => node.props.accessibilityLabel === 'Load raw diff evidence'
-                && typeof node.props.onPress === 'function')[0]!.props.onPress(); });
-            await vi.waitFor(() => expect(scmScreen.root.findAll(node => (node.props.role ?? node.props.accessibilityRole) === 'listitem'
-                && node.findAll(child => child.children.includes('diff --git a/src/provider.ts b/src/provider.ts')).length > 0))
-                .not.toHaveLength(0));
+            await vi.waitFor(() => expect(scmScreen.root.findAll(node => node.props.accessibilityLabel ===
+                'Files this GitLab merge request changes'), `SCM Actions: ${scmActions.join(', ')}`).not.toHaveLength(0));
+            expect(scmActions.filter(actionId => actionId === `${GITLAB_PLUGIN_ID}/${GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges}`))
+                .toHaveLength(1);
+            expect(scmActions).not.toContain(rawDiffAction);
         } finally { await scmScreen.unmount(); }
     });
 
