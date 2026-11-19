@@ -98,7 +98,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             <StepFocalContext.Provider value={focals}>
                 {Platform.OS === 'web'
                     ? <React.Fragment key={props.stepKey}>{props.children}</React.Fragment>
-                    : <View key={props.stepKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut(layer)}>{props.children}</View>}
+                    : <View key={props.stepKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut?.(layer)}>{props.children}</View>}
             </StepFocalContext.Provider>
         </Animated.View>
     );
