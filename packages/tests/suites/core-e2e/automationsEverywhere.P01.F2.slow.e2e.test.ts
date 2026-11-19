@@ -335,8 +335,18 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   const roots = traces.filter(row => row.phase === 'automation.sessionLifecycle.admit.sessionArchived');
   expect(roots, 'One committed archive occurrence enters the Session admission owner').toHaveLength(1);
   const root = roots[0]!;
-  const descendants = new Set([root.spanId]);
   const requestTraces = traces.filter(row => row.requestId === root.requestId);
+  const spans = new Map(requestTraces.map(row => [row.spanId, row]));
+  let operation = root;
+  while (operation.phase !== 'db.transaction.callback' && operation.parentSpanId !== undefined) {
+    const parent = spans.get(operation.parentSpanId);
+    if (!parent) break;
+    operation = parent;
+  }
+  expect(operation.phase, 'Admission belongs to the archive transaction').toBe('db.transaction.callback');
+  // Publication audience discovery can prepare candidates before admission
+  // reuses it. Measure the containing transaction so that shared read is counted.
+  const descendants = new Set([operation.spanId]);
   let previousSize: number;
   do {
     previousSize = descendants.size;
@@ -345,7 +355,12 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     }
   } while (descendants.size !== previousSize);
   const queries = requestTraces.filter(row => descendants.has(row.spanId) && row.phase.startsWith('db.'));
-  expect(queries.filter(row => row.phase === 'db.AutomationTrigger.findMany'),
+  // Scoped-lock discovery and authoritative admission also read Trigger rows.
+  // Only the candidate owner's query represents cross-scope selection cost.
+  const candidateSpans = new Set(requestTraces.filter(row => descendants.has(row.spanId)
+    && row.phase === 'automation.sessionLifecycle.candidates').map(row => row.spanId));
+  expect(queries.filter(row => row.phase === 'db.AutomationTrigger.findMany'
+    && row.parentSpanId !== undefined && candidateSpans.has(row.parentSpanId)),
     'One set-oriented candidate selection serves all four scopes').toHaveLength(1);
   expect(queries.filter(row => row.phase === 'db.SessionGrant.findMany').length,
     'The Session audience is resolved once, never once per matching trigger').toBeLessThanOrEqual(1);

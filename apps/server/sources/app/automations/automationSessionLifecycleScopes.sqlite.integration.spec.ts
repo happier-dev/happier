@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { projectAutomationSessionLifecycleLaunchProfileId } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
@@ -17,6 +17,8 @@ import { admitSessionLifecycleAutomationRunsTx } from './automationSessionLifecy
 import { encodeAutomationSessionLifecycleConfiguration } from './automationSessionLifecycleConfigurationCodec';
 import { updateAutomationTrigger } from './automationCrudService';
 import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
+import { logger } from '@/utils/logging/log';
+import { withWebLatencyTrace } from '@/utils/webLatencyTrace';
 
 const serverId = 'srv_00000000000000000000000000000000';
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -283,10 +285,35 @@ describe('Session lifecycle scoped admission', () => {
             encryptionMode: 'plain', metadata: '{}', projectKey: 'budget-project', archivedAt: new Date() } });
         const first = await habit(current, { kind: 'sessionLifecycle', events: ['sessionArchived'], policy: { kind: 'firstMatch' } });
         const every = await habit(current, { kind: 'sessionLifecycle', events: ['sessionArchived'], policy: { kind: 'everyMatch' } });
-        await inTx(tx => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId, sourceSession: source,
-            recipientAccountIds: [current.accountId], occurrence: { v: 1, kind: 'sessionLifecycle', event: 'sessionArchived',
-                sourceSessionId: source.id, occurredAt: source.archivedAt!.getTime() },
-        }));
+        const originalLevel = logger.level;
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        logger.level = 'debug';
+        // Capture the logging transport boundary; admission and SQLite stay real.
+        const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+        try {
+            await withWebLatencyTrace(randomUUID(), () => inTx(tx => admitSessionLifecycleAutomationRunsTx({
+                tx, accountId: current.accountId, sourceSession: source,
+                recipientAccountIds: [current.accountId], occurrence: { v: 1, kind: 'sessionLifecycle', event: 'sessionArchived',
+                    sourceSessionId: source.id, occurredAt: source.archivedAt!.getTime() },
+            })));
+            const phases = debug.mock.calls.flatMap(args => {
+                const record: unknown = args[0];
+                if (typeof record !== 'object' || record === null || !('phase' in record)
+                    || typeof record.phase !== 'string' || !('spanId' in record) || typeof record.spanId !== 'number') return [];
+                return [{ phase: record.phase, spanId: record.spanId,
+                    parentSpanId: 'parentSpanId' in record ? record.parentSpanId : undefined }];
+            });
+            const roots = phases.filter(row => row.phase === 'automation.sessionLifecycle.admit.sessionArchived');
+            expect(roots).toHaveLength(1);
+            expect(phases.filter(row => row.phase === 'automation.sessionLifecycle.candidates'))
+                .toEqual([expect.objectContaining({ parentSpanId: roots[0]!.spanId })]);
+            expect(phases.filter(row => row.phase === 'automation.sessionLifecycle.reserve'))
+                .toEqual([expect.objectContaining({ parentSpanId: roots[0]!.spanId })]);
+        } finally {
+            debug.mockRestore();
+            logger.level = originalLevel;
+            vi.unstubAllEnvs();
+        }
         for (const [attached, policy, remainingOccurrences] of [
             [first, { kind: 'firstMatch' }, 0], [every, { kind: 'everyMatch' }, null],
         ] as const) {

@@ -8,6 +8,7 @@ import { readRetainedCommittedSessionInputMachineTarget } from '@/app/session/me
 import { getTransactionContext, type Tx } from '@/storage/inTx';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 
 export type AutomationSessionLifecycleSourceSubjects = Readonly<{
     sessionId: string;
@@ -112,9 +113,9 @@ export async function readAutomationSessionLifecycleCandidatesInTx(
         const serverId = await readCurrentServerIdentityId(process.env, tx);
         const sources = missing.map(session => projectAutomationSessionLifecycleSourceSubjects(serverId, session));
         const rows = (await Promise.all(buildAutomationSessionLifecycleCandidateWheres(sources)
-            .map(where => tx.automationTrigger.findMany({
+            .map(where => timeWebLatencyPhase('automation.sessionLifecycle.candidates', () => tx.automationTrigger.findMany({
                 where, orderBy: { id: 'asc' }, select: SESSION_LIFECYCLE_CANDIDATE_SELECT,
-            })))).flat();
+            }))))).flat();
         for (const source of sources) prepared.set(source.sessionId, {
             source,
             rows: rows.filter(row => row.subjectKey === null || automationSubjectKeyMatchesV1(

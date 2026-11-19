@@ -126,7 +126,9 @@ export async function timeWebLatencyPhase<T>(phase: string, operation: () => T |
     let status: 'completed' | 'failed' = 'failed';
     let outcome: { code?: string; sqlState?: string } = {};
     try {
-        const result = await (span ? context.run(span, operation) : operation());
+        // Lazy promises (including Prisma queries) start when awaited. Keep that
+        // assimilation inside the owning span rather than the caller's context.
+        const result = await (span ? context.run(span, async () => await operation()) : operation());
         status = 'completed';
         return result;
     } catch (error) {

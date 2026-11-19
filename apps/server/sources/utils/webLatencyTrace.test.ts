@@ -52,6 +52,31 @@ describe('web latency request correlation', () => {
         expect(sink).toHaveBeenCalledWith(expect.objectContaining({ phase: 'socket.session-alive',
             sessionId: 'session-publisher', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) }), expect.any(String));
     });
+    it('keeps lazy promise work inside its phase without repeating the operation', async () => {
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        const records: { phase?: string; spanId?: number; parentSpanId?: number }[] = [];
+        const stream = (logger as unknown as { [symbols.streamSym]: DestinationStream })[symbols.streamSym];
+        vi.spyOn(stream, 'write').mockImplementation(message => { records.push(JSON.parse(message)); });
+        // Prisma executes its lazy Promise when awaited, after the callback returns.
+        const lazy: PromiseLike<string> = {
+            then: (resolve, reject) => timeWebLatencyPhase('probe.lazy-query', () => 'ok').then(resolve, reject),
+        };
+        let operations = 0;
+        expect(await withWebLatencyTrace('req-lazy', () => timeWebLatencyPhase('probe.owner', () => {
+            operations += 1;
+            return lazy;
+        }))).toBe('ok');
+        expect(operations).toBe(1);
+        const owner = records.find(row => row.phase === 'probe.owner');
+        expect(owner?.spanId).toEqual(expect.any(Number));
+        expect(records.find(row => row.phase === 'probe.lazy-query')?.parentSpanId).toBe(owner?.spanId);
+
+        const failure = new Error('private');
+        const rejected: PromiseLike<never> = { then: (resolve, reject) => Promise.reject(failure).then(resolve, reject) };
+        await expect(withWebLatencyTrace('req-lazy-rejected', () => timeWebLatencyPhase('probe.rejected', () => rejected)))
+            .rejects.toBe(failure);
+    });
+
     it('runs operations without phase clocks or submissions when detailed tracing is disabled', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
         const clock = vi.spyOn(performance, 'now');

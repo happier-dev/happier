@@ -9,6 +9,7 @@ import { type SessionTurnFactsV1 } from '@happier-dev/protocol/sessions/turns/se
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { log } from '@/utils/logging/log';
+import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 
 import { emitAutomationSourceStatusUpdated } from "./automationChangePublisher";
 import {
@@ -107,69 +108,71 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
     const occurrence = AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse(
         params.occurrence,
     );
-    if (occurrence.event === "parentTurnStarted" || occurrence.event === "parentTurnCompleted" || occurrence.event === "parentTurnFailed"
-        || occurrence.event === "parentTurnCancelled") {
-        const turn = await params.tx.sessionTurn.findUnique({
-            where: { sessionId_turnId: { sessionId: occurrence.sourceSessionId, turnId: occurrence.sourceTurnId } },
-            select: { initiator: true },
-        });
-        if (turn?.initiator !== "user" && turn?.initiator !== "agent_session") return [];
-    }
-    if (occurrence.event === "userActionRequired") {
-        // A pending main-turn request can only be awaiting the user while its
-        // exact host-stamped parent turn is still the Session's live turn. A
-        // missing, already terminalized, or superseded turn is stale publisher
-        // truth arriving late, not a new occurrence: it must bind to no turn,
-        // admit no Run, and consume no trigger budget.
-        const sourceTurn = await params.tx.sessionTurn.findUnique({
-            where: {
-                sessionId_turnId: {
-                    sessionId: occurrence.sourceSessionId,
-                    turnId: occurrence.sourceTurnId,
+    return timeWebLatencyPhase(`automation.sessionLifecycle.admit.${occurrence.event}`, async () => {
+        if (occurrence.event === "parentTurnStarted" || occurrence.event === "parentTurnCompleted" || occurrence.event === "parentTurnFailed"
+            || occurrence.event === "parentTurnCancelled") {
+            const turn = await params.tx.sessionTurn.findUnique({
+                where: { sessionId_turnId: { sessionId: occurrence.sourceSessionId, turnId: occurrence.sourceTurnId } },
+                select: { initiator: true },
+            });
+            if (turn?.initiator !== "user" && turn?.initiator !== "agent_session") return [];
+        }
+        if (occurrence.event === "userActionRequired") {
+            // A pending main-turn request can only be awaiting the user while its
+            // exact host-stamped parent turn is still the Session's live turn. A
+            // missing, already terminalized, or superseded turn is stale publisher
+            // truth arriving late, not a new occurrence: it must bind to no turn,
+            // admit no Run, and consume no trigger budget.
+            const sourceTurn = await params.tx.sessionTurn.findUnique({
+                where: {
+                    sessionId_turnId: {
+                        sessionId: occurrence.sourceSessionId,
+                        turnId: occurrence.sourceTurnId,
+                    },
                 },
-            },
-            select: { status: true },
-        });
-        if (sourceTurn?.status !== "in_progress") return [];
-        const sourceSession = await params.tx.session.findUnique({
-            where: { id: occurrence.sourceSessionId },
-            select: { latestTurnId: true },
-        });
-        if (sourceSession?.latestTurnId !== occurrence.sourceTurnId) return [];
-    }
-    const [{ source, rows }] = await readAutomationSessionLifecycleCandidatesInTx(params.tx, [params.sourceSession]);
+                select: { status: true },
+            });
+            if (sourceTurn?.status !== "in_progress") return [];
+            const sourceSession = await params.tx.session.findUnique({
+                where: { id: occurrence.sourceSessionId },
+                select: { latestTurnId: true },
+            });
+            if (sourceSession?.latestTurnId !== occurrence.sourceTurnId) return [];
+        }
+        const [{ source, rows }] = await readAutomationSessionLifecycleCandidatesInTx(params.tx, [params.sourceSession]);
 
-    const rowsByAccount = new Map<string, SessionLifecycleCandidateRow[]>();
-    for (const row of rows) {
-        const accountId = row.automation.accountId;
-        const accountRows = rowsByAccount.get(accountId);
-        if (accountRows) accountRows.push(row);
-        else rowsByAccount.set(accountId, [row]);
-    }
-    const ownRows = rowsByAccount.get(params.accountId) ?? [];
-    rowsByAccount.delete(params.accountId);
-    if (rowsByAccount.size > 0) {
-        const recipients = new Set(params.recipientAccountIds);
-        afterTx(params.tx, () => {
-            void (async () => { for (const [accountId, accountRows] of rowsByAccount) {
-                await inTx(async tx => {
-                    if (!recipients.has(accountId)) {
-                        const access = await resolveSessionAccessForOperation(tx, {
-                            accountId, sessionId: source.sessionId, capability: 'readTranscript',
-                            authentication: backgroundDeliveryAuthentication(),
+        const rowsByAccount = new Map<string, SessionLifecycleCandidateRow[]>();
+        for (const row of rows) {
+            const accountId = row.automation.accountId;
+            const accountRows = rowsByAccount.get(accountId);
+            if (accountRows) accountRows.push(row);
+            else rowsByAccount.set(accountId, [row]);
+        }
+        const ownRows = rowsByAccount.get(params.accountId) ?? [];
+        rowsByAccount.delete(params.accountId);
+        if (rowsByAccount.size > 0) {
+            const recipients = new Set(params.recipientAccountIds);
+            afterTx(params.tx, () => {
+                void (async () => { for (const [accountId, accountRows] of rowsByAccount) {
+                    await inTx(async tx => {
+                        if (!recipients.has(accountId)) {
+                            const access = await resolveSessionAccessForOperation(tx, {
+                                accountId, sessionId: source.sessionId, capability: 'readTranscript',
+                                authentication: backgroundDeliveryAuthentication(),
+                            });
+                            if (access.status !== 'allowed') return;
+                        }
+                        await admitSessionLifecycleCandidatesTx({
+                            ...params, tx, accountId, occurrence,
+                            rows: accountRows,
                         });
-                        if (access.status !== 'allowed') return;
-                    }
-                    await admitSessionLifecycleCandidatesTx({
-                        ...params, tx, accountId, occurrence,
-                        rows: accountRows,
                     });
-                });
-            } })().catch(error => log({ module: 'automation-session-lifecycle', level: 'error' },
-                'Session lifecycle recipient admission failed after source commit', error));
-        });
-    }
-    return admitSessionLifecycleCandidatesTx({ ...params, occurrence, rows: ownRows });
+                } })().catch(error => log({ module: 'automation-session-lifecycle', level: 'error' },
+                    'Session lifecycle recipient admission failed after source commit', error));
+            });
+        }
+        return admitSessionLifecycleCandidatesTx({ ...params, occurrence, rows: ownRows });
+    });
 }
 
 async function admitSessionLifecycleCandidatesTx(params: Readonly<{
@@ -238,14 +241,14 @@ async function admitSessionLifecycleCandidatesTx(params: Readonly<{
 
         const bounded = stored.remainingOccurrences !== null && !replacesPending;
         if (bounded) {
-            const reserved = await params.tx.automationTrigger.updateMany({
+            const reserved = await timeWebLatencyPhase('automation.sessionLifecycle.reserve', () => params.tx.automationTrigger.updateMany({
                 where: {
                     id: row.id,
                     revision: row.revision,
                     remainingOccurrences: { gt: 0 },
                 },
                 data: { remainingOccurrences: { decrement: 1 } },
-            });
+            }));
             if (reserved.count !== 1) continue;
             row.remainingOccurrences = stored.remainingOccurrences! - 1;
         }
