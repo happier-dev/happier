@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { readBrowserActionInputHintFields, readComputerActionInputHintFields } from './remoteControlInputHints.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { RuntimeActionIdV1Schema, isBrowserExtensionActionIdV1, isBrowserProfileActionIdV1, type RuntimeActionIdV1 } from '../actionIds.js';
@@ -274,7 +275,10 @@ function createRuntimeActionSpecFor<
     inputHints: {
       title,
       description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_HINT_DESCRIPTION,
-      fields: BROWSER_RUNTIME_ACTION_INPUT_HINT_FIELDS[actionId] ?? [],
+      fields: lazyActionSpecArray(() => Object.hasOwn(BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS, actionId)
+        ? readBrowserActionInputHintFields(params.inputSchema, BROWSER_RUNTIME_ACTION_INPUT_HINT_FIELDS[actionId] ?? [])
+        : Object.hasOwn(COMPUTER_RUNTIME_ACTION_INPUT_SCHEMAS, actionId)
+          ? readComputerActionInputHintFields(params.inputSchema) : []),
     },
   };
 }

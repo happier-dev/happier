@@ -1007,14 +1007,14 @@ describe('approval field presentation', () => {
       commandId: 'cmd-1', browserSessionId: 'session-1', viewId: 'view-1', kind: 'openView',
       target: { targetId: 'target-1', kind: 'externalUrl', url: 'http://127.0.0.1:4000' }, platform: 'web', focus: true } });
     const technical = presentation.rows.filter((row) => row.kind === 'value' && row.technical).map((row) => row.path).sort();
-    expect(technical).toEqual(['browserSessionId', 'commandId', 'focus', 'kind', 'platform', 'viewId']);
-    const target = presentation.rows.find((row) => row.path === 'target');
-    expect(target).toMatchObject({ kind: 'value' });
+    // DESIGN-LOGIC-1119 gives Browser operands their declared human labels.
+    expect(technical).toEqual(['browserSessionId', 'commandId', 'focus', 'kind', 'platform', 'target.targetId', 'viewId']);
+    const target = presentation.rows.find((row) => row.path === 'target.kind');
+    expect(target).toMatchObject({ kind: 'value', title: 'Page type', value: 'Website' });
     expect(target?.kind === 'value' && target.technical).toBeFalsy();
-    const members = target?.kind === 'value' ? target.entries ?? [] : [];
-    expect(members.filter((entry) => entry.technical).map((entry) => entry.value)).toEqual(['target-1']);
-    expect(members.find((entry) => entry.label === 'Url')).toMatchObject({ value: 'http://127.0.0.1:4000' });
-    expect(members.find((entry) => entry.label === 'Url')?.technical).toBeFalsy();
+    const url = presentation.rows.find((row) => row.path === 'target.url');
+    expect(url).toMatchObject({ kind: 'value', title: 'URL', value: 'http://127.0.0.1:4000' });
+    expect(url?.kind === 'value' && url.technical).toBeFalsy();
   });
 
   it('reviews the custom Provider credential reference privately and preserves declared nonsecret public headers', () => {
