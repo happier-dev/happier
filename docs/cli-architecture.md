@@ -8016,8 +8016,9 @@ channels and exits when the holder closes that connection.
      first primary launch. It returns `{ kind: 'adopt' }` while the holder and the
      Agent are alive, and spawns otherwise.
   5. If the respawn gives up (no restart, Stop, already running, startup failure,
-     respawn not attempted), the spared tree is ended (`sparedHeldAgents.end`). An
-     end never retires a live owner of the Session.
+     respawn not attempted), the spare owner ends the Agent through its recorded
+     holder socket and PID pair (`sparedHeldAgents.end`). This still works after
+     the runner's process-census roots disappear.
   6. A Session placed on a target: its holder and Agent run in the target, so the
      runner reports the target's pids, and the daemon probes and ends the spared
      Agent there (`reachHeldTargetAgent`, a short Session authority of its own; the

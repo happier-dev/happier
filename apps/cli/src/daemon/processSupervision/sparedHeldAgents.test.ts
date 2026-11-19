@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '@/daemon/types';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
@@ -8,6 +8,7 @@ import { createSparedHeldAgentCustody } from './sparedHeldAgents';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import {
     attachSessionHolderChild, createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild,
+    type SessionHeldAgentV1,
 } from '@/subprocess/supervision/sessionHolder';
 
 /**
@@ -19,14 +20,14 @@ import {
 
 const held = Object.freeze({ role: 'primary' as const, socketPath: '/run/user/1/happier-holders-1/a.sock', holderPid: 4101, agentPid: 4102 });
 
-function scenario(overrides: Partial<Parameters<typeof createSessionRunnerRespawnManager>[0]> = {}) {
+function scenario(overrides: Partial<Parameters<typeof createSessionRunnerRespawnManager>[0]> = {}, nativeAgent?: SessionHeldAgentV1) {
     const ended: string[] = [];
     const endedTurns: (string | null)[] = [];
     const spawned: SpawnSessionOptions[] = [];
     const custody = createSparedHeldAgentCustody({
         ownerRemainder: { end: async owner => { ended.push(owner.kind === 'session' ? owner.sessionId : 'other'); return { status: 'complete', outcomes: [] }; } },
         endTurn: async tracked => { endedTurns.push(tracked.activeTurnId ?? null); },
-        probe: async candidate => candidate.holderPid === held.holderPid,
+        ...(nativeAgent ? {} : { probe: async (candidate: SessionHeldAgentV1) => candidate.holderPid === held.holderPid }),
     });
     const manager = createSessionRunnerRespawnManager({
         enabled: true, maxRestarts: 3, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0, random: () => 0,
@@ -38,7 +39,7 @@ function scenario(overrides: Partial<Parameters<typeof createSessionRunnerRespaw
         ...overrides,
     });
     const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4100), pid: 4100, happySessionId: 'cs1', startedBy: 'daemon', processStartTimeMs: Date.now() - 1_000, activeTurnId: 'turn-7',
-        spawnOptions: { directory: '/tmp/work' } as SpawnSessionOptions, heldAgentsV1: [held] } as TrackedSession;
+        spawnOptions: { directory: '/tmp/work' } as SpawnSessionOptions, heldAgentsV1: [nativeAgent ?? held] } as TrackedSession;
     // What onChildExited does for an unexpected runner exit before asking the respawn owner.
     const crash = async () => {
         const spare = await custody.spare(tracked);
@@ -184,7 +185,7 @@ describe('spared held Agent custody through the respawn owner', () => {
         expect(run.ended).toEqual([]);
     });
 
-    it.skipIf(process.platform === 'win32')('releases the exact non-adoptable local Agent after host loss', async () => {
+    it.skipIf(process.platform === 'win32').each(['not adoptable', 'respawn cancelled'] as const)('releases the exact local Agent after host loss (%s)', async (disposition) => {
         const socketPath = createSessionHolderSocketPath();
         const child = spawnSessionHolderChild({
             executablePath: requireSessionHolderExecutablePath(), socketPath, command: process.execPath,
@@ -192,7 +193,6 @@ describe('spared held Agent custody through the respawn owner', () => {
         });
         await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
         const held = { role: 'primary' as const, socketPath, holderPid: child.holderPid!, agentPid: child.pid! };
-        child.detach();
         const custody = createSparedHeldAgentCustody({
             ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },
             endTurn: async () => undefined,
@@ -202,12 +202,27 @@ describe('spared held Agent custody through the respawn owner', () => {
             startedBy: 'daemon', heldAgentsV1: [held],
         };
         try {
-            expect(await custody.spare(tracked)).toBeNull();
-            await custody.endStranded({ ...tracked, heldAgentsV1: [{ ...held, holderPid: process.pid }] });
-            expect(() => process.kill(held.agentPid, 0)).not.toThrow();
-            await custody.endStranded(tracked);
+            if (disposition === 'respawn cancelled') {
+                expect(await child.request({ op: 'meta', value: { role: 'primary' } })).toMatchObject({ ok: true });
+            }
+            child.detach();
+            if (disposition === 'respawn cancelled') {
+                const run = scenario({ baseDelayMs: 30_000, maxDelayMs: 30_000 }, held);
+                expect(await run.crash()).toBe('scheduled');
+                // The runner is gone and the process census has no owner roots for this holder.
+                run.manager.markStopRequested('cs1', { source: 'test', requestedAtMs: Date.now() } as never);
+                await run.manager.awaitTerminalSettlement('cs1');
+                expect(run.spawned).toEqual([]);
+            } else {
+                expect(await custody.spare(tracked)).toBeNull();
+                await custody.endStranded({ ...tracked, heldAgentsV1: [{ ...held, holderPid: process.pid }] });
+                expect(() => process.kill(held.agentPid, 0)).not.toThrow();
+                await custody.endStranded(tracked);
+            }
             expect(() => process.kill(held.agentPid, 0)).toThrow();
+            await vi.waitFor(() => expect(() => process.kill(held.holderPid, 0)).toThrow());
         } finally {
+            child.detach();
             const remaining = await (async () => {
                 try { process.kill(held.agentPid, 0); } catch { return null; }
                 return await attachSessionHolderChild(socketPath, 'primary').catch(() => null);

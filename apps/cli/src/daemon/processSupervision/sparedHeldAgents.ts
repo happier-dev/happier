@@ -55,7 +55,7 @@ export function createSparedHeldAgentCustody(input: Readonly<{
     }>;
 }>) {
     type Spared = Pick<TrackedSession, 'pid' | 'sessionRunnerPid' | 'happySessionId' | 'activeTurnId'>
-        & Readonly<{ placed: Readonly<{ tracked: TrackedSession; held: SessionHeldAgentV1 }> | null }>;
+        & Readonly<{ held: SessionHeldAgentV1; placedOwner: TrackedSession | null }>;
     const spared = new Map<string, Spared>();
     /** Relays served again for runners this daemon reattached, by tracked Session: released when that runner exits. */
     const restoredRelays = new Map<TrackedSession, () => void>();
@@ -78,9 +78,10 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         const turn = spared.get(sessionId);
         if (!turn) return;
         spared.delete(sessionId);
-        if (turn.placed) await input.target?.end(turn.placed.tracked, turn.placed.held);
+        if (turn.placedOwner) await input.target?.end(turn.placedOwner, turn.held);
+        else await stopDetachedLocalSessionHolder(turn.held);
         const result = await input.ownerRemainder.end({ kind: 'session', sessionId });
-        logger.infoFile('[DAEMON RUN] Ended the held Agent of a crashed runner that is not respawned', { sessionId, status: result.status, target: Boolean(turn.placed) });
+        logger.infoFile('[DAEMON RUN] Ended the held Agent of a crashed runner that is not respawned', { sessionId, status: result.status, target: Boolean(turn.placedOwner) });
         if (turn.activeTurnId) await input.endTurn(turn);
     };
     return Object.freeze({
@@ -110,7 +111,7 @@ export function createSparedHeldAgentCustody(input: Readonly<{
             if (!held || !sessionId || !await isHeldAgentAlive(tracked, held)) return null;
             const evidence = resolveTrackedSessionExitSettlementEvidence(tracked);
             spared.set(sessionId, { pid: evidence.pid, sessionRunnerPid: evidence.sessionRunnerPid,
-                happySessionId: sessionId, activeTurnId: evidence.activeTurnId, placed: placed ? { tracked, held } : null });
+                happySessionId: sessionId, activeTurnId: evidence.activeTurnId, held, placedOwner: placed ? tracked : null });
             logger.infoFile('[DAEMON RUN] Sparing the held Agent of a crashed runner for its respawn', { sessionId, pid: tracked.pid });
             let settled = false;
             return Object.freeze({
