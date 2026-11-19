@@ -103,9 +103,10 @@ describe('pluginEventAutomationEditSeed', () => {
         });
         expect(readPluginEventAutomationEditSeed(definition, triggerId, { mode: 'plain' })?.source.sourceConfig).toEqual(sourceConfig);
     });
-    it('opens a saved event through Sync currentness and exact private transport, without plaintext Account keys', async () => {
+    it.each(['available', 'unloaded'] as const)('opens a saved event through Sync currentness, acquiring private content only when needed (%s)', async detailKind => {
         const { sync } = await import('@/sync/sync');
         const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { storage } = await import('@/sync/domains/state/storage');
         const owner = sync as unknown as {
             credentials: import('@/auth/storage/tokenStorage').AuthCredentials | undefined;
             appliedServerTarget: { serverId: string; serverUrl: string; generation: number } | null;
@@ -113,10 +114,15 @@ describe('pluginEventAutomationEditSeed', () => {
         };
         const previousCredentials = owner.credentials;
         const previousTarget = owner.appliedServerTarget;
+        const previousAutomations = storage.getState().automations;
         const definition = eventDefinition();
         if (definition.detail.kind !== 'available') throw new Error('Expected private detail');
+        storage.setState({ automations: { [definition.id]: detailKind === 'available' ? definition
+            : { ...definition, detail: { kind: 'unloaded', templateVersion: definition.templateVersion } } } });
         // apiSocket's prepared request is the network boundary; API parsing, currentness and opening stay real.
+        const paths: string[] = [];
         const transport = vi.spyOn(apiSocket, 'createRequestForPreparedTarget').mockReturnValue(async (path: string) => {
+            paths.push(path);
             return new Response(JSON.stringify(path === '/v1/account/encryption/currentness'
                 ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
                 : definition.detail.kind === 'available' ? definition.detail.value : null), { status: 200 });
@@ -127,10 +133,13 @@ describe('pluginEventAutomationEditSeed', () => {
             await expect(owner.getAutomationPluginEventEditSeed('automation-1', triggerId)).resolves.toMatchObject({
                 triggerId, expectedTriggerRevision: 4, source: { sourceInstanceId: 'repository:42', sourceConfig: { repository: 'acme/widgets' } },
             });
+            expect(paths.filter(path => path === '/v3/automations/automation-1')).toHaveLength(detailKind === 'available' ? 0 : 1);
+            expect(paths.filter(path => path === '/v1/account/encryption/currentness')).toHaveLength(1);
         } finally {
             transport.mockRestore();
             owner.credentials = previousCredentials;
             owner.appliedServerTarget = previousTarget;
+            storage.setState({ automations: previousAutomations });
         }
     });
     it('opens and seeds only the explicitly requested trigger identity and revision', () => {

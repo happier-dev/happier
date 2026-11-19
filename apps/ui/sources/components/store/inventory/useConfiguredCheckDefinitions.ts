@@ -14,6 +14,8 @@ import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { AutomationApiError } from '@/sync/api/automations/apiAutomations';
+import { HappyError } from '@/utils/errors/errors';
 
 export type ConfiguredCheckDefinitionFacts =
     | Readonly<{ kind: 'loading' | 'unavailable' }>
@@ -23,6 +25,10 @@ export type ConfiguredCheckDefinitionFacts =
 export const CONFIGURED_CHECK_DEFINITION_LOADING: ConfiguredCheckDefinitionFacts = Object.freeze({ kind: 'loading' });
 const UNAVAILABLE: ConfiguredCheckDefinitionFacts = Object.freeze({ kind: 'unavailable' });
 const NO_DOMAINS = Object.freeze([]);
+export type ConfiguredCheckSelection = Readonly<{ automationId: string; triggerId: string }>;
+type SelectedDefinitionRead =
+    | Readonly<{ kind: 'available' | 'missing' }>
+    | Readonly<{ kind: 'unavailable'; reason: Readonly<{ code: string; status?: number; failureCause?: HappyError['failureCause'] }> }>;
 export function configuredCheckDefinitionKey(automationId: string, triggerId: string): string {
     return JSON.stringify([automationId, triggerId]);
 }
@@ -48,16 +54,41 @@ export async function openConfiguredCheckContentAccess(lifetime: ServerAccountSc
 
 /** One presented Account page lends its private definitions to Checks; it never opens a detail per row. */
 export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifetime | null, presented: boolean,
-    automations: readonly AutomationDefinition[]) {
+    automations: readonly AutomationDefinition[], selection?: ConfiguredCheckSelection) {
     const reader = usePluginAccountAvailabilityReader(lifetime?.scope ?? null, HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, { enabled: presented });
+    const automationId = selection?.automationId;
+    const [attempt, setAttempt] = React.useState(0);
+    const [selectedRead, setSelectedRead] = React.useState<Readonly<{
+        lifetime: ServerAccountScopeLifetime; automationId: string; value: SelectedDefinitionRead;
+    }> | null>(null);
+    const retrySelected = React.useCallback(() => setAttempt(value => value + 1), []);
     React.useEffect(() => {
         if (!presented || !lifetime) return;
         const active = captureActiveServerAccountScopeLifetime();
         if (!active || !areServerAccountScopesEqual(active.scope, lifetime.scope)) return;
+        if (automationId !== undefined) {
+            let alive = true;
+            const publish = (value: SelectedDefinitionRead) => {
+                if (alive && lifetime.isCurrent()) setSelectedRead({ lifetime, automationId, value });
+            };
+            void import('@/sync/sync').then(async ({ sync }) => {
+                if (!alive || !lifetime.isCurrent()) return;
+                const definition = await sync.refreshAutomationDefinitionDetail(automationId);
+                publish(definition ? { kind: 'available' }
+                    : { kind: 'unavailable', reason: { code: 'automation_stored_content_unavailable' } });
+            }).catch((error: unknown) => {
+                publish(error instanceof AutomationApiError && error.status === 404 ? { kind: 'missing' }
+                    : { kind: 'unavailable', reason: error instanceof HappyError
+                        ? { code: error.code ?? 'action_failed', ...(error.status === undefined ? {} : { status: error.status }),
+                            ...(error.failureCause ? { failureCause: error.failureCause } : {}) }
+                        : { code: 'action_failed' } });
+            });
+            return () => { alive = false; };
+        }
         const release = retainAutomationDefinitionDetailsDemand(active);
         void import('@/sync/sync').then(({ sync }) => sync.ensureAutomationsRead()).catch(() => {});
         return release;
-    }, [lifetime, presented]);
+    }, [lifetime, presented, automationId, attempt]);
     const needsContent = presented && automations.some(definition => definition.triggers.some(trigger =>
         isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger)));
     const [opened, setOpened] = React.useState<Readonly<{
@@ -114,6 +145,7 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
                 observerMachineId: entry.observation?.kind === 'durablePush' ? null : entry.observation?.watcher?.machineId ?? null } : UNAVAILABLE];
         }));
     }, [base, domains, reader]);
-    return { byTrigger, domainsPending: needsDomains && domainPage.snapshot.status !== 'ready',
+    const selected = selectedRead?.lifetime === lifetime && selectedRead.automationId === automationId ? selectedRead.value : null;
+    return { byTrigger, selected, retrySelected, domainsPending: needsDomains && domainPage.snapshot.status !== 'ready',
         domainContinuation: needsDomains && domainPage.hasNextPage ? domainPage.nextPage : undefined };
 }

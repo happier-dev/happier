@@ -9391,7 +9391,9 @@ class Sync {
         const credentials = this.credentials;
         if (!credentials) throw new Error('Not authenticated');
         const { requestContext, shouldContinue } = this.prepareAppliedAutomationExecution();
-        const definition = await this.readAndUpsertAutomationDefinition(automationId, requestContext, shouldContinue);
+        const current = storage.getState().automations[automationId];
+        const definition = current?.detail.kind === 'available' ? current
+            : await this.readAndUpsertAutomationDefinition(automationId, requestContext, shouldContinue);
         if (!shouldContinue()) throw new Error('Automation server-account scope changed');
         let accountCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
         try {

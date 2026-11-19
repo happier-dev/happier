@@ -4,6 +4,7 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
+import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -38,8 +39,9 @@ export function ServiceCheckPage() {
       projectKey: null,
       presented,
       kinds: CHECK_KINDS,
+      ...(address ? { configuredCheck: address } : {}),
     }),
-    [presented, scope],
+    [presented, scope, address?.automationId, address?.triggerId],
   );
   return (
     <MachineManagedInventorySection
@@ -63,7 +65,9 @@ export function ServiceCheckPage() {
         const reading =
           !row &&
           address !== null &&
-          (!family || family.result.coverage === 'loading');
+          family?.result.coverage === 'loading';
+        const unavailable = family && typeof family.result.coverage === 'object'
+          && 'unavailable' in family.result.coverage;
         return (
           <ItemList testID="services.check.page">
             {row ? <ServiceCheckPageBody row={row} /> : (
@@ -73,7 +77,9 @@ export function ServiceCheckPage() {
                 alwaysShowTitle
               />
             )}
-            {row ? null : reading ? (
+            {unavailable ? (
+              <ManagedInventoryCoverage families={[family]} testIDPrefix="services.check.page" />
+            ) : row ? null : reading ? (
               <ItemGroup surface="none" testID="services.check.page.loading">
                 <SkeletonRows rows={4} />
               </ItemGroup>

@@ -4,11 +4,16 @@ import { useManagedInventoryAttention } from './useManagedInventoryAttention';
 import { useManagedConfiguredBackups, useManagedConfiguredChecks, useManagedSetup, useManagedWatchedServices, type ManagedConfiguredBackupRow, type ManagedConfiguredCheckRow, type ManagedSetupRow,
     type ManagedWatchedServiceRow } from './managedOperationalInventory';
 import { useInstalledScope } from '../catalog/storeAccountAdmission';
+import type { ConfiguredCheckSelection } from './useConfiguredCheckDefinitions';
 
 export type ManagedInventoryRow = InstalledRow | ManagedWatchedServiceRow | ManagedSetupRow | ManagedConfiguredCheckRow | ManagedConfiguredBackupRow;
 
 export type ManagedInventoryKind = ManagedInventoryRow['kind'];
-export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand & Readonly<{ kinds?: readonly ManagedInventoryKind[] }>;
+export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand & Readonly<{
+    kinds?: readonly ManagedInventoryKind[];
+    /** An addressed Check uses the exact definition reader, independently of the Account's list window. */
+    configuredCheck?: ConfiguredCheckSelection;
+}>;
 const HIDDEN_DEMAND: StoreDemand = Object.freeze({ presented: false });
 const PRESENTED_DEMAND: StoreDemand = Object.freeze({ presented: true });
 export type ManagedInventoryFamilies = Readonly<{
@@ -64,7 +69,7 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const theme = storeKinds.theme.useInstalled(input, demand('theme'), admitted);
     const watchedService = useManagedWatchedServices(input, demand('watchedService'), admitted);
     const setup = useManagedSetup(input, demand('setup'), admitted);
-    const configuredCheck = useManagedConfiguredChecks(input, demand('configuredCheck'), admitted);
+    const configuredCheck = useManagedConfiguredChecks(input, demand('configuredCheck'), admitted, query.configuredCheck);
     const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck, configuredBackup }), [watchedService, setup, configuredCheck, configuredBackup]);
     const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software, theme }),
         [app, browserExtension, mcpServer, skill, agent, provider, plugin, software, theme]);

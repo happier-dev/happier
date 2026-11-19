@@ -9,6 +9,10 @@ import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import type { ManagedInventoryQuery } from './useManagedInventory';
 
+const routerMock = await vi.hoisted(async () =>
+    (await import('@/dev/testkit/mocks/router')).createExpoRouterMock());
+vi.mock('expo-router', () => routerMock.module);
+
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
@@ -24,7 +28,7 @@ function watchesField(serviceWatchesV1: unknown) {
     return MachinePublishedMetadataV1Schema.parse({ ...createMachineFixture().metadata!, serviceWatchesV1 }).serviceWatchesV1!;
 }
 
-afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
+afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); routerMock.resetParams(); });
 
 it('lists configured Backups through the shared App page in Installed and Machine Overview, including never-run configuration', async () => {
     const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
@@ -317,6 +321,81 @@ it('follows the Automation pages past ones without a Check when the person asks 
     await act(async () => { await more(); });
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows.map(row => row.automationId)).toEqual(['a', 'c']));
     expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).not.toEqual({ partial: 'automation_page' });
+    await hook.unmount();
+});
+
+it('reads an addressed Check outside the loaded Automation page without traversing unrelated definitions', async () => {
+    const [first, selected] = await Promise.all([healthCheckDetail('a'), healthCheckDetail('c')]);
+    await account.restore({ serverIdentityId: 'srv_inventory_addressed_check', machines: [], httpAnswers: {
+        'GET /v3/automations/c': { body: selected },
+        'POST /v3/automations/query': { body: { automations: [first], nextCursor: 'unrelated-page' } },
+    } });
+    const scope = storage.getState().settingsScope!;
+    await act(async () => storage.getState().applyAutomations([healthCheckSummary('a')], 'unrelated-page'));
+    const query = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] as const,
+        configuredCheck: { automationId: selected.id, triggerId: selected.triggers[0]!.id } };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows.map(row => row.automationId)).toEqual(['c']));
+    expect(account.home.requests.filter(request => request.path === '/v3/automations/c')).toHaveLength(1);
+    expect(account.home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(0);
+    await hook.unmount();
+});
+
+it.each([404, 503])('keeps an addressed Check refusal distinct from unavailable storage (HTTP %s)', async status => {
+    await account.restore({ serverIdentityId: `srv_inventory_addressed_${status}`, machines: [], httpAnswers: {
+        'GET /v3/automations/retained': { status, body: { error: status === 404 ? 'automation_not_found' : 'database_connection_unavailable' } },
+    } });
+    const scope = storage.getState().settingsScope!;
+    const query = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] as const,
+        configuredCheck: { automationId: 'retained', triggerId: 'retained-trigger' } };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toEqual(status === 404
+        ? 'available' : { unavailable: { code: 'database_connection_unavailable', status: 503 } }));
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toEqual([]);
+    expect(account.home.requests.filter(request => request.path === '/v3/automations/retained')).toHaveLength(1);
+    await hook.unmount();
+});
+
+it('keeps an addressed Check storage failure visible beside cached facts and retries that address', async () => {
+    const { createAutomationDefinitionFromDetail } = await import('@/sync/domains/automations/automationDefinitionProjection');
+    const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+    await loadSyncSingletonForTests();
+    const { renderAccountScreen } = await import('@/dev/testkit/render/renderAccountScreen');
+    const { ServiceCheckPage } = await import('@/components/projects/deployments/ServiceCheckPage');
+    const selected = await healthCheckDetail('retained');
+    await account.restore({ serverIdentityId: 'srv_inventory_addressed_cached', machines: [], httpAnswers: {
+        'GET /v3/automations/retained': { status: 503, body: { error: 'database_connection_unavailable' } },
+    } });
+    const scope = storage.getState().settingsScope!;
+    await act(async () => storage.getState().applyAutomations([createAutomationDefinitionFromDetail(selected)], 'unrelated-page'));
+    routerMock.module.router.setParams({ automation: selected.id, trigger: selected.triggers[0]!.id });
+    const screen = await renderAccountScreen(<ServiceCheckPage />);
+    await vi.waitFor(() => expect(screen.findHostByTestId('services.check.page.coverage.unavailable.retry')).toBeTruthy());
+    expect(screen.findHostByTestId('services.check.page.missing')).toBeNull();
+    expect(screen.findHostByTestId('services.check.page.header')).toBeTruthy();
+    expect(account.home.requests.filter(request => request.path === '/v3/automations/retained')).toHaveLength(1);
+    account.home.answer(scope.serverId, 'GET /v3/automations/retained', { body: selected });
+    await screen.pressByTestIdAsync('services.check.page.coverage.unavailable.retry');
+    await vi.waitFor(() => expect(screen.findHostByTestId('services.check.page.coverage.unavailable.retry')).toBeNull());
+    expect(screen.findHostByTestId('services.check.page.missing')).toBeNull();
+    expect(account.home.requests.filter(request => request.path === '/v3/automations/retained')).toHaveLength(2);
+    expect(account.home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(0);
+    await screen.unmount();
+});
+
+it('removes an addressed Check cached row after its canonical read returns not found', async () => {
+    const { createAutomationDefinitionFromDetail } = await import('@/sync/domains/automations/automationDefinitionProjection');
+    const selected = await healthCheckDetail('retained');
+    await account.restore({ serverIdentityId: 'srv_inventory_addressed_cached_missing', machines: [], httpAnswers: {
+        'GET /v3/automations/retained': { status: 404, body: { error: 'automation_not_found' } },
+    } });
+    const scope = storage.getState().settingsScope!;
+    await act(async () => storage.getState().applyAutomations([createAutomationDefinitionFromDetail(selected)], null));
+    const query = { scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] as const,
+        configuredCheck: { automationId: selected.id, triggerId: selected.triggers[0]!.id } };
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toBe('available'));
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toEqual([]);
     await hook.unmount();
 });
 
