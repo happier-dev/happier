@@ -1,3 +1,5 @@
+import { configuration } from '@/configuration';
+
 type ManifestFixtureOverrides = Readonly<Record<string, unknown>>;
 
 export function createPluginManifestV2Fixture<T extends ManifestFixtureOverrides>(
@@ -16,7 +18,7 @@ export function createPluginManifestV2Fixture(
         displayName: 'Acme Test Manifest',
         description: 'Test manifest',
         engines: {
-            happier: '^0.2.0',
+            happier: configuration.currentCliVersion,
         },
         runtime: {
             apiVersion: 1,
