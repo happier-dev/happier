@@ -28,6 +28,7 @@ import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentence
 import { useWorkflowEditorComposerCustody } from '../editor/useWorkflowEditorComposerCustody';
 import { WorkflowBlockListEditor } from '../editor/WorkflowBlockListEditor';
 import { useWorkflowEditorSelector } from '../editor/workflowEditorDraftStore';
+import { renderWorkflowCardFieldRow } from '../editor/workflowCardFieldRow';
 import { WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { readWorkflowActionFieldRequests } from '../presentation/workflowActionFieldRequests';
@@ -51,6 +52,8 @@ const sameRetainedValue = <T,>(left: T, right: T): boolean =>
 
 export type WorkflowSentenceBuilderProps = Readonly<{
   anchorRef: React.RefObject<View | null>;
+  /** A view the builder never covers (its host's header line): it opens beyond it, still hanging from the anchor. */
+  clearanceRef?: React.RefObject<View | null>;
   /** The source the sentence starts from (a resource's place, an event, a starter's trigger). One per mount. */
   intent: WorkflowSentenceEditorIntent;
   /** What is being automated, named in the title ("Automate Production · happier-web"); absent: "Automate this". */
@@ -73,6 +76,7 @@ export function WorkflowSentenceBuilder(
     <Popover
       open
       anchorRef={props.anchorRef}
+      {...(props.clearanceRef === undefined ? {} : { clearanceRef: props.clearanceRef })}
       boundaryRef={null}
       placement="auto-vertical"
       phonePresentation="sheet"
@@ -185,6 +189,22 @@ function WorkflowSentenceBuilderBody(
     router.push(route);
   };
   const canSave = step !== null && validation.valid && !sentence.saving;
+  const nameField = (
+    <FieldTextInput
+      testID={`${TEST_ID}-name`}
+      value={name}
+      onChangeText={(next) => onChange({ ...draftStore.get(), name: next })}
+      accessibilityLabel={t('workflows.sentence.builder.savesAs')}
+      placeholder={t('workflows.sentence.builder.namePlaceholder')}
+    />
+  );
+  // On the sheet "Saves as" is one more labelled row, on the same label track as When and Machine.
+  const savesAs = props.sheet ? renderWorkflowCardFieldRow('saves-as', t('workflows.sentence.builder.savesAs'), nameField) : (
+    <View style={styles.name}>
+      <Text style={styles.nameLabel}>{t('workflows.sentence.builder.savesAs')}</Text>
+      <View style={styles.nameField}>{nameField}</View>
+    </View>
+  );
   return (
     <FloatingOverlay
       maxHeight={props.maxHeight}
@@ -285,22 +305,7 @@ function WorkflowSentenceBuilderBody(
           />
         </WorkflowDocumentGridContext.Provider>
         </WorkflowSentenceRowsContext.Provider>
-        <View style={styles.name}>
-          <Text style={styles.nameLabel}>
-            {t('workflows.sentence.builder.savesAs')}
-          </Text>
-          <View style={styles.nameField}>
-            <FieldTextInput
-              testID={`${TEST_ID}-name`}
-              value={name}
-              onChangeText={(next) =>
-                onChange({ ...draftStore.get(), name: next })
-              }
-              accessibilityLabel={t('workflows.sentence.builder.savesAs')}
-              placeholder={t('workflows.sentence.builder.namePlaceholder')}
-            />
-          </View>
-        </View>
+        {savesAs}
       </View>
     </FloatingOverlay>
   );
