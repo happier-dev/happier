@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ActionSpecGetResultSchema } from '@happier-dev/protocol/actions/specs/catalog';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -82,7 +83,30 @@ describe('Automations everywhere: qualified plugin subjects', () => {
         const rawAction = inputs.pluginProjectionV2?.actionsById[contributionKey];
         const uiAction = inputs.pluginUiProjection.actionsById[contributionKey];
         const discoveredAction = discovery.find(action => action.id === actionId);
-        expect(specs.find(spec => spec.id === actionId), JSON.stringify({
+        const selectedSpec = specs.find(spec => spec.id === actionId);
+        if (!selectedSpec) {
+          // Capture the failed consumer first; this subsequent diagnostic read
+          // must never supply or refresh the entry being asserted below.
+          console.log('F7_PICKER_PROJECTION_BEFORE_DIRECT_READ', JSON.stringify({
+            generation: inputs.pluginProjectionV2?.generation,
+            rawAction: projectAction(rawAction), uiAction: projectAction(uiAction),
+          }));
+          try {
+            const fresh = await actor.execute('action.spec.get', {
+              id: actionId, includeOutputSchema: false,
+            }, context);
+            const directAction = fresh.ok ? ActionSpecGetResultSchema.parse(fresh.result).actionSpec : null;
+            console.log('F7_PICKER_DIRECT_MACHINE_ACTION_SPEC', JSON.stringify(fresh.ok ? {
+              ok: true, action: directAction ? { id: directAction.id,
+                automation: directAction.automation, approvalScope: directAction.approvalScope } : null,
+            } : { ok: false, errorCode: fresh.errorCode }));
+          } catch (error) {
+            console.log('F7_PICKER_DIRECT_MACHINE_ACTION_SPEC', JSON.stringify({
+              threw: error instanceof Error ? error.name : 'unknown',
+            }));
+          }
+        }
+        expect(selectedSpec, JSON.stringify({
           rawAction: projectAction(rawAction), uiAction: projectAction(uiAction),
           discovery: discoveredAction ? { automation: discoveredAction.automation,
             approvalScope: discoveredAction.approvalScope } : null,
