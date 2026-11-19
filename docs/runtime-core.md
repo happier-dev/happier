@@ -2720,6 +2720,14 @@ authority and the remaining composed-validation boundary.
 
 ## Session path and owners
 
+In 0.3 development source, Session awareness carries task progress from the
+compact work-state display. The work-state owner counts completed task and
+todo items against the total task and todo items. The count is private Session
+content and is omitted for locked or unavailable work state. Awareness also
+projects the running work count from fresh Runtime Activity and authorized
+managed Sessions. A foreground turn in the Session does not count as one of
+its running work items.
+
 In 0.3 development source, `session.status.set_reason {reason}` edits the current
 Session's explanatory annotation through the registered `display.statusReason`
 field. Its binding writes only `work.statusReason` through the existing metadata

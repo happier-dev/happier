@@ -4,6 +4,7 @@ import { SessionManagerV1Schema, SessionManagedSessionsV1Schema } from '../follo
 import { SessionOriginKindV1Schema } from '../creation/sessionCreateOriginV1.js';
 import { SessionDiscussionParticipantV1Schema } from '../creation/sessionDiscussionParticipantV1.js';
 import { ExecutionRunIdSchema } from '../idsV1.js';
+import { SessionTaskProgressV1Schema } from '../work/state/sessionWorkStatePrimary.js';
 
 import {
   SessionWorkStateItemKindV1Schema,
@@ -201,6 +202,8 @@ export const SessionAwarenessProjectionV1Schema = lazyZodSchema(() => z.strictOb
     freshness: SessionAwarenessFreshnessV1Schema,
     operational: SessionAwarenessOperationalV1Schema,
     currentWork: z.optional(SessionAwarenessWorkHeadlineV1Schema),
+    taskProgress: z.optional(SessionTaskProgressV1Schema),
+    runningWorkCount: z.optional(z.number().check(z.int(), z.positive())),
     lineage: z.optional(SessionAwarenessLineageV1Schema),
     workspace: z.optional(SessionAwarenessWorkspaceV1Schema),
     encryption: SessionAwarenessEncryptionV1Schema,

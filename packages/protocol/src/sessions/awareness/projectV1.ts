@@ -23,6 +23,7 @@ import {
   type SessionAwarenessRuntimeFactsV1,
 } from './runtime.js';
 import { projectSessionAwarenessWorkHeadlineV1 } from './work.js';
+import { projectSessionWorkDisplayV1 } from '../work/state/sessionWorkStatePrimary.js';
 import { isSessionUsageLimitIssueCurrentV1 } from '../state/valueSchemas/usageLimitRecovery.js';
 
 /**
@@ -80,8 +81,10 @@ export function projectSessionAwarenessV1(
 
   const title = contentReadable ? normalizeAwarenessTextV1(input.title) : null;
   const statusReason = contentReadable ? normalizeAwarenessTextV1(input.statusReason) : null;
+  const work = contentReadable && input.currentness.work !== 'unavailable'
+    ? projectSessionWorkDisplayV1(input.work) : null;
   const currentWork = projectSessionAwarenessWorkHeadlineV1({
-    work: input.work,
+    work,
     workflowHeadline: input.workflowHeadline,
     contentReadable,
     workEvidenceUnavailable: input.currentness.work === 'unavailable',
@@ -91,6 +94,8 @@ export function projectSessionAwarenessV1(
     && lifecycle.processTerminalState !== 'stopped' && !lifecycle.archivedAtMs
     ? input.runtime.workStatus : null;
   const lineage = contentReadable ? input.lineage ?? undefined : undefined;
+  const runningWorkCount = normalizeAwarenessCountV1(input.managedSessions?.working)
+    + (runtimeFacts.freshness === 'live' ? runtimeFacts.reportedActiveCount : 0);
 
   return {
     v: SESSION_AWARENESS_PROJECTION_VERSION_V1,
@@ -108,6 +113,8 @@ export function projectSessionAwarenessV1(
     freshness: runtimeFacts.freshness,
     operational,
     ...(currentWork ? { currentWork } : {}),
+    ...(work?.taskProgress ? { taskProgress: work.taskProgress } : {}),
+    ...(runningWorkCount > 0 ? { runningWorkCount } : {}),
     ...(lineage ? { lineage } : {}),
     ...(workspace ? { workspace } : {}),
     encryption,

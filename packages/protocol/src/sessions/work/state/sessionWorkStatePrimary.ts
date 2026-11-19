@@ -8,11 +8,35 @@ export const SessionWorkDisplayItemV1Schema = lazyZodSchema(() => z.strictObject
 }).shape));
 export type SessionWorkDisplayItemV1 = z.infer<typeof SessionWorkDisplayItemV1Schema>;
 
+export const SessionTaskProgressV1Schema = lazyZodSchema(() => z.strictObject({
+  done: z.number().check(z.int(), z.nonnegative()),
+  total: z.number().check(z.int(), z.positive()),
+}));
+export type SessionTaskProgressV1 = z.infer<typeof SessionTaskProgressV1Schema>;
+
+export function isSessionTaskItemV1(item: Pick<SessionWorkDisplayItemV1, 'kind'>): boolean {
+  return item.kind === 'task' || item.kind === 'todo';
+}
+
+export function projectSessionTaskProgressV1(
+  items: readonly Pick<SessionWorkDisplayItemV1, 'kind' | 'status'>[],
+): SessionTaskProgressV1 | undefined {
+  let total = 0;
+  let done = 0;
+  for (const item of items) {
+    if (!isSessionTaskItemV1(item)) continue;
+    total++;
+    if (item.status === 'complete') done++;
+  }
+  return total > 0 ? { done, total } : undefined;
+}
+
 /** Display facts only; neither retained work history nor a full work-state snapshot. */
 export const SessionWorkDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   primaryItem: z.nullable(SessionWorkDisplayItemV1Schema),
   hasActiveGoal: z.boolean(),
+  taskProgress: z.optional(SessionTaskProgressV1Schema),
 }));
 export type SessionWorkDisplayV1 = z.infer<typeof SessionWorkDisplayV1Schema>;
 
@@ -28,6 +52,7 @@ export function projectSessionWorkDisplayV1(
   if (!work) return null;
   if (!('items' in work)) return work;
   const primary = readSessionWorkStatePrimaryItemV1(work.items, work.primaryItemId);
+  const taskProgress = projectSessionTaskProgressV1(work.items);
   return {
     v: 1,
     primaryItem: primary ? {
@@ -38,6 +63,7 @@ export function projectSessionWorkDisplayV1(
       ...(primary.statusReason === undefined ? {} : { statusReason: primary.statusReason }),
     } : null,
     hasActiveGoal: work.items.some(item => item.kind === 'goal' && item.status === 'active'),
+    ...(taskProgress ? { taskProgress } : {}),
   };
 }
 

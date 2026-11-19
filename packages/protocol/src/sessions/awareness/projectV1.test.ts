@@ -586,6 +586,38 @@ describe('projectSessionAwarenessV1 — content availability', () => {
 });
 
 describe('projectSessionAwarenessV1 — work headline', () => {
+  it('combines running direct reports with live runtime work without counting the Session itself', () => {
+    const facts = input({
+      lifecycle: { latestTurnStatus: 'in_progress' },
+      runtime: { presence: 'online', active: true, activityState: 'active', activityActiveCount: 2 },
+      managedSessions: { total: 5, working: 3, needsYou: 0, stalled: 0, finished: 2, attentionPrimary: null },
+    });
+    expect(SessionAwarenessProjectionV1Schema.parse(projectSessionAwarenessV1(facts)))
+      .toHaveProperty('runningWorkCount', 5);
+    expect(projectSessionAwarenessV1({ ...facts, runtime: { ...facts.runtime, presence: 'offline' } }))
+      .toHaveProperty('runningWorkCount', 3);
+  });
+
+  it('projects the same task progress from full work state and its compact display', async () => {
+    const { projectSessionWorkDisplayV1 } = await import('../work/state/sessionWorkStatePrimary.js');
+    const work: NonNullable<ProjectSessionAwarenessV1Input['work']> = {
+      v: 1, backendId: 'agent', updatedAt: NOW,
+      items: [
+        { id: 'goal', kind: 'goal', origin: 'vendor', title: 'Objective', status: 'complete', updatedAt: NOW },
+        { id: 'task', kind: 'task', origin: 'happier', title: 'Prepare', status: 'complete', updatedAt: NOW },
+        { id: 'todo', kind: 'todo', origin: 'vendor', title: 'Publish', status: 'active', updatedAt: NOW },
+      ],
+    };
+    for (const source of [work, projectSessionWorkDisplayV1(work)]) {
+      const projection = projectSessionAwarenessV1(input({ work: source }));
+      expect(SessionAwarenessProjectionV1Schema.parse(projection)).toMatchObject({
+        taskProgress: { done: 1, total: 2 },
+      });
+      expect(projectSessionAwarenessV1(input({ work: source, content: { mode: 'e2ee', keyState: 'locked' } })))
+        .not.toHaveProperty('taskProgress');
+    }
+  });
+
   it('selects the canonical primary work item, including paused work', () => {
     const projection = projectSessionAwarenessV1(input({
       work: {

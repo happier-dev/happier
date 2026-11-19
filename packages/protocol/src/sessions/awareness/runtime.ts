@@ -141,6 +141,7 @@ export type SessionAwarenessRuntimeFactsV1 = Readonly<{
   resuming: boolean;
   working: boolean;
   backgroundActive: boolean;
+  reportedActiveCount: number;
   freshPermissionRequired: boolean;
   freshActionRequired: boolean;
   blockedInput: boolean;
@@ -257,10 +258,9 @@ export function projectSessionAwarenessRuntimeV1(
     || freshOptimisticPendingInput
     || (resuming && !hasTerminalPrimaryTurnProjection && !waitingForAction);
 
-  const hasProviderRuntimeActivity = !archived && hasActiveSessionRuntimeActivity({
-    state: runtime.activityState, activeCount: normalizeAwarenessCountV1(runtime.activityActiveCount),
-  });
-  const backgroundActive = !working && hasProviderRuntimeActivity;
+  const activity = { state: runtime.activityState, activeCount: normalizeAwarenessCountV1(runtime.activityActiveCount) };
+  const reportedActiveCount = !archived && hasActiveSessionRuntimeActivity(activity) ? activity.activeCount : 0;
+  const backgroundActive = !working && reportedActiveCount > 0;
 
   // Pending facts and runtime reachability are orthogonal. A host can observe the runtime's
   // active projection without owning a presence channel (the CLI V2 row is the concrete case).
@@ -329,6 +329,7 @@ export function projectSessionAwarenessRuntimeV1(
     resuming,
     working,
     backgroundActive,
+    reportedActiveCount,
     freshPermissionRequired,
     freshActionRequired,
     blockedInput,
