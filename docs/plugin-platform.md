@@ -13348,8 +13348,11 @@ In unreleased 0.3, a receipt Event source can select a whole Home or one
 Environment. Home adoption and reconnect page the visible Environments and read
 retained receipts within each Environment. Setup leaves those reads to the source,
 and later invalidations name exact receipts. Each Event retains the receipt's
-actual Environment and controller context. For repository deployments, the
-Account-opened receipt also supplies the App context. Targeted observation and
+actual Environment and controller context. The admitted Environment header
+supplies the owning App context for repository and stored Compose deployments,
+independently of optional receipt investigation data. An Environment retains the
+Source selected at creation, including for historical receipts. The observer reuses opened
+Environment headers within its batch and native completion. Targeted observation and
 preview-child sources still require their Environment.
 The named Receipt and Target Link Artifact readers in the SDK's `/protocol`
 entry and in `@happier-dev/deployment-protocol/v1` are the same canonical

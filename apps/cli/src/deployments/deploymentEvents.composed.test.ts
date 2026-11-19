@@ -74,7 +74,8 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
         }
         if (id === 'deployments.environments.get') return { ok: true, environment: { id: input.environmentId, revision: 1, projectSourceId: 'source',
             ...(input.environmentId === 'env' ? { previewTemplateEnvironmentId: 'template' } : {}) } };
-        if (id === 'deployments.environments.list') return { ok: true, items: [{ id: 'env', revision: 1 }], nextCursor: null };
+        if (id === 'deployments.environments.list') return { ok: true,
+            items: [{ id: 'env', revision: 1, projectSourceId: 'source' }], nextCursor: null };
         throw new Error(`Unexpected Action ${id}`);
     });
     // Host Actions and authenticated Event delivery are genuine plugin boundaries.

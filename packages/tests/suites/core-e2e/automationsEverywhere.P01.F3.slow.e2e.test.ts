@@ -19,7 +19,7 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   const run = createRunDirs({ runLabel: 'automations-p01-f3' });
   setup = await startAutomationsEverywhereDeploymentFixture(run.testDir('remote-resource'),
     { observeAutomationWriteFailures: true });
-  const { fixture, actor, machine, deployInput, docker } = setup;
+  const { fixture, actor, machine, deployInput, docker, projectSourceId } = setup;
   const observer = await fixture.enrollDaemon({ ...actor, name: 'remote-event-observer' },
     { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
   const catalog = await actor.execute('workflow.events.list', observer.target);
@@ -157,10 +157,9 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   if (!page.ok) throw new Error(page.error);
   const receipt = page.items.find(item => item.environmentId === deployInput.environmentId && item.state === 'failed');
   expect(receipt).toBeDefined();
-  expect(receipt?.projectSourceId).toEqual(expect.any(String));
   expect((await runs())[0]!.cause).toMatchObject({ evidence: { subjectContexts: expect.arrayContaining([
     { role: 'operand', subject: { kind: 'environment', serverId: fixture.serverId, environmentId: deployInput.environmentId } },
-    { role: 'context', subject: { kind: 'app', serverId: fixture.serverId, projectSourceId: receipt!.projectSourceId } },
+    { role: 'context', subject: { kind: 'app', serverId: fixture.serverId, projectSourceId } },
     { role: 'context', subject: { kind: 'machine', serverId: fixture.serverId, machineId: machine.target.machineId } },
   ]) } });
 }, 0);

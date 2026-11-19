@@ -19,12 +19,13 @@ const receipt = { v: 1, id: 'receipt-a', environmentId: config.environmentId, ta
     actionOperationId: 'operation-a', contentArtifactId: 'artifact-a', contentHeaderVersion: 1, contentBodyVersion: 1,
     requestedAtMs: 1000, startedAtMs: 1001 } as const;
 
-function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = false, targetKind = 'vercel', omitFailureSummary = false) {
+function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = false, targetKind = 'vercel', omitFailureSummary = false,
+    investigationSource?: 'repository' | 'stored') {
     let current: Omit<typeof receipt, 'id' | 'state' | 'revision' | 'operation' | 'targetLinkId' | 'environmentId'> & {
         id: string;
         state: 'running' | 'failed' | 'succeeded' | 'cancelled' | 'outcome_unknown'; revision: number; settledAtMs?: number;
         operation: 'deploy' | 'rollback' | 'promote' | 'teardown'; targetLinkId: string; environmentId: string } = { ...receipt };
-    const environment = { id: config.environmentId, runtimeTargetLinkId: config.targetLinkId as string };
+    const environment = { id: config.environmentId, projectSourceId: 'source-a', runtimeTargetLinkId: config.targetLinkId as string };
     const targetLink = { id: config.targetLinkId, environmentId: config.environmentId, role: 'runtime', targetKind,
         source: targetKind === 'ownServer' ? { kind: 'host', id: 'own-server' }
             : { kind: 'plugin', contribution: { pluginId: 'happier.platform.test', localId: 'runtime' } } };
@@ -51,7 +52,8 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         if (id === 'deployments.observation.get') return targetKind === 'ownServer'
             ? { ok: false, error: 'unsupported_action' }
             : { ok: true, environment, targetLink, credentialPrincipal: config.credentialPrincipal };
-        if (id === 'deployments.environments.get') return { ok: true, environment, targetLinks: [targetLink] };
+        if (id === 'deployments.environments.get') return { ok: true,
+            environment: { ...environment, id: input.environmentId }, targetLinks: [targetLink] };
         if (id === 'deployments.environments.list') return input.cursor === 'next-environment'
             ? { ok: true, items: [environment], nextCursor: null, coverage: 'complete' }
             : { ok: true, items: [{ id: 'other-environment' }], nextCursor: 'next-environment', coverage: 'complete' };
@@ -67,7 +69,9 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         if (id === 'deployments.receipts.get') {
             reads.push(String(input.deploymentId));
             return input.deploymentId === current.id ? { ok: true, deployment: current,
-                investigation: { source: { kind: 'repository', projectSourceId: 'source-a', sourceRevision: 1, sha: 'a'.repeat(40) } },
+                ...(investigationSource ? { investigation: { source: investigationSource === 'repository'
+                    ? { kind: 'repository', projectSourceId: 'repository-source', sourceRevision: 1, sha: 'a'.repeat(40) }
+                    : { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` } } } : {}),
                 ...(current.state === 'failed' && !omitFailureSummary ? { failureSummary: { phase: 'build', code: 'build_failed' } } : {}) }
                 : { ok: false, error: 'deployment_unavailable' };
         }
@@ -118,7 +122,10 @@ it.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
             expect(h.admissions[0]).toMatchObject({
                 eventRef: { pluginId, localId: state === 'outcome_unknown' ? 'deployment-outcome-unknown' : `deployment-${state}` },
                 definitions: [], occurredAt: 1100,
-                subjectContexts: expect.arrayContaining([{ role: 'operand', subject: { kind: 'environment', serverId: config.serverId, environmentId: config.environmentId } }]),
+                subjectContexts: expect.arrayContaining([
+                    { role: 'operand', subject: { kind: 'environment', serverId: config.serverId, environmentId: config.environmentId } },
+                    { role: 'context', subject: { kind: 'app', serverId: config.serverId, projectSourceId: 'source-a' } },
+                ]),
             });
             expect(h.reads).toEqual([receipt.id]);
             expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.list')).toHaveLength(0);
@@ -153,6 +160,8 @@ it('shares one exact receipt read without a failure summary before native comple
         const exactReads = h.execute.mock.calls.slice(beforeInvalidation)
             .filter(([id, input]) => id === 'deployments.receipts.get' && input.deploymentId === receipt.id);
         expect(exactReads).toHaveLength(1);
+        expect(h.execute.mock.calls.slice(beforeInvalidation)
+            .filter(([id]) => id === 'deployments.environments.get')).toHaveLength(1);
     } finally {
         h.controller.abort();
         await running;
@@ -168,8 +177,9 @@ it('publishes a failed Event when the receipt has no failure summary', async () 
     expect(result.observations[0]).toMatchObject({ payload: { state: 'failed', phase: null, failureCode: null } });
 });
 
-it('retains the private Source association when projecting a successful receipt Event', async () => {
-    const h = fixture(undefined, 'deployment-succeeded'); h.settle('succeeded');
+it.each(['repository', 'stored', undefined] as const)(
+    'retains the owning Environment Source without opening successful receipt investigation (%s)', async investigationSource => {
+    const h = fixture(undefined, 'deployment-succeeded', false, 'ownServer', false, investigationSource); h.settle('succeeded');
     const running = runCheckpointedPluginEventObserverV1({ context: h.context,
         source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200), now: () => 1200 });
     try {
@@ -178,6 +188,7 @@ it('retains the private Source association when projecting a successful receipt 
         expect(h.admissions[0]).toMatchObject({ subjectContexts: expect.arrayContaining([
             { role: 'context', subject: { kind: 'app', serverId: config.serverId, projectSourceId: 'source-a' } },
         ]) });
+        expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.get')).toHaveLength(0);
     } finally { h.controller.abort(); await running; }
 });
 
@@ -205,6 +216,9 @@ it('replays retained receipts by visible Environment and follows addressed remot
         h.reads.length = 0;
         await h.receiptChanged('remote-environment');
         expect(new Set(h.reads)).toEqual(new Set(['receipt-remote']));
+        expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.environments.get').map(([, input]) => input)).toEqual([
+            { serverId: config.serverId, environmentId: 'remote-environment' },
+        ]);
         expect(h.admissions).toHaveLength(2);
         expect(h.admissions[1]).toMatchObject({ subjectContexts: expect.arrayContaining([
             { role: 'operand', subject: { kind: 'environment', serverId: config.serverId, environmentId: 'remote-environment' } },

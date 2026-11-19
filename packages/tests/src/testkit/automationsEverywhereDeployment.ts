@@ -44,7 +44,7 @@ export async function startAutomationsEverywhereDeploymentFixture(testDir: strin
       serverId: fixture.serverId, projectSourceId: source.source.id, machine, docker, invoke,
       ...(options?.volumeBackup ? { volumeBackup: true } : {}),
     });
-    return { fixture, actor, machine, deployInput, docker, invoke };
+    return { fixture, actor, machine, deployInput, docker, invoke, projectSourceId: source.source.id };
   } catch (error) {
     await fixture.stop();
     throw error;
