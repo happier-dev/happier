@@ -28,8 +28,7 @@ export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, acto
   { ...targetContext, presentUserConfirmation: { actionId: 'action.invoke' } });
   if (!setup.ok) throw new Error(`${eventId} source setup refused (${setup.errorCode})`);
   const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
-  const linked = await actor.execute('workflow.trigger.add', {
-    name: `Review ${eventId}`,
+  const linked = await actor.executeReviewed('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'review', document: { text: `Review this settled ${eventId} fact.`,
@@ -42,7 +41,10 @@ export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, acto
       observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: selected.observationBinding.materializationRef },
       filter, maximumObservationAgeMs: null },
   });
-  if (!linked.ok) throw new Error(`${eventId} trigger refused (${linked.errorCode})`);
+  if (!linked.ok) {
+    throw new Error(`${eventId} trigger refused (${JSON.stringify({ errorCode: linked.errorCode,
+      failureCause: linked.failureCause })})`);
+  }
   const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
   await waitFor(async () => {
     const listed = await actor.execute('workflow.trigger.list', { automationId: saved.set.automationId, triggerId: saved.triggerId });
