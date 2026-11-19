@@ -17,6 +17,7 @@ import {
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
   DropdownMenu,
@@ -677,6 +678,8 @@ const styles = StyleSheet.create(() => ({
     flexShrink: 1,
     minWidth: 0,
   },
-  currentName: { ...pageTitleTypography(), flexShrink: 1 },
+  // The page's name stands on the page text edge with the page title above and the section titles below it (phone P1:
+  // the trigger sat at 16 under a title at 18): the sheet edge it stands on plus the heading's optical inset.
+  currentName: { ...pageTitleTypography(), flexShrink: 1, marginLeft: PAGE_LIST_METRICS.headingOpticalInsetPx },
   currentSectionName: { ...Typography.default('semiBold'), ...happierPageTextMetrics('sectionTitle'), flexShrink: 1 },
 }));
