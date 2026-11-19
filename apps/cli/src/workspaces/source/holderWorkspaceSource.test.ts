@@ -148,10 +148,13 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
     });
 
     it('forwards only allowlisted workspace-command environment into the target, never other host entries', async () => {
-        const source = createHolderWorkspaceSource({ id: 'target:test', rootPath: root, holder, helperPath: helperExecutable! });
-        const printed = await collect(source.spawn({ command: 'sh', args: ['-c', 'printf "%s|%s|%s" "$HAPPIER_TEST_HOST_TOKEN" "$GIT_AUTHOR_NAME" "$LC_ALL"'], cwd: root,
-            env: { HAPPIER_TEST_HOST_TOKEN: 'host-only', GIT_AUTHOR_NAME: 'Ann', LC_ALL: 'C' } }));
-        expect(printed.stdout).toBe('|Ann|C');
+        const addressedRoot = join(directory, 'controller');
+        const source = createHolderWorkspaceSource({ id: 'target:test', rootPath: addressedRoot, guestRootPath: root, holder, helperPath: helperExecutable! });
+        const printed = await collect(source.spawn({ command: 'sh', args: ['-c', 'printf "%s|%s|%s|%s" "$HAPPIER_TEST_HOST_TOKEN" "$GIT_AUTHOR_NAME" "$LC_ALL" "$GIT_INDEX_FILE"'], cwd: addressedRoot,
+            env: { HAPPIER_TEST_HOST_TOKEN: 'host-only', GIT_AUTHOR_NAME: 'Ann', LC_ALL: 'C', GIT_INDEX_FILE: join(addressedRoot, '.git/private') } }));
+        expect(printed.stdout).toBe(`|Ann|C|${join(root, '.git/private')}`);
+        expect(() => source.spawn({ command: 'git', args: ['write-tree'], cwd: addressedRoot,
+            env: { GIT_INDEX_FILE: join(directory, 'outside') } })).toThrow(expect.objectContaining({ code: 'workspace_root_unsafe' }));
     }, 60_000);
 
     it('lists, stats, writes with expectations, renames, deletes and watches through the helper and holder', async () => {

@@ -3,12 +3,18 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -51,13 +57,14 @@ func workspaceTargetDomainResult(err *workspaceConfinedDomainError) workspaceTar
 func workspaceTargetEntryOf(handle workspaceConfinedLinuxHandle) *workspaceTargetEntry {
 	stat := handle.stat
 	return &workspaceTargetEntry{Kind: string(handle.kind), Size: uint64(stat.Size), Mode: stat.Mode,
+		AtimeMs: float64(stat.Atim.Sec)*1e3 + float64(stat.Atim.Nsec)/1e6,
 		MtimeMs: float64(stat.Mtim.Sec)*1e3 + float64(stat.Mtim.Nsec)/1e6,
 		CtimeMs: float64(stat.Ctim.Sec)*1e3 + float64(stat.Ctim.Nsec)/1e6,
 		Dev:     handle.dev, Ino: handle.ino}
 }
 
 func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetResult {
-	if request.op == "realpath" || request.op == "stat" {
+	if request.op == "realpath" || request.op == "stat" || request.op == "access-executable" {
 		resolved, domainErr, missing := resolveWorkspaceTargetRealpath(request.rootPath, request.relativePath)
 		if domainErr != nil {
 			return workspaceTargetDomainResult(domainErr)
@@ -69,6 +76,9 @@ func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetR
 			result := workspaceTargetStatus("path")
 			result.Path = &resolved
 			return result
+		}
+		if request.op == "access-executable" {
+			return accessWorkspaceTargetExecutable(request.rootPath, resolved)
 		}
 		request = workspaceTargetMetaRequest{rootPath: request.rootPath, relativePath: resolved, op: "lstat"}
 		result := runWorkspaceTargetMeta(request)
@@ -238,6 +248,10 @@ func runWorkspaceTargetWrite(request workspaceTargetWriteRequest, content []byte
 		return mkdirWorkspaceTarget(request)
 	case "rename":
 		return renameWorkspaceTarget(request)
+	case "copy-exclusive":
+		return copyExclusiveWorkspaceTargetFile(request)
+	case "set-times":
+		return setWorkspaceTargetFileTimes(request)
 	case "rmdir":
 		parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
 		if domainErr != nil {
@@ -279,6 +293,162 @@ func splitWorkspaceTargetParent(rootPath, relativePath string) (*workspaceConfin
 		return nil, "", workspaceConfinedError("not_directory", "parent is not a directory")
 	}
 	return parent, name, nil
+}
+
+func accessWorkspaceTargetExecutable(rootPath, relativePath string) workspaceTargetResult {
+	path, domainErr := openWorkspaceTargetPath(rootPath, relativePath, true)
+	if domainErr != nil {
+		return workspaceTargetDomainResult(domainErr)
+	}
+	defer path.close()
+	if path.missing {
+		return workspaceTargetStatus("missing")
+	}
+	if err := unix.Access("/proc/self/fd/"+strconv.Itoa(path.final().fd), unix.X_OK); err != nil {
+		if errors.Is(err, unix.EACCES) {
+			return workspaceTargetError("EACCES", "file is not executable")
+		}
+		return workspaceTargetError("io_failed", "execute permissions could not be read")
+	}
+	return workspaceTargetStatus("done")
+}
+
+func setWorkspaceTargetFileTimes(request workspaceTargetWriteRequest) workspaceTargetResult {
+	parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+	if domainErr != nil {
+		return workspaceTargetDomainResult(domainErr)
+	}
+	defer parent.close()
+	atime, atimeErr := unix.TimeToTimespec(time.UnixMilli(request.atimeMs))
+	mtime, mtimeErr := unix.TimeToTimespec(time.UnixMilli(request.mtimeMs))
+	if atimeErr != nil || mtimeErr != nil {
+		return workspaceTargetError("io_failed", "file timestamps are out of range")
+	}
+	if err := unix.UtimesNanoAt(parent.final().fd, name, []unix.Timespec{atime, mtime}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return workspaceTargetError("io_failed", "file timestamps could not be set")
+	}
+	return workspaceTargetStatus("done")
+}
+
+func copyWorkspaceTargetFile(file *os.File, source workspaceConfinedLinuxHandle) error {
+	fd, err := unix.Dup(source.fd)
+	if err != nil {
+		return err
+	}
+	input := os.NewFile(uintptr(fd), "confined source")
+	defer input.Close()
+	_, err = io.Copy(file, input)
+	return err
+}
+
+func createExclusiveWorkspaceTargetFile(parent *workspaceConfinedLinuxPath, name string, mode uint32) (*os.File, workspaceTargetResult) {
+	fd, err := unix.Openat(parent.final().fd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, mode)
+	if errors.Is(err, unix.EEXIST) {
+		return nil, workspaceTargetStatus("exists")
+	}
+	if err != nil {
+		return nil, workspaceTargetError("io_failed", "exclusive file could not be opened")
+	}
+	return os.NewFile(uintptr(fd), name), workspaceTargetStatus("opened")
+}
+
+func copyExclusiveWorkspaceTargetFile(request workspaceTargetWriteRequest) workspaceTargetResult {
+	source, domainErr := openWorkspaceTargetPath(request.rootPath, request.relativePath, true)
+	if domainErr != nil {
+		return workspaceTargetDomainResult(domainErr)
+	}
+	defer source.close()
+	if source.missing {
+		return workspaceTargetStatus("missing")
+	}
+	entry := source.final()
+	if entry.kind != workspaceConfinedKindFile {
+		return workspaceTargetError("workspace_file_unsupported", "source is not a regular file")
+	}
+	parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.toRelativePath)
+	if domainErr != nil {
+		return workspaceTargetDomainResult(domainErr)
+	}
+	defer parent.close()
+	file, result := createExclusiveWorkspaceTargetFile(parent, name, entry.stat.Mode&0o777)
+	if file == nil {
+		return result
+	}
+	copyErr := copyWorkspaceTargetFile(file, entry)
+	modeErr := file.Chmod(os.FileMode(entry.stat.Mode & 0o777))
+	closeErr := file.Close()
+	if copyErr != nil || modeErr != nil || closeErr != nil {
+		_ = unix.Unlinkat(parent.final().fd, name, 0)
+		return workspaceTargetError("io_failed", "exclusive file copy failed")
+	}
+	result = workspaceTargetStatus("done")
+	result.Entry = workspaceTargetEntryOf(entry)
+	return result
+}
+
+// Readiness is acknowledged only after exclusive creation. The client may
+// then close the file, or ask us to copy and fsync bytes into that same inode.
+func openExclusiveWorkspaceTargetFile(request workspaceTargetWriteRequest, reader *bufio.Reader, output io.Writer) error {
+	respond := func(result workspaceTargetResult) error { return writeWorkspaceConfinedRecord(output, result) }
+	parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+	if domainErr != nil {
+		return respond(workspaceTargetDomainResult(domainErr))
+	}
+	defer parent.close()
+	file, result := createExclusiveWorkspaceTargetFile(parent, name, 0o666)
+	if file == nil {
+		return respond(result)
+	}
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
+		_ = unix.Unlinkat(parent.final().fd, name, 0)
+		return respond(workspaceTargetError("io_failed", "exclusive file mode could not be read"))
+	}
+	result.Entry = &workspaceTargetEntry{Mode: stat.Mode}
+	if err := respond(result); err != nil {
+		_ = unix.Unlinkat(parent.final().fd, name, 0)
+		return err
+	}
+	line, err := readWorkspaceConfinedLine(reader)
+	if errors.Is(err, io.EOF) {
+		return respond(workspaceTargetStatus("done"))
+	}
+	if err != nil {
+		return respond(workspaceTargetError("io_failed", "exclusive file input could not be read"))
+	}
+	fields, err := decodeClosedWorkspaceConfinedObject(line, map[string]bool{"relativePath": true, "mode": true})
+	if err != nil {
+		return respond(workspaceTargetError("workspace_root_unsafe", "invalid exclusive file input"))
+	}
+	from, err := decodeRequiredString(fields, "relativePath")
+	if err != nil {
+		return respond(workspaceTargetError("workspace_root_unsafe", "invalid exclusive file source path"))
+	}
+	source, domainErr := openWorkspaceTargetPath(request.rootPath, from, false)
+	if domainErr != nil {
+		return respond(workspaceTargetDomainResult(domainErr))
+	}
+	defer source.close()
+	if source.missing || source.final().kind != workspaceConfinedKindFile {
+		return respond(workspaceTargetError("workspace_file_unsupported", "source is not a regular file"))
+	}
+	if raw, ok := fields["mode"]; ok {
+		var mode uint32
+		if json.Unmarshal(raw, &mode) != nil || mode > 0o777 {
+			return respond(workspaceTargetError("workspace_root_unsafe", "invalid exclusive file mode"))
+		}
+		if err := file.Chmod(os.FileMode(mode)); err != nil {
+			return respond(workspaceTargetError("io_failed", "exclusive file mode could not be set"))
+		}
+	}
+	if err := copyWorkspaceTargetFile(file, source.final()); err != nil {
+		return respond(workspaceTargetError("io_failed", "exclusive file could not be written"))
+	}
+	if err := file.Sync(); err != nil {
+		return respond(workspaceTargetError("io_failed", "exclusive file could not be flushed"))
+	}
+	return respond(workspaceTargetStatus("done"))
 }
 
 func putWorkspaceTargetFile(request workspaceTargetWriteRequest, content []byte) workspaceTargetResult {

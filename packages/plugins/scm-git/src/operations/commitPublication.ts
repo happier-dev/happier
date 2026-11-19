@@ -1,5 +1,4 @@
-import { accessSync, constants, closeSync, fchmodSync, fstatSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 
 import { resolveGitIndexPath } from '@happier-dev/plugin-sdk/scm/git';
 import { SCM_OPERATION_ERROR_CODES, type ScmCommitCreateRequest, type ScmCommitCreateResponse, type ScmOperationErrorCode } from '@happier-dev/plugin-sdk/scm';
@@ -9,7 +8,8 @@ import { mapGitErrorCode } from '../remote.js';
 import type { ScmBackendContext } from '../types.js';
 import { createGitTemporaryIndex, runGitCommand, type GitTemporaryIndex } from './commitExecutionRuntime.js';
 import { readGitStateFile, resolveGitStatePath } from './branchOperationState.js';
-import { createGitExecutionFeatureDetector, type GitExecutionFeatures } from '../repository.js';
+import { readGitExecutionFeatures, type GitExecutionFeatures } from '../repository.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { applyValidatedGitPatch } from './applyValidatedGitPatch.js';
 import { parseNumStatZ } from '../statusParser.js';
 import { observeGitCommitPublication } from './commitOutcome.js';
@@ -128,7 +128,7 @@ async function reconcileIndex(input: { cwd: string; target: GitCommitTarget; can
     return { success: true, treeOid: verified.stdout.trim() };
 }
 
-export async function publishGitCommit(input: { context: ScmBackendContext; request: ScmCommitCreateRequest; target: GitCommitTarget; index: GitTemporaryIndex; message: string; gitFeatures?: () => Promise<GitExecutionFeatures> }): Promise<ScmCommitCreateResponse> {
+export async function publishGitCommit(input: { context: ScmBackendContext; request: ScmCommitCreateRequest; target: GitCommitTarget; index: GitTemporaryIndex; message: string; gitFeatures?: (cwd: string) => Promise<GitExecutionFeatures> }): Promise<ScmCommitCreateResponse> {
     const { context, request, target, index } = input;
     const cwd = context.cwd;
     let candidateOid: string | undefined;
@@ -156,28 +156,33 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         const result = await runGitCommand({ cwd, args, stdin, env, timeoutMs: 20_000 });
         return result;
     };
-    let lockFd: number | undefined;
+    const fs = readRepositoryFileSystem();
+    const effects = fs.filePublication;
+    if (!effects) return decorate(failure(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, 'SCM workspace file publication is unavailable'));
+    const toCommandPath = (path: string) => fs.commandPaths?.toCommandPath(path) ?? path;
+    let lock: Awaited<ReturnType<typeof effects.openExclusiveFile>> | undefined;
     let indexLockPath: string | undefined;
     let reconciledIndex: GitTemporaryIndex | undefined;
     try {
-        const gitFeatures = await (input.gitFeatures ?? createGitExecutionFeatureDetector())();
+        const gitFeatures = await (input.gitFeatures ?? readGitExecutionFeatures)(cwd);
         let hooksDirectory: string | undefined;
         if (!gitFeatures.hookRun) {
-            if (process.platform === 'win32') return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_FAILED, 'This Git for Windows cannot run commit hooks'));
+            if (!fs.commandPaths && process.platform === 'win32') return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_FAILED, 'This Git for Windows cannot run commit hooks'));
             const root = await run(['rev-parse', '--show-toplevel']);
             if (!root.success) return decorate(failure(mapGitErrorCode(root.stderr), root.stderr));
             const hooks = await run(['-C', root.stdout.trim(), 'rev-parse', '--git-path', 'hooks']);
             if (!hooks.success) return decorate(failure(mapGitErrorCode(hooks.stderr), hooks.stderr));
-            hooksDirectory = resolve(root.stdout.trim(), hooks.stdout.trim());
+            const commandPath = (fs.commandPaths ? posix.resolve : resolve)(root.stdout.trim(), hooks.stdout.trim());
+            hooksDirectory = fs.commandPaths?.fromCommandPath(commandPath) ?? commandPath;
         }
         const runHook = async (hook: string, args: readonly string[], env: Record<string, string | undefined>, stdin?: string): Promise<ScmExecResult> => {
             if (gitFeatures.hookRun) {
                 const stdinFile = join(dirname(index.indexPath), 'post-rewrite-input');
-                if (stdin !== undefined) writeFileSync(stdinFile, stdin);
-                return run(['hook', 'run', '--ignore-missing', ...(stdin === undefined ? [] : [`--to-stdin=${stdinFile}`]), hook, '--', ...args], undefined, env);
+                if (stdin !== undefined) await fs.writeFile(stdinFile, Buffer.from(stdin));
+                return run(['hook', 'run', '--ignore-missing', ...(stdin === undefined ? [] : [`--to-stdin=${toCommandPath(stdinFile)}`]), hook, '--', ...args], undefined, env);
             }
             const hookPath = join(hooksDirectory!, hook);
-            try { accessSync(hookPath, constants.X_OK); }
+            try { await effects.accessExecutable(hookPath); }
             catch (error) {
                 const code = error instanceof Error && 'code' in error ? error.code : undefined;
                 if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EACCES') return { success: true, stdout: '', stderr: '', exitCode: 0 };
@@ -186,9 +191,9 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
             // Before `git hook run`, let Git's POSIX shell-alias executor exec the resolved
             // hook directly. Git supplies root cwd/GIT_PREFIX and argv quoting; the existing
             // command service still owns stdin, output, cancellation and process-tree cleanup.
-            const inheritedConfig = readScmEnvironment().GIT_CONFIG_PARAMETERS;
+            const inheritedConfig = fs.commandPaths ? undefined : readScmEnvironment().GIT_CONFIG_PARAMETERS;
             const launcher = '!f() { if test "$1" = set; then GIT_CONFIG_PARAMETERS=$2; export GIT_CONFIG_PARAMETERS; else unset GIT_CONFIG_PARAMETERS; fi; shift 2; exec "$@"; }; f';
-            return run(['-c', `alias.happier-commit-hook=${launcher}`, 'happier-commit-hook', inheritedConfig === undefined ? 'unset' : 'set', inheritedConfig ?? '', hookPath, ...args], stdin, env);
+            return run(['-c', `alias.happier-commit-hook=${launcher}`, 'happier-commit-hook', inheritedConfig === undefined ? 'unset' : 'set', inheritedConfig ?? '', toCommandPath(hookPath), ...args], stdin, env);
         };
         const author = await run(['var', 'GIT_AUTHOR_IDENT']);
         const committer = await run(['var', 'GIT_COMMITTER_IDENT']);
@@ -235,15 +240,16 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         stdout += preCommit.stdout; stderr += preCommit.stderr;
         if (!preCommit.success) hookName = 'pre-commit';
         if (!preCommit.success) return decorate(failure(getScmCommandIndeterminateErrorCode(preCommit) ?? SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_FAILED, preCommit.stderr || 'Pre-commit hook failed'));
-        writeFileSync(messageFile, input.message + '\n');
+        await fs.writeFile(messageFile, Buffer.from(input.message + '\n'));
+        const commandMessageFile = toCommandPath(messageFile);
         if (request.signOff) {
-            const trailer = await run(['interpret-trailers', '--in-place', '--if-exists=addIfDifferentNeighbor', '--if-missing=add', '--trailer', `Signed-off-by: ${committer.stdout.trim().replace(/> .*/, '>')}`, messageFile], undefined, hookEnv);
+            const trailer = await run(['interpret-trailers', '--in-place', '--if-exists=addIfDifferentNeighbor', '--if-missing=add', '--trailer', `Signed-off-by: ${committer.stdout.trim().replace(/> .*/, '>')}`, commandMessageFile], undefined, hookEnv);
             if (!trailer.success) return decorate(failure(mapGitErrorCode(trailer.stderr), trailer.stderr));
         }
         // The tree after each content-capable hook names the hook that expanded the selection.
         const treeAfter = async () => { const tree = await run(['write-tree']); return tree.success ? tree.stdout.trim() : null; };
         let expandedBy: string | undefined = (await treeAfter()) !== beforeTreeOid ? 'pre-commit' : undefined;
-        for (const [hook, args] of [['prepare-commit-msg', [messageFile, 'message']], ['commit-msg', [messageFile]]] as const) {
+        for (const [hook, args] of [['prepare-commit-msg', [commandMessageFile, 'message']], ['commit-msg', [commandMessageFile]]] as const) {
             const result = await runHook(hook, args, hookEnv);
             stdout += result.stdout; stderr += result.stderr;
             if (!result.success) hookName = hook;
@@ -266,7 +272,7 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         if (!cleanup.success && cleanup.exitCode !== 1) return decorate(failure(mapGitErrorCode(cleanup.stderr), cleanup.stderr));
         const mode = cleanup.success ? cleanup.stdout.trim() : 'whitespace';
         if (!['default', 'whitespace', 'strip', 'verbatim', 'scissors'].includes(mode)) return decorate(failure(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, 'Unsupported commit.cleanup configuration'));
-        let cleaned = readFileSync(messageFile, 'utf8');
+        let cleaned = Buffer.from(await fs.readFile(messageFile)).toString('utf8');
         if (mode !== 'verbatim') {
             const clean = await run(['stripspace', ...(mode === 'strip' ? ['--strip-comments'] : [])], cleaned, hookEnv);
             if (!clean.success) return decorate(failure(mapGitErrorCode(clean.stderr), clean.stderr));
@@ -283,7 +289,7 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         const committedAt = /([0-9]+) [+-][0-9]{4}$/.exec(identityEnv.GIT_COMMITTER_DATE ?? '')?.[1];
         if (committedAt !== undefined) committedAtMs = Number(committedAt) * 1000;
 
-        const indexPathResult = await resolveGitIndexPath({ cwd, runGit: (command) => runGitCommand({ ...command, args: [...command.args] }) });
+        const indexPathResult = await resolveGitIndexPath({ cwd, fromCommandPath: fs.commandPaths?.fromCommandPath, runGit: (command) => runGitCommand({ ...command, args: [...command.args] }) });
         if (!indexPathResult.success) return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, indexPathResult.error));
         const indexPath = indexPathResult.indexPath;
         const sharing = await run(['config', '--get', 'core.sharedRepository']);
@@ -307,18 +313,19 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
             }
         }
         indexLockPath = `${indexPath}.lock`;
-        try { lockFd = openSync(indexLockPath, 'wx'); }
+        try { lock = await effects.openExclusiveFile(indexLockPath); }
         catch (error) {
             indexLockPath = undefined;
             const code = error instanceof Error && 'code' in error ? error.code : undefined;
             return decorate(failure(code === 'EEXIST' ? SCM_OPERATION_ERROR_CODES.INDEX_LOCKED : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
                 error instanceof Error ? error.message : String(error)));
         }
+        let lockMode: number | undefined;
         if (sharedMode) {
-            const mode = fstatSync(lockFd).mode & 0o777;
+            const mode = lock.mode & 0o777;
             if (!(mode & 0o200)) sharedMode &= ~0o222;
             if (mode & 0o100) sharedMode |= (sharedMode & 0o444) >> 2;
-            fchmodSync(lockFd, replaceMode ? sharedMode : mode | sharedMode);
+            lockMode = replaceMode ? sharedMode : mode | sharedMode;
         }
         const current = await createGitTemporaryIndex({ cwd, seed: { kind: 'current-index' } });
         if (!current.success) return decorate(current);
@@ -326,8 +333,7 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         const reconciliation = await reconcileIndex({ cwd, target, candidateOid, candidateTree, expectedIndexTreeOid: request.expectedIndexTreeOid, index: reconciledIndex, identityEnv, gitFeatures });
         if (!reconciliation.success) return decorate(reconciliation.response);
         // Prepare the verified bytes before ref publication; the native index lock excludes terminal Git.
-        writeFileSync(lockFd, readFileSync(reconciledIndex.indexPath));
-        fsyncSync(lockFd);
+        await lock.writeFrom(reconciledIndex.indexPath, lockMode);
         let targetMatches: boolean | undefined;
         const publication = await runGitCommand({ cwd, args: ['update-ref', '-m', `commit${request.mode === 'amend' ? ' (amend)' : target.headOid ? '' : ' (initial)'}: ${actualMessage.split('\n')[0]}`, '--stdin'],
             env: hookEnv,
@@ -372,10 +378,10 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
             if (await readGitStateFile(context, file.name, 'raw') !== file.content) throw new Error(`Git ${file.name} changed after publication; refresh operation state`);
             const statePath = await resolveGitStatePath(context, file.name);
             if (!statePath) throw new Error(`Could not resolve Git ${file.name} after publication`);
-            unlinkSync(statePath);
+            await fs.unlink(statePath);
         }
-        closeSync(lockFd); lockFd = undefined;
-        try { renameSync(indexLockPath!, indexPath); indexLockPath = undefined; indexReconciliation = 'reconciled'; indexTreeOid = reconciliation.treeOid; }
+        await lock.close(); lock = undefined;
+        try { await fs.rename(indexLockPath!, indexPath); indexLockPath = undefined; indexReconciliation = 'reconciled'; indexTreeOid = reconciliation.treeOid; }
         catch (error) {
             indexReconciliation = 'failed';
             return decorate({ ...failure(SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, `Commit was created, but index reconciliation failed: ${error instanceof Error ? error.message : String(error)}`),
@@ -406,8 +412,8 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         return decorate(response);
     } finally {
         const cleanupErrors: string[] = [];
-        for (const cleanup of [() => { if (lockFd !== undefined) closeSync(lockFd); }, () => { if (indexLockPath) unlinkSync(indexLockPath); }, () => reconciledIndex?.cleanup()]) {
-            try { cleanup(); } catch (error) { cleanupErrors.push(error instanceof Error ? error.message : String(error)); }
+        for (const cleanup of [() => lock?.close(), () => indexLockPath ? fs.unlink(indexLockPath) : undefined, () => reconciledIndex?.cleanup()]) {
+            try { await cleanup(); } catch (error) { cleanupErrors.push(error instanceof Error ? error.message : String(error)); }
         }
         if (cleanupErrors.length && responseForCleanup) {
             responseForCleanup.success = false;

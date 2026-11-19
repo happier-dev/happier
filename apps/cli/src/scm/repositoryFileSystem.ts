@@ -9,6 +9,11 @@ export function createScmRepositoryFileSystem(): NonNullable<BackendRuntimeServi
     return {
         lstat: path => source.lstat(path),
         realpath: path => source.realpath(path),
+        stat: path => source.stat(path),
+        readFile: path => source.readFile(path),
+        writeFile: (path, contents) => source.writeFile(path, contents),
+        ...(source.commandPaths ? { commandPaths: source.commandPaths } : {}),
+        ...(source.filePublication ? { filePublication: source.filePublication } : {}),
         rm: (path, options) => source.rm(path, options),
         ...(source.kind === 'local' ? { openDirectory: (path: string) => open(path, 'r') } : {}),
         mkdir: (path, options) => source.mkdir(path, options),

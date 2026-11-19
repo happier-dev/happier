@@ -112,7 +112,7 @@ async function evaluateAmendAdmission(context: ScmBackendContext, acknowledged: 
 export async function gitCommitCreate(input: {
     context: ScmBackendContext;
     request: ScmCommitCreateRequest;
-    gitFeatures?: () => Promise<GitExecutionFeatures>;
+    gitFeatures?: (cwd: string) => Promise<GitExecutionFeatures>;
 }): Promise<ScmCommitCreateResponse> {
     const { context, request } = input;
     if (request.preparedTreeOid !== undefined && (request.preparedTreeOid !== request.expectedCandidateTreeOid || request.scope !== undefined || request.patches !== undefined || !normalizeCommitRef(request.preparedTreeOid).ok)) {
@@ -336,7 +336,7 @@ export async function gitCommitCreate(input: {
         commitResponse = withPublication(await prepareAndPublish());
         return commitResponse;
     } finally {
-        try { temporaryIndex.cleanup(); } catch (error) {
+        try { await temporaryIndex.cleanup(); } catch (error) {
             const cleanupError = error instanceof Error ? error.message : String(error);
             if (commitResponse) {
                 commitResponse.success = false;

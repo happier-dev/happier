@@ -1,4 +1,5 @@
 import { createGitTemporaryIndex, type GitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 import { runScmCommand, type ScmExecResult } from '../runtime';
 import type { RepositoryCheckpointAvailabilityReason } from './types';
@@ -56,6 +57,14 @@ export function classifyGitCheckpointCommandFailure(
 /** Prepended to every command that writes a checkpoint temporary index (see `expandSplitIndex`). */
 export const GIT_CHECKPOINT_TEMPORARY_INDEX_ARGS = ['-c', 'core.splitIndex=false'] as const;
 
+export async function createScmTemporaryIndex(input: Pick<Parameters<typeof createGitTemporaryIndex>[0], 'cwd' | 'seed' | 'indexPath'>): ReturnType<typeof createGitTemporaryIndex> {
+    const source = currentWorkspaceSource();
+    if (!source.filePublication) return { success: false, error: 'SCM workspace file publication is unavailable' };
+    return createGitTemporaryIndex({ ...input, runGit: runGitCheckpointCommand,
+        fromCommandPath: source.commandPaths?.fromCommandPath,
+        fileSystem: { ...source.filePublication, unlink: path => source.rm(path) } });
+}
+
 export async function createGitCheckpointTemporaryIndex(input: {
     cwd: string;
     indexPath?: string;
@@ -63,11 +72,10 @@ export async function createGitCheckpointTemporaryIndex(input: {
     | { success: true; tempIndex: GitCheckpointTemporaryIndex }
     | { success: false; reason: GitCheckpointCommandFailure['reason']; error: string }
 > {
-    const result = await createGitTemporaryIndex({
+    const result = await createScmTemporaryIndex({
         cwd: input.cwd,
         seed: { kind: 'current-index', expandSplitIndex: false },
         ...(input.indexPath ? { indexPath: input.indexPath } : {}),
-        runGit: runGitCheckpointCommand,
     });
     if (result.success) return result;
     const failure = result.commandResult

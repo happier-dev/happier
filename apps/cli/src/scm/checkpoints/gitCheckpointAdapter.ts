@@ -20,6 +20,7 @@ import { rejectUnauthorizedScmInstallableCommand } from '../commandAuthorization
 import { runScmCommand as runHostScmCommand, runWithScmCommandRunner, ScmExecUnavailableError, type ScmCommandRunner } from '../runtime';
 import type { ScmBackendContext } from '../types';
 import type { GitCheckpointBackendContext } from './types';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices {
     return {
@@ -81,6 +82,10 @@ export async function resolveGitCheckpointBackendContext(input: Readonly<{
         ? detectedRoot.stdout.split(/\r?\n/).map(line => line.trim()) : [];
     if (!detectedRoot.success && detectedRoot.stderr.trim() === 'scm_exec_unavailable') throw new ScmExecUnavailableError();
     if (!repoRoot) return null;
+    const paths = currentWorkspaceSource().commandPaths;
+    const addressedPath = (path: string) => isAbsolute(path)
+        ? paths?.fromCommandPath(path) ?? path
+        : resolve(input.cwd, path);
 
     return {
         cwd: input.cwd,
@@ -88,13 +93,13 @@ export async function resolveGitCheckpointBackendContext(input: Readonly<{
         projectKey: `${resolve(input.workingDirectory ?? input.cwd)}:${input.cwd}`,
         detection: {
             isRepo: true,
-            rootPath: repoRoot,
+            rootPath: addressedPath(repoRoot),
             mode: '.git',
         },
         // `--git-path` prints paths relative to the command's working directory.
         ...(indexPath && evidencePath ? { checkpointGitPaths: {
-            index: isAbsolute(indexPath) ? indexPath : resolve(input.cwd, indexPath),
-            checkpointEvidence: isAbsolute(evidencePath) ? evidencePath : resolve(input.cwd, evidencePath),
+            index: addressedPath(indexPath),
+            checkpointEvidence: addressedPath(evidencePath),
         } } : {}),
     };
 }

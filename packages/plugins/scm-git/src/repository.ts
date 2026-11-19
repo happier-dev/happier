@@ -1,4 +1,4 @@
-import { readUntrackedFileStats } from '@happier-dev/plugin-sdk/scm/backend';
+import { readCurrentBackendRuntimeServices, readUntrackedFileStats } from '@happier-dev/plugin-sdk/scm/backend';
 import type { ScmRepoDetection, ScmBackendContext } from './types.js';
 import type {
   ScmStatusSnapshotRequest,
@@ -13,7 +13,6 @@ import { buildGitSnapshot } from './statusSnapshot.js';
 import { inspectGitCheckoutIdentity, resolveGitMainWorktreePath } from './checkoutIdentity.js';
 import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
 import { realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { readGitBranchOperationState } from './operations/branchOperationState.js';
 import { parseGitStatusPorcelainV2Z } from './statusParser.js';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser.js';
@@ -24,17 +23,28 @@ const NOT_A_REPOSITORY: ScmRepoDetection = { isRepo: false, rootPath: null, mode
 
 export type GitExecutionFeatures = Readonly<{ hookRun: boolean; stagedIntentMerge: boolean }>;
 
-/** One executable-version observation per backend occurrence, shared by its commit callers. */
-export function createGitExecutionFeatureDetector(): () => Promise<GitExecutionFeatures> {
-    let pending: Promise<GitExecutionFeatures> | undefined;
-    return () => pending ??= (async () => {
-        const result = await runScmCommand({ bin: 'git', cwd: tmpdir(), args: ['--version'] });
-        const version = result.success ? /^git version (\d+)\.(\d+)(?:\.|\s|$)/.exec(result.stdout.trim()) : null;
-        if (!version) throw detectionUnavailable(result.stderr || 'Could not determine the Git executable version');
-        const major = Number(version[1]);
-        const minor = Number(version[2]);
-        return { hookRun: major > 2 || (major === 2 && minor >= 36), stagedIntentMerge: major > 2 || (major === 2 && minor >= 40) };
-    })();
+/** Observe the Git version once per backend and admitted command source. */
+export function createGitExecutionFeatureDetector(): (cwd: string) => Promise<GitExecutionFeatures> {
+    const localCommandSource = {};
+    const pending = new WeakMap<object, Promise<GitExecutionFeatures>>();
+    return (cwd) => {
+        const commandSource = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths ?? localCommandSource;
+        const cached = pending.get(commandSource);
+        if (cached) return cached;
+        const probe = readGitExecutionFeatures(cwd);
+        pending.set(commandSource, probe);
+        return probe;
+    };
+}
+
+/** Interpret the Git version from the same command source as this commit. */
+export async function readGitExecutionFeatures(cwd: string): Promise<GitExecutionFeatures> {
+    const result = await runScmCommand({ bin: 'git', cwd, args: ['--version'] });
+    const version = result.success ? /^git version (\d+)\.(\d+)(?:\.|\s|$)/.exec(result.stdout.trim()) : null;
+    if (!version) throw detectionUnavailable(result.stderr || 'Could not determine the Git executable version');
+    const major = Number(version[1]);
+    const minor = Number(version[2]);
+    return { hookRun: major > 2 || (major === 2 && minor >= 36), stagedIntentMerge: major > 2 || (major === 2 && minor >= 40) };
 }
 
 /**
@@ -54,7 +64,8 @@ function detectionUnavailable(detail: string): Error {
 }
 
 export async function detectGitRepo(input: { cwd: string; includeRetainedWorktrees?: boolean }): Promise<ScmRepoDetection> {
-    if (input.includeRetainedWorktrees) {
+    const paths = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths;
+    if (input.includeRetainedWorktrees && !paths) {
         const rootPath = await resolveGitRetainedWorktreeRepository(input.cwd);
         if (rootPath) return { isRepo: true, rootPath, mode: '.git' };
     }
@@ -95,13 +106,13 @@ export async function detectGitRepo(input: { cwd: string; includeRetainedWorktre
         throw detectionUnavailable(diagnostic || 'the repository probe was refused');
     }
 
+    // Bare repositories answer false before --show-toplevel fails.
+    const discoveredRoot = gitRepoCheck.success && discoveryAnswer
+        ? gitRepoCheck.stdout.slice(discoveryAnswer[0].length).trim()
+        : '';
     return {
         isRepo: true,
-        // Bare repositories answer false before --show-toplevel fails. Preserve their
-        // existing repository detection without inventing a worktree root.
-        rootPath: gitRepoCheck.success && discoveryAnswer
-            ? gitRepoCheck.stdout.slice(discoveryAnswer[0].length).trim() || null
-            : null,
+        rootPath: discoveredRoot ? paths?.fromCommandPath(discoveredRoot) ?? discoveredRoot : null,
         mode: '.git',
     };
 }

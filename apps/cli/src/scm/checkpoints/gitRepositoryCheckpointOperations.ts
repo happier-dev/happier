@@ -177,7 +177,7 @@ async function captureCheckpoint(input: RepositoryCheckpointCaptureRequest): Pro
             ],
         };
     } finally {
-        temporaryIndex.tempIndex.cleanup();
+        await temporaryIndex.tempIndex.cleanup();
     }
 }
 

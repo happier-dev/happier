@@ -1,4 +1,5 @@
-import { constants, copyFileSync, statSync, unlinkSync, utimesSync } from 'node:fs';
+import { constants } from 'node:fs';
+import { copyFile, stat, unlink, utimes } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -33,8 +34,24 @@ export type GitTemporaryIndexSeed =
 export type GitTemporaryIndex = Readonly<{
     indexPath: string;
     env: Record<string, string>;
-    cleanup: () => void;
+    cleanup: () => Promise<void>;
 }>;
+
+export type GitTemporaryIndexFileSystem = Readonly<{
+    copyFileExclusive(from: string, to: string): Promise<Readonly<{ atime: Date; mtime: Date }>>;
+    setFileTimes(path: string, atime: Date, mtime: Date): Promise<void>;
+    unlink(path: string): Promise<void>;
+}>;
+
+const localIndexFileSystem: GitTemporaryIndexFileSystem = {
+    async copyFileExclusive(from, to) {
+        const { atime, mtime } = await stat(from);
+        await copyFile(from, to, constants.COPYFILE_EXCL);
+        return { atime, mtime };
+    },
+    setFileTimes: utimes,
+    unlink,
+};
 
 export type GitTemporaryIndexFailure = Readonly<{
     success: false;
@@ -45,13 +62,14 @@ export type GitTemporaryIndexFailure = Readonly<{
 export async function resolveGitIndexPath(input: Readonly<{
     cwd: string;
     runGit: GitTemporaryIndexCommandAdapter;
+    fromCommandPath?: (path: string) => string;
 }>): Promise<Readonly<{ success: true; indexPath: string }> | GitTemporaryIndexFailure> {
     const result = await input.runGit({ cwd: input.cwd, args: ['rev-parse', '--git-path', 'index'] });
     const rawPath = result.stdout.trim();
     if (!result.success || !rawPath) {
         return { success: false, error: result.stderr || 'Failed to resolve repository index path', commandResult: result };
     }
-    return { success: true, indexPath: isAbsolute(rawPath) ? rawPath : resolve(input.cwd, rawPath) };
+    return { success: true, indexPath: isAbsolute(rawPath) ? input.fromCommandPath?.(rawPath) ?? rawPath : resolve(input.cwd, rawPath) };
 }
 
 export async function createGitTemporaryIndex(input: Readonly<{
@@ -60,6 +78,8 @@ export async function createGitTemporaryIndex(input: Readonly<{
     seed: GitTemporaryIndexSeed;
     /** The repository index path the caller already resolved (`rev-parse --git-path index`). */
     indexPath?: string;
+    fromCommandPath?: (path: string) => string;
+    fileSystem?: GitTemporaryIndexFileSystem;
 }>): Promise<Readonly<{ success: true; tempIndex: GitTemporaryIndex }> | GitTemporaryIndexFailure> {
     const sourceIndex = input.indexPath
         ? { success: true as const, indexPath: input.indexPath }
@@ -69,9 +89,10 @@ export async function createGitTemporaryIndex(input: Readonly<{
     // same admitted checkout permissions, rather than a daemon-private home.
     const indexPath = join(dirname(sourceIndex.indexPath), `happier-index-${randomUUID()}`);
     const env = { GIT_INDEX_FILE: indexPath };
-    const cleanup = () => {
+    const fileSystem = input.fileSystem ?? localIndexFileSystem;
+    const cleanup = async () => {
         for (const ownedPath of [indexPath, `${indexPath}.lock`]) {
-            try { unlinkSync(ownedPath); }
+            try { await fileSystem.unlink(ownedPath); }
             catch (error) {
                 if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
             }
@@ -83,14 +104,13 @@ export async function createGitTemporaryIndex(input: Readonly<{
         if (input.seed.kind === 'current-index') {
             let sourceIndexTimes: { atime: Date; mtime: Date } | undefined;
             try {
-                sourceIndexTimes = statSync(sourceIndex.indexPath);
-                copyFileSync(sourceIndex.indexPath, indexPath, constants.COPYFILE_EXCL);
+                sourceIndexTimes = await fileSystem.copyFileExclusive(sourceIndex.indexPath, indexPath);
             } catch (error) {
                 if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
                 initializeEmpty = true;
             }
             if (!initializeEmpty && sourceIndexTimes && input.seed.kind === 'current-index' && input.seed.expandSplitIndex === false) {
-                utimesSync(indexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime);
+                await fileSystem.setFileTimes(indexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime);
             } else if (!initializeEmpty && sourceIndexTimes) {
                 // A snapshot must not depend on a shared-index file Git can retire.
                 const result = await input.runGit({ cwd: input.cwd, args: ['update-index', '--no-split-index'], env });
@@ -99,7 +119,7 @@ export async function createGitTemporaryIndex(input: Readonly<{
                 }
                 // Git uses the index timestamp to detect racy-clean entries.
                 // Copying and expanding it must not make same-stat edits look clean.
-                utimesSync(indexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime);
+                await fileSystem.setFileTimes(indexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime);
             }
         }
         if (input.seed.kind === 'tree' || initializeEmpty) {
@@ -117,6 +137,6 @@ export async function createGitTemporaryIndex(input: Readonly<{
     } catch (error) {
         return { success: false, error: error instanceof Error ? error.message : String(error) };
     } finally {
-        if (!retained) cleanup();
+        if (!retained) await cleanup();
     }
 }

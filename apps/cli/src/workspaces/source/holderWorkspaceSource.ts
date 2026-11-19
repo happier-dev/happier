@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { readFile as readHostFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
@@ -17,7 +18,7 @@ import {
 
 import type { WorkspaceChildProcess, WorkspaceDirent, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from './workspaceSource';
 import { runWithWorkspaceSource } from './workspaceSource';
-import { holderWorkspaceRelativePath, resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
+import { holderWorkspaceRelativePath, mapHolderWorkspacePath, resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
 
 export { resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
 
@@ -36,7 +37,7 @@ export async function runWithHolderWorkspaceSource<T>(input: Readonly<{
   } finally { holder.detach(); channel.destroy(); }
 }
 
-type TargetEntry = Readonly<{ kind: string; size: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
+type TargetEntry = Readonly<{ kind: string; size: number; atimeMs: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
 type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly Readonly<{ name: string; kind: string }>[];
   target?: string; path?: string; sha256?: string; code?: string; message?: string }>;
 
@@ -116,11 +117,12 @@ export function createHolderWorkspaceSource(input: Readonly<{
       if (content?.byteLength) child.stdin.write(Buffer.from(content));
       child.stdin.end();
     });
-  const meta = async (target: string, op: 'lstat' | 'stat' | 'list' | 'readlink' | 'realpath') => {
+  const meta = async (target: string, op: 'lstat' | 'stat' | 'list' | 'readlink' | 'realpath' | 'access-executable') => {
     const result = await runHelper('workspace-confined-meta', { relativePath: relative(target), op });
     if (result.status === 'missing') throw errno('ENOENT', `No such file or directory: ${target}`);
     if (result.status === 'error') {
       throw result.code === 'not_directory' ? errno('ENOTDIR', result.message ?? 'Not a directory')
+        : result.code === 'EACCES' ? errno('EACCES', result.message ?? 'Permission denied')
         : result.code === 'not_link' ? errno('EINVAL', result.message ?? 'Not a link')
           : result.code === 'symlink_loop' ? errno('ELOOP', result.message ?? 'Too many links')
             : new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
@@ -135,8 +137,47 @@ export function createHolderWorkspaceSource(input: Readonly<{
     }
     return result;
   };
+  const openExclusiveFile = async (target: string) => {
+    const relativePath = relative(target);
+    const child = holder().spawnStream({ argv: [input.helperPath, 'workspace-confined-write'] });
+    const lines = createInterface({ input: child.stdout });
+    const records = lines[Symbol.asyncIterator]();
+    let transportError: Error | undefined;
+    const failed = (error: Error) => { transportError = error; lines.close(); };
+    child.once('error', failed);
+    child.stdin.on('error', failed);
+    const terminated = new Promise<number | null>(resolve => child.once('close', resolve));
+    const next = async () => {
+      const result = await records.next();
+      if (result.done) throw transportError ?? errno('io_failed', 'Target helper returned no result');
+      const record = JSON.parse(result.value) as TargetResult;
+      if (record.status === 'exists') throw errno('EEXIST', `File exists: ${target}`);
+      if (record.status === 'error') throw new PluginError({ code: record.code ?? 'workspace_root_unsafe',
+        message: record.message ?? 'Refused', retryable: false });
+      return record;
+    };
+    child.stdin.write(`${JSON.stringify({ v: 1, rootPath: guestRoot, op: 'open-exclusive', relativePath })}\n`);
+    try {
+      const opened = await next();
+      if (opened.status !== 'opened' || !opened.entry) throw errno('io_failed', 'Target helper did not open the file');
+      let settled: Promise<void> | undefined;
+      const finish = (record?: Readonly<{ relativePath: string; mode?: number }>) => settled ??= (async () => {
+        child.stdin.end(record ? `${JSON.stringify(record)}\n` : undefined);
+        if ((await next()).status !== 'done' || await terminated !== 0) throw errno('io_failed', 'Target helper did not finish the exclusive file');
+      })().finally(() => lines.close());
+      return {
+        mode: opened.entry.mode,
+        writeFrom: (sourcePath: string, mode?: number) => finish({ relativePath: relative(sourcePath), mode }),
+        close: () => settled ? settled.catch(() => undefined) : finish(),
+      };
+    } catch (error) {
+      child.stdin.end();
+      lines.close();
+      throw error;
+    }
+  };
   const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
-    const child = holder().spawnStream(resolveHolderWorkspaceCommand(root, request));
+    const child = holder().spawnStream(resolveHolderWorkspaceCommand(root, request, guestRoot));
     if (request.stdoutFd !== undefined) child.stdout.pipe(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
     return child as unknown as WorkspaceChildProcess;
   };
@@ -183,6 +224,24 @@ export function createHolderWorkspaceSource(input: Readonly<{
     nativeHelperPath: input.helperPath,
     kind: 'target' as const,
     id: input.id,
+    commandPaths: {
+      toCommandPath: target => mapHolderWorkspacePath(root, guestRoot, target),
+      fromCommandPath: target => mapHolderWorkspacePath(guestRoot, root, target),
+    },
+    filePublication: {
+      async copyFileExclusive(from, to) {
+        const result = await write({ op: 'copy-exclusive', relativePath: relative(from), toRelativePath: relative(to) });
+        if (result.status === 'missing') throw errno('ENOENT', `No such file: ${from}`);
+        if (result.status === 'exists') throw errno('EEXIST', `File exists: ${to}`);
+        if (result.status !== 'done' || !result.entry) throw errno('io_failed', 'Target helper did not copy the file');
+        return { atime: new Date(result.entry.atimeMs), mtime: new Date(result.entry.mtimeMs) };
+      },
+      async setFileTimes(target, atime, mtime) {
+        await write({ op: 'set-times', relativePath: relative(target), atimeMs: atime.getTime(), mtimeMs: mtime.getTime() });
+      },
+      async accessExecutable(target) { await meta(target, 'access-executable'); },
+      openExclusiveFile,
+    },
     stat: async target => entryStats((await meta(target, 'stat')).entry!),
     lstat: async target => entryStats((await meta(target, 'lstat')).entry!),
     // The native JSON codec omits an empty entries slice.

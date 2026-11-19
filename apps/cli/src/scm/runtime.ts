@@ -398,6 +398,9 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
         let interactionResponded = false;
         let interactionError = '';
         let pendingStdoutLine = '';
+        // Holder output is delivered by a shared channel. The prepared transaction's
+        // response still belongs to the backend and workspace that launched it.
+        const respondToInteraction = input.stdinInteraction && AsyncLocalStorage.bind(input.stdinInteraction.respond);
         const timeoutMs = input.timeoutMs;
         const maxOutputBytes = resolveScmMaxOutputBytes(input.maxOutputBytes);
 
@@ -519,7 +522,7 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
 
         const observeInteraction = (chunk: Buffer) => {
             const interaction = input.stdinInteraction;
-            if (!interaction || interactionStarted || resolved || stoppedEarly || aborted || timedOut || outputLimitExceeded) return;
+            if (!interaction || !respondToInteraction || interactionStarted || resolved || stoppedEarly || aborted || timedOut || outputLimitExceeded) return;
             pendingStdoutLine += chunk.toString();
             let newline: number;
             while ((newline = pendingStdoutLine.indexOf('\n')) >= 0) {
@@ -529,7 +532,7 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
                 interactionStarted = true;
                 void Promise.resolve().then(() => {
                     if (resolved || closedResult || aborted || timedOut || outputLimitExceeded) return;
-                    return interaction.respond();
+                    return respondToInteraction();
                 }).then((response) => {
                     if (response === undefined || resolved || closedResult || aborted || timedOut || outputLimitExceeded) return;
                     interactionResponded = true;

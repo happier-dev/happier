@@ -33,7 +33,7 @@ describe('commit temporary index seed', () => {
             try {
                 expect(git(['write-tree'], result.tempIndex.env)).toBe(treeOid);
             } finally {
-                result.tempIndex.cleanup();
+                await result.tempIndex.cleanup();
             }
         } finally {
             rmSync(cwd, { recursive: true, force: true });

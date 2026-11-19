@@ -10,6 +10,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import { applyValidatedGitPatch } from './applyValidatedGitPatch.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 
 export type GitCommandOptions = {
     cwd: string;
@@ -41,7 +42,11 @@ export async function createGitTemporaryIndex(input: {
     | { success: true; tempIndex: GitTemporaryIndex }
     | { success: false; errorCode: 'COMMAND_FAILED'; error: string }
 > {
+    const fileSystem = readRepositoryFileSystem();
+    if (!fileSystem.filePublication) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: 'SCM workspace file publication is unavailable' };
     const result = await createSharedGitTemporaryIndex({
+        fileSystem: { ...fileSystem.filePublication, unlink: fileSystem.unlink },
+        fromCommandPath: fileSystem.commandPaths?.fromCommandPath,
         cwd: input.cwd,
         seed: input.seed,
         runGit: (command) => runGitCommand({ ...command, args: [...command.args], timeoutMs: 5000 }),

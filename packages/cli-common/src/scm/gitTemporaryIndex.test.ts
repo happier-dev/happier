@@ -9,13 +9,13 @@ import { createGitTemporaryIndex, resolveGitIndexPath, type GitTemporaryIndexCom
 
 const cleanupBoundary = vi.hoisted(() => ({ fail: false }));
 // Filesystem removal failure is an OS boundary; all Git/index mechanics stay real.
-vi.mock('node:fs', async (importOriginal) => {
-    const fs = await importOriginal<typeof import('node:fs')>();
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const fs = await importOriginal<typeof import('node:fs/promises')>();
     return {
         ...fs,
-        unlinkSync: (...args: Parameters<typeof fs.unlinkSync>) => {
+        unlink: async (...args: Parameters<typeof fs.unlink>) => {
             if (cleanupBoundary.fail) throw new Error('OS denied private-index cleanup');
-            return fs.unlinkSync(...args);
+            return fs.unlink(...args);
         },
     };
 });
@@ -63,11 +63,11 @@ describe('Git private index mechanics', () => {
                 if (seed.kind === 'tree') expect(await git(cwd, ['write-tree'], result.tempIndex.env)).toBe(treeOid);
                 expect(readFileSync(join(cwd, '.git', 'index'))).toEqual(before);
             } finally {
-                result.tempIndex.cleanup();
+                await result.tempIndex.cleanup();
             }
             expect(existsSync(result.tempIndex.indexPath)).toBe(false);
             expect(existsSync(directory)).toBe(true);
-            result.tempIndex.cleanup();
+            await result.tempIndex.cleanup();
         }
     }));
 
@@ -75,7 +75,7 @@ describe('Git private index mechanics', () => {
         const empty = await createGitTemporaryIndex({ cwd, runGit, seed: { kind: 'current-index' } });
         if (!empty.success) throw new Error(empty.error);
         try { expect(await git(cwd, ['ls-files'], empty.tempIndex.env)).toBe(''); }
-        finally { empty.tempIndex.cleanup(); }
+        finally { await empty.tempIndex.cleanup(); }
         writeFileSync(join(cwd, 'file.txt'), 'staged\n');
         await git(cwd, ['add', '.']);
         if (split) await git(cwd, ['update-index', '--split-index']);
@@ -97,7 +97,7 @@ describe('Git private index mechanics', () => {
             writeFileSync(join(cwd, 'file.txt'), 'later\n');
             await git(cwd, ['add', '.']);
             expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('staged');
-        } finally { result.tempIndex.cleanup(); }
+        } finally { await result.tempIndex.cleanup(); }
     }));
 
     it.each([false, true])('captures same-stat edits after copying a racy current index (split=%s)', async split => withRepo(async cwd => {
@@ -122,7 +122,7 @@ describe('Git private index mechanics', () => {
             await git(cwd, ['add', '-A', '--', '.'], result.tempIndex.env);
             expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('New');
             expect(readFileSync(liveIndexPath)).toEqual(before);
-        } finally { result.tempIndex.cleanup(); }
+        } finally { await result.tempIndex.cleanup(); }
     }));
 
     it('resolves and copies the linked worktree index rather than the main index', async () => withRepo(async (cwd) => {
@@ -140,7 +140,7 @@ describe('Git private index mechanics', () => {
         const result = await createGitTemporaryIndex({ cwd: linked, runGit, seed: { kind: 'current-index' } });
         if (!result.success) throw new Error(result.error);
         try { expect(await git(linked, ['show', ':file.txt'], result.tempIndex.env)).toBe('linked staged'); }
-        finally { result.tempIndex.cleanup(); }
+        finally { await result.tempIndex.cleanup(); }
     }));
 
     it('keeps an isolated command index beside the canonical checkout index without changing live staged content', async () => withRepo(async (cwd) => {
@@ -158,7 +158,7 @@ describe('Git private index mechanics', () => {
             await git(cwd, ['add', '.'], result.tempIndex.env);
             expect(await git(cwd, ['show', ':file.txt'], result.tempIndex.env)).toBe('isolated checkpoint');
             expect(readFileSync(liveIndexPath)).toEqual(before);
-        } finally { result.tempIndex.cleanup(); }
+        } finally { await result.tempIndex.cleanup(); }
         expect(existsSync(result.tempIndex.indexPath)).toBe(false);
         expect(existsSync(liveIndexPath)).toBe(true);
     }));
@@ -182,11 +182,11 @@ describe('Git private index mechanics', () => {
         if (!result.success) throw new Error(result.error);
         try {
             cleanupBoundary.fail = true;
-            expect(() => result.tempIndex.cleanup()).toThrow('OS denied private-index cleanup');
+            await expect(result.tempIndex.cleanup()).rejects.toThrow('OS denied private-index cleanup');
             expect(existsSync(result.tempIndex.indexPath)).toBe(true);
         } finally {
             cleanupBoundary.fail = false;
-            result.tempIndex.cleanup();
+            await result.tempIndex.cleanup();
         }
         expect(existsSync(result.tempIndex.indexPath)).toBe(false);
         expect(existsSync(dirname(result.tempIndex.indexPath))).toBe(true);

@@ -120,7 +120,7 @@ export async function createGitRollbackBackup(input: Readonly<{
             receipts: [CHECKPOINT_ROLLBACK_RECEIPT_IDS.backupCaptured],
         };
     } finally {
-        temporaryIndex.tempIndex.cleanup();
+        await temporaryIndex.tempIndex.cleanup();
     }
 }
 
@@ -284,7 +284,7 @@ async function compareCurrentWorktreeToExpectedFinal(input: Readonly<{
 
         return { success: true, diverged: currentTreeSha !== expectedTreeSha };
     } finally {
-        temporaryIndex.tempIndex.cleanup();
+        await temporaryIndex.tempIndex.cleanup();
     }
 }
 

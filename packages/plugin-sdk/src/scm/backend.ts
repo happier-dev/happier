@@ -788,6 +788,21 @@ export type BackendRuntimeServices = Readonly<{
         lstat(path: string): Promise<Readonly<{ dev: number; ino: number; birthtimeMs?: number;
             isDirectory(): boolean; isSymbolicLink(): boolean }>>;
         realpath(path: string): Promise<string>;
+        readFile(path: string): Promise<Uint8Array>;
+        writeFile(path: string, contents: Uint8Array): Promise<void>;
+        stat(path: string): Promise<Readonly<{ isDirectory(): boolean }>>;
+        commandPaths?: Readonly<{ toCommandPath(path: string): string; fromCommandPath(path: string): string }>;
+        /** Exclusive files, durable writes, and metadata stay in the same workspace as commands. */
+        filePublication?: Readonly<{
+            copyFileExclusive(from: string, to: string): Promise<Readonly<{ atime: Date; mtime: Date }>>;
+            setFileTimes(path: string, atime: Date, mtime: Date): Promise<void>;
+            accessExecutable(path: string): Promise<void>;
+            openExclusiveFile(path: string): Promise<Readonly<{
+                mode: number;
+                writeFrom(sourcePath: string, mode?: number): Promise<void>;
+                close(): Promise<void>;
+            }>>;
+        }>;
         mkdir(path: string, options?: Readonly<{ recursive?: boolean; mode?: number }>): Promise<unknown>;
         mkdtemp(prefix: string): Promise<string>;
         rm(path: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>): Promise<void>;

@@ -32,6 +32,7 @@ import (
 type workspaceTargetEntry struct {
 	Kind    string  `json:"kind"`
 	Size    uint64  `json:"size"`
+	AtimeMs float64 `json:"atimeMs"`
 	MtimeMs float64 `json:"mtimeMs"`
 	CtimeMs float64 `json:"ctimeMs"`
 	Mode    uint32  `json:"mode"`
@@ -80,6 +81,8 @@ type workspaceTargetWriteRequest struct {
 	mode           uint32
 	expect         string
 	recursive      bool
+	atimeMs        int64
+	mtimeMs        int64
 }
 
 var workspaceTargetSha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -103,7 +106,7 @@ func decodeWorkspaceTargetMetaRequest(encoded []byte) (workspaceTargetMetaReques
 		return request, err
 	}
 	switch request.op {
-	case "lstat", "stat", "list", "readlink", "realpath":
+	case "lstat", "stat", "list", "readlink", "realpath", "access-executable":
 		return request, nil
 	}
 	return request, fmt.Errorf("unknown op")
@@ -111,7 +114,7 @@ func decodeWorkspaceTargetMetaRequest(encoded []byte) (workspaceTargetMetaReques
 
 func decodeWorkspaceTargetWriteRequest(encoded []byte) (workspaceTargetWriteRequest, error) {
 	fields, err := decodeClosedWorkspaceConfinedObject(encoded, map[string]bool{"v": true, "rootPath": true, "relativePath": true, "op": true,
-		"toRelativePath": true, "sizeBytes": true, "mode": true, "expect": true, "recursive": true})
+		"toRelativePath": true, "sizeBytes": true, "mode": true, "expect": true, "recursive": true, "atimeMs": true, "mtimeMs": true})
 	if err != nil {
 		return workspaceTargetWriteRequest{}, err
 	}
@@ -149,11 +152,15 @@ func decodeWorkspaceTargetWriteRequest(encoded []byte) (workspaceTargetWriteRequ
 		if raw, ok := fields["recursive"]; ok && json.Unmarshal(raw, &request.recursive) != nil {
 			return request, fmt.Errorf("invalid recursive")
 		}
-	case "rename":
+	case "rename", "copy-exclusive":
 		if request.toRelativePath, err = decodeRequiredString(fields, "toRelativePath"); err != nil {
 			return request, err
 		}
-	case "rmdir":
+	case "set-times":
+		if json.Unmarshal(fields["atimeMs"], &request.atimeMs) != nil || json.Unmarshal(fields["mtimeMs"], &request.mtimeMs) != nil {
+			return request, fmt.Errorf("invalid timestamps")
+		}
+	case "rmdir", "open-exclusive":
 	default:
 		return request, fmt.Errorf("unknown op")
 	}
@@ -187,6 +194,9 @@ func workspaceConfinedWriteCommand(args []string, input io.Reader, output io.Wri
 	request, err := decodeWorkspaceTargetWriteRequest(line)
 	if err != nil {
 		return writeWorkspaceConfinedRecord(output, workspaceTargetError("workspace_root_unsafe", "invalid workspace-confined-write request"))
+	}
+	if request.op == "open-exclusive" {
+		return openExclusiveWorkspaceTargetFile(request, reader, output)
 	}
 	var content []byte
 	if request.op == "put" {

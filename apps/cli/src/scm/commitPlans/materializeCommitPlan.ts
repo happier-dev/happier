@@ -1,8 +1,7 @@
-import { createGitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
 import { buildScmComparisonIdentity, scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 import { applyHunks, parseUnifiedDiffHunks, type Hunk, type HunkLine } from '@happier-dev/protocol/diff/hunks';
 import type { ScmChangeOccurrence, ScmComparison } from '@happier-dev/protocol';
-import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
+import { createScmTemporaryIndex, runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
 import { readGitCheckpointDiffOutput } from '../checkpoints/gitCheckpointDiffOutput';
 import { resolveCapturedScmComparisonRefPrefix } from '../comparisons/captureScmComparison';
 import { readGitComparisonFiles, type GitComparisonFile } from '../comparisons/readGitComparisonFiles';
@@ -85,7 +84,7 @@ async function assertNativeHookMergeDrivers(cwd: string, original: string, accep
     const configured = await runGitCheckpointCommand({ cwd, args: ['config', '--get', 'merge.default'] });
     if (!configured.success && configured.exitCode !== 1) throw new ScmCommitPlanMaterializationConflict('stale_evidence', configured.stderr || 'Default merge-driver configuration is unavailable');
     const defaultDriver = configured.success ? configured.stdout.trim() : 'text';
-    const created = await createGitTemporaryIndex({ cwd, seed: { kind: 'tree', treeOid: original }, runGit: runGitCheckpointCommand });
+    const created = await createScmTemporaryIndex({ cwd, seed: { kind: 'tree', treeOid: original } });
     if (!created.success) throw new ScmCommitPlanMaterializationConflict('stale_evidence', created.error);
     try {
         for (const treeOid of [original, accepted, target]) {
@@ -98,7 +97,7 @@ async function assertNativeHookMergeDrivers(cwd: string, original: string, accep
                     'Configured merge driver can silently resolve accepted-hook selection conflicts; reselect these changes', attributes[i]);
             }
         }
-    } finally { created.tempIndex.cleanup(); }
+    } finally { await created.tempIndex.cleanup(); }
 }
 
 async function git(cwd: string, args: readonly string[], options: Readonly<{ stdin?: string; env?: Record<string, string> }> = {}): Promise<string> {
@@ -339,7 +338,7 @@ export async function materializeScmCommitPlan(input: Readonly<{
     for (const id of allSelected) if (!layers.some((value) => value.occurrences.some((ref) => ref.id === id))) {
         throw new ScmCommitPlanMaterializationConflict('stale_evidence', 'Selected occurrence has no captured immutable layer', byId.get(id)!.path, [id]);
     }
-    const created = await createGitTemporaryIndex({ cwd, seed: { kind: 'tree', treeOid: baseTreeOid }, runGit: runGitCheckpointCommand });
+    const created = await createScmTemporaryIndex({ cwd, seed: { kind: 'tree', treeOid: baseTreeOid } });
     if (!created.success) throw new ScmCommitPlanMaterializationConflict('stale_evidence', created.error);
     const steps: Array<{ groupId: string; targetTreeOid: string }> = [];
     const cumulative = new Set<string>();
@@ -364,6 +363,6 @@ export async function materializeScmCommitPlan(input: Readonly<{
             }
             steps.push({ groupId: group.id, targetTreeOid: (await git(cwd, ['write-tree'], { env: created.tempIndex.env })).trim() });
         }
-    } finally { created.tempIndex.cleanup(); }
+    } finally { await created.tempIndex.cleanup(); }
     return { baseTreeOid, indexTreeOid, steps };
 }

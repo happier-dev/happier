@@ -11706,6 +11706,12 @@ with binary smart HTTP forwarded through the existing holder streams to a
 credential-free target loopback endpoint. These are matching-source development
 contracts, not a wire epoch or a persisted credential format.
 
+Placed Git discovery projects its root to the caller's workspace address. The
+commit publisher uses the selected workspace for Git, temporary indexes, the
+exclusive index lock and reconciliation. Placed publication requires matching
+development CLI, SCM SDK and confined helper support for those file operations.
+No Action shape, persisted format or wire epoch changes.
+
 The unpublished 0.3 signed external Action binding adds optional literal
 `managedAcquireDelegation: true`. Only Home derives it from the exact reviewed
 Team preset and bound custodian controller. The receiving daemon consumes that

@@ -1,7 +1,7 @@
 // Same specifiers as the leaves this source replaced, so OS-boundary test doubles keep applying.
 import { spawn } from 'child_process';
 import { accessSync, closeSync, constants as fsConstants, openSync, writeSync } from 'node:fs';
-import { copyFile, symlink, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rm, rmdir, stat, writeFile, type FileHandle } from 'fs/promises';
+import { access, copyFile, symlink, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rm, rmdir, stat, unlink, utimes, writeFile, type FileHandle } from 'fs/promises';
 import path, { delimiter as PATH_DELIMITER } from 'node:path';
 
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
@@ -66,6 +66,34 @@ async function openWorkspaceFile(target: string, options?: Readonly<{ noFollow?:
 export const localWorkspaceSource: WorkspaceSource = Object.freeze<WorkspaceSource>({
   kind: 'local' as const,
   id: 'local',
+  filePublication: {
+    async copyFileExclusive(from, to) {
+      const { atime, mtime } = await stat(from);
+      await copyFile(from, to, fsConstants.COPYFILE_EXCL);
+      return { atime, mtime };
+    },
+    setFileTimes: utimes,
+    accessExecutable: target => access(target, fsConstants.X_OK),
+    async openExclusiveFile(target) {
+      const handle = await open(target, 'wx');
+      try {
+        const { mode } = await handle.stat();
+        return {
+          mode,
+          async writeFrom(sourcePath, mode) {
+            if (mode !== undefined) await handle.chmod(mode);
+            await handle.writeFile(await readFile(sourcePath));
+            await handle.sync();
+          },
+          close: () => handle.close(),
+        };
+      } catch (error) {
+        await handle.close();
+        await unlink(target);
+        throw error;
+      }
+    },
+  },
   stat: (target: string) => stat(target),
   lstat: (target: string) => lstat(target),
   readdir: (target: string) => readdir(target, { withFileTypes: true }),

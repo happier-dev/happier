@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { Duplex } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import type { RpcHandler } from '@/api/rpc/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
@@ -30,6 +31,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
     const status = { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, operation: {} };
     const commit = { method: RPC_METHODS.SCM_COMMIT_CREATE, operation: { message: 'panel change', scope: { kind: 'all-pending' } } };
     const comparison = { method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, operation: { source: { kind: 'workingTree' } } };
+    const diff = { method: RPC_METHODS.SCM_DIFF_FILE, operation: { path: 'notes.txt', area: 'pending' } };
     const push = { method: RPC_METHODS.SCM_REMOTE_PUSH, operation: { remote: 'origin', branch: 'main' } };
     it.each([
         ...[true, false].flatMap(placed => [status, commit, push].map(request => ({ placed, caller: 'none', ...request }))),
@@ -41,15 +43,31 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
         // SEC2: comparison capture must share the placed-root owner decision.
         { placed: true, caller: 'member', ...comparison },
         { placed: true, caller: 'other-member', ...comparison },
-    ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller)', async ({ placed, caller, method, operation }) => {
+        ...[diff, commit].map(request => ({ placed: true as const, caller: 'none' as const, disjointRoots: true, ...request })),
+    ] as const)('keeps $method hooks at their workspace authority (placed=$placed, caller=$caller, disjoint=$disjointRoots)', async (fixture) => {
+        const { placed, caller, method, operation } = fixture;
+        const disjointRoots = 'disjointRoots' in fixture;
         const directory = await mkdtemp(join(tmpdir(), 'scm-directory-'));
         const root = join(directory, 'workspace-sync');
+        const addressedRoot = disjointRoots ? join(directory, 'controller') : root;
         const destination = join(directory, 'destination.git');
         const lifetime = new AbortController();
+        const controllerIndex = join(addressedRoot, '.git/index');
+        const controllerLock = `${controllerIndex}.lock`;
+        let controllerIndexBefore: Buffer | undefined;
         let agent: SessionHolderChild | undefined;
         let containerId: string | undefined;
         try {
             await mkdir(root);
+            if (disjointRoots) {
+                await mkdir(addressedRoot);
+                await writeFile(join(addressedRoot, 'notes.txt'), 'controller-only\n');
+                const controllerGit = (...args: string[]) => execFileSync('git', args, { cwd: addressedRoot, stdio: 'pipe' });
+                controllerGit('init', '-q', '-b', 'main');
+                controllerGit('add', 'notes.txt');
+                controllerIndexBefore = await readFile(controllerIndex);
+                await writeFile(controllerLock, 'controller Git owns this lock\n');
+            }
             const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
             git('init', '-q', '-b', 'main');
             git('config', 'user.name', 'Test');
@@ -67,6 +85,11 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             // Git runs the monitor from the worktree, so one relative path serves host and target.
             git('config', 'core.fsmonitor', '.git/hooks/fsmonitor');
             await writeFile(join(root, 'notes.txt'), 'changed\n');
+            if (disjointRoots && method === RPC_METHODS.SCM_COMMIT_CREATE) {
+                const hook = join(root, '.git/hooks/commit-msg');
+                await writeFile(hook, '#!/bin/sh\ntest "$GIT_EDITOR" = : && test -f "$GIT_INDEX_FILE" || exit 1\nprintf "\\nplaced hook\\n" >> "$1"\n');
+                await chmod(hook, 0o755);
+            }
             if (placed) {
                 if (devcontainerImage) {
                     // Devcontainer's image workspaceFolder mode binds this host root at /workspace.
@@ -114,7 +137,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                     command: 'sleep', args: ['600'], cwd: targetRoot, target });
                 await new Promise<void>((resolve, reject) => { agent!.once('spawn', resolve); agent!.once('error', reject); });
                 registerSessionTargetWorkspace({ sessionId: 'directory-rpc-session', lifetime: lifetime.signal,
-                    primarySocketPath, target: { ...target, helperPath: helperPath! }, workspace: { hostRoot: root, targetRoot } });
+                    primarySocketPath, target: { ...target, lifetime: lifetime.signal, helperPath: helperPath! }, workspace: { hostRoot: addressedRoot, targetRoot } });
             }
             const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
             if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT && placed) {
@@ -140,10 +163,10 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
             // host account would run the placed Session's hooks.
             const memberLaunches: string[] = [];
             const requester = { serverId: 'home', accountId: 'member-account', machineId: 'machine', installationId: 'installation' };
-            registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, root,
-                { registry, selectWorkspaceSource: admission.selectWorkspaceSource,
+            registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, addressedRoot,
+                { registry, ...(disjointRoots ? { machineId: 'machine' } : {}), selectWorkspaceSource: admission.selectWorkspaceSource,
                     actionExecutor: createActionExecutor({ scmActionExecute: input => executeScmActionOperation({
-                        ...input, actionContext: input.context, workingDirectory: root, accessPolicy: { kind: 'osUser' }, registry,
+                        ...input, actionContext: input.context, workingDirectory: addressedRoot, accessPolicy: { kind: 'osUser' }, registry,
                     }) }),
                     ...(caller !== 'none' ? {
                         resolveRequester: async () => ({ identity: caller === 'manage'
@@ -159,7 +182,26 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                             }) as unknown as ApiMachineClient['prepareNativeOperation'],
                         },
                     } : {}) });
-            const response = await handlers.get(method)!({ cwd: root, ...operation },
+            const statusResponse = disjointRoots ? await handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ cwd: addressedRoot }) : null;
+            if (disjointRoots) expect(statusResponse, JSON.stringify(statusResponse)).toMatchObject({ success: true });
+            const request = {
+                cwd: statusResponse?.snapshot?.repo.rootPath ?? addressedRoot, ...operation,
+            };
+            const addressedRequest = disjointRoots
+                ? createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine',
+                    project: { machineId: 'machine', directory: addressedRoot } })
+                : request;
+            if (disjointRoots && method === RPC_METHODS.SCM_COMMIT_CREATE) {
+                const targetLock = join(root, '.git/index.lock');
+                const previousHead = git('rev-parse', 'HEAD');
+                await writeFile(targetLock, 'terminal Git owns this lock\n');
+                const refused = await handlers.get(method)!(addressedRequest);
+                expect(refused).toMatchObject({ success: false, errorCode: 'INDEX_LOCKED' });
+                expect(git('rev-parse', 'HEAD')).toEqual(previousHead);
+                await expect(readFile(targetLock, 'utf8')).resolves.toBe('terminal Git owns this lock\n');
+                await rm(targetLock);
+            }
+            const response = await handlers.get(method)!(addressedRequest,
                 caller !== 'none' ? { signal: new AbortController().signal, localActionContext: { authority: 'present_user', runtimeAccountId:
                     caller === 'member' ? requester.accountId : 'other-member-account' } } : undefined);
             if (caller === 'other-member') {
@@ -170,6 +212,22 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 return;
             }
             expect(memberLaunches).toEqual([]);
+            if (disjointRoots) {
+                expect(response, JSON.stringify(response)).toMatchObject({ success: true });
+                expect(statusResponse.snapshot.repo.rootPath).toBe(addressedRoot);
+                if (method === RPC_METHODS.SCM_DIFF_FILE) {
+                    expect(response.diff).toContain('+changed');
+                    expect(response.diff).not.toContain('controller-only');
+                } else {
+                    expect(response.publication).toMatchObject({ state: 'published', indexReconciliation: 'reconciled' });
+                    expect(git('show', 'HEAD:notes.txt').toString()).toBe('changed\n');
+                    expect(git('log', '-1', '--format=%B').toString().trim()).toBe('panel change\n\nplaced hook');
+                    expect(git('status', '--porcelain').toString()).toBe('');
+                }
+                await expect(readFile(join(addressedRoot, 'notes.txt'), 'utf8')).resolves.toBe('controller-only\n');
+                await expect(readFile(controllerIndex)).resolves.toEqual(controllerIndexBefore);
+                await expect(readFile(controllerLock, 'utf8')).resolves.toBe('controller Git owns this lock\n');
+            }
             // A target may refuse a capability, but must never retry it on the host.
             if (method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
                 expect(response, JSON.stringify(response)).toMatchObject({ comparison: { inventory: {

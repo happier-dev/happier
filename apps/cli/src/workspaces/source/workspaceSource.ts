@@ -55,6 +55,19 @@ export interface WorkspaceSource {
   readonly nativeHelperPath?: string;
   /** Identity for keys that dedupe per workspace (watches, caches): never shared across sources. */
   readonly id: string;
+  /** Translate absolute paths passed to or reported by a command whose root has another name in its OS. */
+  readonly commandPaths?: Readonly<{ toCommandPath(path: string): string; fromCommandPath(path: string): string }>;
+  /** Publication effects. Read-only sources omit these operations. */
+  readonly filePublication?: Readonly<{
+    copyFileExclusive(from: string, to: string): Promise<Readonly<{ atime: Date; mtime: Date }>>;
+    setFileTimes(path: string, atime: Date, mtime: Date): Promise<void>;
+    accessExecutable(path: string): Promise<void>;
+    openExclusiveFile(path: string): Promise<Readonly<{
+      mode: number;
+      writeFrom(sourcePath: string, mode?: number): Promise<void>;
+      close(): Promise<void>;
+    }>>;
+  }>;
   stat(path: string): Promise<WorkspaceEntryStats>;
   lstat(path: string): Promise<WorkspaceEntryStats>;
   readdir(path: string): Promise<WorkspaceDirent[]>;

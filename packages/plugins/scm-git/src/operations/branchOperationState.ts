@@ -1,4 +1,3 @@
-import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import type { ScmOperationRepositoryState, ScmOperationState } from '@happier-dev/plugin-sdk/scm';
@@ -6,6 +5,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 
 type GitStatePaths = ReadonlyMap<string, string | null>;
@@ -25,9 +25,10 @@ async function resolveGitStatePaths(context: ScmBackendContext, statePaths: read
     if (rawPaths.length !== statePaths.length) {
         return new Map(await Promise.all(statePaths.map(async statePath => [statePath, await resolveGitStatePath(context, statePath)] as const)));
     }
+    const paths = readRepositoryFileSystem().commandPaths;
     return new Map(statePaths.map((statePath, index) => {
         const rawPath = rawPaths[index].trim();
-        return [statePath, rawPath ? (isAbsolute(rawPath) ? rawPath : resolve(context.cwd, rawPath)) : null];
+        return [statePath, rawPath ? (isAbsolute(rawPath) ? paths?.fromCommandPath(rawPath) ?? rawPath : resolve(context.cwd, rawPath)) : null];
     }));
 }
 
@@ -37,7 +38,7 @@ export async function resolveGitStatePath(context: ScmBackendContext, statePath:
 
 async function directoryExists(path: string): Promise<boolean> {
     try {
-        return (await stat(path)).isDirectory();
+        return (await readRepositoryFileSystem().stat(path)).isDirectory();
     } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
         throw error;
@@ -46,7 +47,7 @@ async function directoryExists(path: string): Promise<boolean> {
 
 async function readTrimmedFile(path: string, format: 'trimmed' | 'raw' = 'trimmed'): Promise<string | null> {
     try {
-        const content = await readFile(path, 'utf8');
+        const content = Buffer.from(await readRepositoryFileSystem().readFile(path)).toString('utf8');
         if (format === 'raw') return content;
         const value = content.trim();
         return value || null;

@@ -9,7 +9,7 @@ import type { ScmDiffSummaryTurnEvidenceMode } from '@happier-dev/protocol/scm';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '../checkpoints/gitCheckpointAdapter';
-import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
+import { createScmTemporaryIndex, runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
 import { buildRepositoryCheckpointRefs, encodeRepositoryCheckpointScope, parseRepositoryCheckpointRef } from '../checkpoints/refs';
 import { findRepositoryCheckpointTurnEvidenceByReceipt, readRepositoryCheckpointInitialEvidence, readRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEvidence';
 import { readGitComparisonFiles, type GitComparisonFile } from './readGitComparisonFiles';
@@ -23,7 +23,6 @@ import { recoverRepositoryCheckpointEvidence } from '../checkpoints/recoverRepos
 import { readPullRequestComparison, type ReadPullRequestComparisonPage } from './readPullRequestComparisonPage';
 import type { ScmDiffSummaryPromptFile } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
 import { materializeGitRepositoryCheckpoint } from '../checkpoints/materializeGitRepositoryCheckpoint';
-import { createGitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
 import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import { projectCapturedComparisonIndex } from './projectCapturedComparison';
@@ -201,7 +200,7 @@ export async function prepareCapturedScmComparisonInvestigation(input: Readonly<
         index = stored.retainedRefs.find(ref => ref.ref === indexRef)?.oid;
         if (!index) throw new Error('Captured staged lineage is unavailable');
       }
-      const created = await createGitTemporaryIndex({ cwd: repository, seed: { kind: 'tree', treeOid: endpoints.before }, runGit: runGitCheckpointCommand });
+      const created = await createScmTemporaryIndex({ cwd: repository, seed: { kind: 'tree', treeOid: endpoints.before } });
       if (!created.success) throw new Error(created.error);
       try {
         for (const file of captured.comparison.inventory.files) {
@@ -227,7 +226,7 @@ export async function prepareCapturedScmComparisonInvestigation(input: Readonly<
             if (!witness.success || witness.stdout !== '') throw new Error('Captured comparison evidence does not agree with its raw endpoint lineage');
           }
         }
-      } finally { created.tempIndex.cleanup(); }
+      } finally { await created.tempIndex.cleanup(); }
     } catch (error) {
       throw Object.assign(new Error('Captured comparison evidence is unavailable for surrounding-file investigation', { cause: error }), { code: 'DIFF_UNAVAILABLE' });
     }

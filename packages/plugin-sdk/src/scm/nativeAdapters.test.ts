@@ -33,7 +33,7 @@ describe('public native SCM adapters', () => {
                 expect(comparison.sections).toHaveLength(1);
                 await expect(resolveGitIndexPath({ cwd, runGit })).resolves.toEqual({ success: true, indexPath: join(cwd, '.git', 'index') });
             } finally {
-                result.tempIndex.cleanup();
+                await result.tempIndex.cleanup();
             }
             expect(existsSync(result.tempIndex.indexPath)).toBe(false);
         } finally {
