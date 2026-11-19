@@ -145,6 +145,12 @@ export type SessionListFilterFactsV1 = SessionCoordinatorFactsV1 & Readonly<{
 }>;
 
 /** Shared by lists, Boards, rule previews and occurrence matching. No fact lookup or graph traversal. */
+/** Whether one field narrows under an evaluator: the field owner's answer (an empty or opaque list selection does not). */
+export function sessionListFilterFieldNarrowsV1(filter: SessionListFilterV1, fieldId: string,
+    evaluator: EntityFilterEvaluatorV1): boolean {
+    return sessionWorkFilterFields.find(field => field.id === fieldId)?.compile(filter, evaluator) !== undefined;
+}
+
 export function matchSessionListFilterV1(filter: SessionListFilterV1, facts: SessionListFilterFactsV1,
     evaluator: EntityFilterEvaluatorV1 = 'list'): SessionListFilterMatchV1 {
     return compileEntityListFilterV1(sessionWorkFilterFields, filter, evaluator)(facts);

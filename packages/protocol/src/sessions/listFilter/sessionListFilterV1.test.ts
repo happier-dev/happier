@@ -3,13 +3,34 @@ import { describe, expect, it } from 'vitest';
 import { ScopeActionInputSchemas } from '../../actions/scopeActionFamily.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../listing/query.js';
 import { projectSessionListFilterAfterHomeQueryV1, projectSessionListFilterHomeQueriesV1 } from './sessionListFilterQueryV1.js';
-import { canSessionListFilterIncludeRunsV1, matchSessionBotFilterV1, matchSessionProjectFilterV1, matchSessionProjectScopeV1, matchSessionListFilterV1, normalizeSessionListFilterV1, readSessionListStartedByV1, resolveSessionProjectScopeV1, SessionListFilterV1Schema } from './sessionListFilterV1.js';
+import { canSessionListFilterIncludeRunsV1, matchSessionBotFilterV1, matchSessionProjectFilterV1, matchSessionProjectScopeV1, matchSessionListFilterV1, normalizeSessionListFilterV1, readSessionListStartedByV1, resolveSessionProjectScopeV1, SessionListFilterStoredReadV1Schema, SessionListFilterV1Schema, type SessionListFilterV1 } from './sessionListFilterV1.js';
 import { buildBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { listSessionPresentationStatesForWorkStatusFilterV1 } from '../awareness/presentationV1.js';
 
 const CODEX_TARGET = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
 
 describe('SessionListFilterV1', () => {
+    // UI refinements 2026-11-19 (b): in a list view a selection that describes nothing narrows nothing. An empty Home
+    // selection is no selection and an opaque key narrows no list. Stored reads keep the key ("never silently
+    // discarded") and follow rules keep failing closed.
+    it('narrows no list by an empty Home selection or an opaque key, while a follow rule stays closed', () => {
+        const facts = { serverId: 'home', kind: 'session' as const, startedBy: 'you' as const };
+        const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
+        expect(matchSessionListFilterV1(base, facts, 'list')).toBe('match');
+        const emptyHomes: SessionListFilterV1 = { ...base, homeServerIds: [] };
+        const opaque = { ...base, retiredField: true } as SessionListFilterV1;
+        expect(matchSessionListFilterV1(emptyHomes, facts, 'list')).toBe('match');
+        expect(matchSessionListFilterV1(opaque, facts, 'list')).toBe('match');
+        expect(matchSessionListFilterV1(emptyHomes, facts, 'daemonRule')).toBe('miss');
+        expect(matchSessionListFilterV1(opaque, facts, 'daemonRule')).toBe('unavailable');
+        expect(SessionListFilterStoredReadV1Schema.parse(opaque)).toHaveProperty('retiredField', true);
+    });
+    it('queries every mounted Home for an empty Home selection in a list, and none for a follow rule', () => {
+        const filter: SessionListFilterV1 = { ...normalizeSessionListFilterV1({ scope: 'all_accessible' }), homeServerIds: [] };
+        const options = { storage: 'active' as const, includeInactive: true, mountedHomeServerIds: ['a', 'b'] };
+        expect(projectSessionListFilterHomeQueriesV1(filter, options).map(({ serverId }) => serverId)).toEqual(['a', 'b']);
+        expect(projectSessionListFilterHomeQueriesV1(filter, { ...options, evaluator: 'daemonRule' })).toEqual([]);
+    });
     it('applies complete existing Work choices to canonical Run presentation without rewriting raw state selections', () => {
         const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
         const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const, status: 'running' as const };
@@ -42,11 +63,14 @@ describe('SessionListFilterV1', () => {
         expect(matchSessionListFilterV1(excluded, run)).toBe('unavailable');
         expect(SessionListFilterV1Schema.safeParse({ ...base, statuses: ['invented_state'] }).success).toBe(false);
     });
-    it('does not turn an explicit empty Home selection into a structural-query proof', () => {
+    // UI refinements 2026-11-19 (b) supersedes "an explicit empty Home selection matches nothing" for list views: it is
+    // no selection there; a follow rule still reads it closed.
+    it('keeps an explicit empty Home selection out of structural-query proof: no list narrowing, a closed rule', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: [], scope: 'all_accessible', startedBy: ['you'] });
         const local = projectSessionListFilterAfterHomeQueryV1(filter, 'home');
         expect(local.homeServerIds).toEqual([]);
-        expect(matchSessionListFilterV1(local, { serverId: 'home', kind: 'session', startedBy: 'you' })).toBe('miss');
+        expect(matchSessionListFilterV1(local, { serverId: 'home', kind: 'session', startedBy: 'you' })).toBe('match');
+        expect(matchSessionListFilterV1(local, { serverId: 'home', kind: 'session', startedBy: 'you' }, 'daemonRule')).toBe('miss');
     });
     it('admits canonical qualified Agent targets, not display names or unqualified routing ids', () => {
         const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
@@ -149,7 +173,9 @@ describe('SessionListFilterV1', () => {
     it('never uses list attention promotion as proof that a Run matches the selected starter', () => {
         const filter = normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['home'], startedBy: ['you'] });
         expect(matchSessionListFilterV1(filter, { serverId: 'home', kind: 'run', startedBy: 'triggers', attentionRequired: true })).toBe('miss');
-        expect(matchSessionListFilterV1({ ...filter, startedBy: [] }, { serverId: 'home', kind: 'run', startedBy: 'you', attentionRequired: true })).toBe('miss');
+        // An empty starter selection is no list selection (UI refinements 2026-11-19); a follow rule still misses.
+        expect(matchSessionListFilterV1({ ...filter, startedBy: [] }, { serverId: 'home', kind: 'run', startedBy: 'you', attentionRequired: true })).toBe('match');
+        expect(matchSessionListFilterV1({ ...filter, startedBy: [] }, { serverId: 'home', kind: 'run', startedBy: 'you', attentionRequired: true }, 'daemonRule')).toBe('miss');
         expect(matchSessionListFilterV1({ ...filter, startedBy: ['you', 'you', 'you'] },
             { serverId: 'home', kind: 'run', startedBy: 'triggers', attentionRequired: false })).toBe('miss');
     });

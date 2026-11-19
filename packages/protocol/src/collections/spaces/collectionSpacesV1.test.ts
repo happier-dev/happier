@@ -169,13 +169,16 @@ describe('collection spaces', () => {
         expect(resolveCollectionSpaceSelectionV1(local, 'home/account', 'workflow', [], { authoritative: true })).toBe('all-workflows');
     });
 
-    it('preserves future narrowing through the persisted catalog and never turns it into a match', () => {
+    it('preserves future narrowing through the persisted catalog; it narrows no list and keeps a follow rule closed', () => {
         const future = { ...custom('future'), filter: { ...custom('future').filter, homeServerIds: ['home'], futureScope: { selected: ['narrow'] } } };
         expect(CollectionSpacesV1Schema.safeParse({ v: 1, spaces: [future] }).success).toBe(false);
         const read = CollectionSpacesStoredReadV1Schema.parse({ v: 1, spaces: [future] });
         const space = read.spaces[0];
         expect(space?.entityKind).toBe('sessionWork');
         if (space?.entityKind !== 'sessionWork') throw new Error('Expected session space');
-        expect(matchSessionListFilterV1(space.filter, { serverId: 'home', kind: 'session', startedBy: 'you', scopeMatches: { my_work: true } })).toBe('unavailable');
+        expect(space.filter).toHaveProperty('futureScope');
+        const facts = { serverId: 'home', kind: 'session' as const, startedBy: 'you' as const, scopeMatches: { my_work: true } };
+        expect(matchSessionListFilterV1(space.filter, facts)).toBe('match');
+        expect(matchSessionListFilterV1(space.filter, facts, 'daemonRule')).toBe('unavailable');
     });
 });

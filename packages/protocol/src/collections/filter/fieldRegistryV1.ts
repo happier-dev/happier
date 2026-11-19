@@ -66,12 +66,26 @@ export function defineEntityFilterFieldV1<Filter, Facts, Selection>(
             const selection = field.readSelection(filter);
             if (selection === undefined) return undefined;
             const supported = field.evaluators.includes(evaluator);
+            // A list view narrows only by what it can state (UI refinements 2026-11-19): a selection this list cannot
+            // evaluate (opaque or future narrowing) or one naming no value is no condition there. Stored reads keep it;
+            // follow rules and space admission still fail closed on it.
+            if (evaluator === 'list' && !(supported && namesValues(conditions, selection))) return undefined;
             return facts => {
                 if (field.appliesTo && !field.appliesTo(facts)) return 'miss';
                 return supported ? field.match(selection, facts) : 'unavailable';
             };
         },
     };
+}
+
+/** A selection names values when its codec states at least one; a field without a codec is stated elsewhere. */
+function namesValues<Selection>(conditions: EntityFilterConditionCodecV1<Selection> | undefined, selection: Selection): boolean {
+    if (!conditions) return true;
+    try {
+        return conditions.project(selection).some(condition => condition.values.length > 0);
+    } catch {
+        return false;
+    }
 }
 
 export function getUnsupportedEntityFilterFieldsV1<Filter, Facts>(

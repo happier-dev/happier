@@ -213,7 +213,8 @@ export function conditionModelFromFilter<Filter, Facts>(
         };
         const available = Boolean(descriptor.conditions && descriptor.evaluators.includes(bindings.evaluator ?? 'list'));
         if (available) availableFields.push(field);
-        if (!descriptor.isActive(filter)) continue;
+        // The field owner decides what narrows under this evaluator (a list skips an empty or opaque selection).
+        if (!descriptor.isActive(filter) || !descriptor.compile(filter, bindings.evaluator ?? 'list')) continue;
         // Stored future selections must stay visible. Only the owner can admit their values.
         let conditions: ReturnType<NonNullable<typeof descriptor.conditions>['project']> | undefined = undefined;
         try { conditions = descriptor.conditions?.project(filter); } catch { conditions = undefined; }

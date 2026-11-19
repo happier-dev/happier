@@ -50,7 +50,7 @@ export async function previewSessionFollowRule(input: Readonly<{
                 ? await getServerFeaturesSnapshot({ serverId: input.serverId, signal: input.signal }) : null;
             input.assertCurrent();
             for (const home of projectSessionListFilterHomeQueriesV1(filter, { storage: 'active', includeInactive: true,
-                mountedHomeServerIds: [input.serverId], limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false,
+                mountedHomeServerIds: [input.serverId], limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false, evaluator: 'daemonRule',
                 // A selected Project asks for every key its Sessions may carry (owner 11-08).
                 workspaceRefs: readProjectAccountWorkspaceRefs(getStorage().getState()),
                 projectFacet: features?.status === 'ready' && supportsSessionListProjectSelectionV1(features.features) ? 'query' : 'local' })) {

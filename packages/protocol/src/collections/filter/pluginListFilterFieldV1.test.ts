@@ -21,7 +21,9 @@ describe('plugin list filter fields over held facts', () => {
         }
         const selection: PluginListFilterSelectionV1 = { extensions: { [admitted.field.id]: { kind: 'time', selection: { op: 'after', atMs: 0 } } } };
         expect(validatePluginListFilterSelectionsV1([admitted.field], selection.extensions)).toBe(false);
-        expect(compileEntityListFilterV1(createPluginListFilterFieldRegistryV1([admitted.field]), selection)({ extensions: { [admitted.field.id]: 0 } })).toBe('unavailable');
+        // A selection the field cannot state narrows no list (UI refinements 2026-11-19); a follow rule stays closed.
+        expect(compileEntityListFilterV1(createPluginListFilterFieldRegistryV1([admitted.field]), selection)({ extensions: { [admitted.field.id]: 0 } })).toBe('match');
+        expect(compileEntityListFilterV1(createPluginListFilterFieldRegistryV1([admitted.field]), selection, 'daemonRule')({ extensions: { [admitted.field.id]: 0 } })).toBe('unavailable');
     });
 
     it('admits one closed declarative source and validates values at ingress', () => {
@@ -54,9 +56,12 @@ describe('plugin list filter fields over held facts', () => {
         expect(unavailableFields).toEqual([]);
         expect(compileEntityListFilterV1(fields, selection, 'daemonRule')({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('unavailable');
         const retired = createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>([]);
-        expect(compileEntityListFilterV1(retired, selection)({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('unavailable');
+        // Retired or wrong-kind narrowing narrows no list (UI refinements 2026-11-19); a follow rule stays closed.
+        expect(compileEntityListFilterV1(retired, selection)({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('match');
+        expect(compileEntityListFilterV1(retired, selection, 'daemonRule')({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('unavailable');
         const wrongKind: PluginListFilterSelectionV1 = { extensions: { 'test.release/release-stage': { kind: 'boolean', value: true } } };
-        expect(compileEntityListFilterV1(fields, wrongKind)({ extensions: { 'test.release/release-stage': true } })).toBe('unavailable');
+        expect(compileEntityListFilterV1(fields, wrongKind)({ extensions: { 'test.release/release-stage': true } })).toBe('match');
+        expect(compileEntityListFilterV1(fields, wrongKind, 'daemonRule')({ extensions: { 'test.release/release-stage': true } })).toBe('unavailable');
         expect(validatePluginListFilterSelectionsV1([admitted.field], selection.extensions)).toBe(true);
         expect(validatePluginListFilterSelectionsV1([admitted.field], wrongKind.extensions)).toBe(false);
         expect(validatePluginListFilterSelectionsV1([], selection.extensions)).toBe(false);

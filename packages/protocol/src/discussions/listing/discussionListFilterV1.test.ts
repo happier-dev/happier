@@ -12,11 +12,11 @@ describe('Discussion list filters', () => {
         expect(compileDiscussionListFilterV1({ state: 'archived', attention: 'any', unreadOnly: false })({ state: 'archived' })).toBe('match');
     });
 
-    it('refuses cross-entity/current unknown writes while keeping future saved narrowing unavailable', () => {
+    it('refuses cross-entity/current unknown writes and keeps future saved narrowing, which narrows no list', () => {
         expect(DiscussionListFilterV1Schema.safeParse({ state: 'active', attention: 'any', unreadOnly: false, view: 'running' }).success).toBe(false);
         const stored = { state: 'active', attention: 'any', unreadOnly: false, futureField: true };
         const read = createStoredReadSchema(DiscussionListFilterV1Schema).parse(stored);
         expect(read).toEqual(stored);
-        expect(compileDiscussionListFilterV1(read)({ state: 'active' })).toBe('unavailable');
+        expect(compileDiscussionListFilterV1(read)({ state: 'active' })).toBe('match');
     });
 });

@@ -14,12 +14,12 @@ describe('Workflow definition list filters', () => {
         expect(compileWorkflowListFilterV1({ view: 'all' })({})).toBe('match');
     });
 
-    it('preserves future narrowing at stored ingress and never matches it', () => {
+    it('preserves future narrowing at stored ingress; it narrows no list', () => {
         const future = { view: 'all', futureField: { include: ['release'] }, extensions: { 'test.release/stage': { kind: 'future', value: 'ready' } } };
         expect(WorkflowListFilterV1Schema.safeParse(future).success).toBe(false);
         const read = createStoredReadSchema(WorkflowListFilterV1Schema).parse(future);
         expect(read).toEqual(future);
-        expect(compileWorkflowListFilterV1(read)({ running: true, triggered: true })).toBe('unavailable');
+        expect(compileWorkflowListFilterV1(read)({ running: true, triggered: true })).toBe('match');
         expect(compileWorkflowListFilterV1({ ...read, view: 'running' })({ running: false })).toBe('miss');
     });
 });

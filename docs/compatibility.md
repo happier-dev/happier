@@ -9782,6 +9782,19 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 entity list filters narrow a list view (evaluator `list`) only by
+a selection they can state. A selection the list cannot evaluate (an opaque or
+future key, a retired extension) or one whose condition names no value (for
+example an empty `homeServerIds`) is no condition there: it matches nothing
+away, draws no condition row, and an empty Home selection queries every
+mounted Home. `defineEntityFilterFieldV1` decides this once. Stored reads still
+keep opaque keys, so an older reader never silently discards newer narrowing.
+Follow rules (`daemonRule`), their previews and space admission keep failing
+closed on the same selection. No wire field, stored format, migration or epoch
+changes. Matching development Protocol, UI and CLI readers reload together; an
+earlier development list reader showed such a filter as an empty list. The
+inspected `../0.2` frontier at `73c533b470` has no entity list filter registry.
+
 Unreleased 0.3 Agent manifests and daemon Agent catalog projections can carry
 the optional boolean `capabilities.tools.noTools`. Its absence leaves older
 declarations readable and makes the Agent ineligible for no-tools task

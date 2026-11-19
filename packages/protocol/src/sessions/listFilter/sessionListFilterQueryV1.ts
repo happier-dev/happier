@@ -1,5 +1,6 @@
 import type { SessionAudienceSelectionV1, SessionListQueryV1 } from '../listing/query.js';
-import { normalizeSessionListFilterHomeIds, normalizeSessionListFilterV1, resolveSessionProjectScopeV1, type QualifiedAudienceSelection, type SessionListFilterV1 } from './sessionListFilterV1.js';
+import { normalizeSessionListFilterHomeIds, normalizeSessionListFilterV1, resolveSessionProjectScopeV1, sessionListFilterFieldNarrowsV1, type QualifiedAudienceSelection, type SessionListFilterV1 } from './sessionListFilterV1.js';
+import type { EntityFilterEvaluatorV1 } from '../../collections/filter/fieldRegistryV1.js';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../../workspaces/workspaceRefV1.js';
 
 function toHomeAudience(audience: QualifiedAudienceSelection): SessionAudienceSelectionV1 {
@@ -29,6 +30,8 @@ export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilter
    * (`resolveSessionProjectScopeV1`, owner 11-08). Without them, the Project's anchor alone.
    */
   workspaceRefs?: readonly WorkspaceRefV1[];
+  /** A list view by default; a follow rule's preview keeps its own closed reading of the selection. */
+  evaluator?: EntityFilterEvaluatorV1;
 }>): ReadonlyArray<Readonly<{ serverId: string; query: SessionListQueryV1 }>> {
   const scopeKeys = (project: QualifiedProjectKeyV1) => options.workspaceRefs
     ? [...resolveSessionProjectScopeV1(project, options.workspaceRefs).projectKeys] : [project.projectKey];
@@ -40,7 +43,10 @@ export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilter
   const sectionFacetActive = options.sectionFacet !== 'local' && Boolean(normalized.sections?.include.length);
   const projectFacetActive = options.projectFacet === 'query'
     && Boolean(normalized.projects?.include.length || normalized.projects?.exclude.length);
-  return normalized.homeServerIds
+  // A Home selection the field owner says narrows nothing (an empty one, in a list) asks every mounted Home.
+  const homeServerIds = sessionListFilterFieldNarrowsV1(normalized, 'homeServerIds', options.evaluator ?? 'list')
+    ? normalized.homeServerIds : [...mountedHomeServerIds];
+  return homeServerIds
     .filter(serverId => mountedHomeServerIds.has(serverId))
     // A globally active qualified facet with no value in this Home cannot match.
     .filter(serverId => (!audienceFacetActive || normalized.audiences.some(audience => audience.serverId === serverId))

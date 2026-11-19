@@ -75,7 +75,8 @@ export function createSessionFollowPreview(params: Readonly<{
     }
     // A selected Project asks the Home for every key its Sessions may carry (owner 11-08).
     const queries = projectSessionListFilterHomeQueriesV1(filter, { storage: 'active', includeInactive: true,
-      mountedHomeServerIds: [homeServerId], limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false, projectFacet, workspaceRefs });
+      mountedHomeServerIds: [homeServerId], limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false, projectFacet, workspaceRefs,
+      evaluator: 'daemonRule' });
     if (sourceSessionId) {
       const page = await read({ context, includeSystem: false, signal, query: { v: 1, storage: 'active', includeInactive: true,
         scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], includeAttention: false } },

@@ -233,6 +233,16 @@ describe('shared collection condition model', () => {
         expect(publicFilters.applyCollectionConditionEdit(registry, running, { type: 'clear' })).toEqual({ view: 'all', extensions: {} });
     });
 
+    // UI refinements 2026-11-19 (b): the field owner decides what narrows a list; the model draws no row for the rest.
+    it('draws no list condition for an empty Home selection or an opaque key; a rule editor still states them', () => {
+        const filter = { ...normalizeSessionListFilterV1({ scope: 'all_accessible' }), homeServerIds: [], retiredField: true };
+        const listRows = publicFilters.conditionModelFromFilter(sessionWorkFilterFields, filter as never).rows.map(row => row.fieldId);
+        expect(listRows.filter(id => id === 'homeServerIds' || id === 'unavailableFields')).toEqual([]);
+        const ruleRows = publicFilters.conditionModelFromFilter(sessionWorkFilterFields, filter as never, { evaluator: 'daemonRule' })
+            .rows.map(row => row.fieldId);
+        expect(ruleRows).toEqual(expect.arrayContaining(['homeServerIds', 'unavailableFields']));
+    });
+
     it('preserves opaque narrowing on unrelated edits and refuses invalid, stale or unsupported edits', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible',
             extensions: { 'retired/field': { kind: 'boolean', value: true } } });
