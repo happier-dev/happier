@@ -446,6 +446,20 @@ it('labels unrequested ended PlanFit history as not loaded for multiple accounts
   expect(screen.getTextContent()).toContain(t('usage.board.plans.pastCyclesNotLoaded'));
 });
 
+it('shows unloaded PlanFit history on the visible row beside an unread account', async () => {
+  const now = Date.now();
+  const history = { historyStatus: 'not_loaded', windows: [] };
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }], { unusedCapacity: history });
+  const unread = quotaRead('other', 0, [], { unusedCapacity: history }, { state: 'error_last_known_good', confidence: 'unknown' });
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps([read, unread])} id="usage_plan_fit" testID="fit" />);
+  expect(screen.findHostByTestId('fit.plan.work.fit.insufficient')).toBeTruthy();
+  expect(screen.findByTestId('fit.plan.other')).toBeFalsy();
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.pastCyclesNotLoaded'));
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.fitNoneEnded'));
+});
+
 it('says once that no plan has anything to compare yet, and keeps every plan one press away (acceptance 11-18 #7)', async () => {
   const now = Date.now();
   const reads = ['first', 'second'].map(id => quotaRead(id, now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,

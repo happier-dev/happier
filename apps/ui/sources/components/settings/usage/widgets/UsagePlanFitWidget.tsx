@@ -307,7 +307,7 @@ function PlanRow(
     keyFact === null && !props.noPriceSaidOnce ? t('usage.board.plans.planNoPriceShort') : null,
     renewalKnown ? periodText : null,
     verdict ? fitWindow : null,
-    verdict ?? (fit.observed === 0 && !props.noneEndedSaidOnce ? [fitWindow, t('usage.board.plans.fitNoneEnded')].filter(Boolean).join(' · ') : null),
+    verdict ?? (props.noneEndedSaidOnce ? null : fitText),
   ].filter(Boolean).join(' · ');
   const figureNode = hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
     datum={{ keyboard: false, label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure;
