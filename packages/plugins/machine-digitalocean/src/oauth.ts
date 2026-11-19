@@ -110,12 +110,13 @@ export const digitalOceanOAuthMode: Extract<ConnectedAccountAuthenticationModeRu
       if (!client) return { status: 'unavailable', diagnostic: diagnostic('public_client_unavailable',
         'This Home does not offer Sign in with DigitalOcean. Connect with an access token instead.') };
       if (input.pkce.method !== 'S256' || !input.pkce.challenge) return reconnect;
-      const scope = client.scopes.join(' ');
       await context.attemptCredentials.set('oauthClientId', client.clientId, { signal });
-      await context.attemptCredentials.set('requestedScope', scope, { signal });
+      // Keep the scope vector in the same form as Cloudflare so the host does not
+      // redact a matching space-delimited scope returned by the token endpoint.
+      await context.attemptCredentials.set('requestedScopes', JSON.stringify(client.scopes), { signal });
       const url = new URL(issuer + '/v1/oauth/authorize');
       url.search = new URLSearchParams({
-        client_id: client.clientId, redirect_uri: input.callbackUrl, response_type: 'code', scope,
+        client_id: client.clientId, redirect_uri: input.callbackUrl, response_type: 'code', scope: client.scopes.join(' '),
         state: input.state, code_challenge: input.pkce.challenge, code_challenge_method: 'S256',
       }).toString();
       return { status: 'awaitingOAuthRedirect', authorizationUrl: url.href, issuer };
@@ -126,15 +127,17 @@ export const digitalOceanOAuthMode: Extract<ConnectedAccountAuthenticationModeRu
     try {
       const store = context.attemptCredentials;
       const clientId = await store.get('oauthClientId', { signal });
-      const requestedScope = await store.get('requestedScope', { signal });
-      if (!clientId || !requestedScope || !input.pkceVerifier) return reconnect;
+      const retainedScopes = await store.get('requestedScopes', { signal });
+      if (!clientId || !retainedScopes || !input.pkceVerifier) return reconnect;
+      const requestedScopes = z.array(text).min(1).safeParse(JSON.parse(retainedScopes));
+      if (!requestedScopes.success) return reconnect;
       const grant = await exchange(context, new URLSearchParams({
         grant_type: 'authorization_code', client_id: clientId, code: input.code,
         redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier,
       }), signal);
       const scopes = (grant.scope ?? '').split(/\s+/u).filter(Boolean);
       const granted = new Set(scopes);
-      if (requestedScope.split(' ').some(scope => !granted.has(scope))) return {
+      if (requestedScopes.data.some(scope => !granted.has(scope))) return {
         status: 'rejected', diagnostic: diagnostic('permissions_missing',
           'DigitalOcean did not grant the permissions Happier needs. Reconnect and approve them for your team.'),
       };
@@ -143,7 +146,7 @@ export const digitalOceanOAuthMode: Extract<ConnectedAccountAuthenticationModeRu
       const identity = { subject: grant.info.uuid, teamId: grant.info.team_uuid, displayName: grant.info.team_name };
       await stage(store, grant, signal);
       for (const [key, value] of Object.entries(identity)) await store.set(key, value, { signal });
-      await store.delete('requestedScope', { signal });
+      await store.delete('requestedScopes', { signal });
       return { ...connected(identity, grant.expiresAt), scopes };
     } catch (error) { return failure(error, signal); }
   },

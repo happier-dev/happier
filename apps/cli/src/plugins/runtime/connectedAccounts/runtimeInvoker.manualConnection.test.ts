@@ -222,7 +222,8 @@ describe('manual Connected Account production invocation', () => {
         // an opaque token invented below that trust boundary.
         const capturedCredentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'fixture-account' })).toString('base64url')}.signature`, encryption };
         const promotedResources: Pick<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>, 'resourceId' | 'encryptionMode' | 'storedContent'>[] = [];
-        const promotionHome = fixture.provider === 'vercel' ? Fastify() : null;
+        const exportsManualToken = fixture.provider === 'vercel' || fixture.provider === 'railway' || fixture.provider === 'digitalocean';
+        const promotionHome = exportsManualToken ? Fastify() : null;
         let directCredentialWrites = 0;
         if (promotionHome) {
             promotionHome.get('/v1/features', async () => ({ features: { teams: { enabled: true } }, capabilities: {} }));
@@ -376,7 +377,7 @@ describe('manual Connected Account production invocation', () => {
             const content = QualifiedConnectedAccountCredentialPayloadV1Schema.parse(openQualifiedConnectedAccountContentEnvelope(encryption
                 ? { kind: 'credential', accountMode: 'e2ee', material: encryption, envelope: persisted[0]!.content }
                 : { kind: 'credential', accountMode: 'plain', envelope: persisted[0]!.content }));
-            if (fixture.provider === 'vercel') {
+            if (exportsManualToken) {
                 expect(directCredentialWrites).toBe(0);
                 expect(promotedResources).toHaveLength(1);
                 expect(content.values).not.toHaveProperty('token');

@@ -298,8 +298,12 @@ it.each([
         beginStatus: 'awaitingOAuth', publicClient: 'fixture-vercel-client' },
     { provider: 'Railway', service: inventories.railway, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
         machineModeIds: ['token'], beginStatus: 'awaitingOAuth', publicClient: 'fixture-railway-client' },
+    { provider: 'Railway without a Home client', service: inventories.railway, defaultModeId: 'oauth', modeIds: ['oauth'],
+        declarationLoads: 0, machineModeIds: ['token'], unavailableCode: 'railway_oauth_public_client_unavailable' },
     { provider: 'DigitalOcean', service: inventories.digitalocean, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
         machineModeIds: ['token'], beginStatus: 'awaitingOAuth', publicClient: 'fixture-digitalocean-client' },
+    { provider: 'DigitalOcean without a Home client', service: inventories.digitalocean, defaultModeId: 'oauth', modeIds: ['oauth'],
+        declarationLoads: 0, machineModeIds: ['token'], unavailableCode: 'digitalocean_oauth_public_client_unavailable' },
 ])('demands $provider Account authentication through the service description wrapper', async testCase => {
     const { service, defaultModeId, modeIds, declarationLoads, publicClient } = testCase;
     const railway = testCase.provider === 'Railway';
@@ -322,16 +326,16 @@ it.each([
     let savedConnection: ReturnType<typeof QualifiedConnectedAccountCredentialMutationV4Schema.parse> | undefined;
     const accountId = 'public-auth-cold';
     const credentials = { token: createAccountTokenForTests(accountId) };
-    const url = 'https://public-auth-cold.test';
+    const url = `https://${testCase.provider.toLowerCase().replaceAll(' ', '-')}.public-auth-cold.test`;
     const serverId = await homes.addHome({ name: 'Cold public authentication', serverUrl: url,
         accountId, credentials, accountEncryptionMode: 'plain' });
-    if (publicClient !== undefined) {
+    if (publicClient !== undefined || 'unavailableCode' in testCase) {
         const baseline = createRootLayoutFeaturesResponse();
         const features = createRootLayoutFeaturesResponse({ capabilities: {
             server: { webappUrl: url },
-            connectedServices: { ...baseline.capabilities.connectedServices, publicOAuthClients: [{
+            connectedServices: { ...baseline.capabilities.connectedServices, ...(publicClient ? { publicOAuthClients: [{
                 service, clientId: publicClient, scopesByMode: { oauth: hostScopes },
-            }] },
+            }] } : {}) },
         } });
         homes.answer(serverId, '/v1/features', { body: features });
         homes.answer(serverId, '/v1/features/authenticated', { body: features });
@@ -399,7 +403,8 @@ it.each([
                 if (init?.method !== 'POST') return Response.json({ error: 'connect_credential_not_found' }, { status: 404 });
                 savedConnection = QualifiedConnectedAccountCredentialMutationV4Schema.parse(await new Response(init.body).json());
                 return Response.json({ success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-                    configurationRevision: 'vercel-configuration' });
+                    configurationRevision: 'initialConfiguration' in savedConnection && savedConnection.initialConfiguration
+                        ? 'oauth-configuration' : null });
             }
             const transaction = await answerAttemptTransaction(request, init, transactions);
             if (transaction) return transaction;
@@ -415,12 +420,14 @@ it.each([
             return homes.request(input, init);
         } });
     await bootstrapMachineRead.promise;
-    if (publicClient !== undefined) {
+    if (publicClient !== undefined || 'unavailableCode' in testCase) {
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const snapshot = await getServerFeaturesSnapshot({ serverId, force: true });
-        expect(snapshot).toMatchObject({ status: 'ready', features: { capabilities: { connectedServices: {
-            publicOAuthClients: [{ service, clientId: publicClient }],
-        } } } });
+        expect(snapshot.status).toBe('ready');
+        if (snapshot.status !== 'ready') throw new Error('Missing Home features');
+        const advertised = snapshot.features.capabilities.connectedServices?.publicOAuthClients;
+        if (publicClient) expect(advertised).toMatchObject([{ service, clientId: publicClient, scopesByMode: { oauth: hostScopes } }]);
+        else expect(advertised ?? []).toEqual([]);
     }
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Missing cold Account lifetime');
@@ -475,6 +482,13 @@ it.each([
     // Description exposes modes without activating executable authentication.
     expect(packaged.reads).toBe(0);
     expect(accountListReads).toBe(1);
+    if ('unavailableCode' in testCase) {
+        const result = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
+            command: { operation: 'beginConnect', service, modeId: defaultModeId } });
+        expect(result).toMatchObject({ status: 'unavailable', code: testCase.unavailableCode });
+        expect(vendorRequests).toBe(0);
+        expect(savedConnection).toBeUndefined();
+    }
     if ('beginStatus' in testCase) {
         const begin = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.authentication.beginConnect', {
             service, modeId: defaultModeId,
@@ -509,7 +523,7 @@ it.each([
                 });
             }
             if (digitalocean) {
-                expect(callback.status).toBe('connected');
+                expect(callback).toMatchObject({ status: 'connected' });
                 expect(savedConnection).toMatchObject({ ref: { service }, metadata: {
                     providerIdentity: { accountId: 'user-fixture', organizationId: 'team-fixture' },
                 } });

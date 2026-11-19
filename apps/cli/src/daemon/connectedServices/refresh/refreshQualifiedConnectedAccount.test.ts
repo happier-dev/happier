@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   openQualifiedConnectedAccountContentEnvelope,
   parseQualifiedConnectedAccountCredentialPlaintextV1,
+  QualifiedConnectedAccountConfigurationSnapshotV4Schema,
+  QualifiedConnectedAccountCredentialMutationV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   sealQualifiedConnectedAccountContentEnvelope,
 } from '@happier-dev/protocol';
@@ -68,12 +70,13 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
     accountMode: 'e2ee' as const,
     material: requireConnectedAccountCryptoMaterial(credentials, resolveConnectedAccountCryptoMaterial(credentials)),
   };
+  const configurationRevision = provider === 'railway' ? 'configuration-1' : null;
   const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
     ref: activeAccount,
     authenticationModeId: 'oauth',
     revisionSemantics: 'revisioned' as const,
     credentialRevision,
-    configurationRevision: null,
+    configurationRevision,
     content: sealQualifiedConnectedAccountContentEnvelope({
       kind: 'credential',
       ...contentMode,
@@ -101,8 +104,14 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
   });
   const getAccountEncryptionMode = vi.fn(async () => accountMode);
   const mutateCredentialHealth = vi.fn(async () => ({
-    success: true as const, credentialRevision, configurationRevision: null,
+    success: true as const, credentialRevision, configurationRevision,
   }));
+  let currentCredential = credentialSnapshot;
+  const configurationContent = configurationRevision ? sealQualifiedConnectedAccountContentEnvelope({
+    kind: 'configuration', ...contentMode,
+    payload: { values: { workspaceId: 'fixture-workspace', projectId: 'fixture-project', environmentId: 'fixture-env' }, secretRefs: {} },
+    randomBytes: length => new Uint8Array(length),
+  }) : null;
   const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
     reloadController: {
       async acquireRuntimeRegistry() {
@@ -126,8 +135,11 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
     getAccountEncryptionMode,
     mutateCredentialHealth,
     ...(randomBytes ? { randomBytes } : {}),
-    readCredential: vi.fn(async () => credentialSnapshot),
-    readConfiguration: vi.fn(async () => null),
+    readCredential: vi.fn(async () => currentCredential),
+    readConfiguration: vi.fn(async () => configurationContent ? QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({
+      target: { kind: 'account', ref: activeAccount }, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: currentCredential.credentialRevision, configurationRevision, configurationContent,
+    }) : null),
     configuration: {
       read: vi.fn(async () => null),
       secrets: {
@@ -150,11 +162,16 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
   }>): ReturnType<NonNullable<Parameters<typeof refreshQualifiedConnectedAccount>[0]['mutateCredential']>> => ({
     success: true as const,
     credentialRevision: nextCredentialRevision,
-    configurationRevision: null,
+    configurationRevision,
   }));
   return {
     credentials,
     credentialSnapshot,
+    applyCredentialWrite(write: { content: typeof credentialSnapshot.content; metadata: typeof credentialSnapshot.metadata }) {
+      currentCredential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ...credentialSnapshot, credentialRevision: nextCredentialRevision, content: write.content, metadata: write.metadata,
+      });
+    },
     owner,
     getAccountEncryptionMode,
     acquireRefreshLease,
@@ -185,6 +202,8 @@ describe('refreshQualifiedConnectedAccount', () => {
         return Response.json({ token_type: 'Bearer', access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 });
       }
       expect(url).toBe('https://cloud.digitalocean.com/v1/oauth/revoke');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer access-new');
+      expect(new URLSearchParams(await new Response(init?.body).text()).get('token')).toBe('access-new');
       return Response.json({});
     });
     vi.stubGlobal('fetch', request);
@@ -193,15 +212,18 @@ describe('refreshQualifiedConnectedAccount', () => {
       operationId: 'rotate-grant', expectedCredential: harness.credentialSnapshot, resolveV4Support: () => 'advertised',
       establishedRuntimeOwner: harness.owner, acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
     })).resolves.toMatchObject({ status: 'refreshed', credentialRevision: nextCredentialRevision });
-    const write = harness.mutateCredential.mock.calls[0]?.[0].mutation as { content: Parameters<typeof openQualifiedConnectedAccountContentEnvelope>[0]['envelope'] };
+    const write = QualifiedConnectedAccountCredentialMutationV4Schema.parse(harness.mutateCredential.mock.calls[0]?.[0].mutation);
     expect(openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', ...harness.contentMode, envelope: write.content }))
       .toMatchObject({ values: { token: 'access-new', refreshToken: 'refresh-new' } });
+    harness.applyCredentialWrite(write);
     const deleteCredential = vi.fn(async () => ({ success: true as const }));
     await expect(revokeQualifiedConnectedAccount({
       account: ref, token: harness.credentials.token, cleanupGroupReferences: true, resolveV4Support: () => 'advertised',
       resolveRemovalReviewSupport: () => 'absent', establishedRuntimeOwner: harness.owner, deleteCredential,
     })).resolves.toMatchObject({ status: 'deleted', remoteStatus });
-    expect(deleteCredential).toHaveBeenCalledWith(expect.objectContaining({ deletion: expect.objectContaining({ ref }) }));
+    expect(deleteCredential).toHaveBeenCalledWith(expect.objectContaining({
+      deletion: expect.objectContaining({ ref, expectedCredentialRevision: nextCredentialRevision }),
+    }));
     expect(request).toHaveBeenCalledTimes(provider === 'railway' ? 1 : 2);
   });
 
