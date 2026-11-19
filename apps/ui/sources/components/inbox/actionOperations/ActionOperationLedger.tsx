@@ -51,7 +51,7 @@ import { requestAcceptedActionOperationStop, type ActionOperationStopResponse, t
 import { useActionOperationStopControl } from './useActionOperationStopControl';
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
-import { readActionOperationOutputAttachment } from './actionOperationDetailPresentation';
+import { presentFailure, readActionOperationOutputAttachment } from './actionOperationDetailPresentation';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 
 const SECTION_ORDER: readonly ActionOperationSection[] = ['inProgress', 'needsAttention', 'recent'];
@@ -126,7 +126,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         ? joinHappierFacts(statusLabel, sourceTitle)
         : runCard?.line ?? sourceTitle;
     const openOperation = () => props.onOpenOperation(props.operation);
-    const detailText = runCard ? '' : joinHappierFacts(...(inboxPresentation
+    const failureReason = snapshot.state === 'failed' ? presentFailure(snapshot)?.reason : undefined;
+    const detailText = runCard ? failureReason ?? '' : joinHappierFacts(failureReason, ...(inboxPresentation
         ? [determinateProgress, sourceContext.contextLine]
         : [
             props.operation.followUpAttention,
@@ -172,7 +173,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
 
     if (inboxPresentation) return <InboxWorkRow
         testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title} narrow={props.narrow}
-        facts={[sourceTitle, determinateProgress, sourceContext.contextLine]}
+        facts={[failureReason, sourceTitle, determinateProgress, sourceContext.contextLine]}
         phase={workStatus.bucket === 'working' ? 'live' : workStatus.bucket === 'needs_you' ? 'attention' : 'finished'}
         status={workStatus}
         accessibilityLiveRegion="polite"

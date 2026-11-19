@@ -61,10 +61,11 @@ describe('ActionOperationLedgerView', () => {
         const failed = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'failed', revision: 1,
             actionId: 'session.spawn_new', state: 'failed', scope: { accountId: 'account', machineId: 'machine' },
             title: 'Create session', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'unsupported',
-            error: { errorCode: 'internal_error', error: 'Failed' } });
+            error: { errorCode: 'internal_error', error: 'Workspace is read-only' } });
         const screen = await renderScreen(<ActionOperationRows operations={[{
             serverId: homeA, snapshot: failed, observation: 'available', isUnavailableProjection: false,
         }]} onOpenOperation={() => {}} onDismissOperation={onDismiss} />);
+        expect(screen.getTextContent()).toContain('Workspace is read-only');
         expect(screen.findByTestId('action-operation-dismiss.failed')).not.toBeNull();
         await screen.pressByTestIdAsync('action-operation-dismiss.failed');
         expect(onDismiss.mock.calls[0]?.[0].snapshot).toEqual(failed);
@@ -172,7 +173,7 @@ describe('ActionOperationLedgerView', () => {
                 createdAt: 100,
                 settledAt: 120,
                 cancellation: 'unsupported' as const,
-                error: { errorCode: 'failed', error: 'Failed' },
+                error: { errorCode: 'failed', error: 'Workspace is read-only' },
             },
             observation: 'available' as const,
             isUnavailableProjection: false,
@@ -187,6 +188,7 @@ describe('ActionOperationLedgerView', () => {
         );
 
         expect(screen.getTextContent()).toContain('Failed');
+        expect(screen.getTextContent()).toContain('Workspace is read-only');
         expect(screen.findHostByTestId('inbox.action-operation.operation-inbox-failed')).not.toBeNull();
         // In the Inbox the row's one trailing control is its … menu; Dismiss is in it.
         await chooseDropdownMenuItem(screen, 'action-operation-dismiss.operation-inbox-failed', 'inbox.dismiss');
