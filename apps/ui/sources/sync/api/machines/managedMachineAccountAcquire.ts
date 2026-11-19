@@ -283,7 +283,10 @@ function readUiManagedAccountRequestEnvelopeDigest(params: Omit<UiManagedAccount
 }
 
 /** Foreground Account work owns no fictitious Machine Action operation. */
-export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccountRecipeParams, 'input'> & { input: ManagedAcquireInputV1 }) {
+export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccountRecipeParams, 'input'> & Readonly<{
+    input: ManagedAcquireInputV1;
+    presetSnapshot?: ManagedMachinePresetV1;
+}>) {
     const host = await readRuntimeFetchHost(params.account.endpointUrl);
     const features = await getServerFeaturesSnapshot({ serverId: params.account.serverId, signal: params.signal });
     const delivery = readMachineProvisionerHostAvailability({ host,
@@ -313,11 +316,14 @@ export async function executeUiManagedAccountAcquire(params: Omit<UiManagedAccou
             if (params.context.externalActionExecutionAuthorization && !params.context.originalActionEnvelope) {
                 throw new ManagedMachineControllerError('admission_unavailable');
             }
-            const read = await createMachinePresetActionClient({ request: params.account.request }).execute('machines.presets.get', {
-                homeId: params.input.selection.homeId, id: params.input.selection.id,
-            }, { signal: params.signal });
-            if (read.kind !== 'found') throw new ManagedMachineControllerError(read.code);
-            const preset = read.preset;
+            let preset = params.presetSnapshot;
+            if (!preset) {
+                const read = await createMachinePresetActionClient({ request: params.account.request }).execute('machines.presets.get', {
+                    homeId: params.input.selection.homeId, id: params.input.selection.id,
+                }, { signal: params.signal });
+                if (read.kind !== 'found') throw new ManagedMachineControllerError(read.code);
+                preset = read.preset;
+            }
             if (preset.revision !== params.input.selection.revision) throw new ManagedMachineControllerError('request_conflict');
             preparation = await prepareUiManagedOpaquePreset({ account: params.account, preset, signal: params.signal });
             await preparation.prepare(preset, params.input.presetContentOverride);

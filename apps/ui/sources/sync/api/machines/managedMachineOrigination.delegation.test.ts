@@ -1,10 +1,16 @@
 import { bindManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machines/managed';
+import nacl from 'tweetnacl';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createManagedMachinePresetAcquireOverrideV1,
-    projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+    projectManagedMachinePresetForRecipientV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema,
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema,
     ExternalActionResponseEnvelopeV1Schema, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -15,6 +21,8 @@ import { createMachineFixture, createMachineReadBatchResponseFixture,
     createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -101,6 +109,114 @@ describe('delegated managed preset origination', () => {
             }
             expect(poolRequests).toEqual(usesPool ? [{ poolId, requestKey: 'delegated-create', purpose: 'managed-preset',
                 preset: { homeId, id: preset.id, revision: preset.revision } }] : []);
+        },
+    );
+
+    it.each(['team-controller', 'local-refusal'] as const)(
+        'routes exact E2EE preset acquisition from the public Action (%s)', async placement => {
+            const homeId = 'srv_e2ee_preset';
+            const serverUrl = 'https://e2ee-preset-acquire.example.test';
+            const accountId = 'team-member';
+            const custodianAccountId = 'team-owner';
+            const requestId = 'team-preset-acquire';
+            const actionId = 'machines.managed.acquire';
+            const route = '/v1/actions/machines.managed.acquire';
+            const controller = { machineId: 'team-controller', installationId: 'team-controller-installation' };
+            const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37));
+            const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }),
+                secret: encodeBase64(new Uint8Array(32).fill(41), 'base64url') };
+            const encryption = await createEncryptionFromAuthCredentials(credentials);
+            const recipient = { account: { kind: 'account' as const, accountId, name: null, firstName: null,
+                lastName: null, username: null, avatarUrl: null },
+                readiness: { status: 'available' as const, contentPublicKey: encodeBase64(encryption.contentDataKey),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) },
+                envelopeStatus: 'missing' as const };
+            const presetId = 'team-private-preset';
+            const launchName = 'Team private installation-only launch';
+            const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
+                content: { v: 1, name: 'Team delegated preset', launch: { provider: { pluginId: 'custom.compute', localId: 'vm' },
+                    schemaVersion: 1, name: launchName, choices: {} } },
+                recipientCensus: [recipient], randomBytes: getRandomBytes });
+            const preset = ManagedMachinePresetV1Schema.parse({ id: presetId, homeId, revision: 4,
+                owner: { kind: 'team', teamId: 'team' }, contentEncryptionMode: 'e2ee', ...sealed,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                ...(placement === 'team-controller' ? { controller, teamAcquireDelegated: true } : {}) });
+            const override = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'e2ee', accountId,
+                accountKey: encryption.getContentPrivateKey(), randomBytes: getRandomBytes,
+                projection: projectManagedMachinePresetForRecipientV1({ ...sealed, recipientAccountId: accountId }),
+                enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
+            if (!override) throw new Error('Expected a sealed acquisition override');
+            const input = ManagedAcquireInputV1Schema.parse({
+                selection: { kind: 'preset', homeId, id: presetId, revision: preset.revision }, presetContentOverride: override });
+            const boundInput = ManagedAcquireInputV1Schema.parse({ ...input, controller });
+            const binding = { serverIdentityId: homeId, accountId, actionId, requestId,
+                target: { kind: 'machine' as const, machineId: controller.machineId },
+                authentication: { kind: 'account' as const, tokenEpoch: 0 } };
+            const approval = { kind: 'approval_request_created', artifactId: 'create-approval', actionId };
+            await upsertServerProfile({ serverUrl, name: 'Team Home' });
+            await setServerProfileIdentityForUrl(serverUrl, homeId);
+            expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, credentials)).toBe(true);
+
+            let deliveredInput: unknown;
+            let deliveryError: unknown;
+            const routingReads: unknown[] = [];
+            setRuntimeFetch(async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (isServerFetchConnectivityProbeRequest(url)) return Response.json({});
+                const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(credentials));
+                if (path === '/v1/machines/presets/get') return Response.json({ kind: 'found', preset });
+                if (path === MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1) {
+                    routingReads.push(body);
+                    return Response.json({ kind: 'resolved', controller, controllerAccess: {
+                        custodian: { accountId: custodianAccountId }, installationPublicKey: encodeBase64(keys.publicKey, 'base64url'),
+                    } });
+                }
+                if (path === `${route}/execution-authorization`) {
+                    const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                    return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-team-preset-authorization',
+                        binding: { ...binding, ...controller, custodianAccountId, accountEncryptionMode: 'e2ee',
+                            managedAcquireDelegation: true, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } }));
+                }
+                if (path === route) {
+                    try {
+                        expect(JSON.stringify(body)).not.toContain(launchName);
+                        expect(JSON.stringify(body)).not.toContain(credentials.token);
+                        const { envelope, executionAuthorization } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                        if (envelope.v !== 2 || !executionAuthorization) throw new Error('Expected a signed encrypted controller request');
+                        const material = openManagedControllerActionCodecV1({ authorization: executionAuthorization, serverIdentityId: homeId,
+                            ...controller, installationPrivateKey: keys.secretKey });
+                        if (!material) throw new Error('Expected the exact installation to open the invocation codec');
+                        expect(material.machineKey).not.toEqual(encryption.getContentPrivateKey());
+                        deliveredInput = openExternalActionRequestV2({ envelope, binding, material,
+                            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+                        return Response.json(prepareExternalActionResponseV2({ request: envelope, binding, material, randomBytes: getRandomBytes,
+                            executedMachineId: controller.machineId, execution: { ok: true, result: approval } }).response);
+                    } catch (error) {
+                        deliveryError = error;
+                        throw error;
+                    }
+                }
+                return Response.json({}, { status: 404 });
+            });
+            onTestFinished(resetRuntimeFetch);
+            const account = await captureLazyActionAccountContext(homeId);
+            onTestFinished(() => account.dispose());
+
+            const result = await executeManagedMachineNativeAction({ account, actionId, input,
+                context: { surface: 'ui', authority: 'present_user', actionRequestId: requestId } });
+            if (placement === 'local-refusal') {
+                expect(result).toMatchObject({ ok: false, errorCode: 'guest_cli_identity_unavailable',
+                    failureCause: { errorCode: 'guest_cli_identity_unavailable' } });
+                expect(routingReads).toEqual([]);
+                expect(deliveredInput).toBeUndefined();
+                return;
+            }
+            expect(deliveryError).toBeUndefined();
+            expect(result).toEqual({ ok: true, result: approval });
+            expect(routingReads).toEqual([{ homeId, id: presetId, revision: preset.revision, controller }]);
+            expect(deliveredInput).toEqual({ input: boundInput });
         },
     );
 

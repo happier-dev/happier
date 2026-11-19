@@ -1,5 +1,5 @@
 import { MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedAdmissionOutputV1Schema, resolveManagedAcquireReviewV1,
+import { unwrapManagedMachineReadV1, ManagedMachineActionInputSchemasV1, ManagedAdmissionOutputV1Schema, isManagedPresetAcquireInputV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/pools';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -30,9 +30,9 @@ import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1,
 import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1,
     SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
-import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedAcquireInputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { createMachinePresetActionClient } from './managedMachinePresets';
+import { createMachinePresetActionClient, MachinePresetActionError } from './managedMachinePresets';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
 
@@ -112,8 +112,8 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         : ManagedMachineActionInputSchemasV1[actionId].safeParse(params.input);
     if (!parsedInput.success) return failure('invalid_parameters');
     let input = parsedInput.data;
-    let review = actionId === 'machines.managed.acquire'
-        ? resolveManagedAcquireReviewV1(ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input)) : null;
+    let acquireInput = actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.parse(input) : undefined;
+    let review = acquireInput ? resolveManagedAcquireReviewV1(acquireInput) : null;
     const managedObservation = 'managed' in input ? input.managed : undefined;
     if (operationActionId && !managedObservation) return failure('admission_unavailable');
     const homeId = review?.homeId ?? managedObservation?.homeId ?? ('homeId' in input ? input.homeId : undefined);
@@ -128,12 +128,31 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         return output.success ? { ok: true, result: output.data } : failure('managed_response_invalid');
     };
     let scopedControllerAccess: ManagedControllerAccessV1 | undefined;
-    const presetOrigin = params.presetOrigin ?? context.managedPresetOrigin;
-    if (actionId === 'machines.managed.acquire' && presetOrigin) {
+    let presetSnapshot: ManagedMachinePresetV1 | undefined;
+    let presetOrigin = params.presetOrigin ?? context.managedPresetOrigin;
+    // A public Action reference carries an exact revision but may lack the picker's
+    // local origin. Resolve placement before starting any Account-hosted recipe.
+    if (acquireInput && isManagedPresetAcquireInputV1(acquireInput) && !acquireInput.controller && !presetOrigin
+        && !context.externalActionExecutionAuthorization) {
+        try {
+            const read = await createMachinePresetActionClient({ request: account.request }).execute('machines.presets.get', {
+                homeId: acquireInput.selection.homeId, id: acquireInput.selection.id,
+            }, { signal: params.signal });
+            params.signal?.throwIfAborted();
+            account.assertCurrent();
+            if (read.kind === 'refused') return failure(read.code);
+            presetSnapshot = read.preset;
+            presetOrigin = presetSnapshot;
+        } catch (error) {
+            if (error instanceof MachinePresetActionError) return failure(error.code);
+            throw error;
+        }
+    }
+    if (acquireInput && presetOrigin) {
         let poolFailure: Extract<ActionExecuteResult, { ok: false }> | undefined;
         const bound = await bindUiManagedPresetAcquireOriginV1({
             account, signal: params.signal,
-            input: ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input),
+            input: acquireInput,
             preset: presetOrigin,
             requestKey: requestId,
             resolvePool: async poolInput => {
@@ -147,8 +166,9 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         account.assertCurrent();
         if (poolFailure) return poolFailure;
         if (bound.kind === 'refused') return failure(bound.code);
-        input = bound.input;
-        review = resolveManagedAcquireReviewV1(bound.input);
+        acquireInput = bound.input;
+        input = acquireInput;
+        review = resolveManagedAcquireReviewV1(acquireInput);
         scopedControllerAccess = bound.controllerAccess;
     }
     if (isOrdinaryMachineSetupNativeActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId)) {
@@ -219,15 +239,15 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         // still execute through the resource's current controller.
         if (actionId !== 'machines.managed.controller.update') controller = row.controller;
     }
-    if (!controller && actionId === 'machines.managed.acquire') {
-        const acquire = ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input);
+    if (!controller && acquireInput) {
         try {
             return validateExecution({ ok: true, result: await executeUiManagedAccountAcquire({
-                account, context, requestId, input: acquire,
+                account, context, requestId, input: acquireInput, presetSnapshot,
                 signal: params.signal, installNativePayload: params.installNativePayload,
             }) });
         } catch (error) {
-            if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) {
+            if (error instanceof ManagedMachineControllerError) return error.toActionFailure(actionId);
+            if (error instanceof SystemTaskExecutionError) {
                 return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
             }
             throw error;

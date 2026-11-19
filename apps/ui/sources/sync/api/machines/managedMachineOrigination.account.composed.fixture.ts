@@ -608,7 +608,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             expect(refused).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
             expect({ admissions, allocations, machineRpcs }).toEqual({ admissions: 1, allocations: 0, machineRpcs: 0 });
             expect(homePaths.filter(path => path.includes('/machines/presets/') || path.includes('/machines/pools/')))
-                .toEqual(missingPolicy ? Array.from({ length: plainPreset ? 1 : 2 }, () => '/v1/machines/presets/get') : []);
+                .toEqual(['/v1/machines/presets/get']);
             const wire = homeBodies.join('\n');
             expect(wire).not.toContain(privatePresetName);
             expect(wire).not.toContain(privateLaunchName);
@@ -1147,7 +1147,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect({ admissions, allocations, approvals, machineRpcs, guestDispatches }).toEqual({
             admissions: missingPolicy && !plainPreset ? 2 : 1, allocations: 1, approvals: 1, machineRpcs: 0, guestDispatches: startAgent ? 1 : 0,
         });
-        expect(roleDispatches).toBe(refusedRoles ? 0 : 1);
+        expect(roleDispatches).toBe(0);
         expect(guestContinuation).toEqual({ managedId: 'managed-1', creationRequestId: 'native-managed-create', expectedIntentRevision: 0 });
         if (exportedHomePayload) {
             expect(releaseRequests).toBe(0);
@@ -1219,7 +1219,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             // Actual external Action responses retain the structural/ciphertext
             // projection, never the local declaration or native resource.
             expect(homePaths.filter(path => path.includes('/machines/presets/') || path.includes('/machines/pools/')))
-                .toEqual(missingPolicy ? Array.from({ length: plainPreset ? 1 : 2 }, () => '/v1/machines/presets/get') : []);
+                .toEqual(Array.from({ length: missingPolicy ? 2 : 1 }, () => '/v1/machines/presets/get'));
             const homeWire = homeBodies.join('\n');
             expect(homeWire).not.toContain(privatePresetName);
             expect(homeWire).not.toContain(privateLaunchName);
