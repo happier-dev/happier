@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { OpenProjectInputV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectOpenControllerOptions } from './projectOpenController';
 import type { SessionDraftRepositoryStorage } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -25,6 +26,7 @@ type OpenEffect = (input: OpenProjectInputV1) => Promise<OpenProjectResultV1>;
 let openEffect: OpenEffect;
 let operationTransport: ActionOperationMachineTransportV1 | undefined;
 let account: LazyActionAccountContext;
+let homeId: string;
 installSessionActionRpcBoundary((request, context) => {
     const prefix = 'machine:';
     if (!request.method.startsWith(prefix) || !operationTransport) throw new Error(`Unexpected Project RPC: ${request.method}`);
@@ -43,7 +45,7 @@ beforeEach(async () => {
     await loadSyncSingletonForTests();
     openEffect = async () => { throw new Error('Unexpected Project Open effect'); };
     operationTransport = undefined;
-    const homeId = await homes.addHome({ name: 'Project Open', serverUrl: 'https://home.test', serverIdentityId: 'srv_project_home',
+    homeId = await homes.addHome({ name: 'Project Open', serverUrl: 'https://home.test', serverIdentityId: 'srv_project_home',
         accountId: 'account', currentAccount: true });
     account = await captureLazyActionAccountContext(homeId);
     const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://home.test', serverIdentityId: 'srv_project_home',
@@ -354,6 +356,33 @@ describe('Project Open screen behavior', () => {
         expect(navigation).toEqual([]);
         expect(controller.getSnapshot()).toMatchObject({ pending: false, canCheck: true,
             result: { kind: 'outcomeUnknown', operationId: 'original-attempt' }, uncertainInput: folder });
+    });
+    it.each(['structured', 'empty'] as const)('keeps Open blocked after a %s Home HTTP 502', async response => {
+        const openPath = '/v1/actions/projects.open';
+        homes.answer(homeId, `POST ${openPath}`, {
+            select: input => {
+                if (response === 'empty') return { status: 502 };
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
+                return { status: 502, body: {
+                    error: 'invalid_request',
+                    code: 'action_outcome_unknown',
+                    requestId: envelope.requestId,
+                    diagnostic: { reason: 'daemon_acknowledgement_lost' },
+                } };
+            },
+        });
+        const { controller, navigation } = harness(async () => { throw new Error('Unexpected Project Open effect'); });
+        try {
+            await controller.submit();
+            expect(controller.getSnapshot()).toMatchObject({
+                pending: false, canCheck: false, result: { kind: 'outcomeUnknown' }, uncertainInput: folder,
+            });
+            await controller.submit();
+            expect(homes.requests.filter(request => request.method === 'POST' && request.path === openPath)).toHaveLength(1);
+            expect(navigation).toEqual([]);
+        } finally {
+            controller.dispose();
+        }
     });
     it('retires a focus-only accepted retry when its mounted client leaves during row hydration', async () => {
         const repository = draftRepository();

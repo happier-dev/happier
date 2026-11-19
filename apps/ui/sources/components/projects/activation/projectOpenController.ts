@@ -1,4 +1,4 @@
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { OpenProjectResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ProjectOpenDraftDocumentV2Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
@@ -237,7 +237,7 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
                             expectedAccountId: lifetime.scope.accountId, signal: abort.signal,
                         });
                         if (executed.ok) result = OpenProjectResultV1Schema.parse(executed.result);
-                        else if (executed.errorCode === 'outcome_unknown') {
+                        else if (isActionOutcomeUnknownErrorCodeV1(executed.errorCode)) {
                             const details = executed.details;
                             const operationId = details && typeof details === 'object' && 'operationId' in details
                                 && typeof details.operationId === 'string' ? details.operationId.trim() : '';
