@@ -11,6 +11,7 @@ export function useDeploymentCancellation(input: Readonly<{
     cancel: ReturnType<typeof createDeploymentActions>['cancel'] | null;
     review: DeploymentReviewHandle;
     onOpenReceipt: (deploymentId: string) => void;
+    onRequest?: () => void;
 }>) {
     const press = useDeploymentPress(input.review, input.onOpenReceipt);
     const canCancel = input.cancel !== null && input.receipt?.cancellable === true;
@@ -18,6 +19,7 @@ export function useDeploymentCancellation(input: Readonly<{
     const requestCancel = () => {
         const { cancel, receipt } = input;
         if (!cancel || !receipt || !canCancel) return;
+        input.onRequest?.();
         void press.press(() => cancel({ environmentId: receipt.deployment.environmentId,
             deploymentId: receipt.deployment.id, expectedReceiptRevision: receipt.deployment.revision }), { openReceipt: false });
     };

@@ -97,6 +97,7 @@ import {
 } from './deploymentPresentation';
 import {
   useDeploymentPress,
+  hasDeploymentPressAttention,
   readDeploymentActionError,
   type DeploymentActionOutcome,
   type DeploymentOutcomeController,
@@ -1404,15 +1405,12 @@ export function DeployOutcomeBanner(
 ) {
   const { placement, controller } = props;
   const { outcome } = controller;
-  if (!outcome) return null;
+  if (!outcome || !hasDeploymentPressAttention(controller, props.copy)) return null;
   const rollback = props.copy === 'rollback';
   const cancel = props.copy === 'cancel';
   const domain = props.copy === 'domain' || props.copy === 'domainAdd' || props.copy === 'setting';
   const setting = props.copy === 'setting';
-  if (outcome.kind === 'receipt') return null;
   if (outcome.kind === 'approval') {
-    // Once decided, the receipt itself speaks; a stale "waiting" would be untrue.
-    if (!controller.pending) return null;
     return (
       <AttentionBanner
         testID="project-deployments.outcome.approval"
@@ -1439,8 +1437,6 @@ export function DeployOutcomeBanner(
     );
   }
   if (outcome.kind === 'started') {
-    // An accepted cancel settles on the receipt itself; "Deploy started" belongs to a new deploy only.
-    if (cancel || domain) return null;
     return (
       <AttentionBanner
         testID="project-deployments.outcome.started"
@@ -1450,6 +1446,7 @@ export function DeployOutcomeBanner(
       />
     );
   }
+  if (outcome.kind !== 'refused') return null;
   // A cancel has no build to explain: an unsupported refusal reads as any other "couldn't cancel".
   const unsupported = outcome.reason === 'unsupported' && !cancel && !domain;
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;

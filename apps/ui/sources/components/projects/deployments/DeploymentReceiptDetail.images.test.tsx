@@ -197,6 +197,52 @@ describe('Receipt → failed', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
+  it.each([
+    { phone: false, code: 'deployment_failed_unclassified' },
+    { phone: true, code: 'deployment_failed_unclassified' },
+    { phone: false, code: 'invalid_request' },
+  ])('shows the retry outcome as the only attention condition (phone=$phone, recorded=$code)', async ({ phone, code }) => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const base = createDeploymentReceiptDetailV1();
+    const receipt = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }),
+      content: DeploymentOwnServerContentV1Schema.parse({ ...base.content,
+        failure: { code, phase: 'build' } }),
+    });
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const deploy = vi.fn(async () => ({ ok: false as const, error: 'approval_stale' }));
+    const screen = await renderScreen(
+      <AccountNoticeInvestigationBoundary>
+        <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+          deploymentId={receipt.deployment.id} environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+          accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}} rollback={null}
+          cancel={null} deploy={deploy} phone={phone} linkPath={null} review={{ pendingId: null, request() {}, open() {} }}
+          onOpenReceipt={() => {}} />
+      </AccountNoticeInvestigationBoundary>,
+    );
+    const failed = 'project-deployments.receipt.outcome.failed';
+    const refused = 'project-deployments.outcome.refused.other';
+    try {
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId(failed), node => node !== null);
+      });
+      const banner = screen.findAll(node => node.props.testID === failed && node.props.title !== undefined)[0]!;
+      expect(banner.props.title).toBe(t('projects.deployments.failureBuild'));
+      if (code === 'invalid_request') expect(banner.props.description ?? '').not.toContain(readDeploymentFailureRecoveryV1(code).remedy);
+      const retry = [`${failed}.action`, `${failed}.deployAgain`, 'project-deployments.receipt.deployAgain']
+        .find(id => screen.findByTestId(id) !== null);
+      expect(retry).toBeDefined();
+      await screen.pressByTestIdAsync(retry!);
+      await vi.waitFor(() => expect(screen.findByTestId(refused)).not.toBeNull());
+      expect(screen.findByTestId(failed)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it.each(['deployment_image_unavailable', 'build_platform_unsupported', 'stateful_service_multi_machine'])('offers the canonical remedy for the recorded cause (%s)', async code => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code, phase: 'build' as const };

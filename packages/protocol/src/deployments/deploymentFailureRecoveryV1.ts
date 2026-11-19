@@ -264,6 +264,8 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     if (code === 'deployment_conflict' && (details.step === 'native_execution'
         || failure?.step === 'native_execution'
         || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
+    // A recorded build failure already passed review. Its generic request code cannot send the person back to admission.
+    if (code === 'invalid_request' && (failure?.phase ?? details.phase) === 'build') return recoveries.native_build_failed;
     const sourceFile = code === 'deployment_source_unavailable' ? sourceFileRecovery(failure ?? details) : null;
     if (sourceFile) return sourceFile;
     if (code === 'deployment_source_unavailable' && request?.pullRequestHead) return pullRequestHeadRecovery;
@@ -290,6 +292,8 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
     const authoredRemedy = typeof facts.remedy === 'string' && !supersededRemedies.has(facts.remedy) ? facts.remedy
         : typeof failure?.remedy === 'string' ? failure.remedy
             : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy : undefined;
+    const supersededRemedy = recovery === nativeConflictRecovery && authoredRemedy === recoveries.deployment_conflict.remedy
+        || recovery === recoveries.native_build_failed && authoredRemedy === recoveries.invalid_request.remedy;
     return projectActionFailureRecoveryV1({ ...details,
         requiredFact: typeof facts.requiredFact === 'string'
             && !(facts.step === 'native_execution'
@@ -297,8 +301,7 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
             : typeof failure?.requiredFact === 'string' ? failure.requiredFact
                 : typeof sourceAdmission?.requiredFact === 'string' ? sourceAdmission.requiredFact
                     : undefined,
-        remedy: recovery === nativeConflictRecovery && authoredRemedy === recoveries.deployment_conflict.remedy
-            ? undefined : authoredRemedy,
+        remedy: supersededRemedy ? undefined : authoredRemedy,
     }, {
         requiredFact: facts.step === 'native_execution' ? 'nativeExecutionResult' : 'deploymentActionResult',
         remedy: recovery.remedy,

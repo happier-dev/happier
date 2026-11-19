@@ -69,7 +69,7 @@ import {
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
-import { useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
+import { hasDeploymentPressAttention, useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
@@ -132,7 +132,7 @@ export const DeploymentReceiptDetail = React.memo(
     const environment = useDeploymentEnvironment(props.controller, props.environmentId, props.demand);
     const environmentValue = environment.snapshot.value;
     const activeId = environmentValue?.runtimeTargetLink?.activeDeploymentId ?? null;
-    // Each control keeps its own answer, so the banner speaks for the press it follows.
+    const [latestPress, setLatestPress] = React.useState<'rollback' | 'deploy' | 'cancel' | null>(null);
     const rollbackPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const againPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const receipt = useDeploymentReceipt(
@@ -151,7 +151,10 @@ export const DeploymentReceiptDetail = React.memo(
       nativeAddressDemand ? props.environmentId : null, props.demand);
     const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
       receipt: value, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
+      onRequest: () => setLatestPress('cancel'),
     });
+    const pressed = latestPress === 'rollback' ? rollbackPress : latestPress === 'deploy' ? againPress : cancelPress;
+    const pressAttention = latestPress !== null && hasDeploymentPressAttention(pressed.banner, latestPress);
     // Who acted is the receipt's captured actor through the one actor display owner; the requester is audit only.
     const receiptActors = React.useMemo(() => [value?.facts.actor ?? null], [value?.facts.actor]);
     const [actorPresentation] = useDeploymentActorPresentations({ actors: receiptActors,
@@ -245,6 +248,7 @@ export const DeploymentReceiptDetail = React.memo(
     // Every press is reviewed or refused by the Action owner (the approval page is its confirmation); none here.
     const rollBack = (deploymentId: string, restoreBackupId?: string) => {
       if (!rollback) return;
+      setLatestPress('rollback');
       void rollbackPress.press(() => rollback({ environmentId, deploymentId,
         ...(restoreBackupId === undefined ? {} : { restoreBackupId }) }));
     };
@@ -263,11 +267,13 @@ export const DeploymentReceiptDetail = React.memo(
     const pressAgain = () => {
       if (retryTeardown && teardown && content.teardown) {
         const reason = content.teardown.reason;
+        setLatestPress('deploy');
         void againPress.press(() => teardown({ environmentId, targetLinkId: deployment.targetLinkId,
           requestKey: deployment.requestKey, reason }, { confirmed: true }));
         return;
       }
       if (!deploy || !againTarget || !againSha) return;
+      setLatestPress('deploy');
       void againPress.press(() => deploy({ environmentId, targetLinkId: againTarget, sha: againSha,
         ...(content.sourceMethod ? { sourceMethod: content.sourceMethod } : {}) }));
     };
@@ -405,7 +411,8 @@ export const DeploymentReceiptDetail = React.memo(
       />
     ) : null;
     const pinned = cancelButton ?? againButton;
-    const pinnedOutcome = cancelButton ? cancelPress : againPress;
+    const pressInPinnedBar = phone && (latestPress === 'cancel' ? cancelButton !== null
+      : latestPress === 'deploy' && cancelButton === null && againButton !== null);
     const menu = (
       <ReceiptMenu
         onCancel={canCancel && !cancelLeads ? pressCancel : undefined}
@@ -425,7 +432,7 @@ export const DeploymentReceiptDetail = React.memo(
     );
     // A failed deploy's notice offers its recovery choices on this, its one page; when the failure card already leads
     // with the rollback they would repeat, the card's own button is that choice.
-    const noticeRecovery = deployment.state === 'failed' && !recoveryLeads
+    const noticeRecovery = !pressAttention && deployment.state === 'failed' && !recoveryLeads
       ? <DeploymentNoticeRecoveryChoices deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" /> : null;
     const headerActions = phone ? (
       <View style={styles.headerActions}>{noticeRecovery}{rollbackButton}{menu}</View>
@@ -496,13 +503,10 @@ export const DeploymentReceiptDetail = React.memo(
               actionsLayout={phone && !rollbackButton && !noticeRecovery ? 'hang' : undefined}
               actionsPlacement="page"
             />
-            {deploymentInProgressStates().includes(deployment.state)
+            {!pressAttention && deploymentInProgressStates().includes(deployment.state)
               ? <DeploymentPendingRequest pending={environmentValue?.pendingDeployment} serverId={props.serverId} /> : null}
-            {outcomeBanner(rollbackPress, 'rollback')}
-            {/* A phone pressed these in its pinned bar, so their answers show there. */}
-            {phone ? null : outcomeBanner(cancelPress, 'cancel')}
-            {phone && !releasePruned ? null : outcomeBanner(againPress, 'deploy')}
-            {releasePruned && againTarget && againSha ? (
+            {pressAttention && latestPress && !pressInPinnedBar ? outcomeBanner(pressed, latestPress) : null}
+            {!pressAttention && releasePruned && againTarget && againSha ? (
               <AttentionBanner
                 testID="project-deployments.receipt.pruned"
                 tone="neutral"
@@ -518,7 +522,7 @@ export const DeploymentReceiptDetail = React.memo(
                 }}
               />
             ) : null}
-            {deployment.state === 'failed' ? (
+            {!pressAttention && deployment.state === 'failed' ? (
               <AttentionBanner
                 testID="project-deployments.receipt.outcome.failed"
                 tone="danger"
@@ -570,7 +574,7 @@ export const DeploymentReceiptDetail = React.memo(
             ) : null}
             {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
               testID="project-deployments.receipt.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
-            {notice ? (
+            {!pressAttention && notice ? (
               <AttentionBanner
                 testID={`project-deployments.receipt.notice.${deployment.state}`}
                 tone={notice.tone}
@@ -679,7 +683,7 @@ export const DeploymentReceiptDetail = React.memo(
           {phone && pinned ? (
             <KeyboardStickyFooter>
               <PagePinnedBar testID="project-deployments.receipt.bar" style={styles.bar}>
-                {outcomeBanner(pinnedOutcome, cancelButton ? 'cancel' : 'deploy', 'inline')}
+                {pressAttention && latestPress && pressInPinnedBar ? outcomeBanner(pressed, latestPress, 'inline') : null}
                 {pinned}
               </PagePinnedBar>
             </KeyboardStickyFooter>

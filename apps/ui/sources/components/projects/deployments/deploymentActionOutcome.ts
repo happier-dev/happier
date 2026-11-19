@@ -27,6 +27,17 @@ export type DeploymentOutcomeController = Readonly<{
   openRecovery: ((destination: DeploymentFailureRecoveryDestinationV1, at?: DeploymentRecoveryTarget) => void) | null;
 }>;
 
+/** Whether the result still has an attention banner on the page that made this press. */
+export function hasDeploymentPressAttention(controller: DeploymentOutcomeController,
+  copy: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'domainAdd' | 'setting' | undefined): boolean {
+  switch (controller.outcome?.kind) {
+    case 'approval': return controller.pending;
+    case 'started': return copy !== 'cancel' && copy !== 'domain' && copy !== 'domainAdd' && copy !== 'setting';
+    case 'refused': return true;
+    default: return false;
+  }
+}
+
 function createDeploymentOutcomeController(outcome: DeploymentActionOutcome | null, review: DeploymentPressReview | null,
   retry: () => Promise<void>): DeploymentOutcomeController {
   return { outcome, pending: outcome?.kind === 'approval' && review?.pendingId === outcome.artifactId,
