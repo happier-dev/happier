@@ -3239,6 +3239,9 @@ thirty-second Axios deadline.
 For a saved Provider connection, source-level broker readiness requires a
 current, usable model in a broker application. It uses the same source catalog
 as an exact model read with no application or model selected.
+Team administration determines whether the saved source still matches through
+the custodian daemon's connection description. An unusable broker route can
+leave the connection intact and the Machine available as a placement choice.
 In 0.3 development, the Test
 result's optional, closed `code` preserves the
 exact admitted application refusal or the carrier's public failure classification;

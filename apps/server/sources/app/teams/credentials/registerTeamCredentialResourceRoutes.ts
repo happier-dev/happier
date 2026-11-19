@@ -423,8 +423,6 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             ? eligibilityByPoolId.get(resource.brokerPlacement.poolId) ?? []
             : candidateMachineIds.length === 0 ? [] : await readBrokerEligibility(resource, source, candidateMachineIds);
         const hasEligibleSource = eligibility.some(candidate => candidate.eligibility?.status === 'eligible');
-        const hasChangedSource = eligibility.some(candidate => candidate.eligibility?.status === 'unavailable'
-            && (candidate.eligibility.reason === 'source_changed' || candidate.eligibility.reason === 'source_unavailable'));
         const brokerRefusalReason = readTeamCredentialBrokerRefusalReason(eligibility.map(({ eligibility }) => (
             eligibility?.status === 'unavailable' ? eligibility.reason : null
         )));
@@ -441,7 +439,11 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
                 if (inspected.status === 'changed') providerSourceState = 'changed';
             }
         }
-        const sourceChanged = hasChangedSource || providerSourceState === 'changed';
+        // A Provider connection can still match its offer while the broker has no usable model.
+        const sourceChanged = source.kind === 'provider_connection'
+            ? providerSourceState === 'changed'
+            : eligibility.some(candidate => candidate.eligibility?.status === 'unavailable'
+                && (candidate.eligibility.reason === 'source_changed' || candidate.eligibility.reason === 'source_unavailable'));
         const sourceAuthenticationFailure = eligibility.some(candidate => candidate.eligibility?.status === 'unavailable'
             && candidate.eligibility.reason === 'connected_service_credential_reconnect_required');
         const nonBrokerAllowed = resource.deliveryPolicy.preferredAllowedModes.some(route => route !== 'brokered');

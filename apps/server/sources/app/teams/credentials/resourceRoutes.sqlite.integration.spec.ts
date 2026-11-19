@@ -2447,7 +2447,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const source = {
             v: 1 as const,
             kind: "provider_connection" as const,
-            connectionId: "exact-readiness-connection" as ProviderConnectionId,
+            connectionId: "pc_exact-readiness-connection" as ProviderConnectionId,
             connectionSecurityFingerprint: fingerprint,
             credentialSlotId: "apiKey",
         };
@@ -2498,7 +2498,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             runtime: { health: "available" as const, modelCount: 1, checkedAt: 1 },
         };
         let describedConnections = [providerConnection];
-        let brokerRefusal: "application_unavailable" | "model_unavailable" | null = null;
+        let brokerRefusal: "application_unavailable" | "model_unavailable" | "source_unavailable" | null = null;
         app.forwardRpcForUser = vi.fn(async (input: Readonly<{ method: string }>) => {
             if (input.method.endsWith("daemon.providers.connections.describe")) {
                 return { ok: true as const, result: {
@@ -2602,6 +2602,40 @@ describe("Team credential resource routes (SQLite integration)", () => {
             readiness: { kind: "available" },
             brokerPresentation: { selectedTarget: { machineId: online.id, availability: "available" } },
         });
+
+        // Sharing from an online Providers Machine does not itself set Team broker placement.
+        // Its current connection can still have no usable model in a broker application.
+        brokerRefusal = "source_unavailable";
+        const freshId = crypto.randomUUID();
+        const fresh = await post("/v1/teams/credential-resources/create", custodian.id, {
+            resourceId: freshId,
+            teamId: team.id,
+            displayName: plainPrivateLabel("Main gateway"),
+            source,
+            deliveryPolicy: { preferredAllowedModes: ["brokered"] },
+            sessionUsePolicy: "personal_allowed",
+            brokerPlacement: null,
+            requestPolicy: null,
+            allMembersAllowedRoutes: null,
+            groupGrants: [],
+            memberGrants: [],
+            usageLimits: [],
+        });
+        expect(fresh.statusCode, fresh.body).toBe(200);
+        const freshProjection = {
+            source,
+            sourcePresentation: projected.sourcePresentation,
+            brokerPlacement: null,
+            readiness: { kind: "broker_unavailable" },
+            recoveryAction: "select_broker",
+            brokerPresentation: {
+                eligibleTargets: expect.arrayContaining([{ machineId: online.id, availability: "available", displayName: null }]),
+            },
+        };
+        expect(fresh.json()).toMatchObject(freshProjection);
+        const freshEdit = await post("/v1/teams/credential-resources/get", custodian.id, { resourceId: freshId });
+        expect(freshEdit.statusCode, freshEdit.body).toBe(200);
+        expect(freshEdit.json()).toMatchObject(freshProjection);
 
         for (const reason of ["application_unavailable", "model_unavailable"] as const) {
             brokerRefusal = reason;
