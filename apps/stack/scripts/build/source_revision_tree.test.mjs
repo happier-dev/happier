@@ -245,6 +245,7 @@ async function createRevisionFixture(t) {
   // The checkout's installed workspace link, as pnpm writes it.
   await symlink('../../../../packages/shared', join(server, 'node_modules/@happier-dev/shared'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(join(server, 'sources/main.light.ts'), COMMITTED_MAIN);
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};\n');
   await writeFile(join(repoDir, 'packages/shared/src/index.ts'), COMMITTED_SHARED);
   // Native support is built by the daemon support owner (Go, Rust and pnpm builds: a
   // system boundary). This stand-in keeps the owner's contract: one artifact per
@@ -319,6 +320,23 @@ test('stacks on one revision share one base tree; each runs only its own declare
   const [baseInfo, cloneInfo] = await Promise.all([lstat(join(a.baseDir, 'packages/shared/src/index.ts')),
     lstat(join(c.treeDir, 'packages/shared/src/index.ts'))]);
   assert.equal(cloneInfo.ino, baseInfo.ino);
+});
+
+test('a cold source reload prepares one shared base for the server and daemon', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const descriptor = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'),
+    rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  const prepare = stack => prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path(`stacks/${stack}`),
+    descriptorPath: descriptor.descriptorPath, components: [{ component: 'server' }, { component: 'daemon' }],
+    env: { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+      HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, logger: { error() {} } });
+
+  const cold = await prepare('cold');
+  const warm = await prepare('warm');
+  const countBaseBuilds = roles => Object.values(roles).filter(role => role.sourceTree.baseBuilt).length;
+  assert.equal(cold.server.sourceCapture.inputIdentity, cold.daemon.sourceCapture.inputIdentity);
+  assert.equal(countBaseBuilds(cold), 1);
+  assert.equal(countBaseBuilds(warm), 0);
 });
 
 test('a declared overlay keeps its selected bytes when the checkout moves after description', async t => {

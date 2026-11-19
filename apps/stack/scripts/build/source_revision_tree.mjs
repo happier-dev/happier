@@ -610,7 +610,10 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
   // reloads) hold a tree and pin its base; release them before writing a new one.
   await releaseStackSourceTrees({ stackBaseDir, components: components.map(({ component }) => component), signal, preparing: true });
   const prepared = {};
-  for (const { component, serverComponent = 'happier-server-light', dbProvider } of components) {
+  // A co-located daemon needs Plugin UI in the base. Prepare it first so the
+  // server reuses that base and a server-only reload still skips Plugin UI.
+  const preparationOrder = [...components].sort((left, right) => Number(right.component === 'daemon') - Number(left.component === 'daemon'));
+  for (const { component, serverComponent = 'happier-server-light', dbProvider } of preparationOrder) {
     const started = performance.now();
     // Each preparation gets its own tree: the incumbent keeps running from its tree
     // until the restart retires it, and stop then releases every tree but the selected one.
