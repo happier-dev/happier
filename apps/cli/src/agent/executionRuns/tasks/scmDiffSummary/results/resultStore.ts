@@ -509,6 +509,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
             const target = selected.find((stop) => stop.id === edit.targetStopId)!;
             const merged = { ...target, title: edit.title ?? target.title, explanationMarkdown: edit.explanationMarkdown,
               changeRefs: selected.flatMap((stop) => stop.changeRefs),
+              ...(selected.some(stop => stop.captions) ? { captions: selected.flatMap(stop => stop.captions ?? []) } : {}),
               ...(selected.some(stop => stop.suggestedQuestions) ? { suggestedQuestions: [...new Set(selected.flatMap(stop => stop.suggestedQuestions ?? []))] } : {}),
               ...(selected.some((stop) => stop.findingRefs) ? { findingRefs: [...new Set(selected.flatMap((stop) => stop.findingRefs ?? []))] } : {}),
               ...(selected.some(stop => stop.reviewExplanations) ? { reviewExplanations: selected.flatMap(stop => stop.reviewExplanations ?? []) } : {}) };

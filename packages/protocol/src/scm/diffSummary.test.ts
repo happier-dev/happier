@@ -188,6 +188,18 @@ describe('comparison evidence and analysis contracts', () => {
     expect(diffSummary.normalizeScmDiffSummaryModelOutput(value, options).walkthrough).toMatchObject({
       stops: [{ changeRefs: ['pair-1:a:0'] }], otherChangeRefs: ['pair-1:a:1'],
     });
+    const caption = { changeRef: 'c1', side: 'after', startLine: 1, endLine: 1, text: 'This branch handles the retry.' };
+    const withCaption = (lineCaption: typeof caption) => ({ walkthrough: {
+      ...value.walkthrough, stops: [{ ...stop, captions: [lineCaption] }],
+    } });
+    const captioned = diffSummary.normalizeScmDiffSummaryModelOutput(withCaption(caption), options);
+    expect(captioned.walkthrough?.stops[0]).toMatchObject({ captions: [{ ...caption, changeRef: 'pair-1:a:0' }] });
+    expect(diffSummary.normalizeScmDiffSummaryModelOutput(captioned, { ...options, referenceMode: 'canonical' }))
+      .toEqual(captioned);
+    expect(() => diffSummary.normalizeScmDiffSummaryModelOutput(withCaption({ ...caption, changeRef: 'c2', startLine: 9, endLine: 9 }), options))
+      .toThrow(/caption.*stop/i);
+    expect(() => diffSummary.normalizeScmDiffSummaryModelOutput(withCaption({ ...caption, endLine: 9 }), options))
+      .toThrow(/caption.*range/i);
     const omitted = { walkthrough: { ...value.walkthrough, otherChangeRefs: [] } };
     expect(diffSummary.normalizeScmDiffSummaryModelOutput(omitted, options).walkthrough).toMatchObject({
       stops: [{ changeRefs: ['pair-1:a:0'] }], otherChangeRefs: ['pair-1:a:1'],

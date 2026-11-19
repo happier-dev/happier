@@ -246,8 +246,20 @@ function combine(parts: readonly ScmDiffSummaryModelOutput[]): ScmDiffSummaryMod
   for (const stop of walkthroughs.flatMap((walkthrough) => walkthrough.stops)) {
     const existing = stops.find((candidate) => candidate.changeRefs.some((ref) => stop.changeRefs.includes(ref)));
     const changeRefs = stop.changeRefs.filter((ref) => !stopRefs.has(ref));
-    if (changeRefs.length) stops.push({ ...stop, changeRefs });
-    else if (existing) existing.explanationMarkdown += `\n\n${stop.explanationMarkdown}`;
+    if (changeRefs.length) stops.push({
+      ...stop,
+      changeRefs,
+      ...(stop.captions ? { captions: stop.captions.filter(caption => changeRefs.includes(caption.changeRef)) } : {}),
+    });
+    else if (existing) {
+      existing.explanationMarkdown += `\n\n${stop.explanationMarkdown}`;
+      if (stop.captions) {
+        existing.captions = [
+          ...existing.captions ?? [],
+          ...stop.captions.filter(caption => existing.changeRefs.includes(caption.changeRef)),
+        ];
+      }
+    }
     changeRefs.forEach((ref) => stopRefs.add(ref));
   }
   const otherChangeRefs = [...new Set(walkthroughs.flatMap((walkthrough) => walkthrough.otherChangeRefs))].filter((ref) => !stopRefs.has(ref));

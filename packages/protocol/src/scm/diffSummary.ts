@@ -223,6 +223,13 @@ export const ScmDiffSummaryWalkthroughSchema = lazyZodSchema(() => z.strictObjec
   stops: z.array(z.strictObject({
     id: z.string().check(z.minLength(1)), title: z.string().check(z.trim(), z.minLength(1)), explanationMarkdown: z.string().check(z.trim(), z.minLength(1)),
     changeRefs: z.array(z.string().check(z.minLength(1))), importance: z.optional(z.enum(['low', 'medium', 'high'])),
+    captions: z.optional(z.array(z.strictObject({
+      changeRef: z.string().check(z.minLength(1)),
+      side: z.enum(['before', 'after']),
+      startLine: z.number().check(z.int(), z.positive()),
+      endLine: z.number().check(z.int(), z.positive()),
+      text: z.string().check(z.trim(), z.minLength(1)),
+    }).check(z.refine(caption => caption.endLine >= caption.startLine, 'Invalid caption line range')))),
     findingRefs: z.optional(z.array(z.string().check(z.minLength(1)))),
     suggestedQuestions: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
     reviewExplanations: z.optional(z.array(ScmReviewExplanationSchema).check(z.minLength(1))),
@@ -324,7 +331,9 @@ export function normalizeScmDiffSummaryModelOutput(value: unknown, params: Reado
   }
   const comparison = ScmComparisonSchema.parse(params.comparison);
   const occurrences = comparison.inventory.files.flatMap((file) => file.occurrences);
-  const refs = new Map(occurrences.map((occurrence) => [params.referenceMode === 'canonical' ? occurrence.id : occurrence.alias, occurrence.id]));
+  const refs = new Map(occurrences.map(occurrence => [
+    params.referenceMode === 'canonical' ? occurrence.id : occurrence.alias, occurrence,
+  ]));
   const allowed = params.requestedOutputs ?? ['summary', 'walkthrough', 'commitPlan'];
   const carriesSummary = output.summaryMarkdown !== undefined || output.risks !== undefined
     || output.testImpact !== undefined || output.suggestedPrBody !== undefined;
@@ -334,7 +343,7 @@ export function normalizeScmDiffSummaryModelOutput(value: unknown, params: Reado
   function resolveGroup(groups: readonly (readonly string[])[], keepUnassignedInOtherChanges = false) {
     const used = new Set<string>();
     const resolved = groups.map((group) => group.map((ref) => {
-      const id = refs.get(ref);
+      const id = refs.get(ref)?.id;
       if (!id) throw new Error(`Unknown comparison change reference: ${ref}`);
       if (used.has(id)) throw new Error(`Duplicate comparison change reference: ${ref}`);
       used.add(id);

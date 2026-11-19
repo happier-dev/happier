@@ -77,7 +77,7 @@ export function buildDiffSummaryPrompt(params: Readonly<{
   const language = ScmDiffSummaryOutputLanguageSchema.safeParse(params.outputLanguage);
   const shape = params.reviewExplanation ? ['  "reviewExplanations": [{ "stopId": string, "markdown": string }]'] : [
     ...(outputs.includes('summary') ? ['  "summaryMarkdown": string,', '  "risks"?: string[],', '  "testImpact"?: string,', '  "suggestedPrBody"?: string,'] : []),
-    ...(outputs.includes('walkthrough') ? ['  "walkthrough": { "title": string, "intro": string, "stops": [{ "id": string, "title": string, "explanationMarkdown": string, "changeRefs": string[], "importance"?: "low"|"medium"|"high", "findingRefs"?: string[], "suggestedQuestions"?: string[] }], "readingHint"?: string, "otherChangeRefs": string[] },'] : []),
+    ...(outputs.includes('walkthrough') ? ['  "walkthrough": { "title": string, "intro": string, "stops": [{ "id": string, "title": string, "explanationMarkdown": string, "changeRefs": string[], "importance"?: "low"|"medium"|"high", "findingRefs"?: string[], "suggestedQuestions"?: string[], "captions"?: [{ "changeRef": string, "side": "before"|"after", "startLine": number, "endLine": number, "text": string }] }], "readingHint"?: string, "otherChangeRefs": string[] },'] : []),
     ...(outputs.includes('commitPlan') ? ['  "commitPlan": { "groups": [{ "id": string, "message": string, "rationale": string, "changeRefs": string[] }], "leftOutChangeRefs": string[] },'] : []),
   ];
   const aliases = params.comparison ? presentScmDiffSummaryModelContext(params.comparison.inventory.files.map((file) => ({
@@ -116,6 +116,7 @@ export function buildDiffSummaryPrompt(params: Readonly<{
       'Editorial guidance:',
       '- Tell a causal story in dependency order: contracts and data shapes, then implementing code, then callers and UI.',
       '- For walkthrough stops: Group changes across files by intent. Title each stop by its outcome, never a filename.',
+      '- Optionally caption a specific code detail. Use an exact change alias from the stop, its before or after side, and inclusive line numbers inside that changed range.',
       '- Optionally suggest a small list of plain-text intent questions grounded in each stop\'s evidence. Omit suggestedQuestions when no useful question is supported; do not invent motives or missing test results.',
       '- Explain behavior before and after the change; avoid line-by-line narration. Explain why only where the code cannot convey it.',
       '- Place a proving test beside the behavior it proves.',
