@@ -326,7 +326,8 @@ import { createManagedMachineActionClient, ManagedMachineActionError } from '@/s
 import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction, prepareUiManagedPresetAcquire } from '@/sync/api/machines/managedMachineOrigination';
 import { executeUiManagedProvisionerList, prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
 import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
-import { executeUiMachinePresetArchive } from './machinePresetArchive';
+import { executeUiMachinePresetArchive, resolveUiMachinePresetArchiveExecutionTarget } from './machinePresetArchive';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { readManagedMachineReadForSnapshot } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
@@ -1125,7 +1126,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // Action input, presence ranking, or the UI's default Machine selection.
     const pluginInput = args.actionId === 'approval.request.create' && args.input !== null && typeof args.input === 'object'
       && 'actionArgs' in args.input ? args.input.actionArgs : args.input;
-    const machineOwnedAction = isMachineOwnedAdmissionAction(args.actionId, args.input);
+    const presetArchive = args.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1;
+    const machineOwnedAction = isMachineOwnedAdmissionAction(args.actionId, args.input) || presetArchive;
     const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(args.actionId);
     let workspaceSourceMachineId: string | undefined;
     if (relationshipWrite) {
@@ -1145,7 +1147,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const originalSpec = ActionIdSchema.safeParse(args.actionId);
     const demand = originalSpec.success ? getActionSpec(originalSpec.data).machineRuntimeDemandForInput?.(pluginInput, args.context) : null;
     const serviceRequest = readLocalServiceControlActionRequest(readAdmittedActionId(args.actionId, args.input), pluginInput);
-    let requestedMachineId = workspaceSourceMachineId ?? serviceRequest?.target.machineId ?? (demand?.target.kind === 'machine' ? demand.target.machineId : pluginInput !== null && typeof pluginInput === 'object'
+    const presetMachineId = presetArchive && args.context.externalActionTarget?.kind === 'machine'
+      ? args.context.externalActionTarget.machineId : undefined;
+    let requestedMachineId = presetMachineId ?? workspaceSourceMachineId ?? serviceRequest?.target.machineId ?? (demand?.target.kind === 'machine' ? demand.target.machineId : pluginInput !== null && typeof pluginInput === 'object'
       && 'machineId' in pluginInput && typeof pluginInput.machineId === 'string'
       ? pluginInput.machineId : undefined);
     if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
@@ -1192,7 +1196,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       requestedMachineId = selected.machineId;
     }
     const mountedMachineId = args.context.executionRunTargetMachineId
-      ?? (!relationshipWrite && args.context.surface !== 'plugin' ? args.context.defaultSessionMachineId : undefined);
+      ?? (!relationshipWrite && !presetArchive && args.context.surface !== 'plugin' ? args.context.defaultSessionMachineId : undefined);
     if (requestedMachineId && mountedMachineId && requestedMachineId !== mountedMachineId) {
       return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
     }
@@ -5258,6 +5262,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     return serverId ? { ...request, serverId } : input;
   };
 
+  const resolveMachineAdmissionContext = async (actionId: ActionId, input: unknown, context: ActionExecutorContext):
+    Promise<ActionExecutorContext | ActionExecuteFailure | null> => {
+    if (context.surface === 'plugin' && !isSessionSpawnNewActionIdV1(actionId)) return null;
+    if (isMachineOwnedAdmissionAction(actionId, input)) return context;
+    if (actionId !== MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 || !accountContext) return null;
+    const target = await resolveUiMachinePresetArchiveExecutionTarget(input, accountContext, context.signal);
+    return target && 'ok' in target ? target : target ? { ...context, externalActionTarget: target } : null;
+  };
+
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
     input = normalizeTerminalHomeInput(actionId, input);
     const resolved = resolveContext(context, input, actionId);
@@ -5269,8 +5282,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     if (opts?.admittedClientActionId === actionId) {
       return await executor.executeAdmittedClientAction(actionId, input, resolved);
     }
-    return (resolved.surface !== 'plugin' || isSessionSpawnNewActionIdV1(actionId)) && isMachineOwnedAdmissionAction(actionId, input)
-      ? await executeMachineAction(actionId, input, resolved, confirmInFlow)
+    const machineContext = await resolveMachineAdmissionContext(actionId, input, resolved);
+    if (machineContext && 'ok' in machineContext) return machineContext;
+    return machineContext
+      ? await executeMachineAction(actionId, input, machineContext, confirmInFlow)
       : await confirmOwnUiRefusal(actionId, input, resolved,
         await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved),
         deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
@@ -5324,12 +5339,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       // The daemon owns implicit and explicit review for its admitted Actions.
       // Preparation must not create an app-local approval before that owner runs.
-      if ((resolved.surface !== 'plugin' || isSessionSpawnNewActionIdV1(actionId)) && isMachineOwnedAdmissionAction(actionId, input)) {
-        const review = options?.reviewOnly && !isSessionSpawnNewActionIdV1(actionId) ? await executor.prepare(actionId, input, resolved, options) : null;
+      const machineContext = await resolveMachineAdmissionContext(actionId, input, resolved);
+      if (machineContext && 'ok' in machineContext) return { kind: 'settled', result: machineContext };
+      if (machineContext) {
+        const review = options?.reviewOnly && !isSessionSpawnNewActionIdV1(actionId) ? await executor.prepare(actionId, input, machineContext, options) : null;
         if (review?.kind === 'settled') return review;
         return { kind: 'ready',
           ...(review?.operation ? { operation: review.operation } : {}),
-          invocation: { run: () => executeMachineAction(actionId, input, resolved) } };
+          invocation: { run: () => executeMachineAction(actionId, input, machineContext) } };
       }
       // A prepared run reaches the same receiving owner as execute, so its refusal gets the same confirmation.
       const prepared = await executor.prepare(actionId, input, resolved, options);

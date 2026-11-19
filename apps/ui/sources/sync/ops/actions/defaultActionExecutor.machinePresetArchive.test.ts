@@ -12,6 +12,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { MachinePresetActionInputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -26,7 +27,7 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 afterEach(() => standardCleanup());
 
-async function archiveFixture(originalMachineId?: string, accountNative = false, cold = false) {
+async function archiveFixture(originalMachineId?: string, accountNative = false, cold = false, retainedCancelled = false) {
     await homes.reset();
     const lifetime = new AbortController();
     onTestFinished(() => lifetime.abort());
@@ -53,7 +54,7 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
     const launch = { provider, schemaVersion: provisioner.schemaVersion, choices: accountNative ? { snapshot: 'base' } : {},
         ...(accountNative ? { credentials: [{ purpose: { consumer: provider, purpose: ACCOUNT_PURPOSE }, account: connectedAccount }] } : {}) };
     const credentialConfigurations = accountNative ? [{ account: connectedAccount, revision: 'original-account-revision' }] : [];
-    const prepared = { operationId: 'original-prepare', status: cold ? 'cancelled' : 'ready', binding: {
+    const prepared = { operationId: 'original-prepare', status: cold || retainedCancelled ? 'cancelled' : 'ready', binding: {
         configuration: { launch }, cliIdentity: 'original-cli', credentialConfigurations,
         ...(originalMachineId ? { machineId: originalMachineId } : {}) },
         ...(cold ? {} : { artifact: { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: { image: 'original-image' } } }) };
@@ -79,6 +80,33 @@ async function archiveFixture(originalMachineId?: string, accountNative = false,
     }
     return { serverId, homeId, account, row: () => preset, signal: lifetime.signal };
 }
+
+it.each(['executeConfirmed', 'prepare'] as const)('sends retained-image Archive as a whole root to its original host (%s)', async entry => {
+    const fixture = await archiveFixture('original-host', false, false, true);
+    const roots: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, fixture.serverId, { actionId: 'machines.presets.archive',
+        machineId: 'original-host', installationId: 'original-installation', tokenEpoch: 0,
+        execute: (input, context) => {
+            roots.push({ input, target: context.target, invocation: context.invocation });
+            return { kind: 'conflict', currentRevision: 9 };
+        } });
+    const input = { homeId: fixture.homeId, id: fixture.row().id, expectedRevision: fixture.row().revision };
+    const context = { serverId: fixture.serverId, surface: 'ui' as const, authority: 'present_user' as const,
+        actionRequestId: `archive-root-${entry}`, defaultSessionMachineId: 'unrelated-focused-machine', signal: fixture.signal };
+    const executor = createDefaultActionExecutor();
+    const result = entry === 'executeConfirmed' ? await executor.executeConfirmed('machines.presets.archive', input, context)
+        : await (async () => {
+            const prepared = await executor.prepare('machines.presets.archive', input, context);
+            expect(prepared.kind).toBe('ready');
+            expect(roots).toEqual([]);
+            return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+        })();
+    expect({ result, roots }).toMatchObject({ result: { ok: true, result: { kind: 'conflict', currentRevision: 9 } },
+        roots: [{ input, target: { kind: 'machine', machineId: 'original-host' } }] });
+    expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toEqual([]);
+    expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.archive'))).toEqual([]);
+    expect(fixture.row().revision).toBe(input.expectedRevision);
+});
 
 it('retains a prepared local image and refuses Archive when its original host is unknown', async () => {
     const fixture = await archiveFixture();

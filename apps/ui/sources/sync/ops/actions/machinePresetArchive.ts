@@ -1,4 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { projectManagedMachinePresetForRecipientV1, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
@@ -6,6 +7,7 @@ import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/m
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachineProvisionerPreparationInspectResultV1Schema, MachineProvisionerPreparationDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { ManagedMachineControllerError, settleManagedMachinePresetPreparationOperationV1, managedMachinePresetPreparationNeedsNativeCleanupV1,
+    resolveManagedMachinePresetArchiveExecutionTargetV1,
     type ManagedMachinePresetPreparationCustodyV1, type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
 import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
 import { createUiManagedAccountNativeInvocationForLaunch } from '@/sync/api/machines/managedMachineAccountNative';
@@ -16,6 +18,31 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
 type ArchiveRequest = Parameters<NonNullable<ActionExecutorDeps['machinePresetArchive']>>[0];
+
+/** Select the whole Archive root before the receiving host admits its private native children. */
+export async function resolveUiMachinePresetArchiveExecutionTarget(rawInput: unknown, account: LazyActionAccountContext,
+    signal?: AbortSignal): Promise<Awaited<ReturnType<typeof resolveManagedMachinePresetArchiveExecutionTargetV1>> | ActionExecuteFailure> {
+    const parsed = MachinePresetActionInputSchemasV1['machines.presets.archive'].safeParse(rawInput);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    try {
+        return await withOpenedPreset(account, parsed.data, signal, async (preset, content) => {
+            if (preset.revision !== parsed.data.expectedRevision) return null;
+            return await resolveManagedMachinePresetArchiveExecutionTargetV1({ prepared: content.prepared,
+                readDestroyExecution: async launch => {
+                    const selected = await readPluginAccountAvailability(account.accountLifetime.scope).ensureCurrentAccountExecution(launch.provider.pluginId);
+                    if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
+                    const provisioner = readProvisioner(selected.manifest.contributes.machineProvisioners, launch);
+                    const destroy = selected.manifest.contributes.actions?.find(action => action.id === provisioner.preparation!.actions.destroy);
+                    if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
+                    return destroy.execution;
+                },
+                readCleanupUnavailable: machineId => readCleanupUnavailable(account, machineId, signal) });
+        });
+    } catch (error) {
+        if (error instanceof ManagedMachineControllerError) return error.toActionFailure('machines.presets.archive');
+        throw error;
+    }
+}
 
 /** Inspect and destroy are reviewed before Archive spends its ordinary admitted parent. */
 export async function prepareUiMachinePresetArchive(request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
@@ -54,13 +81,7 @@ export async function executeUiMachinePresetArchive(request: ArchiveRequest, acc
                     const destroy = selected.manifest.contributes.actions?.find(action => action.id === destroyId);
                     if (!destroy) throw new ManagedMachineControllerError('provider_unavailable');
                     if (destroy.execution?.target !== 'account' && prepared.binding.machineId) {
-                        const machineId = prepared.binding.machineId;
-                        const rows = await readMachineRows({ readTransport: account.readTransport, request: account.request,
-                            machineIds: [machineId], signal });
-                        const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId,
-                            machine: rows.get(machineId), machineReachable: false });
-                        if (readiness.status === 'revoked') cleanupUnavailable = 'machine_revoked';
-                        if (readiness.status === 'replaced') cleanupUnavailable = 'machine_replaced';
+                        cleanupUnavailable = await readCleanupUnavailable(account, prepared.binding.machineId, signal);
                     }
                     if (!cleanupUnavailable) invoke = createUiManagedAccountNativeInvocationForLaunch({ account, launch,
                         credentialConfigurations: prepared.binding.credentialConfigurations, provisioner, selected,
@@ -92,6 +113,15 @@ export async function executeUiMachinePresetArchive(request: ArchiveRequest, acc
         if (error instanceof ManagedMachineControllerError) return error.toActionFailure('machines.presets.archive');
         throw error;
     }
+}
+
+async function readCleanupUnavailable(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal):
+    Promise<Parameters<typeof settleManagedMachinePresetPreparationOperationV1>[0]['cleanupUnavailable']> {
+    const rows = await readMachineRows({ readTransport: account.readTransport, request: account.request,
+        machineIds: [machineId], signal });
+    const readiness = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId,
+        machine: rows.get(machineId), machineReachable: false });
+    return readiness.status === 'revoked' ? 'machine_revoked' : readiness.status === 'replaced' ? 'machine_replaced' : undefined;
 }
 
 function readProvisioner(declarations: readonly MachineProvisionerContributionV1[], launch: NonNullable<ManagedMachinePresetContentV1['prepared']>['binding']['configuration']['launch']) {

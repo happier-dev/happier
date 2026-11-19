@@ -10,7 +10,8 @@ import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protoc
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachineProvisionerPreparationInspectResultV1Schema, MachineProvisionerPreparationDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { ManagedMachineControllerError, settleManagedMachinePresetPreparationOperationV1,
-    managedMachinePresetPreparationNeedsNativeCleanupV1, type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
+    managedMachinePresetPreparationNeedsNativeCleanupV1, resolveManagedMachinePresetArchiveExecutionTargetV1,
+    type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
 import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
 import type { StoredCredentials } from '@/persistence';
 import { createCliManagedAccountNativeInvocationForLaunch } from './accountNative';
@@ -48,15 +49,12 @@ export async function resolveCliMachinePresetArchiveExecutionTarget(input: Machi
     const content = await createManagedPresetHydrator(host).openRecipientProjection({ presetId: preset.id,
         mode: preset.contentEncryptionMode, projection: projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: accountId }),
         signal: host.signal });
-    const prepared = content.prepared;
-    if (!prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) return null;
-    const { destroy } = await readArchivePreparationProvider(prepared.binding.configuration.launch, host, host.signal);
-    const machineId = prepared.binding.machineId;
-    if (destroy.execution?.target === 'account' || !machineId) return null;
-    const cleanupHost = await readCurrentAccountMachinePreparationCleanupHost({ machineId, serverHttpBaseUrl: host.serverUrl,
-        ...(host.authorization ? { authorization: host.authorization } : { token: host.credentials.token }), signal: host.signal });
-    // Permanent host loss remains the existing metadata Archive with manual cleanup diagnostics.
-    return cleanupHost.unavailable ? null : { kind: 'machine', machineId };
+    return await resolveManagedMachinePresetArchiveExecutionTargetV1({ prepared: content.prepared,
+        readDestroyExecution: async launch => (await readArchivePreparationProvider(launch, host, host.signal)).destroy.execution,
+        readCleanupUnavailable: async machineId => (await readCurrentAccountMachinePreparationCleanupHost({ machineId,
+            serverHttpBaseUrl: host.serverUrl,
+            ...(host.authorization ? { authorization: host.authorization } : { token: host.credentials.token }),
+            signal: host.signal })).unavailable });
 }
 
 /** Archive spends its admitted parent through retained native cleanup and the final row CAS. */

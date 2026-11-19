@@ -11,6 +11,7 @@ import { createManagedMachinePresetPreparationBindingV1, readManagedMachinePrese
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 import { createPresetPreparationProgress, type ManagedMachinePresetPreparationProgressV1 } from './presetPreparationProgress.js';
 import type { ManagedMachinePresetPreparationBuildCompositionV1 } from './presetPreparationBuildInput.js';
+import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
 export type ManagedMachinePresetPreparationStorageV1 = Readonly<{
   /** Bound to the preset and original admission by the installed custodian. */
@@ -217,6 +218,21 @@ export async function cancelManagedMachinePresetPreparationOperationV1(
 export function managedMachinePresetPreparationNeedsNativeCleanupV1(prepared: ManagedMachinePresetPreparedV1): boolean {
   return Boolean(prepared.artifact || prepared.nativeOperationRef)
     || prepared.status !== 'failed' && prepared.status !== 'cancelled';
+}
+
+/** Archive and its private native children execute together on the retained image's host. */
+export async function resolveManagedMachinePresetArchiveExecutionTargetV1(input: Readonly<{
+  prepared: ManagedMachinePresetPreparedV1 | undefined;
+  readDestroyExecution(launch: ManagedMachinePresetPreparedV1['binding']['configuration']['launch']): Promise<PluginActionExecutionV2 | undefined>;
+  readCleanupUnavailable(machineId: string): Promise<OperationInput['cleanupUnavailable']>;
+}>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
+  const prepared = input.prepared;
+  if (!prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(prepared)) return null;
+  const execution = await input.readDestroyExecution(prepared.binding.configuration.launch);
+  const machineId = prepared.binding.machineId;
+  if (execution?.target === 'account' || !machineId) return null;
+  // Permanent host loss keeps the existing metadata Archive and cleanup diagnostics.
+  return await input.readCleanupUnavailable(machineId) ? null : { kind: 'machine', machineId };
 }
 
 async function cancelOperation(input: OperationInput, current: OpenPreset, expectedRevision?: number): Promise<OperationResult> {
