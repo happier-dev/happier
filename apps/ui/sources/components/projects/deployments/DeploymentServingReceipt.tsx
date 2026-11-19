@@ -96,7 +96,9 @@ export const DeploymentServingReceipt = React.memo(
           )}
           testID="project-deployments.environment.serving.receipt"
           onPress={props.onOpenReceipt}
-          style={styles.part}
+          // Without an address (a database) the facts are what serves: they follow the label directly, never a rule
+          // under an empty heading (PAGE-ACCEPT-176 R3-D9).
+          style={props.address ? styles.part : styles.firstPart}
         >
           <FactStrip
             testID="project-deployments.environment.serving.cells"
@@ -207,5 +209,6 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.subtle,
   },
+  firstPart: { marginTop: theme.space.s8 },
   strip: { marginTop: theme.space.s6 },
 }));
