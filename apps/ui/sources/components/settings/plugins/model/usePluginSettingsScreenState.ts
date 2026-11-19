@@ -35,6 +35,8 @@ import type { PluginListingRouteParams } from './pluginsSurfaceRoutes';
 import { type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { type PluginScaffoldUiMode } from '@happier-dev/protocol/actions';
 import {
+    MarketplaceRegistryProfileRequirementV1Schema,
+    type MarketplaceRegistryProfileRequirementV1,
     type PluginUpdatePolicyV1,
 } from '@happier-dev/protocol/marketplace';
 import { t } from '@/text';
@@ -536,12 +538,19 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 };
                 const requestChange = async (managedResourceDispositions?: readonly ManagedResourceDispositionV1[]): Promise<
                     | { supported: false; reason: 'cancelled' }
+                    | { supported: true; registryRequirement: MarketplaceRegistryProfileRequirementV1 }
                     | { supported: true; response: Extract<CapabilitiesInvokeResponse, { ok: false }>
                         | Readonly<{ ok: true; result: PluginMutationResult }> }
                 > => {
                     const actionFailure = (execution: ActionExecuteFailure, actionId: PluginDevLoopActionIdV1) => {
                         if (!isAuthorityCurrent()) {
                             return { supported: false as const, reason: 'cancelled' as const };
+                        }
+                        if (actionId === 'plugins.install' && execution.errorCode === 'plugin_registry_profile_required') {
+                            const requirement = MarketplaceRegistryProfileRequirementV1Schema.safeParse(execution.details);
+                            if (requirement.success) {
+                                return { supported: true as const, registryRequirement: requirement.data };
+                            }
                         }
                         if (isActionApprovalDeclinedErrorCode(execution.errorCode)) {
                             setRoutineOperationSettlement({
@@ -622,12 +631,12 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 // then the same change is requested again: the daemon either
                 // prepares the Install and Trust review or names what is still
                 // missing. Cancel ends the action with nothing fetched.
-                while (
-                    (params.method === 'install' || params.method === 'update')
-                    && 'response' in response
-                    && response.response.ok
-                ) {
-                    const registryRequirement = response.response.result.registryRequirement;
+                while (params.method === 'install' || params.method === 'update') {
+                    const registryRequirement = 'registryRequirement' in response
+                        ? response.registryRequirement
+                        : 'response' in response && response.response.ok
+                            ? response.response.result.registryRequirement
+                            : null;
                     if (!registryRequirement) break;
                     const proceed = await showPluginRegistryProfileSelectionDialog({
                         requirement: registryRequirement,

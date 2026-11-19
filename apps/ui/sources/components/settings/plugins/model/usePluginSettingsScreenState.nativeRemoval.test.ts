@@ -105,6 +105,7 @@ async function renderRemovalOwner(
         beforeActionResponse?: (signal: AbortSignal | null | undefined) => Promise<void>;
         actionError?: string; catalog?: boolean; browse?: boolean; management?: boolean; focused?: boolean; installOutcomeUnknown?: boolean; declineInstall?: boolean; noTarget?: boolean;
         deferredInstall?: boolean; installErrorsByMachine?: Readonly<Record<string, string>>;
+        installRegistryRequirement?: Readonly<{ registryOrigin: string; packageName: string; registryProfileId: string | null }>;
         /** A second online Machine beside the selected one. */
         secondMachine?: boolean; bundled?: boolean; bundledAccountEnabled?: boolean;
         /** Machines whose daemon returns its approval without an evaluated review. */
@@ -339,6 +340,18 @@ async function renderRemovalOwner(
                 await options.beforeActionResponse?.(init?.signal);
                 const installError = actionId === 'plugins.install' && envelope.target?.kind === 'machine'
                     ? options.installErrorsByMachine?.[envelope.target.machineId] : undefined;
+                if (actionId === 'plugins.install' && options.installRegistryRequirement) {
+                    // The real READY176 daemon returns this refusal before acquiring package bytes.
+                    // Only the cross-process HTTP response is substituted; mounted Action handling,
+                    // Store selection and modal presentation retain their production owners.
+                    const requirement = options.installRegistryRequirement;
+                    return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
+                        requestId: envelope.requestId, execution: ActionExecuteFailureSchema.parse({ ok: false,
+                            errorCode: 'plugin_registry_profile_required',
+                            error: `Npm registry '${requirement.registryOrigin}' requires a usable registry profile before installing ${requirement.packageName}.`,
+                            details: requirement,
+                        }) }));
+                }
                 if (installError) return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
                     requestId: envelope.requestId, execution: { ok: false, errorCode: installError, error: installError } }));
                 if (options.deferredInstall && (actionId === 'plugins.install' || actionId === 'approval.request.create')) {
@@ -497,6 +510,28 @@ describe('Plugin install/update originating approval state', () => {
             input: { source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } },
         } });
         expect(censusReads).toHaveLength(0);
+    });
+
+    it('opens registry selection when the receiving daemon requires a profile before catalog install', async () => {
+        const requirement = { registryOrigin: 'https://nldw4-5-40-40.tailfce179.ts.net:39178',
+            packageName: '@qa-l12/dash104-provider', registryProfileId: null };
+        const { hook, catalog, actionRequests, nativeInstallCommitCount } = await renderRemovalOwner('disable', [], {
+            catalog: true, browse: true, installRegistryRequirement: requirement,
+        });
+        const { ModalProvider } = await import('@/modal');
+        const screen = await renderSettingsView(React.createElement(ModalProvider));
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.sourceId === catalog.source.id)).toBe(true));
+        await act(async () => {
+            hook.getCurrent().runCatalogAction({ method: 'install', pluginId: 'example.compute', sourceId: catalog.source.id });
+        });
+        await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.registrySelection.body')).not.toBeNull());
+        expect(boundary.alert).not.toHaveBeenCalled();
+        expect(nativeInstallCommitCount()).toBe(0);
+        await act(async () => { screen.pressByTestId('settings.plugins.registrySelection.cancel'); });
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight('example.compute')).toBe(false));
+        expect(actionRequests).toHaveLength(1);
+        expect(nativeInstallCommitCount()).toBe(0);
     });
 
     // Coordination 2026-11-15 23:05: this person's own UI Ask confirms in place.
