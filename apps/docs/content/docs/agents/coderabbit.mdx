@@ -18,8 +18,15 @@ development. It requires a CodeRabbit CLI with the current
 
 ## Install CodeRabbit
 
-Happier does not bundle an install recipe for CodeRabbit. Install it with
-whatever method the vendor documents, then confirm Happier can see it:
+Happier can run CodeRabbit's vendor install recipe on Linux, macOS and Windows:
+
+```bash
+happier agents install coderabbit
+```
+
+The install leaves login to the authentication step below. To install manually,
+follow [CodeRabbit's instructions](https://docs.coderabbit.ai/cli), then confirm
+Happier can see it:
 
 ```bash
 coderabbit --version

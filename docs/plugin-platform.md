@@ -13990,8 +13990,8 @@ the value in the draft's engine options and never save it as a preference.
 ### Review source transcript delivery (0.3 development)
 
 A reviewer receives a source Session transcript when its
-`includeSessionTranscript` selection is enabled. Agent profiles must support
-transcript input; Session reviewers (including bots represented as Sessions)
+`includeSessionTranscript` selection is enabled. Agent profiles must accept
+ordinary instructions; Session reviewers (including bots represented as Sessions)
 receive it in their first ordinary message. `review.start` reads the source
 through `session.transcript.get` once at admission, using that Action's requester
 authority, and follows its pages once for the selected reviewer fanout.
