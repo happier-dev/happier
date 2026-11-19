@@ -171,7 +171,10 @@ describe('Tabs panel retention and active interval', () => {
     mount.unmount();
   });
 
-  it('aborts and unmounts a panel that explicitly discards, and remounts it fresh on return', async () => {
+  it.each([
+    { policy: 'explicit discard', retention: 'discard' },
+    { policy: 'legacy default' },
+  ] as const)('aborts, unmounts and remounts a panel under $policy', async (declaration) => {
     let mountRuns = 0;
     const intervals: AbortSignal[] = [];
 
@@ -189,7 +192,10 @@ describe('Tabs panel retention and active interval', () => {
       const [value, setValue] = useState('stack');
       return (
         <Tabs value={value} onValueChange={setValue} ariaLabel="Sections">
-          <Tabs.Item value="stack" title="Stack Trace" retention="discard"><SensitivePanel /></Tabs.Item>
+          <Tabs.Item value="stack" title="Stack Trace"
+            {...('retention' in declaration ? { retention: declaration.retention } : {})}>
+            <SensitivePanel />
+          </Tabs.Item>
           <Tabs.Item value="activity" title="Activity"><Text value="Activity content" /></Tabs.Item>
         </Tabs>
       );
