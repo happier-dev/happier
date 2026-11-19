@@ -42,19 +42,27 @@ it('offers a named focusable source entry without stealing RNW primary or second
     };
     const context = createSurfaceContext();
     const hostApi = createHostApiStub(context);
+    const commits = vi.fn();
     const render = (interactive: boolean, tabIndex?: -1 | 0, composite = false) => <PluginUiProvider hostApi={hostApi} context={context}>
-        <PluginEntityDragSourceView binding={binding} sourceId="pr" reference={{ id: '42' }} testID="source" tabIndex={tabIndex} onDropOutcome={() => { settlements++; }}>
-            {composite ? <List items={['42', '43']} keyForItem={item => item} accessibilityLabel="Reviews" accessibilityPattern="grid"
-                selection={{ selectedKey: null, onSelectedKeyChange: () => { primary++; } }}
-                renderItem={item => <List.Item title={`Review ${item}`} testID={`row:${item}`} />} />
-                : interactive ? <Pressable accessibilityRole="button" onPress={() => { primary++; }} testID="primary"><Text>Open PR</Text></Pressable> : <Text>PR summary</Text>}
-            <Pressable accessibilityRole="button" aria-haspopup="menu" onPress={() => { overflow++; }} testID="overflow"><Text>More</Text></Pressable>
-        </PluginEntityDragSourceView>
-        <PluginEntityDropTargetView binding={binding} targetId="detail" testID="target"><Text>Detail</Text></PluginEntityDropTargetView>
-        <PluginEntityDropTargetView binding={binding} targetId="detail" input={{ pane: 'second' }} testID="target2"><Text>Second detail</Text></PluginEntityDropTargetView>
+        <React.Profiler id="source" onRender={commits}>
+            <PluginEntityDragSourceView binding={binding} sourceId="pr" reference={{ id: '42' }} testID="source" tabIndex={tabIndex} onDropOutcome={() => { settlements++; }}>
+                {composite ? <List items={['42', '43']} keyForItem={item => item} accessibilityLabel="Reviews" accessibilityPattern="grid"
+                    selection={{ selectedKey: null, onSelectedKeyChange: () => { primary++; } }}
+                    renderItem={item => <List.Item title={`Review ${item}`} testID={`row:${item}`} />} />
+                    : interactive ? <Pressable accessibilityRole="button" onPress={() => { primary++; }} testID="primary"><Text>Open PR</Text></Pressable> : <Text>PR summary</Text>}
+                <Pressable accessibilityRole="button" aria-haspopup="menu" onPress={() => { overflow++; }} testID="overflow"><Text>More</Text></Pressable>
+            </PluginEntityDragSourceView>
+        </React.Profiler>
+        <React.Profiler id="targets" onRender={commits}>
+            <PluginEntityDropTargetView binding={binding} targetId="detail" testID="target"><Text>Detail</Text></PluginEntityDropTargetView>
+            <PluginEntityDropTargetView binding={binding} targetId="detail" input={{ pane: 'second' }} testID="target2"><Text>Second detail</Text></PluginEntityDropTargetView>
+        </React.Profiler>
     </PluginUiProvider>;
     try {
         await act(async () => root.render(render(false)));
+        expect(commits.mock.calls.map(([id, phase]) => [id, phase])).toEqual([
+            ['source', 'mount'], ['targets', 'mount'],
+        ]);
         const entry = container.querySelector<HTMLElement>('[data-testid="source"]')!;
         expect(entry.tabIndex).toBe(0);
         expect(entry.getAttribute('aria-label')).toContain('Review PR');

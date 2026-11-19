@@ -25,13 +25,24 @@ export type PluginEntityDropTargetRegistration = Readonly<{
 }>;
 export type PluginEntityDragSourceMount = Readonly<{ id: string; isCurrent: () => boolean; begin: (input?: 'pointer' | 'keyboard') => EntityDragCarry | null; dispose: () => void }>;
 export type PluginEntityDropTargetMount = Readonly<{ id: string; isCurrent: () => boolean; dispose: () => void }>;
+type PluginEntityDragSourceMountInput = Readonly<{ mountId: string; sourceId: string; reference: PluginUiJsonValueV1 }>;
+type PluginEntityDropTargetMountInput = Readonly<{ mountId: string; targetId: string; input?: PluginUiJsonValueV1; parentId?: string; getBounds: () => WindowBounds | null; refreshBounds?: () => Promise<void> }>;
 export type PluginEntityDragDropBinding = Readonly<{
     runtime: EntityDragDropRuntime;
     runtimeMountId: (mountId: string) => string;
     waitForSourceRegistration: (localId: string, signal?: AbortSignal) => Promise<boolean>;
     waitForTargetRegistration: (localId: string, signal?: AbortSignal) => Promise<boolean>;
-    mountSource: (input: Readonly<{ mountId: string; sourceId: string; reference: PluginUiJsonValueV1 }>) => PluginEntityDragSourceMount | null;
-    mountTarget: (input: Readonly<{ mountId: string; targetId: string; input?: PluginUiJsonValueV1; parentId?: string; getBounds: () => WindowBounds | null; refreshBounds?: () => Promise<void> }>) => PluginEntityDropTargetMount | null;
+    prepareSource: (input: PluginEntityDragSourceMountInput) => Readonly<{
+        id: string;
+        describe: () => EntityDragSourceDescription | null;
+        register: () => PluginEntityDragSourceMount | null;
+    }> | null;
+    prepareTarget: (input: PluginEntityDropTargetMountInput) => Readonly<{
+        id: string;
+        register: () => PluginEntityDropTargetMount | null;
+    }> | null;
+    mountSource: (input: PluginEntityDragSourceMountInput) => PluginEntityDragSourceMount | null;
+    mountTarget: (input: PluginEntityDropTargetMountInput) => PluginEntityDropTargetMount | null;
     refreshMeasurements: () => Promise<void>;
     refresh: () => void;
     dispose: () => void;
@@ -128,53 +139,60 @@ export function createPluginEntityDragDropBinding(input: CreatePluginEntityDragD
         if (refreshBounds) measurements.set(dispose, refreshBounds);
         return dispose;
     };
-    return Object.freeze({
-        runtime: input.runtime,
-        runtimeMountId: id,
-        waitForSourceRegistration: (localId, signal) => waitForRegistration(localId, input.readSource, input.isSourceDeclared, signal),
-        waitForTargetRegistration: (localId, signal) => waitForRegistration(localId, input.readTarget, input.isTargetDeclared, signal),
-        mountSource: mount => {
-            if (!current()) return null;
-            const registration = input.readSource(mount.sourceId);
-            if (!registration?.isCurrent()) return null;
-            const parsed = PluginUiJsonValueV1Schema.safeParse(mount.reference);
-            if (!parsed.success) return null;
-            try { if (!validatePluginDragSourceReferenceV1(registration.descriptor, parsed.data)) return null; }
-            catch { return null; }
-            const sourceId = id(mount.mountId);
-            let mounted = true;
-            const isCurrent = () => {
-                const latest = input.readSource(mount.sourceId);
-                return mounted && current() && registration.isCurrent() && latest?.describe === registration.describe
-                    && latest.descriptor === registration.descriptor;
-            };
-            const item = { kind: 'plugin' as const, scope: input.scope,
-                contribution: { pluginId: input.pluginId, localId: registration.descriptor.id }, reference: parsed.data };
-            const participantCurrent = () => isCurrent() && interactionEnabled();
-            const retire = input.runtime.registerSource({ id: sourceId, scope: input.scope,
-                isCurrent: participantCurrent, getItem: () => participantCurrent() ? item : null,
-                describe: () => {
-                    if (!isCurrent()) return null;
-                    const fallback = input.readSource(mount.sourceId)?.fallbackDescription;
-                    const description = registration.describe(parsed.data);
-                    return description ? { ...fallback, ...description } : fallback ?? null;
-                } });
-            return Object.freeze({ id: sourceId, isCurrent, begin: (activation?: 'pointer' | 'keyboard') => participantCurrent() ? input.runtime.begin(sourceId, activation) : null,
-                dispose: ownRetirement(() => { mounted = false; retire(); }) });
-        },
-        mountTarget: mount => {
-            if (!current()) return null;
-            const registration = input.readTarget(mount.targetId);
-            if (!registration?.isCurrent()) return null;
-            const targetInput = PluginUiJsonValueV1Schema.safeParse(mount.input ?? null);
-            if (!targetInput.success) return null;
+    // Render may prepare and name a participant. Only register mutates the runtime.
+    const prepareSource: PluginEntityDragDropBinding['prepareSource'] = mount => {
+        if (!current()) return null;
+        const registration = input.readSource(mount.sourceId);
+        if (!registration?.isCurrent()) return null;
+        const parsed = PluginUiJsonValueV1Schema.safeParse(mount.reference);
+        if (!parsed.success) return null;
+        try { if (!validatePluginDragSourceReferenceV1(registration.descriptor, parsed.data)) return null; }
+        catch { return null; }
+        const sourceId = id(mount.mountId);
+        const readCurrentRegistration = () => {
+            const latest = input.readSource(mount.sourceId);
+            return current() && registration.isCurrent() && latest?.describe === registration.describe
+                && latest.descriptor === registration.descriptor ? latest : null;
+        };
+        const describe = () => {
+            const latest = readCurrentRegistration();
+            if (!latest) return null;
+            const description = registration.describe(parsed.data);
+            return description ? { ...latest.fallbackDescription, ...description } : latest.fallbackDescription ?? null;
+        };
+        const item = { kind: 'plugin' as const, scope: input.scope,
+            contribution: { pluginId: input.pluginId, localId: registration.descriptor.id }, reference: parsed.data };
+        return {
+            id: sourceId,
+            describe: () => interactionEnabled() ? describe() : null,
+            register: () => {
+                if (!current() || !registration.isCurrent()) return null;
+                let mounted = true;
+                const isCurrent = () => mounted && readCurrentRegistration() !== null;
+                const participantCurrent = () => isCurrent() && interactionEnabled();
+                const retire = input.runtime.registerSource({ id: sourceId, scope: input.scope,
+                    isCurrent: participantCurrent, getItem: () => participantCurrent() ? item : null,
+                    describe });
+                return Object.freeze({ id: sourceId, isCurrent, begin: (activation?: 'pointer' | 'keyboard') => participantCurrent() ? input.runtime.begin(sourceId, activation) : null,
+                    dispose: ownRetirement(() => { mounted = false; retire(); }) });
+            },
+        };
+    };
+    const prepareTarget: PluginEntityDragDropBinding['prepareTarget'] = mount => {
+        if (!current()) return null;
+        const registration = input.readTarget(mount.targetId);
+        if (!registration?.isCurrent()) return null;
+        const targetInput = PluginUiJsonValueV1Schema.safeParse(mount.input ?? null);
+        if (!targetInput.success) return null;
+        const targetId = id(mount.mountId);
+        const register = () => {
+            if (!current() || !registration.isCurrent()) return null;
             let mounted = true;
             const isCurrent = () => {
                 const latest = input.readTarget(mount.targetId);
                 return mounted && current() && registration.isCurrent() && latest?.resolve === registration.resolve
                     && latest.descriptor === registration.descriptor;
             };
-            const targetId = id(mount.mountId);
             const allowedAction = (actionId: string) => isPluginDropTargetActionAllowedV1(registration.descriptor, input.pluginId, actionId);
             const retire = input.runtime.registerTarget({ id: targetId, scope: input.scope,
                 input: targetInput.data,
@@ -202,7 +220,18 @@ export function createPluginEntityDragDropBinding(input: CreatePluginEntityDragD
                 },
             });
             return Object.freeze({ id: targetId, isCurrent, dispose: ownRetirement(() => { mounted = false; retire(); }, mount.refreshBounds) });
-        },
+        };
+        return { id: targetId, register };
+    };
+    return Object.freeze({
+        runtime: input.runtime,
+        runtimeMountId: id,
+        waitForSourceRegistration: (localId, signal) => waitForRegistration(localId, input.readSource, input.isSourceDeclared, signal),
+        waitForTargetRegistration: (localId, signal) => waitForRegistration(localId, input.readTarget, input.isTargetDeclared, signal),
+        prepareSource,
+        prepareTarget,
+        mountSource: mount => prepareSource(mount)?.register() ?? null,
+        mountTarget: mount => prepareTarget(mount)?.register() ?? null,
         refreshMeasurements: async () => {
             await Promise.all([...measurements.values()].map(measure => measure()));
             if (current()) input.runtime.refresh();

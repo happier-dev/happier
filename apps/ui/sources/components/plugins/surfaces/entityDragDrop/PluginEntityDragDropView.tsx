@@ -35,36 +35,20 @@ export function PluginEntityDragSourceView(props: DragSourceProps & Readonly<{ b
     const { binding } = props;
     const mountId = React.useId();
     const referenceKey = JSON.stringify(props.reference);
-    const [source, setSource] = React.useState<ReturnType<PluginEntityDragDropBinding['mountSource']> | null>(null);
-    const mounted = React.useRef<ReturnType<PluginEntityDragDropBinding['mountSource']> | null>(null);
+    const mounted = React.useRef<ReturnType<PluginEntityDragDropBinding['mountSource']>>(null);
     const revision = usePluginUiClientExecutableRegistrationRevision();
-    const latest = React.useRef(props);
-    latest.current = props;
-    React.useEffect(() => {
-        mounted.current?.dispose();
-        mounted.current = props.disabled ? null : binding.mountSource({ mountId, sourceId: props.sourceId, reference: latest.current.reference });
-        setSource(mounted.current);
-        return () => { mounted.current?.dispose(); mounted.current = null; };
-    }, [binding, mountId, props.sourceId, referenceKey, props.disabled]);
-    React.useEffect(() => {
-        if (props.disabled || mounted.current?.isCurrent()) return;
-        mounted.current?.dispose();
-        mounted.current = binding.mountSource({ mountId, sourceId: props.sourceId, reference: latest.current.reference });
-        setSource(mounted.current);
-    }, [binding, mountId, props.sourceId, props.disabled, revision]);
-    return <MountedPluginEntityDragSource {...props} source={source} />;
-}
-
-function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
-    binding: PluginEntityDragDropBinding;
-    source: ReturnType<PluginEntityDragDropBinding['mountSource']> | null;
-}>) {
-    const { binding, source } = props;
+    const reference = React.useRef(props.reference);
+    reference.current = props.reference;
+    const prepared = React.useMemo(() => props.disabled ? null : binding.prepareSource({
+        mountId, sourceId: props.sourceId, reference: reference.current,
+    }), [binding, mountId, props.sourceId, referenceKey, props.disabled, revision]);
+    const latest = React.useRef(prepared);
+    latest.current = prepared;
     const runtime = binding.runtime;
-    const sourceId = source?.id ?? '';
+    const sourceId = prepared?.id ?? '';
     const state = useEntityDragSourceState(runtime, sourceId);
     const pointerInteraction = useHoverCapablePrimaryPointer();
-    const enabled = source !== null && props.disabled !== true;
+    const enabled = prepared !== null;
     const chooser = useEntityDragChooser(runtime, sourceId);
     const chooserOpen = chooser.open;
     const setChooserOpen = chooser.onOpenChange;
@@ -73,8 +57,21 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
     const keyboardCarry = React.useRef<EntityDragCarry | null>(null);
     const gestureAdapter = React.useRef<ReturnType<typeof createEntityDragGestureAdapter> | null>(null);
     const didEnd = React.useRef(false);
-    const sourceRef = React.useRef(source);
-    sourceRef.current = source;
+    const retire = React.useCallback(() => {
+        mounted.current?.dispose();
+        mounted.current = null;
+        gestureAdapter.current?.cancel();
+        keyboardCarry.current?.cancel('source-retired');
+    }, []);
+    React.useEffect(() => {
+        mounted.current = latest.current?.register() ?? null;
+        return retire;
+    }, [binding, mountId, props.sourceId, referenceKey, props.disabled, retire]);
+    React.useEffect(() => {
+        if (props.disabled || mounted.current?.isCurrent()) return;
+        retire();
+        mounted.current = latest.current?.register() ?? null;
+    }, [binding, mountId, props.sourceId, props.disabled, retire, revision]);
     const onDropOutcome = React.useRef(props.onDropOutcome);
     onDropOutcome.current = props.onDropOutcome;
     React.useEffect(() => {
@@ -92,7 +89,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         .enabled(enabled && !pointerInteraction && props.organizing === true)
         .onStart(event => {
             didEnd.current = false;
-            const carry = sourceRef.current?.begin('pointer');
+            const carry = mounted.current?.begin('pointer');
             gestureAdapter.current = carry ? createEntityDragGestureAdapter(carry) : null;
             gestureAdapter.current?.update({ x: event.absoluteX, y: event.absoluteY });
         })
@@ -109,10 +106,6 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         })
         .onFinalize(() => { if (!didEnd.current) gestureAdapter.current?.finalize(); }),
     [binding, runtime, enabled, pointerInteraction, props.organizing]);
-    React.useEffect(() => () => {
-        gestureAdapter.current?.cancel();
-        keyboardCarry.current?.cancel('source-retired');
-    }, [source]);
     React.useEffect(() => {
         if (props.organizing !== true) gestureAdapter.current?.cancel();
     }, [props.organizing]);
@@ -129,7 +122,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         const intent = resolveHappierStagedMoveKey({ key, repeat, staged: carrying, rtl: I18nManager.isRTL });
         if (!intent) return false;
         if (intent === 'pickUp') {
-            const carry = source?.begin('keyboard');
+            const carry = mounted.current?.begin('keyboard');
             keyboardCarry.current = carry ?? null;
             const destination = runtime.getDestinations(sourceId)[0] ?? null;
             setSelected(destination);
@@ -151,7 +144,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         if (event.defaultPrevented || event.target !== event.currentTarget || !handleStagedKey(event.key, event.repeat)) return;
         event.preventDefault(); event.stopPropagation();
     };
-    const title = runtime.describeSource(sourceId)?.title ?? '';
+    const title = prepared?.describe()?.title ?? '';
     const label = t('entityDragDrop.organize.grip', { item: title });
     const isKeyboardCarrying = () => {
         const snapshot = runtime.getSnapshot();
@@ -167,7 +160,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         },
         additionalOperations: [{ id: 'entity.mentionInComposer', label: t('entityDragDrop.composer.mentionInComposer'), disabled: !enabled,
             onSelect: () => { void openMoveSheet({ runtime, sourceLabel: title, composerOnly: true,
-                prepareSource: () => source ? { sourceId, dispose: () => {} } : null }); } }],
+                prepareSource: () => mounted.current ? { sourceId: mounted.current.id, dispose: () => {} } : null }); } }],
     };
     const grip = enabled && !pointerInteraction && props.organizing === true ? <EntityDragGripChooser
         open={chooserOpen} onOpenChange={setChooserOpen} sections={sections}
@@ -207,30 +200,30 @@ export function PluginEntityDropTargetView(props: DropTargetProps & Readonly<{ b
     const mountId = React.useId();
     const node = React.useRef<unknown>(null);
     const measured = React.useRef<WindowBounds | null>(null);
-    const [targetId, setTargetId] = React.useState('');
     const mounted = React.useRef<ReturnType<PluginEntityDragDropBinding['mountTarget']> | null>(null);
     const revision = usePluginUiClientExecutableRegistrationRevision();
-    const latest = React.useRef(props);
-    latest.current = props;
+    const input = React.useRef(props.input);
+    input.current = props.input;
     const { binding } = props;
     const inputKey = JSON.stringify(props.input ?? null);
     const getBounds = React.useCallback(() => readWindowBounds(toTreeDropMeasurableRef(node.current)) ?? measured.current, []);
     const refreshBounds = React.useCallback(async () => {
         measured.current = await measureWindowBounds(toTreeDropMeasurableRef(node.current));
     }, []);
+    const prepared = React.useMemo(() => props.disabled ? null : binding.prepareTarget({
+        mountId, targetId: props.targetId, input: input.current, getBounds, refreshBounds, parentId,
+    }), [binding, mountId, props.targetId, inputKey, props.disabled, parentId, getBounds, refreshBounds, revision]);
+    const latest = React.useRef(prepared);
+    latest.current = prepared;
+    const targetId = prepared?.id ?? '';
     React.useEffect(() => {
-        mounted.current?.dispose();
-        mounted.current = props.disabled ? null : binding.mountTarget({ mountId, targetId: props.targetId, input: latest.current.input,
-            getBounds, refreshBounds, parentId });
-        setTargetId(mounted.current?.id ?? '');
+        mounted.current = latest.current?.register() ?? null;
         return () => { mounted.current?.dispose(); mounted.current = null; };
     }, [binding, mountId, props.targetId, inputKey, props.disabled, parentId, getBounds, refreshBounds]);
     React.useEffect(() => {
         if (props.disabled || mounted.current?.isCurrent()) return;
         mounted.current?.dispose();
-        mounted.current = binding.mountTarget({ mountId, targetId: props.targetId, input: latest.current.input,
-            getBounds, refreshBounds, parentId });
-        setTargetId(mounted.current?.id ?? '');
+        mounted.current = latest.current?.register() ?? null;
     }, [binding, mountId, props.targetId, props.disabled, revision, parentId, getBounds, refreshBounds]);
     const attachDrop = useEntityDropDomBinding(props.disabled ? undefined : binding.runtime);
     const attach = React.useCallback((value: unknown) => { node.current = value; attachDrop(value); }, [attachDrop]);
