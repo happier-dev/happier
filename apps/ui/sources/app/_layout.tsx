@@ -24,6 +24,7 @@ import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
+import { ModalProvider } from '@/modal/ModalProvider';
 import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { PostHogProvider } from 'posthog-react-native';
@@ -808,7 +809,7 @@ function AppBoot() {
     // Boot
     //
 
-    const routeNavigation = isDesktopOverlayWindow ? <SidebarNavigator /> : (
+    const routeNavigation = (
         <VoiceEnergyAppProvider>
             <SidebarNavigator />
         </VoiceEnergyAppProvider>
@@ -860,7 +861,13 @@ function AppBoot() {
                       * its boot deadline lands afterwards, which is how a recovered session is adopted
                       * instead of the user silently appearing signed out.
                       */}
-                    <AuthProvider initialCredentials={initState.credentials}>
+                    {isDesktopOverlayWindow ? (
+                        <GlassNavigationThemeProvider>
+                            <ModalProvider>
+                                <HorizontalSafeAreaRoot><Slot /></HorizontalSafeAreaRoot>
+                            </ModalProvider>
+                        </GlassNavigationThemeProvider>
+                    ) : <AuthProvider initialCredentials={initState.credentials}>
                         <GlassNavigationThemeProvider>
                             <StatusBarProvider />
                             <AppPaneModalProvider>
@@ -887,7 +894,7 @@ function AppBoot() {
                                 </WebServerOverrideGate>
                             </AppPaneModalProvider>
                         </GlassNavigationThemeProvider>
-                    </AuthProvider>
+                    </AuthProvider>}
                     </WindowFoldMetricsProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>

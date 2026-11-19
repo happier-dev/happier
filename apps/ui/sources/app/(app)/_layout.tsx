@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, Slot } from 'expo-router';
 import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
 import { WorkspaceRootStack as Stack } from '@/components/appShell/workspace/WorkspaceRootStack';
 import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/StackClient';
@@ -115,7 +115,6 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     const { theme } = useUnistyles();
     const preferredLanguage = getPreferredLanguage();
     const windowContext = resolveDesktopWindowContext();
-    const isDesktopOverlayWindow = windowContext.role === 'presenter';
     const isDesktopShell = isDesktopHost();
     const newSessionPresentationMode = useSetting('newSessionPresentationModeV1');
     // `/new` renders either the bare composer (simple) or the profile wizard, and the two want
@@ -135,13 +134,11 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     const shouldUseCustomHeader = useAppStackUsesCustomHeader();
     const appShellPresent = useAppShellColumn().present;
     const rootStackScreenOptions = React.useMemo(() => createAppStackScreenOptions({
-        contentStyle: isDesktopOverlayWindow ? NEW_SESSION_TRANSPARENT_CONTENT_STYLE : undefined,
         headerBackTitle: t('common.back'),
         shouldUseCustomHeader,
         theme,
     }), [
         shouldUseCustomHeader,
-        isDesktopOverlayWindow,
         preferredLanguage,
         theme.colors.chrome.header.background,
         theme.colors.chrome.header.foreground,
@@ -621,6 +618,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
 });
 
 export default function RootLayout(): React.ReactElement {
+    if (resolveDesktopWindowContext().role === 'presenter') {
+        return <Slot />;
+    }
+
     // Composition root: subscribes to nothing that changes per navigation, so the
     // `<RootLayoutShell />` element reference stays stable and its Stack subtree is not
     // re-rendered when the route changes. Navigation/auth side effects live in the null-rendering

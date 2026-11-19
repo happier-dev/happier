@@ -294,6 +294,7 @@ vi.mock('expo-router', async () => {
     return {
         ...expoRouterMock.module,
         Stack,
+        Slot: () => React.createElement('DesktopPresenterRoute'),
     };
 });
 
@@ -401,6 +402,25 @@ afterEach(() => {
 });
 
 describe('RootLayout hooks order', () => {
+    it('renders the presenter route without Home navigation or phone chrome', async () => {
+        pathname = '/desktop/activity-overlay';
+        segments = ['(app)', 'desktop', 'activity-overlay'];
+        const internals = { invoke: invokeDesktopHostSpy };
+        vi.stubGlobal('__TAURI_INTERNALS__', internals);
+        vi.stubGlobal('window', { location: { href: `http://tauri.localhost${pathname}` }, __TAURI_INTERNALS__: internals });
+        tauriDesktopState.value = true;
+        stubFeatureFetch();
+
+        const screen = await renderScreen(React.createElement(RootLayout));
+        try {
+            expect(screen.findByType('DesktopPresenterRoute' as never)).toBeTruthy();
+            expect(screen.tree.root.findAllByType('MobileBottomChromeHost' as never)).toHaveLength(0);
+            expect(stackNavigatorScreenOptionsHistory).toHaveLength(0);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('does not throw when redirecting after a non-redirect render', async () => {
         stubFeatureFetch();
 
