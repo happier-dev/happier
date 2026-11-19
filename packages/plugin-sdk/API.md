@@ -2887,6 +2887,7 @@
 | `./reviews` | `ReviewFindingForVerifyV1` | type | daemon |
 | `./reviews` | `ReviewFindingId` | type | daemon |
 | `./reviews` | `ReviewFindingSchema` | value | daemon |
+| `./reviews` | `ReviewFindingSeverityProtocolSchema` | value | any |
 | `./reviews` | `ReviewFindingsApplyInputV1` | type | daemon |
 | `./reviews` | `ReviewFindingsApplyInputV1Schema` | value | daemon |
 | `./reviews` | `ReviewFindingsV2` | type | daemon |
@@ -2917,6 +2918,7 @@
 | `./reviews` | `WorkspaceAnchorResolutionV1` | type | daemon |
 | `./reviews` | `WorkspaceAnchorSnapshotV1` | type | daemon |
 | `./reviews` | `WorkspaceAnchorV1` | type | daemon |
+| `./reviews` | `buildReviewCommentPublicationEntryV1` | value | any |
 | `./reviews` | `createReviewCommentFingerprint` | value | any |
 | `./reviews` | `createReviewCommentLinkedIssueIdV1` | value | any |
 | `./reviews` | `createReviewCommentPublicationSettlementRequestV1` | value | any |

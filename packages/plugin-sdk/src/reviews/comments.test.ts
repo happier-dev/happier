@@ -173,6 +173,9 @@ describe('review comment helpers', () => {
             entries: [singleEntry],
             verdict: null,
         }).success).toBe(true);
+        const summaryPlan = { ...publicationPlan, baseRevision: 'abcdef1', headRevision: '1234567',
+            entries: [{ ...singleEntry, placement: 'summary' }] };
+        expect(githubRevisioned.parse(summaryPlan)).toEqual(parseReviewCommentPublicationPlanV1(summaryPlan));
         expect(githubSingleComment.safeParse({
             ...publicationPlan,
             baseRevision: 'abcdef1',

@@ -22,8 +22,10 @@ import type {
     ReviewCommentPublicationVerdictV1,
     ReviewCommentPublicationVerdictResultV1,
 } from '@happier-dev/protocol';
+import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
+import { ReviewFindingSeveritySchema } from '@happier-dev/protocol/reviews/ReviewFinding';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import { createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, hasReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1 as canonicalReviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildReviewCommentPublicationEntryV1, createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, hasReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1 as canonicalReviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { redactBugReportSensitiveText } from '../diagnostics.js';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentity } from '../manifest.js';
@@ -203,12 +205,14 @@ const publicationTarget = defineProtocolUnion([
     defineProtocolObject({ ...publicationTargetFields, configuredAccountId: nonEmptyPublicationString }, { policy: 'closed' }),
     defineProtocolObject({ ...publicationTargetFields, nativeService: PluginContributionIdentityV1Schema }, { policy: 'closed' }),
 ]);
+export const ReviewFindingSeverityProtocolSchema = projectZodProtocolSchema(ReviewFindingSeveritySchema);
 const publicationEntry = defineProtocolObject({
     happierCommentId: nonEmptyPublicationString,
     expectedServerRevision: defineProtocolNumber({ integer: true, minimum: 1 }),
     anchor: publicationAnchor,
     snapshot: publicationSnapshot,
     body: nonEmptyPublicationString,
+    placement: defineProtocolLiteral('summary' satisfies NonNullable<ReviewCommentPublicationEntryV1['placement']>).optional(),
 }, { policy: 'closed' });
 const publicationVerdictKind = defineProtocolUnion([
     defineProtocolLiteral('approve'),
@@ -535,6 +539,7 @@ export type ReviewCommentSensitiveTextRedactionOptionsV1 = ReviewCommentSensitiv
 
 export { createReviewCommentFingerprintV1 as createReviewCommentFingerprint };
 export { createReviewCommentLinkedIssueIdV1 };
+export { buildReviewCommentPublicationEntryV1 };
 export { createReviewCommentPublicationSettlementRequestV1 };
 export { validateReviewCommentPublicationClaimAgainstPlanV1 };
 export { validateReviewCommentPublicationResultAgainstPlanV1 };
