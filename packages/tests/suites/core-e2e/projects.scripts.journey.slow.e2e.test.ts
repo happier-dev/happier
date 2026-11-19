@@ -13,11 +13,13 @@ import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/action
 import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineFinitePolicyGetResultV1Schema } from '@happier-dev/protocol/machines/machineFinitePolicyV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { ProjectOrganizationUpdateOutputV1Schema } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import { TerminalStreamReadResponseSchema, decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
+import { fetchJson } from '../../src/testkit/http';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { waitFor } from '../../src/testkit/timing';
 
@@ -75,10 +77,22 @@ it('L12.Scripts: a person reads finite output, stops work, and re-runs a queued 
           recipientContentPublicKey: tweetnacl.box.keyPair.fromSecretKey(account.auth.accountMachineKey).publicKey, randomBytes }) }],
     }));
     const reference = { ref: formatSharedSavedSecretRefV1(resourceId), revision: secret.revision };
+    const projectRef = { serverId: fixture.serverId, projectKey: opened.facts.projectKey };
+    const organizationKey = { kind: 'project-organization', ...projectRef } as const;
+    const currentOrganization = await fetchJson<unknown>(new URL(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, fixture.server.baseUrl).href, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${account.auth.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(ProjectAccountRowReadRequestV1Schema.parse({ key: organizationKey })),
+    });
+    expect(currentOrganization.status).toBe(200);
+    const organization = ProjectAccountRowReadResponseV1Schema.parse(currentOrganization.data);
+    if (organization.status !== 'present') throw new Error(`Opened Project organization is ${organization.status}`);
+    expect(organization.row.key).toEqual(organizationKey);
     const binding = ProjectOrganizationUpdateOutputV1Schema.parse(await action('projects.organization.update', {
-      projectRef: { serverId: fixture.serverId, projectKey: opened.facts.projectKey }, expectedRevision: 'absent',
+      projectRef, expectedRevision: organization.row.revision,
       environmentBinding: { name: 'SCRIPT_SECRET', reference },
     }));
+    if (!binding.ok) throw new Error(`Project Secret binding refused (${binding.errorCode})`);
     expect(binding).toMatchObject({ ok: true, row: { environmentBindings: { v: 1, bindings: { SCRIPT_SECRET: reference } } } });
     expect(JSON.stringify(binding)).not.toContain(secretValue);
     const policy = async (accepting: boolean) => {
