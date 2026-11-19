@@ -531,8 +531,9 @@ describe('configured action execution through the shared Session owner', () => {
                 }
                 if (id === 'deployments.receipts.get') return { ok: true, deployment: createDeploymentReceiptHeaderV1({
                     id: subject.deploymentId, environmentId: subject.environmentId,
-                    acceptedExecution: state === 'noController' ? undefined
-                        : { v: 1, controller: { machineId: controllerMachineId, installationId: 'installed' } },
+                    ...(state === 'noController' ? {} : { acceptedExecution: {
+                        v: 1, controller: { machineId: controllerMachineId, installationId: 'installed' },
+                    } }),
                 }) };
                 if (id === 'artifact.get') return { artifact: null };
                 if (id === 'deployments.environments.get') return { ok: true, environment: { id: subject.environmentId,
