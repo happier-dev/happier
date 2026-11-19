@@ -6,6 +6,7 @@ import { executeSessionSectionActionV1, isSessionSectionActionIdV1 } from '@happ
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { setSessionFolderAssignment as setOrganizationFolderAssignmentAtEndpoint } from '@/sync/api/session/sessionOrganizationApi';
 import type { SessionOrganizationDisplayState } from '@/sync/domains/session/organization';
 import { buildSessionOrganizationServerKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -73,6 +74,14 @@ export function createSessionOrganizationResourceAction(account: LazyActionAccou
                 upsertFolder: request => upsertSessionFolder({ ...params, request }),
                 deleteFolder: request => deleteSessionFolder({ ...params, request }),
                 setAssignment: (sessionId, folderId) => setSessionFolderAssignment({ ...params, sessionId, folderId }),
+                setWorkflowAssignment: async (entityId, folderId) => {
+                    const result = await setOrganizationFolderAssignmentAtEndpoint({ ...params,
+                        sessionId: entityId, request: { entityKind: 'workflow', folderId },
+                    });
+                    account.assertCurrent();
+                    getStorage().getState().acknowledgeWorkflowFolderAssignment(account.serverId, entityId, result.folderId);
+                    return result;
+                },
                 archiveSession,
             });
         }

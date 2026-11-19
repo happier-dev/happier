@@ -80,6 +80,7 @@ export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
     | 'includeAllFolderAssignments'
     | 'includeAllTagAssignments'
     | 'assignmentSessionIds'
+    | 'entityKind'
     | 'folderIds'
     | 'tagIds'
     | 'orderScopes'

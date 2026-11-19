@@ -89,6 +89,8 @@ export type SessionOrganizationDomain = {
     sessionOrganizationSessionAppearancesSupportedByServerId: Record<string, boolean>;
     sessionOrganizationFoldersByFolderKey: Record<string, UiSessionOrganizationFolder>;
     sessionOrganizationFolderAssignmentsBySessionKey: Record<string, SessionOrganizationFolderAssignmentEntry>;
+    organizationWorkflowFolderAssignmentsByServerId: Record<string, Record<string, string>>;
+    acknowledgeWorkflowFolderAssignment: (serverId: string, entityId: string, folderId: string | null) => void;
     sessionOrganizationTagsByTagKey: Record<string, UiSessionOrganizationTag>;
     sessionOrganizationTagAssignmentsBySessionKey: Record<string, SessionOrganizationTagAssignmentEntry>;
     sessionOrganizationOrderEntriesByScopeKey: Record<string, readonly SessionOrganizationOrderEntry[]>;
@@ -728,6 +730,17 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
         sessionOrganizationSessionAppearancesSupportedByServerId: {},
         sessionOrganizationFoldersByFolderKey: {},
         sessionOrganizationFolderAssignmentsBySessionKey: {},
+        organizationWorkflowFolderAssignmentsByServerId: {},
+        acknowledgeWorkflowFolderAssignment: (serverId, entityId, folderId) => {
+            set(state => {
+                const current = state.organizationWorkflowFolderAssignmentsByServerId[serverId];
+                if (current === undefined) return state;
+                const next = setRecordValue(current, entityId, folderId ?? undefined);
+                return next === current ? state : { organizationWorkflowFolderAssignmentsByServerId: {
+                    ...state.organizationWorkflowFolderAssignmentsByServerId, [serverId]: next,
+                } } as Partial<S>;
+            });
+        },
         sessionOrganizationTagsByTagKey: {},
         sessionOrganizationTagAssignmentsBySessionKey: {},
         sessionOrganizationOrderEntriesByScopeKey: {},
@@ -740,6 +753,19 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 const currentVersion = state.sessionOrganizationSnapshotVersionByServerId[serverId];
                 if (typeof currentVersion === 'number' && uiSnapshot.version < currentVersion) {
                     return state;
+                }
+                if (options?.entityKind === 'workflow') {
+                    if (uiSnapshot.entityFolderAssignments === undefined || !options.includeAllFolderAssignments) return state;
+                    const assignments = setRecordValue(state.organizationWorkflowFolderAssignmentsByServerId, serverId,
+                        Object.fromEntries(uiSnapshot.entityFolderAssignments.map(entry => [entry.entityId, entry.folderId])));
+                    const folders = options.includeFolders === false ? state.sessionOrganizationFoldersByFolderKey
+                        : replaceRequestedServerRecord(state.sessionOrganizationFoldersByFolderKey, serverId,
+                            options.folderIds, uiSnapshot.folders.map(folder => [folder.folderId, folder] as const),
+                            folder => folder.folderId);
+                    if (assignments === state.organizationWorkflowFolderAssignmentsByServerId
+                        && folders === state.sessionOrganizationFoldersByFolderKey) return state;
+                    return { organizationWorkflowFolderAssignmentsByServerId: assignments,
+                        sessionOrganizationFoldersByFolderKey: folders } as Partial<S>;
                 }
                 const pins = replaceSessionRecord(
                     state.sessionOrganizationPinsBySessionKey,
@@ -1207,6 +1233,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                         serverId,
                         (assignment) => assignment.sessionId,
                     ),
+                    organizationWorkflowFolderAssignmentsByServerId: removeRecordKeys(state.organizationWorkflowFolderAssignmentsByServerId, [serverId]),
                     sessionOrganizationOrderEntriesByScopeKey: removeServerRecordEntries(state.sessionOrganizationOrderEntriesByScopeKey, serverId),
                     sessionOrganizationLabelsByLabelKey: removeServerRecordEntries(state.sessionOrganizationLabelsByLabelKey, serverId),
                 };

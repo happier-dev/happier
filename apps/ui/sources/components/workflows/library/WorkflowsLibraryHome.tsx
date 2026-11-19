@@ -71,6 +71,7 @@ import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScop
 import { AccountWorkflowRowAnchor, formatAccountWorkflowLine, isAccountWorkflowOff, isAccountWorkflowReviewRequired,
     type AccountWorkflowLibraryRow } from './AccountWorkflowRowAnchor';
 import { useWorkflowLibraryView, workflowLibraryRowTitle as rowTitle, type WorkflowLibraryRow } from './useWorkflowLibraryView';
+import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
 import { useWorkflowLibrarySpaceHeader } from './useWorkflowLibrarySpaceHeader';
 import { WorkflowLibraryFreshness } from './WorkflowLibraryFreshness';
 
@@ -102,6 +103,7 @@ type LibraryRowCommands = Readonly<{
     /** Opens the one document share sheet (INT I2) for a workflow the caller owns (07 S7 Share). */
     share: (definition: WorkflowLibraryDefinition, anchor?: ShareSheetAnchor) => void;
     remove: (definition: WorkflowLibraryDefinition) => void;
+    workflowSections: ReturnType<typeof useWorkflowLibraryView>['workflowSections'];
 }>;
 
 const LibraryRowCommandsContext = React.createContext<LibraryRowCommands | null>(null);
@@ -181,15 +183,26 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     }, [router]);
     const display = useCollectionDisplayOptions('workflow', phone);
     const projects = libraryView.projectsByWorkflow;
+    const { workflowSections } = libraryView;
     const groups = React.useMemo(() => {
-        if (display.groupBy === 'source') return LIBRARY_GROUPS;
         const noProject = { key: 'noProject', title: t('workflows.destination.sections.noProject') };
         const byProject = new Map([...projects.values()].map(project => [project.key, project]));
-        return {
+        const source = display.groupBy === 'source' ? LIBRARY_GROUPS : {
             axis: [...byProject.values()].sort((left, right) => left.title.localeCompare(right.title)).concat(noProject),
             groupOf: (row: LibraryRow) => projects.get(row.key)?.key ?? noProject.key,
         };
-    }, [display.groupBy, projects]);
+        if (!workflowSections.sections.length) return source;
+        const sectionGroups = new Map(workflowSections.sections.map(section => [section.address.sectionId, {
+            key: `section:${section.address.sectionId}`, title: resolveSessionSectionDisplayTitle(section.display),
+        }]));
+        return {
+            get axis() { return [...sectionGroups.values(), ...source.axis]; },
+            groupOf: (row: LibraryRow) => {
+                const folderId = 'definition' in row ? workflowSections.assignmentFor(row.definition.definitionId) : null;
+                return (folderId ? sectionGroups.get(folderId)?.key : undefined) ?? source.groupOf(row);
+            },
+        };
+    }, [display.groupBy, projects, workflowSections]);
     const model = useHappierCollection<LibraryRow>({
         items: rows,
         keyOf: readRowKey,
@@ -200,7 +213,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         onOpenChange: openDefinition,
     });
     const anatomy = useLibraryAnatomy();
-    const commands = useLibraryRowCommands(library.deletedDefinitionId);
+    const commands = useLibraryRowCommands(library.deletedDefinitionId, workflowSections);
     const deleted = library.deletedDefinitionId !== null;
     // Built-ins share the filter but live outside this Collection's reachable focus rows.
     const visibleKeys = model.keys;
@@ -488,6 +501,8 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
         secondaryActionAccessibilityLabel: t('workflows.destination.rowMenu.accessibility'),
         secondaryActions: [
             ...(row.group !== 'fromPlugins' && scope ? [{ id: 'mentionInComposer', label: t('entityDragDrop.composer.mentionInComposer') }] : []),
+            ...(row.group !== 'fromPlugins' && commands?.workflowSections.assignmentFor(row.definition.definitionId) !== undefined
+                ? [{ id: 'moveToSection', label: t('sessionsList.moveToFolder') }] : []),
             { id: 'run', label: t('workflows.destination.rowMenu.runNow'), disabled: unavailable },
             ...(owned ? [{ id: 'share', label: t('workflows.destination.rowMenu.share') }] : []),
             ...(row.group === 'fromPlugins' ? [] : [{ id: 'export', label: t('workflows.exportJson') }]),
@@ -505,6 +520,7 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
             }
             const definitionId = row.definition.definitionId;
             if (id === 'run' && !unavailable) commands.run(definitionId);
+            else if (id === 'moveToSection') void commands.workflowSections.move(definitionId, rowTitle(row));
             else if (id === 'share') commands.share(row.definition, resolvePressTriggerAnchor({ currentTarget: selection?.anchorRef?.current }));
             else if (id === 'export') commands.exportJson(definitionId);
             else if (id === 'delete') commands.remove(row.definition);
@@ -542,7 +558,7 @@ function WorkflowDefinitionDragRow(props: Readonly<{ row: Exclude<LibraryRow, Ac
     </WorkspaceDestinationRow>;
 }
 
-function useLibraryRowCommands(deletedDefinitionId: string | null): LibraryRowCommands {
+function useLibraryRowCommands(deletedDefinitionId: string | null, workflowSections: LibraryRowCommands['workflowSections']): LibraryRowCommands {
     const router = useRouter();
     const scope = useActiveServerAccountScope();
     const admitted = React.useRef(new Set<string>());
@@ -554,6 +570,7 @@ function useLibraryRowCommands(deletedDefinitionId: string | null): LibraryRowCo
     return React.useMemo(() => ({
         deleting,
         focusRequest,
+        workflowSections,
         openRun: (runId) => router.push(createWorkflowRunRoute(runId, scope?.serverId) as never),
         // A saved row holds an Artifact identity, not a reviewed machine or inputs: Run now opens the
         // exact revision in the editor, whose Run review admits the run.
@@ -613,7 +630,7 @@ function useLibraryRowCommands(deletedDefinitionId: string | null): LibraryRowCo
                 }
             })();
         },
-    }), [router, scope?.serverId, deleting, focusRequest, deletedDefinitionId]);
+    }), [router, scope?.serverId, deleting, focusRequest, deletedDefinitionId, workflowSections]);
 }
 
 async function exportDefinition(definitionId: string): Promise<void> {

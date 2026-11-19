@@ -41,6 +41,7 @@ export type SessionSectionMoveMenuInput = Readonly<{
     currentSectionIds: readonly (string | null)[];
     /** The moved Session's project, named in "Back to {project}" when known. */
     projectTitle: string | null;
+    unassignedLabel?: string;
     /** The menu's glyph colour; a chooser without one draws them in the secondary text role. */
     iconColor?: string;
     canCreate: boolean;
@@ -74,9 +75,9 @@ export function buildSessionSectionMoveMenuItems(input: SessionSectionMoveMenuIn
     }
     items.push({
         id: PROJECT_ITEM_ID,
-        title: input.projectTitle?.trim()
+        title: input.unassignedLabel ?? (input.projectTitle?.trim()
             ? t('sessionsList.moveToProjectNamed', { project: input.projectTitle.trim() })
-            : t('sessionsList.moveToWorkspaceRoot'),
+            : t('sessionsList.moveToWorkspaceRoot')),
         icon: <MoveIcon name="folder" color={input.iconColor} />,
         ...(allIn(null) ? { disabled: true } : {}),
     });

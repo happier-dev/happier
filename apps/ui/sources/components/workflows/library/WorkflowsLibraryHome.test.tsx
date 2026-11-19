@@ -215,6 +215,68 @@ describe('workflow library page anatomy', () => {
         }
     });
 
+    it('files the mounted saved Workflow through the same section Action and groups its retained row', async () => {
+        const definitionId = '10000000-0000-4000-8000-000000000098';
+        const scope = storage.getState().profileScope!;
+        const folder = {
+            folderId: 'delivery', folderKey: 'delivery', archivedAt: null, sortKey: null,
+            parentFolderId: null, parentFolderKey: null, createdAt: 1, updatedAt: 1,
+            display: { t: 'plain', v: { name: 'Delivery', icon: null } },
+        };
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Release notes' }, ownerAccountId: scope.accountId, access: 'owner',
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+            }] } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            return { ok: false, errorCode: 'unexpected', error: 'Unexpected fixture request' };
+        });
+        const boundary = httpBoundary!;
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        let assigned: string | null = null;
+        setRuntimeFetch((input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v2/session-organization' && url.searchParams.get('entityKind') === 'workflow') {
+                expect(url.searchParams.get('includeAllFolderAssignments')).toBe('true');
+                expect(url.searchParams.has('assignmentEntityIds')).toBe(false);
+                return Promise.resolve(Response.json({ snapshot: {
+                    schemaVersion: 1, version: 1, folders: [folder], folderAssignments: [], pins: [],
+                    tags: [], tagAssignments: [], orderEntries: [], labels: [],
+                    entityFolderAssignments: assigned ? [{ entityKind: 'workflow', entityId: definitionId, folderId: assigned }] : [],
+                } }));
+            }
+            if (url.pathname === `/v2/session-organization/folder-assignments/${definitionId}` && init?.method === 'PUT') {
+                const previousFolderId = assigned;
+                const body = JSON.parse(String(init.body));
+                expect(body).toEqual({ entityKind: 'workflow', folderId: 'delivery' });
+                assigned = body.folderId;
+                return Promise.resolve(Response.json({ entityKind: 'workflow', entityId: definitionId,
+                    folderId: assigned, previousFolderId }));
+            }
+            return boundary.request(input, init);
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        try {
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            const library = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection')!;
+            await vi.waitFor(() => expect(library().props.model.keys).toEqual([definitionId]));
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('session.section.set', {
+                    entityKind: 'workflow', entityId: definitionId, sectionId: folder.folderId,
+                }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId })).toMatchObject({ ok: true });
+            });
+            await vi.waitFor(() => expect(library().props.model.sections).toEqual(expect.arrayContaining([
+                expect.objectContaining({ group: expect.objectContaining({ title: 'Delivery' }),
+                    items: [expect.objectContaining({ key: definitionId })] }),
+            ])));
+            expect(assigned).toBe(folder.folderId);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('groups a Workflow by the viewer’s own authored placement without opening either document', async () => {
         windowSize.width = 1440;
         const scope = storage.getState().profileScope!;

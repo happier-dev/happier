@@ -165,7 +165,7 @@ export function resolveSessionSectionChoiceLabels(
 /** Product projection of the incumbent opened folder records, with no workspace eligibility rule. */
 export function projectSessionOrganizationSections(
     serverId: string,
-    projection: SessionOrganizationProjection,
+    projection: Pick<SessionOrganizationProjection, 'foldersById'>,
 ): SessionSection[] {
     const folders = Object.values(projection.foldersById).filter(folder => folder.archivedAt === null);
     const sectionsById = new Map(folders.map(folder => [folder.folderId, projectSessionSectionV1(folder)]));

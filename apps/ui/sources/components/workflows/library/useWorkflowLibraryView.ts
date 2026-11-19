@@ -5,6 +5,7 @@ import { hasWorkingWorkflowLibraryRun } from './workflowRunStrip';
 import { useWorkflowDefinitionLibrary, type WorkflowLibraryDefinition } from './workflowLibraryReads';
 import { useWorkflowLibrarySummaries, useWorkflowAutomationSummaries, type WorkflowLibraryRunSummary } from './useWorkflowLibrarySummaries';
 import { projectWorkflowLibraryRecords, type WorkflowLibraryRecordRow } from './workflowLibraryCollection';
+import { useWorkflowSections } from './useWorkflowSections';
 import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
 import { splitLibraryDefinitions } from '../column/workflowsColumnModel';
 import type { WorkflowLibraryView } from '@happier-dev/protocol/actions/scopeActionFamily';
@@ -100,6 +101,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     const libraryRows = React.useMemo(() => records.filter(row => row.group === 'library'), [records]);
     const libraryCount = libraryRows.length;
     const lifetime = useActiveServerAccountScopeLifetime();
+    const workflowSections = useWorkflowSections(focused, lifetime, summaryIds);
     const census = useProjectAccountRows();
     const placements = useAuthoringMemoryField('workflowProjectTargetsByDefinitionId');
     const projectsByWorkflow = React.useMemo(() => {
@@ -166,7 +168,7 @@ export function useWorkflowLibraryView(focused: boolean) {
         activeSpace: binding.activeSpace, spacesEnabled: binding.spacesEnabled,
         spacesReady: binding.spacesReady, spaceSettingsScope: binding.spaceSettingsScope,
         view: filters.view, searchQuery, offeredViews, visibleKeys, filterResult, filter, isVisible, needle, update, setFilters: binding.setFilters, reset, setView, setSearchQuery,
-        library, split, rows, projectsByWorkflow, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows,
+        library, split, rows, projectsByWorkflow, workflowSections, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows,
         libraryCoverage: sourceCoverage, libraryIsEmpty };
     const latest = React.useRef(controller);
     React.useLayoutEffect(() => { latest.current = controller; });

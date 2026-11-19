@@ -16,6 +16,7 @@ export type SessionSectionChooserProps = Readonly<{
     onCreate?: () => Promise<SectionAddress | null>;
     disabledReason?: string;
     projectTitle?: string | null;
+    unassignedLabel?: string;
     /** Bulk selections retain each member's current assignment without inventing one common value. */
     currentSectionIds?: readonly (string | null)[];
     onCancel: () => void;
@@ -28,6 +29,7 @@ export function SessionSectionChooser(props: SessionSectionChooserProps): React.
         serverId: props.serverId, sections: props.sections,
         currentSectionIds: props.currentSectionIds ?? [props.value?.serverId === props.serverId ? props.value.sectionId : null],
         projectTitle: props.projectTitle ?? null, canCreate: Boolean(props.onCreate),
+        unassignedLabel: props.unassignedLabel,
         sectionChoiceLabels,
     });
     const [busy, select] = useHappyAction(async (id: string) => {

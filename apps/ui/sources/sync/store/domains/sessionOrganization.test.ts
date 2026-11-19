@@ -3,7 +3,7 @@ import { createStore } from 'zustand/vanilla';
 import type { SessionOrganizationSnapshot } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { countStoreNotifications } from '@/dev/testkit';
 
-import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
+import { buildSessionOrganizationServerKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 
 import {
     createSessionOrganizationDomain,
@@ -35,6 +35,25 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
 }
 
 describe('createSessionOrganizationDomain', () => {
+    it('applies Account Workflow memberships and leaves the same-id Session on its own section', () => {
+        const { get } = createHarness();
+        const sessionKey = buildSessionOrganizationSessionKey('home', 'same-id');
+        get().applySessionFolderAssignments('home', [{ sessionId: 'same-id', folderId: 'session-section' }]);
+        const request = { entityKind: 'workflow' as const, includeAllFolderAssignments: true, includeFolders: false };
+        get().applySessionOrganizationSnapshot('home', emptySnapshot(), request);
+        expect(get().organizationWorkflowFolderAssignmentsByServerId.home).toBeUndefined();
+        get().applySessionOrganizationSnapshot('home', {
+            ...emptySnapshot(),
+            entityFolderAssignments: [{ entityKind: 'workflow', entityId: 'same-id', folderId: 'workflow-section' }],
+        }, request);
+        expect(get().organizationWorkflowFolderAssignmentsByServerId.home).toEqual({ 'same-id': 'workflow-section' });
+        expect(get().sessionOrganizationFolderAssignmentsBySessionKey[sessionKey]?.folderId).toBe('session-section');
+        get().acknowledgeWorkflowFolderAssignment('home', 'same-id', null);
+        expect(get().organizationWorkflowFolderAssignmentsByServerId.home).toEqual({});
+        get().clearSessionOrganizationForServer('home');
+        expect(get().organizationWorkflowFolderAssignmentsByServerId.home).toBeUndefined();
+    });
+
     it('retains per-Home appearances, suppresses equal echoes, and detects support only on requested snapshots', () => {
         const harness = createHarness();
         const appearance = { sessionId: 's1', display: { t: 'plain' as const, v: { color: { kind: 'custom', hex: '#123456' } } }, updatedAt: 1 };

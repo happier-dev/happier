@@ -1,4 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { SetWorkflowFolderAssignmentResponseV1Schema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { serverFetch } from '@/sync/http/client';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { HappyError } from '@/utils/errors/errors';
@@ -142,6 +143,8 @@ function buildSnapshotQuery(request: Partial<SessionOrganizationSnapshotRequest>
     appendBooleanParam(params, 'includeAttentionStandings', request.includeAttentionStandings);
     appendBooleanParam(params, 'includeAttentionReminderTimes', request.includeAttentionReminderTimes);
     appendArrayParam(params, 'assignmentSessionIds', request.assignmentSessionIds);
+    appendArrayParam(params, 'assignmentEntityIds', request.assignmentEntityIds);
+    if (request.entityKind !== undefined) params.set('entityKind', request.entityKind);
     appendArrayParam(params, 'folderIds', request.folderIds);
     appendArrayParam(params, 'tagIds', request.tagIds);
     if (request.orderScopes && request.orderScopes.length > 0) {
@@ -320,13 +323,21 @@ export async function deleteSessionOrganizationFolder(params: Readonly<{
     return parseJsonResponse(response, DeleteSessionOrganizationFolderResponseSchema, 'Failed to delete session folder');
 }
 
-export async function setSessionFolderAssignment(params: Readonly<{
+type FolderAssignmentTransport = Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
     requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     sessionId: string;
     request: SetSessionFolderAssignmentRequest;
-}>): Promise<SetSessionFolderAssignmentResponse> {
+}>;
+
+export function setSessionFolderAssignment(params: FolderAssignmentTransport & Readonly<{
+    request: SetSessionFolderAssignmentRequest & { entityKind?: 'session' };
+}>): Promise<SetSessionFolderAssignmentResponse>;
+export function setSessionFolderAssignment(params: FolderAssignmentTransport & Readonly<{
+    request: SetSessionFolderAssignmentRequest & { entityKind: 'workflow' };
+}>): Promise<z.infer<typeof SetWorkflowFolderAssignmentResponseV1Schema>>;
+export async function setSessionFolderAssignment(params: FolderAssignmentTransport) {
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
         serverUrl: params.serverUrl,
@@ -338,6 +349,9 @@ export async function setSessionFolderAssignment(params: Readonly<{
             body: JSON.stringify(params.request),
         },
     });
+    if (params.request.entityKind === 'workflow') {
+        return parseJsonResponse(response, SetWorkflowFolderAssignmentResponseV1Schema, 'Failed to set Workflow folder assignment');
+    }
     return parseJsonResponse(response, SetSessionFolderAssignmentResponseSchema, 'Failed to set session folder assignment');
 }
 
