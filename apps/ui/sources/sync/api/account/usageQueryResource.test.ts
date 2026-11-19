@@ -8897,12 +8897,28 @@ describe('usage query Work composition', () => {
     const release = hostEntry.subscribe(() => {}, true);
     try {
       await hostEntry.refresh();
+      await expect.poll(() => hostEntry.getSnapshot().pending).toBe('idle');
+      expect(decodeUsageQueryResource(hostEntry.getSnapshot().value!).results[0]?.work?.allocations[0]?.reason).toBe('allocated');
       const beforeHostFlip = home!.requests.filter(request => request.path === '/v2/usage/query').length;
       // The next native read answers a changed partial inventory, so this
       // proves Machine invalidation reaches Work without re-reading accounting.
       scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [] }));
-      // No pool is open. Only this admitted Session makes its Machine a consumer.
-      recordMachineRequestFailed({ ...captured.accountLifetime.scope, machineId: machine.id });
+      const scope = captured.accountLifetime.scope;
+      const projectLookup = vi.spyOn(storage.getState(), 'getProjectForSession');
+      const projectReads = () => projectLookup.mock.calls.filter(([sessionId, serverId]) =>
+        sessionId === contribution.sessionId && serverId === scope.serverId).length;
+      try {
+        recordMachineRequestFailed({ ...scope, serverId: 'foreign-home', machineId: machine.id });
+        expect.soft(projectReads(), 'foreign Home reachability does no Work Session project reads').toBe(0);
+        recordMachineRequestFailed({ ...scope, accountId: 'foreign-account', machineId: machine.id });
+        expect.soft(projectReads(), 'foreign Account reachability does no Work Session project reads').toBe(0);
+        projectLookup.mockClear();
+        // Only this admitted Session makes the Machine a consumer.
+        recordMachineRequestFailed({ ...scope, machineId: machine.id });
+        expect.soft(projectReads(), 'the unchanged Machine inventory shares one Work Session project read').toBe(1);
+      } finally {
+        projectLookup.mockRestore();
+      }
       await flushHookEffects();
       await expect.poll(() => {
         const content = hostEntry.getSnapshot().value;
@@ -8976,7 +8992,8 @@ describe('usage query Work composition', () => {
     expect(unsupported.results[0]?.work?.allocations[0]).toMatchObject({ reason: 'missing_evidence', outcome: null, evidence: [] });
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'unsupported', errorCode: 'FEATURE_UNSUPPORTED' }));
     const unavailableBackend = await readUiUsageQueryBatch(captured, { queries: [query] });
-    expect(unavailableBackend.results[0]?.sources).toContainEqual({ source: 'work', status: 'unsupported', asOfMs: expect.any(Number) });
+    expect(unavailableBackend.results[0]?.sources).toContainEqual({ source: 'work', status: 'unsupported',
+      asOfMs: expect.any(Number), unreadSessions: { failed: 1 } });
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'error', evidence: [], branchEvidence: [], errorCode: 'INVALID_REQUEST' }));
     const denied = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(denied.results[0]?.work?.outcomes).toEqual([]);

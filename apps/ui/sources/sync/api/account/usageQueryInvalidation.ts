@@ -223,16 +223,15 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         .map(account => isConnectedServiceUsageCapable(account.ref.service)) ?? []);
     let observedUsageCapabilities = readUsageCapabilities();
     let observedMachineFacts = readMachineFacts(observedInputs[3], Date.now(), observedInputs[0]);
-    let observedReachabilityRevision = readMachineRequestReachabilityRevision();
-    const reconcile = (machineActivityChanged = false) => {
+    let detachedReachabilityRevision = readMachineRequestReachabilityRevision();
+    const reconcile = (refreshMachineFacts = false) => {
         const inputs = readInputs();
         const nowMs = Date.now();
         // Retain the listener's already-observed projection before doing any
         // machine enumeration, parsing, sorting or serialization.
-        const reachabilityRevision = readMachineRequestReachabilityRevision();
-        const machineFactsCurrent = !machineActivityChanged && inputs[3] === observedInputs[3] && inputs[0]?.serverId === observedInputs[0]?.serverId
-            && inputs[0]?.accountId === observedInputs[0]?.accountId
-            && reachabilityRevision === observedReachabilityRevision;
+        const sameMachineRows = inputs[3] === observedInputs[3];
+        const machineFactsCurrent = !refreshMachineFacts && sameMachineRows && inputs[0]?.serverId === observedInputs[0]?.serverId
+            && inputs[0]?.accountId === observedInputs[0]?.accountId;
         if (machineFactsCurrent && inputs.every((input, index) => input === observedInputs[index])) return;
         const machineFacts = machineFactsCurrent ? observedMachineFacts : readMachineFacts(inputs[3], nowMs, inputs[0]);
         // Evaluate both projections against the same currently admitted demand.
@@ -243,7 +242,7 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             && (index === 1 ? !sameStrictJsonValue(readAccountInputs(inputs[1]), readAccountInputs(observedInputs[1]))
                 : !sameStrictJsonValue(input, observedInputs[index])));
         const consumers = !machineFactsCurrent ? readMachineConsumers(inputs[3] ?? {}) : undefined;
-        const previousConsumers = !machineFactsCurrent ? readMachineConsumers(observedInputs[3] ?? {}) : undefined;
+        const previousConsumers = !machineFactsCurrent && !sameMachineRows ? readMachineConsumers(observedInputs[3] ?? {}) : consumers;
         const changed = !machineFactsCurrent && consumedMachineKey(machineFacts.facts, consumers!)
             !== consumedMachineKey(observedMachineFacts.facts, previousConsumers!)
             // Profile/Settings hydration can replace these small admitted inputs
@@ -268,17 +267,24 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         observedInputs = inputs;
         observedUsageCapabilities = readUsageCapabilities();
         observedMachineFacts = machineFacts;
-        observedReachabilityRevision = reachabilityRevision;
         if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaPoolInputsChanged ? 'quota-pool-inputs'
             : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
     };
     return observe(() => {
-        reconcile();
+        // Detect observations missed while no view was subscribed.
+        reconcile(readMachineRequestReachabilityRevision() !== detachedReachabilityRevision);
         const unwatchState = subscribeRegisteredStorageState(() => reconcile(), {
             profileScope: true, profile: ['connectedAccountsV4', 'connectedAccountGroupsV4'], machines: true, settingsScope: true,
             settings: ['experiments', 'featureToggles', 'usagePacingTargetsV1', 'usageCoachPreferencesV1', 'usageNightHoursV1', 'usageModelPriceOverridesV1'],
         });
-        const unwatchReachability = subscribeMachineRequestReachability(() => reconcile());
+        const unwatchReachability = subscribeMachineRequestReachability(change => {
+            if (change) {
+                const scope = readRegisteredStorageState()?.profileScope;
+                if (!scope || scope.accountId !== change.scope.accountId
+                    || !areServerProfileIdentifiersEquivalent(scope.serverId, change.scope.serverId)) return;
+            }
+            reconcile(true);
+        });
         const unwatchMachineActivity = subscribeRegisteredStorageMachineUpdates((serverId, machineIds) => {
             const state = readRegisteredStorageState();
             const scope = state?.profileScope;
@@ -295,6 +301,12 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             observedUsageCapabilities = capabilities;
             invalidate('quota-inputs');
         });
-        return () => { unwatchState?.(); unwatchReachability(); unwatchMachineActivity?.(); unwatchRegistry(); };
+        return () => {
+            unwatchState?.();
+            unwatchReachability();
+            unwatchMachineActivity?.();
+            unwatchRegistry();
+            detachedReachabilityRevision = readMachineRequestReachabilityRevision();
+        };
     });
 }
