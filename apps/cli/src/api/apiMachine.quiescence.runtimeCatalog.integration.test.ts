@@ -4,6 +4,7 @@ import {
     bindApiSessionSocketSequenceMock,
     createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
+import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
 import type { DaemonState, Machine, MachineMetadata } from './types';
 
 import { ApiMachineClient } from './apiMachine';
@@ -64,6 +65,7 @@ vi.mock('@/utils/time', async (importOriginal) => ({
 vi.mock('@/ui/logger', () => ({
     logger: {
         debug: () => undefined,
+        info: () => undefined,
         warn: () => undefined,
         debugLargeJson: () => undefined,
     },
@@ -196,7 +198,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
                 return new Promise<unknown>(() => {});
             },
         });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
         const advertisedMethods: unknown = Reflect.get(client, 'connectedClientRpcMethods');
         if (!(advertisedMethods instanceof Set)) throw new Error('Missing machine RPC advertisement fixture');
@@ -206,12 +208,14 @@ describe('ApiMachineClient daemon quiescence admission', () => {
         const pending = execute({
             v: 1, action: { pluginId: 'acme.client', localId: 'run' }, input: {},
             surface: 'agent', expectedContributorOccurrenceId: 'acme.client:1',
-        }, {}).then((result) => { outcome = result; return result; });
-        await issued;
+        }, { principalAccountId: 'owner' }).then((result) => { outcome = result; return result; });
+        expect(await Promise.race([issued.then(() => 'issued'), pending])).toBe('issued');
         socket.trigger(SOCKET_RPC_EVENTS.UNREGISTERED, { method: `machine-plain-1:${RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE}` });
         await vi.waitFor(() => expect(outcome).toMatchObject({ ok: false, errorCode: 'plugin_action_outcome_unknown' }));
         expect(await pending).not.toHaveProperty('actionHandlerInvocation');
-        expect(socket.timeout).not.toHaveBeenCalled();
+        expect(socket.timeout).not.toHaveBeenCalledWith(expect.any(Number));
+        expect(socket.emitWithAck).toHaveBeenCalledTimes(1);
+        expect(socket.emitWithAck.mock.calls[0]?.[1]).toHaveProperty('timeoutMs', null);
         expect(socket.getHandlers(SOCKET_RPC_EVENTS.UNREGISTERED)).toHaveLength(0);
     });
 
@@ -484,6 +488,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
                     };
                 }
                 if (event === 'machine-update-state') {
+                    if (attempt === 1) quiescing = true;
                     return {
                         result: attempt === 1 ? 'version-mismatch' : 'success',
                         version: attempt,
@@ -524,7 +529,6 @@ describe('ApiMachineClient daemon quiescence admission', () => {
 
         quiescing = false;
         const daemonStateHandler = vi.fn(() => ({ status: 'running' as const, pid: 123 }));
-        backoffMock.mockImplementationOnce(runWithOneRetry);
         const daemonStateOutcome = await client.updateDaemonState(daemonStateHandler);
         expect(daemonStateOutcome).toBe('suppressed');
         expect(daemonStateHandler).toHaveBeenCalledTimes(1);
@@ -565,8 +569,14 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             return { status: 200, data: AccountProfileResponseSchema.parse({ id: 'account-1' }) };
         });
         let quiescing = false;
+        const acknowledgeRegistration: NonNullable<Parameters<typeof createApiSessionSocketStub>[0]>['emit'] = (event, [registration], socket) => {
+            if (event === SOCKET_RPC_EVENTS.REGISTER) {
+                queueMicrotask(() => socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, registration));
+            }
+        };
         const firstSocket = createApiSessionSocketStub({
             id: 'machine-socket-1',
+            emit: acknowledgeRegistration,
             disconnectReason: 'transport close',
             emitWithAck: (event, payload) => {
                 if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { v: 1, result: 'success', revision: 1 };
@@ -582,6 +592,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
         });
         const secondSocket = createApiSessionSocketStub({
             id: 'machine-socket-2',
+            emit: acknowledgeRegistration,
             disconnectReason: 'transport close',
             emitWithAck: (event, payload) => {
                 if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { v: 1, result: 'success', revision: 2 };
@@ -604,10 +615,16 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             { isDaemonQuiescing: () => quiescing },
         );
         client.onConnectedServicesProjection(async () => {});
+        const sessionsRole = await activateSessionsRoleForMachineClient(client, client.setRPCHandlers({
+            spawnSession: async () => { throw new Error('This fixture does not spawn a Session'); },
+            stopSession: async () => true,
+            requestShutdown() {},
+        }));
 
         try {
             client.connect({ onConnect });
             await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
             expect(firstSocket.emitWithAck).toHaveBeenCalledWith(
                 'machine-update-state',
                 expect.any(Object),
@@ -616,6 +633,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             quiescing = true;
             firstSocket.disconnect();
             await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(2));
+            await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
 
             expect(secondSocket.emitWithAck).not.toHaveBeenCalledWith(
                 'machine-update-state',
@@ -626,7 +644,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             };
             expect(socketOptions.auth).not.toHaveProperty('isDaemonQuiescing');
         } finally {
-            await client.shutdown();
+            try { await sessionsRole.stop(); } finally { await client.shutdown(); }
         }
     }, 5_000);
 });
