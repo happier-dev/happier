@@ -66,7 +66,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
 const runtime = installSessionPaneRuntimeTestHarness({
     sessionId: 'session-a',
     credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
-    features: () => createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } }),
+    features: () => createRootLayoutFeaturesResponse({ features: { browser: { enabled: true }, localServices: { enabled: true } } }),
     request: async (input, init) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
         if ((init?.method ?? 'GET').toUpperCase() !== 'POST' || path !== '/v2/sessions/query') return null;

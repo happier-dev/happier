@@ -136,7 +136,7 @@ function buildLauncherState() {
 
 describe('LocalServicesSurfaceHost', () => {
   it('requests This workspace from the canonical Session root', async () => {
-    const serverId = await home.addHome({ name: 'Workspace services', serverUrl: 'https://workspace-services.test', accountId: 'account', currentAccount: true });
+    const serverId = await home.addHome({ localServicesEnabled: true, name: 'Workspace services', serverUrl: 'https://workspace-services.test', accountId: 'account', currentAccount: true });
     const { createSessionFixture, createMachineFixture } = await import('@/dev/testkit');
     const previous = storage.getState();
     const machine = createMachineFixture({ id: 'machine-a' });
@@ -176,6 +176,13 @@ describe('LocalServicesSurfaceHost', () => {
     };
     pluginProjectionState.scopedInputs = [];
     pluginProjectionState.stackProps = [];
+    // Hosts mounted on a bare Home id read that Home's Local services decision: these suites are about a Home that offers them.
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    for (const serverId of ['server-a', 'server-pane-driver']) {
+      primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready',
+        features: createRootLayoutFeaturesResponse({ features: { localServices: { enabled: true } } }) } });
+    }
     resetLocalServiceInventoryStoreForTests();
     resetLocalServiceLauncherStoreForTests();
   });
@@ -188,7 +195,7 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it('finishes Start after closing its issuing pane before Action admission completes and pushes Running to the reopened pane', async () => {
-    const serverId = await home.addHome({ name: 'Start custody', serverUrl: 'https://start-custody.test',
+    const serverId = await home.addHome({ localServicesEnabled: true, name: 'Start custody', serverUrl: 'https://start-custody.test',
       accountId: 'initiating-account', currentAccount: true });
     const { createDeferred } = await import('@/dev/testkit');
     const admission = createDeferred<void>();
@@ -248,7 +255,7 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it('recovers a failed inventory read and retired watch through the mounted Services Retry action', async () => {
-    const serverId = await home.addHome({ name: 'Services Recovery Home', serverUrl: 'https://services-recovery.test',
+    const serverId = await home.addHome({ localServicesEnabled: true, name: 'Services Recovery Home', serverUrl: 'https://services-recovery.test',
       accountId: 'initiating-account', currentAccount: true });
     const snapshot = LocalServiceInventorySnapshotV1Schema.parse({ v: 1, machineId: 'machine-a', generatedAt: 123,
       refreshState: 'idle', entries: [], diagnostics: [] });
@@ -301,7 +308,7 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it.each(['accept', 'acceptOnce', 'decline', 'retire', 'askFirstReject'] as const)('continues an untrusted Service Start through the shared Setup decision owner only after observed completion (%s)', async decision => {
-    const serverId = await home.addHome({ name: 'Service Setup Home', serverUrl: `https://services-setup-${decision}.test`,
+    const serverId = await home.addHome({ localServicesEnabled: true, name: 'Service Setup Home', serverUrl: `https://services-setup-${decision}.test`,
       accountId: 'initiating-account', currentAccount: true });
     const scope = { serverId, accountId: 'initiating-account' };
     const workspace = { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
@@ -520,7 +527,7 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it('reviews Restart explicitly and binds exact Project controls to the initiating Home Account', async () => {
-    const serverId = await home.addHome({
+    const serverId = await home.addHome({ localServicesEnabled: true,
       name: 'Service Home',
       serverUrl: 'https://services-host.test',
       accountId: 'initiating-account',
@@ -648,7 +655,7 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it('retires a held Project effect review when its exact Home Account changes', async () => {
-    const serverId = await home.addHome({
+    const serverId = await home.addHome({ localServicesEnabled: true,
       name: 'Service Home',
       serverUrl: 'https://services-review-retirement.test',
       accountId: 'initiating-account',
@@ -733,7 +740,7 @@ describe('LocalServicesSurfaceHost', () => {
    * re-enters nothing.
    */
   it('reviews a declared service Start in the host itself and rejoins the same Action with the disclosed digest', async () => {
-    const serverId = await home.addHome({
+    const serverId = await home.addHome({ localServicesEnabled: true,
       name: 'Service Home',
       serverUrl: 'https://services-effect-review.test',
       accountId: 'initiating-account',
@@ -872,7 +879,7 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it('holds managed Stop until the mounted exact-Account Artifact reader observes the durable decision', async () => {
-    const serverId = await home.addHome({
+    const serverId = await home.addHome({ localServicesEnabled: true,
       name: 'Service Home',
       serverUrl: 'https://services-stop-approval.test',
       accountId: 'initiating-account',
@@ -1117,7 +1124,7 @@ describe('LocalServicesSurfaceHost', () => {
     // The regression this pins: the pane's rows are built from LAUNCH TARGETS, and inventory
     // entries only enrich them. Making the inventory fresh while leaving the launcher feed on
     // its mount-time read renders nothing new, which a store-level assertion cannot see.
-    const serverId = await home.addHome({ name: 'Services Watch Home', serverUrl: 'https://services-watch.test',
+    const serverId = await home.addHome({ localServicesEnabled: true, name: 'Services Watch Home', serverUrl: 'https://services-watch.test',
       accountId: 'watch-account', currentAccount: true });
     const startedTarget: LocalServiceLaunchTarget = {
       ...openableTarget,

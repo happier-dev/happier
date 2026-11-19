@@ -98,7 +98,9 @@ function PortServicesHost(
     onServices: (services: PortServices | null) => void;
   }>,
 ) {
+  const { localServicesArm, publicPreviewFeatureEnabled: publicPreviewEnabled, publicPreviewCapabilityDisabledReasons: capabilityDisabledReasons } = useLocalServicePresentationFeatures(props.serverId);
   const feeds = useLocalServiceLiveFeeds({
+    available: localServicesArm === 'available',
     machineId: props.machineId,
     serverId: props.serverId,
     scope: 'machine',
@@ -112,7 +114,6 @@ function PortServicesHost(
     testID: 'machine-processes-port-services',
   });
   const runner = useLocalServiceActionRunner();
-  const { publicPreviewFeatureEnabled: publicPreviewEnabled, publicPreviewCapabilityDisabledReasons: capabilityDisabledReasons } = useLocalServicePresentationFeatures(props.serverId);
   const previewController = useLocalServicePreviewStateController({
     machineId: props.machineId,
     serverId: props.serverId,

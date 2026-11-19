@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -209,7 +210,9 @@ function PublishedHeader(): React.ReactElement {
     );
 }
 
-export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denied'; remote?: boolean; ports?: 'own' | 'unavailable' }>): React.ReactElement {
+export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denied'; remote?: boolean; ports?: 'own' | 'unavailable';
+    /** A Home that does not offer Local services (`server_disabled`, `unsupported`, `unknown`). */
+    availability?: FeatureAvailabilityArm }>): React.ReactElement {
     const [scope, setScope] = React.useState<ServicesScope>('workspace');
     const account = useActiveServerAccountScope();
     // A real Home id lets the line offer "Choose new ports…" (pressing it asks first; this checkout doesn't exist, so the owner refuses).
@@ -250,6 +253,7 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denie
                                 {...(props.remote ? { previewState: PREVIEWS_UNREACHABLE } : {})}
                                 publicPreviewActions={PUBLIC_PREVIEW_ACTIONS}
                                 onRefresh={() => undefined}
+                                {...(props.availability ? { availability: props.availability } : {})}
                                 testID="services-specimen-pane"
                             />
                         </PaneHeaderSlotScope>

@@ -257,6 +257,8 @@ export type AddHomeOptions = Readonly<{
     machinePoolsEnabled?: boolean;
     /** Seeds the canonical Bot template admission decision for that Home. */
     botsEnabled?: boolean;
+    /** Seeds the canonical `localServices` decision for that Home (the fixture default is off). */
+    localServicesEnabled?: boolean;
     /** Whether this Home becomes the active one. Defaults to true. */
     active?: boolean;
     /**
@@ -496,7 +498,12 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
                 || options.credentialResourcesExternalApiEnabled !== undefined
                 || options.credentialResourcesExternalApiAvailability !== undefined
                 || options.machinePoolsEnabled !== undefined
-                || options.botsEnabled !== undefined) {
+                || options.botsEnabled !== undefined
+                || options.localServicesEnabled !== undefined) {
+                if (options.localServicesEnabled !== undefined
+                    && !tryWriteServerEnabledBitInPlace(features, 'localServices', options.localServicesEnabled)) {
+                    throw new Error('The localServices feature bit could not be written by its own writer');
+                }
                 if (options.botsEnabled !== undefined
                     && !tryWriteServerEnabledBitInPlace(features, 'bots', options.botsEnabled)) {
                     throw new Error('The bots feature bit could not be written by its own writer');

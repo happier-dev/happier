@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { FeatureState } from '@happier-dev/protocol/features/decision';
 
+import { resolveFeatureAvailabilityArm, type FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -13,6 +15,10 @@ import {
 function normalizeServerId(value: string | null | undefined): string | null {
     const normalized = String(value ?? '').trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+function featureScope(serverId: string | null) {
+    return serverId ? { scopeKind: 'spawn' as const, serverId } : { scopeKind: 'runtime' as const };
 }
 
 export type LocalServiceCapabilityDisabledReasons = Readonly<{
@@ -49,6 +55,12 @@ export function useLocalServicePresentationFeatures(
     serverId: string | null | undefined,
     options?: Readonly<{ enabled?: boolean }>,
 ): Readonly<{
+    /**
+     * Whether this Home offers Local services at all (the `localServices` decision, classified by the
+     * canonical arm owner). Only `available` lets a surface scan or watch; every other arm is drawn as
+     * the turned-off, unsupported or unknown state instead of an empty list.
+     */
+    localServicesArm: FeatureAvailabilityArm;
     publicPreviewFeatureEnabled: boolean;
     /** The decided state, or null while this Home's features are not yet known. */
     publicPreviewFeatureState: FeatureState | null;
@@ -62,12 +74,19 @@ export function useLocalServicePresentationFeatures(
         enabled: enabled && Boolean(normalizedServerId),
     });
     useServerFeaturesRuntimeSnapshot({ enabled: enabled && !normalizedServerId });
-    const snapshot = enabled ? getCachedServerFeaturesSnapshot(normalizedServerId
+    const cachedSnapshot = getCachedServerFeaturesSnapshot(normalizedServerId
         ? { serverId: normalizedServerId }
-        : undefined) ?? LOADING_SNAPSHOT : LOADING_SNAPSHOT;
+        : undefined) ?? LOADING_SNAPSHOT;
+    const snapshot = enabled ? cachedSnapshot : LOADING_SNAPSHOT;
+    // A hidden retained pane keeps the last-known availability from the cache (no load of its own), so it
+    // never swaps its list for a loading state while hidden and loses its scroll and open row.
+    const localServicesArm = useMemo(() => resolveFeatureAvailabilityArm(resolveRuntimeFeatureDecisionFromSnapshot({
+        featureId: 'localServices', settings, snapshot: cachedSnapshot, scope: featureScope(normalizedServerId),
+    })), [cachedSnapshot, normalizedServerId, settings]);
 
     return useMemo(() => {
         if (!enabled) return {
+            localServicesArm,
             publicPreviewFeatureEnabled: false,
             publicPreviewFeatureState: null,
             publicPreviewCapabilityDisabledReasons: NO_DISABLED_REASONS,
@@ -76,12 +95,11 @@ export function useLocalServicePresentationFeatures(
             featureId: 'localServices.publicPreview',
             settings,
             snapshot,
-            scope: normalizedServerId
-                ? { scopeKind: 'spawn', serverId: normalizedServerId }
-                : { scopeKind: 'runtime' },
+            scope: featureScope(normalizedServerId),
         });
         const localServices = snapshot.status === 'ready' ? snapshot.features.capabilities.localServices : null;
         return {
+            localServicesArm,
             publicPreviewFeatureEnabled: decision?.state === 'enabled',
             publicPreviewFeatureState: decision?.state ?? null,
             publicPreviewCapabilityDisabledReasons: localServices ? {
@@ -89,5 +107,5 @@ export function useLocalServicePresentationFeatures(
                 publicPreview: localServices.publicPreview.disabledReasons,
             } : NO_DISABLED_REASONS,
         };
-    }, [enabled, normalizedServerId, settings, snapshot]);
+    }, [enabled, localServicesArm, normalizedServerId, settings, snapshot]);
 }

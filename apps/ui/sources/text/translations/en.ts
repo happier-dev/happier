@@ -13502,6 +13502,12 @@ const enLocalServices = {
     purpose: 'Long-running services for this checkout: start them, open them and share them.',
     purposeMachine: 'Long-running services on this machine: start them, open them and share them.',
     backToServices: 'Back to services',
+    offTitle: "Local services are off on this Home",
+    offReason: "The Home’s operator turned them off, so dev servers aren’t listed here. Ask them to turn local services back on.",
+    notOfferedTitle: "Local services aren’t available here",
+    notOfferedReason: "This Home or this app doesn’t offer local services, so dev servers aren’t listed here.",
+    availabilityUnknownTitle: "Can’t check local services right now",
+    availabilityUnknownReason: "Happier couldn’t reach this Home to check whether local services are on.",
   },
   effectReview: {
     startTitle: ({ service }: { service: string }) => `Start ${service}?`,

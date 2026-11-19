@@ -69,8 +69,10 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const machine = useMachinePresenceSummary(serverId, machineId);
     // Resolved once for the whole surface: the server names which prerequisite is unmet, and the
     // rows render it instead of one generic sentence for eleven different causes (audit P1-3).
-    const { publicPreviewFeatureEnabled, publicPreviewCapabilityDisabledReasons } = useLocalServicePresentationFeatures(serverId);
+    // The same observation decides whether this Home offers Local services at all: nothing scans while it does not.
+    const { localServicesArm, publicPreviewFeatureEnabled, publicPreviewCapabilityDisabledReasons } = useLocalServicePresentationFeatures(serverId);
     const feeds = useLocalServiceLiveFeeds({
+        available: localServicesArm === 'available',
         machineId,
         serverId,
         sessionId,
@@ -160,6 +162,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             {...entryActions.handlers}
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
             publicPreviewCapabilityDisabledReasons={publicPreviewCapabilityDisabledReasons}
+            availability={localServicesArm}
             machine={machine}
             onRefresh={onRefresh}
             presentation={props.presentation}

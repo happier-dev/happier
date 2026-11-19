@@ -41,6 +41,12 @@ export type LocalServiceLiveFeedsInput = Readonly<{
     /** Accepted SOURCE ref; omitted for Session/Machine feeds that have no Project placement. */
     workspaceRefId?: string | null;
     scope: 'workspace' | 'machine';
+    /**
+     * The Home's Local services decision from `useLocalServicePresentationFeatures` (`localServicesArm
+     * === 'available'`). False starts no scan, watch or Project observation. Product surfaces always
+     * pass it; only tests and specimens that drive the feeds directly omit it.
+     */
+    available?: boolean;
     /** Supplied state replaces the live feed (tests, previews); `undefined` reads live. */
     inventoryState?: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
@@ -59,11 +65,12 @@ export type LocalServiceLiveFeeds = Readonly<{
 }>;
 
 export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): LocalServiceLiveFeeds {
+    const available = input.available !== false;
     const liveInventory = useLocalServiceInventoryStateController({
         machineId: input.machineId,
         serverId: input.serverId,
         sessionId: input.sessionId,
-        enabled: input.inventoryState === undefined,
+        enabled: available && input.inventoryState === undefined,
         snapshotClient: input.inventorySnapshotClient,
     });
     const liveLauncher = useLocalServiceLauncherStateController({
@@ -72,7 +79,7 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
         sessionId: input.sessionId,
         scope: input.scope,
         workspaceRoot: input.workspaceRoot ?? null,
-        enabled: input.launcherState === undefined,
+        enabled: available && input.launcherState === undefined,
         snapshotClient: input.launcherSnapshotClient,
     });
     // Launcher freshness is owned by its shared store for every consumer and mutation surface.
@@ -83,7 +90,7 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
     const bindings = useProjectServiceBindings(input, sourceLauncherState);
     const launcherState = bindings.state;
     const applyLauncherSnapshot = input.launcherState === undefined ? liveLauncher.applySnapshot : undefined;
-    const refresh = React.useMemo(() => inventorySupplied || !liveInventory.refresh || !input.machineId || !input.serverId
+    const refresh = React.useMemo(() => !available || inventorySupplied || !liveInventory.refresh || !input.machineId || !input.serverId
         ? undefined : async () => {
             if (!bindings.binding?.isCurrent()) return;
             if (inventoryState.refreshState === 'unavailable') {
@@ -94,7 +101,7 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
             const refreshed = await refreshLocalServiceMachine({ machineId: input.machineId!, serverId: input.serverId!, sessionId: input.sessionId,
                 accountId: bindings.binding.accountId, isCurrent: bindings.binding.isCurrent });
             await bindings.refresh(refreshed);
-        }, [inventorySupplied, inventoryState.refreshState, liveInventory.refresh, liveLauncher.refresh,
+        }, [available, inventorySupplied, inventoryState.refreshState, liveInventory.refresh, liveLauncher.refresh,
             input.machineId, input.serverId, input.sessionId, bindings.binding, bindings.refresh]);
     return React.useMemo(() => ({
         inventoryState,
@@ -128,7 +135,7 @@ type ServiceActual = Extract<ProjectServicePlacementGetResultV1, { status: 'read
  * The protocol observation owner selects accepted endpoints and proves native provenance. */
 function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceState: LocalServiceLauncherState | null) {
     const presented = useLayoutPresentationActive();
-    const enabled = presented && input.launcherState === undefined && input.scope === 'workspace' && Boolean(input.workspaceRefId && input.serverId);
+    const enabled = presented && input.available !== false && input.launcherState === undefined && input.scope === 'workspace' && Boolean(input.workspaceRefId && input.serverId);
     const { binding } = useServerCredentialAccountScopeBinding(input.serverId ?? '');
     const rows = storage(state => enabled ? readCurrentProjectAccountRows(state) : null);
     const canObserve = enabled && binding?.isCurrent() === true && rows?.status === 'ready' && rows.coverage === 'complete'

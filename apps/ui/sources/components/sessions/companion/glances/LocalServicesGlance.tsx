@@ -6,6 +6,9 @@ import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useLocalServiceLiveFeeds } from '@/components/sessions/localServices/useLocalServiceLiveFeeds';
+import { useLocalServicePresentationFeatures } from '@/components/sessions/localServices/useLocalServicePublicPreviewFeature';
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -44,6 +47,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 export type LocalServicesGlanceState = (AppLocalServicesGlanceState & Readonly<{ refreshFailed?: never }>)
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'noMachine' }>
+    /** The Home does not offer Local services (or could not be checked): the pane's availability state, glance-sized. */
+    | Readonly<{ kind: 'unavailable'; availability: Exclude<FeatureAvailabilityArm, 'available' | 'checking'> }>
     | Readonly<{ kind: 'error' }>
     | Readonly<{ kind: 'ready'; rows: readonly LocalServicesGlanceRow[]; runningCount: number; refreshFailed?: boolean }>;
 
@@ -73,6 +78,17 @@ export const LocalServicesGlanceView = React.memo(function LocalServicesGlanceVi
         body = { kind: 'loading', accessibilityLabel: t('widgetGlances.servicesLoading') };
     } else if (state.kind === 'noMachine') {
         body = { kind: 'content', children: <Text style={styles.quiet}>{t('widgetGlances.noMachine')}</Text> };
+    } else if (state.kind === 'unavailable') {
+        const unknown = state.availability === 'unknown';
+        const off = state.availability === 'server_disabled';
+        body = {
+            kind: 'error', tone: unknown ? 'warning' : 'unavailable',
+            title: unknown ? t('localServices.pane.availabilityUnknownTitle')
+                : off ? t('localServices.pane.offTitle') : t('localServices.pane.notOfferedTitle'),
+            reason: unknown ? t('localServices.pane.availabilityUnknownReason')
+                : off ? t('localServices.pane.offReason') : t('localServices.pane.notOfferedReason'),
+            ...(unknown && props.onRetry ? { action: { label: t('localServices.pane.checkAgain'), onPress: props.onRetry } } : {}),
+        };
     } else if (state.kind === 'error') {
         body = {
             kind: 'error', title: t('localServices.inventory.errorTitle'), reason: t('widgetGlances.servicesReadFailed'),
@@ -219,7 +235,9 @@ export function LocalServicesGlance(props: LocalServicesGlanceProps) {
 function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serverId: string | null; onAfterDetailsOpen?: () => void }>) {
     const machineId = useSessionMachineTarget(input.sessionId, input.serverId)?.machineId ?? null;
     const machine = useMachinePresenceSummary(input.serverId, machineId);
+    const { localServicesArm } = useLocalServicePresentationFeatures(input.serverId);
     const feeds = useLocalServiceLiveFeeds({
+        available: localServicesArm === 'available',
         machineId,
         serverId: input.serverId,
         sessionId: input.sessionId,
@@ -239,6 +257,8 @@ function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serv
     const inventoryRefreshState = feeds.inventoryState.refreshState;
     const inventoryObserved = feeds.inventoryState.generatedAt !== null;
     const state = React.useMemo<LocalServicesGlanceState>(() => {
+        if (localServicesArm === 'checking') return { kind: 'loading' };
+        if (localServicesArm !== 'available') return { kind: 'unavailable', availability: localServicesArm };
         if (!machineId) return { kind: 'noMachine' };
         const rows = buildLocalServiceRows({
             inventoryRows,
@@ -254,7 +274,7 @@ function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serv
             }
         }
         return { kind: 'ready', rows: resolveLocalServicesGlanceRows(rows), runningCount: selectLocalServiceRunningCount(rows), refreshFailed };
-    }, [inventoryRows, inventoryRefreshState, inventoryObserved, feeds.launcherState, machineId, input.sessionId]);
+    }, [inventoryRows, inventoryRefreshState, inventoryObserved, feeds.launcherState, localServicesArm, machineId, input.sessionId]);
     const open = React.useCallback((target: LocalServiceLaunchTarget) => {
         void openInBrowser(target);
     }, [openInBrowser]);
@@ -262,7 +282,12 @@ function useSessionLocalServicesGlance(input: Readonly<{ sessionId: string; serv
     const asOf = away || (state.kind === 'ready' && state.refreshFailed)
         ? feeds.launcherState?.updatedAt ?? feeds.inventoryState.generatedAt
         : null;
-    return { state, machine, asOf, open, refresh: feeds.refresh };
+    // Not yet known whether the Home offers Local services: the retry asks the Home's feature probe again.
+    const serverId = input.serverId;
+    const checkAvailability = React.useCallback(() => {
+        if (serverId) void retryServerFeaturesSnapshot({ serverId });
+    }, [serverId]);
+    return { state, machine, asOf, open, refresh: state.kind === 'unavailable' ? checkAvailability : feeds.refresh };
 }
 
 function LocalServicesLiveGlance(props: LocalServicesGlanceProps) {

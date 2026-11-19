@@ -12050,6 +12050,12 @@ localTailscale: {
       purpose: 'このチェックアウトの常駐サービス：起動、表示、共有ができます。',
       purposeMachine: 'このマシンの常駐サービス：起動、表示、共有ができます。',
       backToServices: 'サービスに戻る',
+      offTitle: "このHomeではローカルサービスがオフです",
+      offReason: "Homeの管理者がオフにしているため、開発サーバーはここに表示されません。オンに戻すよう依頼してください。",
+      notOfferedTitle: "ここではローカルサービスを利用できません",
+      notOfferedReason: "このHomeまたはこのアプリはローカルサービスに対応していないため、開発サーバーはここに表示されません。",
+      availabilityUnknownTitle: "現在ローカルサービスを確認できません",
+      availabilityUnknownReason: "ローカルサービスがオンか確認するためにこのHomeに接続できませんでした。",
     },
     effectReview: {
       startTitle: ({ service }: { service: string }) => `${service} を起動しますか？`,

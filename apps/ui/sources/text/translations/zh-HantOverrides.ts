@@ -9536,6 +9536,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             purpose: '此檢出的常駐服務：啟動、開啟和分享。',
             purposeMachine: '這台機器上的常駐服務：啟動、開啟和分享。',
             backToServices: '返回服務',
+            offTitle: "此 Home 已關閉本機服務",
+            offReason: "Home 的管理員已將其關閉，因此開發伺服器不會顯示在這裡。請讓管理員重新開啟本機服務。",
+            notOfferedTitle: "此處無法使用本機服務",
+            notOfferedReason: "此 Home 或此應用程式不提供本機服務，因此開發伺服器不會顯示在這裡。",
+            availabilityUnknownTitle: "暫時無法檢查本機服務",
+            availabilityUnknownReason: "Happier 無法連線此 Home 來檢查本機服務是否已開啟。",
         },
         effectReview: {
             startTitle: ({ service }: { service: string }) => `啟動 ${service}？`,

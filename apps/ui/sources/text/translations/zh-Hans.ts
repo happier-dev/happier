@@ -11388,6 +11388,12 @@ export const zhHans: TranslationStructure = {
       purpose: '此检出的常驻服务：启动、打开和分享。',
       purposeMachine: '这台机器上的常驻服务：启动、打开和分享。',
       backToServices: '返回服务',
+      offTitle: "此 Home 已关闭本地服务",
+      offReason: "Home 的管理员已将其关闭，因此开发服务器不会显示在这里。请让管理员重新开启本地服务。",
+      notOfferedTitle: "此处无法使用本地服务",
+      notOfferedReason: "此 Home 或此应用不提供本地服务，因此开发服务器不会显示在这里。",
+      availabilityUnknownTitle: "暂时无法检查本地服务",
+      availabilityUnknownReason: "Happier 无法连接此 Home 来检查本地服务是否已开启。",
     },
     effectReview: {
       startTitle: ({ service }: { service: string }) => `启动 ${service}？`,

@@ -25,6 +25,8 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceFreshnessLine, type SurfaceFreshnessAction } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { useLocalServiceInventory } from '@/sync/domains/local/services/inventory/useLocalServiceInventory';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
 import { createLocalServiceLauncherState, selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch/store';
@@ -217,8 +219,12 @@ function buildHeaderLine(input: Readonly<{
     runningMark: React.ReactNode;
     idleMark: React.ReactNode;
     offlineMark: React.ReactNode;
+    /** The Home offers Local services (`availability === 'available'`). */
+    offered: boolean;
 }>): PaneHeaderLine {
     const machine = input.machineName;
+    // A Home that does not offer Local services lists nothing: the line keeps identity only, never a count.
+    if (!input.offered) return { leading: input.idleMark, segments: machine ? [machine] : [] };
     if (input.offline) {
         return {
             leading: input.offlineMark,
@@ -365,6 +371,11 @@ type DetectedLocalServicesPaneProps = Readonly<{
     /** The Account viewing the surface: its own services carry no "Started by". */
     viewerAccountId?: string | null;
     publicPreviewCapabilityDisabledReasons?: LocalServiceCapabilityDisabledReasons;
+    /**
+     * The Home's Local services availability (`useLocalServicePresentationFeatures().localServicesArm`).
+     * Anything but `available` replaces the list with its own state: off, not offered, or not yet known.
+     */
+    availability?: FeatureAvailabilityArm;
     /** The machine these services run on: its name for the header and sections, and whether it answers. */
     machine?: MachinePresenceSummary | null;
     /**
@@ -496,8 +507,11 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     const launcherPending = props.launcherState != null && launcherState.updatedAt === null
         && launcherState.refreshStatus !== 'error';
     const scanPending = (viewModel.status === 'loading' || launcherPending) && !hasLauncherTargets;
+    const availability = props.availability ?? 'available';
+    const offered = availability === 'available';
     const scanUnknown = scanPending || ((viewModel.status === 'error' || launcherState.refreshStatus === 'error') && !hasLauncherTargets);
     const headerLine = React.useMemo(() => buildHeaderLine({
+        offered,
         offline,
         scanUnknown,
         scope,
@@ -506,8 +520,9 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         runningMark,
         idleMark,
         offlineMark,
-    }), [idleMark, machineName, offline, offlineMark, runningCount, runningMark, scanUnknown, scope]);
-    const onRefresh = props.onRefresh;
+    }), [idleMark, machineName, offered, offline, offlineMark, runningCount, runningMark, scanUnknown, scope]);
+    // Nothing to re-read while the Home does not offer Local services.
+    const onRefresh = offered ? props.onRefresh : undefined;
     const isRefreshing = viewModel.isRefreshing;
     const headerAction = React.useMemo(() => (onRefresh ? (
         <IconButton
@@ -722,6 +737,20 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         </ScrollView>
     ) : state);
 
+    if (availability !== 'available') {
+        // Nothing is scanned while the Home does not offer Local services: the state says why, never an
+        // empty list. The scope switch has nothing to switch, so only the page purpose and plugins stay.
+        const state = <LocalServicesAvailabilityState availability={availability} serverId={props.serverId ?? null}
+            animationEnabled={animationEnabled} testID={testID} />;
+        return props.footer || pageHeader ? (
+            <ScrollView style={styles.root} contentContainerStyle={styles.stateScrollContent}>
+                {pageHeader ? <ConstrainedScreenContent>{pageHeader}</ConstrainedScreenContent> : null}
+                {state}
+                {props.footer}
+            </ScrollView>
+        ) : state;
+    }
+
     if (offline && !hasRows) {
         return withFooter(
             <ConstrainedScreenContent>
@@ -854,4 +883,48 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             ) : null}
         </View>
     );
+}
+
+/**
+ * Why a Home's Local services cannot be listed, from the canonical availability arm (the Automations
+ * gate's pattern). A Home that turned them off says who can change it and offers nothing that cannot
+ * work; a Home that could not be checked asks its feature probe again and claims nothing about why.
+ */
+function LocalServicesAvailabilityState(props: Readonly<{
+    availability: Exclude<FeatureAvailabilityArm, 'available'>;
+    serverId: string | null;
+    animationEnabled: boolean;
+    testID: string;
+}>): React.ReactElement {
+    const serverId = props.serverId;
+    const checkAgain = React.useCallback(async () => {
+        if (serverId) await retryServerFeaturesSnapshot({ serverId });
+    }, [serverId]);
+    switch (props.availability) {
+        case 'checking':
+            return (
+                <SurfaceStateCard testID={`${props.testID}-loading`} kind="loading"
+                    title={t('localServices.inventory.loadingTitle')} animationEnabled={props.animationEnabled} />
+            );
+        case 'unknown':
+            return (
+                <SurfaceStateCard testID={`${props.testID}-availability-unknown`} kind="error" iconName="hard-drives"
+                    title={t('localServices.pane.availabilityUnknownTitle')}
+                    reason={t('localServices.pane.availabilityUnknownReason')}
+                    {...(serverId ? { action: { label: t('localServices.pane.checkAgain'), onPress: checkAgain } } : {})}
+                    accessibilitySemantics="status" />
+            );
+        case 'server_disabled':
+            return (
+                <SurfaceStateCard testID={`${props.testID}-off`} kind="unavailable" iconName="hard-drives"
+                    title={t('localServices.pane.offTitle')} reason={t('localServices.pane.offReason')}
+                    accessibilitySemantics="status" />
+            );
+        default:
+            return (
+                <SurfaceStateCard testID={`${props.testID}-not-offered`} kind="unavailable" iconName="hard-drives"
+                    title={t('localServices.pane.notOfferedTitle')} reason={t('localServices.pane.notOfferedReason')}
+                    accessibilitySemantics="status" />
+            );
+    }
 }
