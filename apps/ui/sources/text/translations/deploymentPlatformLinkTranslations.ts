@@ -49,6 +49,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   add: string;
   usePlatform: string;
   platform: string;
+  platformProject: (params: { platform: string }) => string;
   sourceMethod: string;
   gitIntegration: string;
   upload: string;
@@ -96,6 +97,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   hostSetupAction: (params: { machine: string }) => string;
   hostReviewShort: string;
   hostUnchecked: string;
+  hostUncheckedBody: (params: { machine: string }) => string;
 }>;
 
 export const deploymentPlatformLinkTranslations = {
@@ -155,6 +157,7 @@ export const deploymentPlatformLinkTranslations = {
     add: 'Add platform',
     usePlatform: 'Use a platform',
     platform: 'Platform',
+    platformProject: ({ platform }) => `${platform} project`,
     loading: 'Finding platforms…',
     failed: 'Couldn’t load platforms',
     empty: 'No platform is turned on',
@@ -174,7 +177,8 @@ export const deploymentPlatformLinkTranslations = {
     platformLater: 'You choose the platform project right after you create it.',
     deploysFrom: 'Deploys from',
     onPlatformTitle: ({ platform }) => `On ${platform}`,
-    onPlatformBody: 'Next, you pick the account and project. Linking deploys nothing.',
+    // The step's description already says that linking deploys nothing (one message per state, DESIGN-ACCEPT C2).
+    onPlatformBody: 'Next, you pick the account and project.',
     platformBuilds: 'The platform builds this project’s repository at the branch you choose.',
     managersOnly: 'Only managers of this environment can link a platform.',
     refusedRemedy: 'Check the account and project you chose, then check again.',
@@ -191,5 +195,6 @@ export const deploymentPlatformLinkTranslations = {
     hostSetupAction: ({ machine }) => `Set up ${machine}`,
     hostReviewShort: 'Review setup',
     hostUnchecked: 'Couldn’t check whether this Machine can host deploys',
+    hostUncheckedBody: ({ machine }) => `Review setup opens ${machine}’s setup, where Happier checks it can build and run apps.`,
   },
 } satisfies Pick<Record<SupportedLanguage, DeploymentPlatformLinkCopy>, 'en'>;

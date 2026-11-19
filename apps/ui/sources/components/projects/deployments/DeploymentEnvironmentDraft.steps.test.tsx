@@ -280,7 +280,10 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('configure'));
-      expect(screen.findByTestId('project-deployments.draft.catalogApp')).not.toBeNull();
+      // The summary names the app; What runs holds only its addresses, and is absent without any (DESIGN-ACCEPT C6).
+      expect(screen.findByTestId('project-deployments.draft.catalogApp')).toBeNull();
+      const { t } = await import('@/text');
+      expect(screen.getTextContent().includes(t('projects.deployments.whatRunsTitle'))).toBe(domains.length > 0);
       if (domains.length) {
         expect(screen.findByTestId('project-deployments.draft.domain.web')).not.toBeNull();
         expect(frame().primary.disabled).toBe(true);

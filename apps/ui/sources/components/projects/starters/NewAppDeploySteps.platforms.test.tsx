@@ -161,8 +161,11 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
       for (const expected of ['Free', 'Pro', 'Credit', '$20.00 a month', '—', 'Automatic HTTPS', 'Preview deployments', 'alpha.example'])
         expect(comparison, expected).toContain(expected);
       await screen.pressByTestIdAsync(alpha);
-      await waitForHomeGovernance(() => expect(hasMachineField('project-deployments.draft.target:own-server:footer'),
-        'the Machine stays in the Machine card').toBe(true));
+      // The Machine stays in its card, read-only: an unchosen card names its Machine's facts and holds no live select
+      // (DESIGN-ACCEPT W3; lab stWhere / where round 3 #2).
+      await waitForHomeGovernance(() => expect(screen.findHostByTestId('project-deployments.draft.target:own-server:footer'),
+        'the Machine stays in the Machine card').not.toBeNull());
+      expect(hasMachineField('project-deployments.draft.target:own-server:footer'), 'an unchosen Machine card has no select').toBe(false);
       expect(hasMachineField(`${alpha}:footer`), 'a chosen platform card shows its plans, not a Machine picker').toBe(false);
       await screen.unmount();
     } finally {

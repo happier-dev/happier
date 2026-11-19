@@ -692,6 +692,21 @@ export const DeploymentEnvironmentDraft = React.memo(
     // The Machine choice lives in the Machine card (whereM): its picker with the presence owner's line, and when that
     // Machine is away, the one next step on its own line.
     // Until the Machine list has answered, the field holds its place; "no Machine" is said only once it is known.
+    // An unchosen Machine card reads its Machine's facts; only the chosen card carries the Machine select, so a radio
+    // card that isn't chosen never holds a second live control (lab stWhere / where round 3 #2, DESIGN-ACCEPT W3).
+    const machineStatus = chosen ? !machineAway && host.readiness === 'ready' ? t('newApp.deploy.readyToHost')
+      : presence.get(chosen.id)?.label ?? null : null;
+    const machineFacts = chosen ? (
+      <View style={[styles.machineCard, { borderTopWidth: resolveThemeHairlineBorderStyle(theme.colors.border.subtle).borderWidth,
+        borderTopColor: theme.colors.border.subtle }]}>
+        <ItemGroup surface="none" header="none">
+          <BareSectionContent>
+            <MachineCardFactRows serverId={props.lifetime?.scope.serverId ?? null} machineId={chosen.id}
+              machine={machineName(chosen.id)} status={machineStatus} />
+          </BareSectionContent>
+        </ItemGroup>
+      </View>
+    ) : null;
     const machineCard = allMachines != null && machines.length === 0 && machineId === null ? (
       <DeploymentMachinesEmpty serverId={props.lifetime?.scope.serverId ?? ''} testID="project-deployments.draft" empty={
         <Item testID="project-deployments.draft.noMachine.create" title={t('managedMachines.add.createPath')}
@@ -742,10 +757,10 @@ export const DeploymentEnvironmentDraft = React.memo(
               descriptionPlacement="below"
               // Each card carries its own facts (journey-deploy where): the Machine card stays with A machine, and a
               // platform shows its declared plans; which Machine a platform deploys from is Configure's (On <platform>).
-              renderOptionFooter={({ option }) => {
+              renderOptionFooter={({ option, selected }) => {
                 const plans = option.id === OWN_SERVER_TARGET ? undefined
                   : offeredPlatformTargets.find(target => target.key === option.id)?.plans;
-                const body = option.id === OWN_SERVER_TARGET ? machineCard
+                const body = option.id === OWN_SERVER_TARGET ? selected ? machineCard : machineFacts ?? machineCard
                   : plans ? <DeploymentTargetPlans plans={plans} platform={option.title} columns={!props.phone && option.id === leadId}
                     phone={props.phone} testID={`project-deployments.draft.target:${option.id}`} /> : null;
                 return body ? <View testID={`project-deployments.draft.target:${option.id}:footer`}>{body}</View> : null;
@@ -778,7 +793,10 @@ export const DeploymentEnvironmentDraft = React.memo(
               tone="warning"
               title={t(host.readiness === 'needsSetup' ? 'projects.deployments.platformLink.hostNeedsSetup'
                 : 'projects.deployments.platformLink.hostUnchecked')}
-              description={t('projects.deployments.platformLink.hostSetupBody')}
+              // Unknown readiness says what Review setup does, on which Machine (DESIGN-ACCEPT C5: status is not
+              // guidance); a confirmed setup need keeps the review reassurance.
+              description={host.readiness === 'needsSetup' ? t('projects.deployments.platformLink.hostSetupBody')
+                : t('projects.deployments.platformLink.hostUncheckedBody', { machine: machineName(chosen.id) })}
               // The Machine field above names it, so the title says "this Machine"; the way forward stays quiet beside the
               // footer's one primary (R2-D5).
               action={{ label: t('projects.deployments.platformLink.hostReviewShort'),
@@ -811,7 +829,9 @@ export const DeploymentEnvironmentDraft = React.memo(
             <AttentionBanner testID="project-deployments.draft.hostSetup.failed" tone="warning" title={t('machinePresets.setup.title')}
               description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
           ) : null}
-          <ItemGroup
+          {/* A one-service catalog app adds nothing here the summary doesn't say (its name is the Source): the section
+              stands only when it carries the app's addresses (DESIGN-ACCEPT C6, lab catCfg). */}
+          {props.catalogApp && props.catalogApp.domains.length === 0 ? null : <ItemGroup
             title={t('projects.deployments.whatRunsTitle')}
             description={props.copyFrom || storedDefinition || props.catalogApp ? undefined : onPlatform
               ? t('projects.deployments.platformLink.platformBuilds')
@@ -819,7 +839,6 @@ export const DeploymentEnvironmentDraft = React.memo(
           >
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
               subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <>
-                <Item testID="project-deployments.draft.catalogApp" title={props.catalogApp.title} mode="info" showChevron={false} />
                 <DeploymentTemplateDomainRows domains={props.catalogApp.domains} testIDPrefix="project-deployments.draft.domain"
                   hostname={key => domainHostnames[key] ?? ''}
                   onChangeHostname={(key, hostname) => setDomainHostnames(current => ({ ...current, [key]: hostname }))} />
@@ -874,7 +893,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="import" />
             </> : null}
             </>}
-          </ItemGroup>
+          </ItemGroup>}
           {props.copyFrom && copyChoices ? (
             <ItemGroup title={t('projects.deployments.copy.bindings')} description={t('projects.deployments.copy.domainsStay')}>
               {copyChoices.secrets.map((choice, index) => {
@@ -1102,7 +1121,33 @@ const styles = StyleSheet.create((theme) => ({
   // A visited step that another step covers: kept mounted with its choices, out of layout and out of the tab order.
   hiddenStep: { display: 'none' },
   machineCard: { gap: theme.space.s4 },
+  machineFacts: { flexDirection: 'row', gap: theme.space.s16, paddingTop: theme.space.s8 },
+  machineFactValues: { flex: 1, minWidth: 0 },
 }));
+
+/**
+ * An unchosen Machine card's facts (lab stWhere / where): Machine, Status and, when its owner reports it, free memory,
+ * as the compact label · value lines the platform cards' plans use, read-only (DESIGN-ACCEPT W3).
+ */
+function MachineCardFactRows(props: Readonly<{ serverId: string | null; machineId: string; machine: string; status: string | null }>) {
+  const { theme } = useUnistyles();
+  const resources = useMachineResourceSummary({ serverId: props.serverId ?? '', machineId: props.machineId });
+  const available = props.serverId && resources?.kind === 'reporting' ? resources.summary?.memory.availableBytes ?? null : null;
+  const rows = [
+    { label: t('projects.deployments.machine'), value: props.machine },
+    ...(props.status ? [{ label: t('newApp.deploy.factStatus'), value: props.status }] : []),
+    ...(available !== null ? [{ label: t('newApp.deploy.factMemory'),
+      value: t('newApp.deploy.factMemoryFree', { free: formatHappierDataBytes(available, { kind: 'memory' }) }) }] : []),
+  ];
+  return (
+    <View style={styles.machineFacts}>
+      <View>{rows.map(row => <Text key={row.label} variant="meta" numberOfLines={1}
+        style={{ color: theme.colors.text.secondary }}>{row.label}</Text>)}</View>
+      <View style={styles.machineFactValues}>{rows.map(row => <Text key={row.label} variant="meta" numberOfLines={1}
+        style={{ color: theme.colors.text.primary }}>{row.value}</Text>)}</View>
+    </View>
+  );
+}
 
 /**
  * The chosen Machine's facts in its Where card (journey-deploy whereM), each only when its owner reports it: free

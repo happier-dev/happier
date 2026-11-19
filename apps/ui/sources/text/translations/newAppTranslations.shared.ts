@@ -159,6 +159,7 @@ type Copy = Readonly<{
     cantRunUnnamed: string;
     cantRunStored: string;
     factMemory: string;
+    factStatus: string;
     /** A chosen Machine whose Docker host setup is satisfied (journey-deploy whereM). */
     readyToHost: string;
     factMemoryFree: (p: Readonly<{ free: string }>) => string;
@@ -387,6 +388,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Can’t run this app',
       cantRunStored: 'They build from a repository, and this app has none.',
       factMemory: 'Memory',
+      factStatus: 'Status',
       readyToHost: 'Ready to host deploys',
       factMemoryFree: ({ free }) => `${free} free`,
       plan: {
@@ -591,6 +593,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'No pot executar aquesta app',
       cantRunStored: 'Construeixen des d’un repositori, i aquesta app no en té.',
       factMemory: 'Memòria',
+      factStatus: 'Estat',
       readyToHost: 'Preparada per allotjar desplegaments',
       factMemoryFree: ({ free }) => `${free} lliures`,
       plan: {
@@ -795,6 +798,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Kann diese App nicht ausführen',
       cantRunStored: 'Sie bauen aus einem Repository, und diese App hat keins.',
       factMemory: 'Arbeitsspeicher',
+      factStatus: 'Status',
       readyToHost: 'Bereit für Deployments',
       factMemoryFree: ({ free }) => `${free} frei`,
       plan: {
@@ -999,6 +1003,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'No puede ejecutar esta app',
       cantRunStored: 'Compilan desde un repositorio, y esta app no tiene.',
       factMemory: 'Memoria',
+      factStatus: 'Estado',
       readyToHost: 'Lista para alojar despliegues',
       factMemoryFree: ({ free }) => `${free} libres`,
       plan: {
@@ -1203,6 +1208,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Ne peut pas exécuter cette app',
       cantRunStored: 'Elles construisent depuis un dépôt, et cette app n’en a pas.',
       factMemory: 'Mémoire',
+      factStatus: 'Statut',
       readyToHost: 'Prête à héberger des déploiements',
       factMemoryFree: ({ free }) => `${free} libres`,
       plan: {
@@ -1407,6 +1413,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Non può eseguire questa app',
       cantRunStored: 'Compilano da un repository, e questa app non ne ha.',
       factMemory: 'Memoria',
+      factStatus: 'Stato',
       readyToHost: 'Pronta a ospitare i deploy',
       factMemoryFree: ({ free }) => `${free} liberi`,
       plan: {
@@ -1611,6 +1618,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'このアプリを実行できません',
       cantRunStored: 'リポジトリからビルドしますが、このアプリにはありません。',
       factMemory: 'メモリ',
+      factStatus: '状態',
       readyToHost: 'デプロイを実行できます',
       factMemoryFree: ({ free }) => `空き ${free}`,
       plan: {
@@ -1815,6 +1823,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Nie może uruchomić tej aplikacji',
       cantRunStored: 'Budują z repozytorium, a ta aplikacja go nie ma.',
       factMemory: 'Pamięć',
+      factStatus: 'Status',
       readyToHost: 'Gotowa do hostowania wdrożeń',
       factMemoryFree: ({ free }) => `${free} wolne`,
       plan: {
@@ -2019,6 +2028,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Não consegue executar esta app',
       cantRunStored: 'Compilam a partir de um repositório, e esta app não tem.',
       factMemory: 'Memória',
+      factStatus: 'Estado',
       readyToHost: 'Pronta para hospedar implantações',
       factMemoryFree: ({ free }) => `${free} livres`,
       plan: {
@@ -2223,6 +2233,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: 'Не может запустить это приложение',
       cantRunStored: 'Они собирают из репозитория, а у этого приложения его нет.',
       factMemory: 'Память',
+      factStatus: 'Статус',
       readyToHost: 'Готова к развёртываниям',
       factMemoryFree: ({ free }) => `свободно ${free}`,
       plan: {
@@ -2423,6 +2434,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: '无法运行此应用',
       cantRunStored: '它们从仓库构建，而此应用没有仓库。',
       factMemory: '内存',
+      factStatus: '状态',
       readyToHost: '可以运行部署',
       factMemoryFree: ({ free }) => `可用 ${free}`,
       plan: {
@@ -2623,6 +2635,7 @@ export const newAppTranslations: Readonly<
       cantRunUnnamed: '無法執行此應用',
       cantRunStored: '它們從儲存庫建置，而此應用沒有儲存庫。',
       factMemory: '記憶體',
+      factStatus: '狀態',
       readyToHost: '可以執行部署',
       factMemoryFree: ({ free }) => `可用 ${free}`,
       plan: {

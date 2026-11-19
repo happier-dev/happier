@@ -36,12 +36,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { ListPresentationProvider, useListPresentation, usePageListInsets } from '@/components/ui/lists/listPresentation';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { useFirstConnection } from './useFirstConnection';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { DeploymentPlatformCredentialDisclosure, DeploymentPlatformCredentialPrincipal } from './DeploymentPlatformCredentialDisclosure';
@@ -584,8 +582,9 @@ export function DeploymentPlatformTargetEditor(
     preparedCreateKey.current ??= randomUUID();
     onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft), reviewNotice });
   }, [onPrepared, create, createIntentReady, draft, reviewNotice]);
+  // Before Connect there is nothing to check or link: no disabled Check anywhere, the connection leads (DESIGN-ACCEPT C1).
   const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
-    || (create && props.onPrepared) ? null : {
+    || (create && props.onPrepared) || needsConnect ? null : {
     testID: create ? 'project-deployments.platform.create'
       : ready && !props.onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check',
     loading: busy !== null,
@@ -605,13 +604,17 @@ export function DeploymentPlatformTargetEditor(
   // Inside a page (the new-environment draft) the editor is one of the page's sections: its rows share the page's
   // edge, the platform names the section and its one action sits on the section title (lab d1r `platform`).
   const embedded = !setChrome;
+  // Embedded, the editor is one of its host's sections: it keeps the host's presentation and insets, so the platform
+  // section lines up with the sections around it (a dialog's or a page's), instead of adding a page inset of its own.
+  const hostPresentation = useListPresentation();
+  const hostInsets = usePageListInsets();
   React.useEffect(() => {
     setChrome?.({ kind: 'card', footer });
   });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
 
   return (
-    <ListPresentationProvider value="page" pageInsets={embedded ? undefined : 'contained'}>
+    <ListPresentationProvider value={embedded ? hostPresentation : 'page'} pageInsets={embedded ? hostInsets : 'contained'}>
       <View testID="project-deployments.platform" style={embedded ? styles.embedded : deploymentSheetStyles.body}>
         {props.onPrepared ? null : <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.platformLink.lead')}
@@ -654,8 +657,23 @@ export function DeploymentPlatformTargetEditor(
               description: t('projects.deployments.platformLink.onPlatformBody'),
               ...(primary ? { action: <SectionActionButton {...primary} /> } : {}),
             } : { header: 'none' as const })}>
-              {target.create && createAvailable ? <SegmentedChoiceItem<'existing' | 'create'>
-                testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.platform')}
+              {needsConnect ? (
+                <SurfaceStateCard
+                  testID="project-deployments.platform.connect"
+                  size="line"
+                  kind="unavailable"
+                  title={t('projects.deployments.platformLink.connectTitle', { platform: target.title })}
+                  reason={t('projects.deployments.platformLink.connectBody', { platform: target.title })}
+                  action={{
+                    label: t('projects.deployments.platformLink.connectAction', { platform: target.title }),
+                    onPress: connect,
+                    testID: 'project-deployments.platform.connect.add',
+                  }}
+                />
+              ) : null}
+              {target.create && createAvailable && !needsConnect ? <SegmentedChoiceItem<'existing' | 'create'>
+                // The row names the thing it chooses ("Cloudflare Pages project"), not the generic word (C3).
+                testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.platformProject', { platform: target.title })}
                 value={mode} disabled={busy !== null || reviewingCreate}
                 options={[{ id: 'existing', label: t('projects.deployments.platformLink.modeExisting') },
                   { id: 'create', label: t('projects.deployments.platformLink.modeCreate') }]}
@@ -702,7 +720,7 @@ export function DeploymentPlatformTargetEditor(
                   resetFrom();
                 }}
               />}
-              {!create && sourceMethod ? <DeploymentSourceMethodChoice
+              {!create && sourceMethod && !needsConnect ? <DeploymentSourceMethodChoice
                 methods={target.sourceMethods}
                 value={sourceMethod}
                 disabled={busy !== null || reviewingCreate}
@@ -710,7 +728,7 @@ export function DeploymentPlatformTargetEditor(
                 onChange={(method) => { setSourceMethod(method); resetFrom(); }}
               /> : null}
               {/* Each provider choice is a row of the same sheet: the row names it, the control draws no label. */}
-              {draft
+              {draft && !needsConnect
                 ? visibleFields.map((field) => {
                     const more = options.state(field).nextCursor !== undefined;
                     const back = (cursors[field.path]?.length ?? 0) > 0;
@@ -770,20 +788,6 @@ export function DeploymentPlatformTargetEditor(
                 reason={t('projects.deployments.platformLink.choicesFailedBody')}
                 diagnosticCode={drawn.failure.code}
                 action={{ label: t('common.retry'), onPress: () => options.retry() }}
-              />
-            ) : null}
-            {needsConnect ? (
-              <EmptyState
-                testID="project-deployments.platform.connect"
-                layout="centered"
-                icon={<PluginMark title={target.title} pluginId={target.pluginId} />}
-                title={t('projects.deployments.platformLink.connectTitle', { platform: target.title })}
-                subtitle={t('projects.deployments.platformLink.connectBody', { platform: target.title })}
-                primaryAction={{
-                  label: t('projects.deployments.platformLink.connectAction', { platform: target.title }),
-                  onPress: connect,
-                  testID: 'project-deployments.platform.connect.add',
-                }}
               />
             ) : null}
             {/* One cause, one message: a failed choices read is the sheet's message, not a stale Check result too. */}

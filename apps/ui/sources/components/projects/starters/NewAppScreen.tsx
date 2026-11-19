@@ -15,6 +15,7 @@ import { SessionMachineField } from '@/components/sessions/new/placement/Session
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
@@ -91,6 +92,8 @@ const DEPLOY_STEPS: readonly DeploymentDraftFrame['step'][] = ['where', 'configu
 type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}` | 'describe';
 /** The lab's From the catalog row: three apps, the rest one press away in the Store. */
 const CATALOG_TILES = 3;
+/** A source tile's narrowest width before its group drops to one column (the shared card variant's measured grid). */
+const NEW_APP_TILE_MIN_WIDTH_PX = 220;
 /** A catalog tile says what the app is in its listing's own lead clause (lab: a short line); the listing has the rest. */
 const leadSentence = (text: string) => {
   const clause = /^.+?(?:[.!?](?=\s|$)|(?=[:;]\s)|(?=\s[—–-]\s))/.exec(text.trim())?.[0] ?? text.trim();
@@ -149,7 +152,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const phone = useDeviceType() === 'phone';
+  const devicePhone = useDeviceType() === 'phone';
+  // Narrow is the body's measured width, not the device: 200% text or a narrow pane recomposes like a phone (tiles in
+  // one column, the summary's facts beneath their labels, the footer's actions stacked) (DESIGN-ACCEPT R1).
+  const [bodyWidth, setBodyWidth] = React.useState<number | null>(null);
+  const phone = devicePhone || (bodyWidth !== null && bodyWidth < PAGE_LIST_METRICS.rowStackBelowWidthPx);
   // The page's sections stand on PageFrame's reading column; the pinned bar's contents take the same one.
   const pageMaxWidth = useLayoutMaxWidth('reading');
   const dialog = props.setChrome !== undefined;
@@ -651,7 +658,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         : null :
     deployStep === 'where' || deployStep === 'configure' ? t('newApp.deploy.nothingCreated') :
     deployStep === 'review' && deployFrame?.refused ? t('newApp.deploy.plan.nothingWasCreated') :
-    step === 'start' && !starter && codeSourceId === null && door === null && pastedRepository === null
+    // A phone's start footer has room for its actions only (lab jdF-srcp), like the auto step's.
+    step === 'start' && !phone && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
       : step === 'describe'
         ? t('newApp.reviewNote')
@@ -776,7 +784,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               <SelectionTiles
                 density="compact"
                 testIdPrefix="newApp.starter"
-                maximumColumns={phone ? 1 : 3}
+                // One rhythm: two columns in every section of the dialog (journey-deploy round 4).
+                maximumColumns={phone ? 1 : 2} minimumTileWidth={NEW_APP_TILE_MIN_WIDTH_PX}
                 // A starter's one-sentence description reads whole, like a catalog listing's first clause.
                 subtitleLines={4}
                 accessibilityLabel={t('newApp.startNew')}
@@ -796,7 +805,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               <View>
                 <SelectionTiles
                   density="compact"
-                  maximumColumns={phone ? 1 : 2}
+                  maximumColumns={phone ? 1 : 2} minimumTileWidth={NEW_APP_TILE_MIN_WIDTH_PX}
                   subtitleLines={2}
                   accessibilityLabel={t('newApp.alreadyBuilt')}
                   value={door}
@@ -818,7 +827,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                   <SelectionTiles
                     density="compact"
                     // One rhythm: two columns in every section of the dialog (journey-deploy jdF-src).
-                    maximumColumns={phone ? 1 : 2}
+                    maximumColumns={phone ? 1 : 2} minimumTileWidth={NEW_APP_TILE_MIN_WIDTH_PX}
                     // A listing's first clause fits whole (the longest seen, ~95 characters, takes four lines).
                     subtitleLines={4}
                     accessibilityLabel={t('newApp.fromCatalog')}
@@ -851,6 +860,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     );
   } else if (step === 'deploy' && deploySource && scope) {
     const named = deployFrame?.source?.title ?? null;
+    // A catalog app keeps its mark in the summary, as its tile drew it (DESIGN-ACCEPT W1).
+    const deployCatalogItem = deploySource.kind === 'catalogApp' ? appCatalog.items.find((item) =>
+      item.sourceId === deploySource.app.sourceId && item.itemId === deploySource.app.itemId) ?? null : null;
     const name = deployFrame?.appName ?? null;
     const target = deployFrame?.runsOn?.title ?? null;
     const [title, description] = deployStep === 'review'
@@ -868,7 +880,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         <NewAppDeploySummary phone={phone} frame={deployFrame} onChangeSource={leaveDeploy}
           source={deploySource.kind === 'definition'
             ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource' : 'newApp.deploy.builtComposeSource'), note: null }
-            : { title: named ?? pastedRepository?.selector.repository.nameWithOwner ?? '…', note: deployFrame?.source?.note ?? null }} />
+            : { title: named ?? pastedRepository?.selector.repository.nameWithOwner ?? '…', note: deployFrame?.source?.note ?? null,
+              ...(deployCatalogItem ? { mark: <StoreItemMark facts={{ kind: deployCatalogItem.kind, title: deployCatalogItem.title,
+                brand: deployCatalogItem.brandMark }} size={ICON_SIZE.md} /> } : {}) }} />
         <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
           previewEnvironmentId={deploySource.kind === 'repository' && deploySource.projectSourceId === props.projectSourceId
             ? props.previewEnvironmentId : null}
@@ -922,7 +936,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               multiline
               minLines={phone ? 5 : 4}
               growWithText
-              autoFocus={!phone}
+              autoFocus={!devicePhone}
             />
           </View>
         </ItemGroup>
@@ -1159,7 +1173,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   useModalCardChrome(props.setChrome, dialogChrome);
 
   return (
-    <View testID="newApp" style={styles.root}>
+    <View testID="newApp" style={styles.root} onLayout={(event) => {
+      const width = Math.round(event.nativeEvent.layout.width);
+      setBodyWidth((current) => current === width ? current : width);
+    }}>
       {/* Starters need each installation's registry sources, not every plugin's UI (cold open: ~75 serial frames). */}
       <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" sections={REGISTRY_SOURCE_PROJECTION_SECTIONS}
         enabled={step === 'start'} />
@@ -1179,19 +1196,22 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 {footerNote}
               </Text>
             ) : null}
-            {autoSecondary?.map((action) => (
-              <RoundButton key={action.testID} testID={action.testID} size="normal" display="inverted"
-                title={action.title} loading={action.loading ?? false} disabled={action.disabled ?? false} onPress={action.onPress} />
-            ))}
-            {primary ? (
-              <RoundButton
-                testID={primary.testID}
-                size="normal"
-                title={primary.title}
-                disabled={primary.disabled}
-                onPress={primary.onPress}
-              />
-            ) : null}
+            {/* The secondary and the primary stand together on the right (jdF lab footers); only the note leads. */}
+            <View style={phone ? styles.phoneFooterActions : styles.wideFooterActions}>
+              {autoSecondary?.map((action) => (
+                <RoundButton key={action.testID} testID={action.testID} size="normal" display="inverted"
+                  title={action.title} loading={action.loading ?? false} disabled={action.disabled ?? false} onPress={action.onPress} />
+              ))}
+              {primary ? (
+                <RoundButton
+                  testID={primary.testID}
+                  size="normal"
+                  title={primary.title}
+                  disabled={primary.disabled}
+                  onPress={primary.onPress}
+                />
+              ) : null}
+            </View>
           </PagePinnedBar>
         </KeyboardStickyFooter>
       )}
@@ -1261,10 +1281,12 @@ const styles = StyleSheet.create((theme) => ({
   // takes that step back so it shares the edge of the sheets beneath it. The start step's search field and tiles take
   // none: they stand on the dialog title's edge with their section titles (journey-deploy jdF-src, one edge).
   dialogInset: { paddingHorizontal: theme.space.s16 },
-  startNewStack: { gap: theme.space.s8 },
   forgeRepair: { alignItems: 'flex-end', paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s12 },
+  startNewStack: { gap: theme.space.s8 },
 
   phoneFooter: { gap: theme.space.s8 },
+  phoneFooterActions: { gap: theme.space.s8 },
+  wideFooterActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12, marginLeft: 'auto', flexShrink: 0 },
   wideFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12,
     width: '100%', marginHorizontal: 'auto' },
 }));

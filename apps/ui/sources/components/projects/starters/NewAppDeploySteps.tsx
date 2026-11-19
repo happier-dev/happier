@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -14,6 +17,8 @@ import {
   type DeploymentNewDefinitionKind,
 } from '@/components/projects/deployments/deploymentNavigation';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -245,11 +250,13 @@ function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: CatalogTemp
 export function NewAppDeploySummary(
   props: Readonly<{
     phone: boolean;
-    source: Readonly<{ title: string; note: string | null }>;
+    /** What deploys: its name, a quiet note (where it comes from) and, for a catalog app, its mark. */
+    source: Readonly<{ title: string; note: string | null; mark?: React.ReactNode }>;
     frame: DeploymentDraftFrame | null;
     onChangeSource: () => void;
   }>,
 ) {
+  const { theme } = useUnistyles();
   const runsOn =
     props.frame && props.frame.step !== 'where' ? props.frame.runsOn : null;
   return (
@@ -260,7 +267,17 @@ export function NewAppDeploySummary(
         showChevron={false}
         title={
           <FieldLayout label={t('newApp.deploy.source')} columns={!props.phone}>
-            <FieldValue value={props.source.title} note={props.source.note} />
+            {/* One line: the app's mark, its name, then where it comes from (jdF-catWhere / jdF-catCfg); a phone keeps
+                the name only (lab: summary facts hidden on phones) (DESIGN-ACCEPT W1). */}
+            <View style={summaryStyles.sourceLine}>
+              {props.source.mark ?? null}
+              <Text numberOfLines={1} style={[summaryStyles.sourceText, { color: theme.colors.text.primary }]}>
+                {props.source.title}
+                {props.source.note && !props.phone ? (
+                  <Text style={{ color: theme.colors.text.secondary }}>{` · ${props.source.note}`}</Text>
+                ) : null}
+              </Text>
+            </View>
           </FieldLayout>
         }
         rightElement={
@@ -300,3 +317,9 @@ export function NewAppDeploySummary(
     </ItemGroup>
   );
 }
+
+const summaryStyles = StyleSheet.create((theme) => ({
+  sourceLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minWidth: 0 },
+  // The value's role and face, as FieldValue draws it (FieldRow), on one line with its note.
+  sourceText: { ...happierPageTextMetrics('rowTitle'), ...Typography.default(), flexShrink: 1, minWidth: 0 },
+}));

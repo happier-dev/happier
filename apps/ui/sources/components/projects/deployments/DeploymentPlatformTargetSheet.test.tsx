@@ -586,6 +586,10 @@ it('welcomes an Account with no platform account to add a token in place, then c
       expect(screen.findByTestId('project-deployments.platform.connect')).not.toBeNull();
     });
     expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(0);
+    // Nothing that needs the account stands before it: no Check, no project mode, no source method (DESIGN-ACCEPT C1).
+    expect(screen.findByTestId('project-deployments.platform.check')).toBeNull();
+    expect(screen.findByTestId('project-deployments.platform.mode')).toBeNull();
+    expect(screen.findByTestId('project-deployments.platform.sourceMethod')).toBeNull();
     // Add a token opens the one shared connect flow for this service, never a deployment-local form.
     await screen.pressByTestIdAsync('project-deployments.platform.connect.add');
     const sheet = () => screen.root.findAllByType(ConnectSheetContent)[0];
