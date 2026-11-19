@@ -257,9 +257,12 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     const currentController = React.useRef(input.controller);
     currentController.current = input.controller;
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>, binding: ServerCredentialAccountScopeBinding,
-        signal?: AbortSignal) => {
+        signal?: AbortSignal, isCurrentTarget?: () => boolean) => {
         const controller = input.controller;
-        if (!controller || !binding.isCurrent()) return { ok: false as const, code: 'unavailable', reason: 'controller_unavailable' };
+        const isCurrent = () => binding.isCurrent() && (isCurrentTarget?.() ?? true)
+            && currentController.current?.machineId === controller?.machineId
+            && currentController.current?.installationId === controller?.installationId;
+        if (!controller || !isCurrent()) return { ok: false as const, code: 'unavailable', reason: 'controller_unavailable' };
         if (projection.phase !== 'ready') {
             const reason = projection.failureReason ?? 'controller_unavailable';
             return { ok: false as const, code: 'unavailable', reason,
@@ -273,8 +276,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
                 context: { serverId: binding.scope.serverId, expectedAccountId: binding.scope.accountId } },
             pluginUiProjection: uiProjection, resolveContributedAction: createPluginUiProjectedActionResolver(uiProjection.actionsById),
             ...(signal ? { signal } : {}),
-            isCurrent: () => binding.isCurrent() && currentController.current?.machineId === controller.machineId
-                && currentController.current?.installationId === controller.installationId,
+            isCurrent,
         });
         return result.outcome;
     };

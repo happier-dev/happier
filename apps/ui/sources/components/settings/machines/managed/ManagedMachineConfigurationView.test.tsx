@@ -985,7 +985,7 @@ describe('mounted managed configurator', () => {
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
     } finally { await screen.unmount(); }
   });
-  it('offers the provider repair from a refused options read even when the shared check was ready', async () => {
+  it('offers the refused options repair only on the controller that produced it', async () => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
     const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
@@ -994,9 +994,9 @@ describe('mounted managed configurator', () => {
     const { normalizeActionExecutorThrownError } = await import('@happier-dev/protocol/actions/executor/resultProjection');
     const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://options-repair.example.test',
       serverIdentityId: 'srv_options_repair', accountId: 'owner', currentAccount: true });
-    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
-      id: defaultController.machineId, installationId: defaultController.installationId,
-    })]);
+    const other = { machineId: 'other', installationId: 'other-installation' };
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [defaultController, other].map(controller =>
+      createMachineFixture({ id: controller.machineId, installationId: controller.installationId })));
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
@@ -1023,9 +1023,38 @@ describe('mounted managed configurator', () => {
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
       const requirementId = buildQualifiedPluginContributionKey({ pluginId, localId: 'docker-sandboxes-cli' });
-      expect(screen.findByTestId(`managed-config.repair:managedDependency:${requirementId}`)?.props.onPress).toEqual(expect.any(Function));
+      const repairId = `managed-config.repair:managedDependency:${requirementId}`;
+      expect(screen.findByTestId(repairId)?.props.onPress).toEqual(expect.any(Function));
       expect(screen.getTextContent()).toContain('Sign in to Docker');
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+
+      const otherCheck = createDeferred<{ available: true }>();
+      const otherOptions = createDeferred<ReturnType<typeof createManagedCpuOptionsFixture>>();
+      const otherRead = vi.fn();
+      await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+        const request = readProvisionerRequest(value);
+        return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId, execution: { ok: true,
+          result: { controller: other, provisioners: [{ ...provisioner, occurrenceId: 'other-occurrence' }] } } } };
+      } });
+      await answerExternalActionAccountForHome(harness, serverId, { ...other, actionId: 'machines.provisioners.check', tokenEpoch: 0,
+        execute: () => otherCheck.promise });
+      await answerExternalActionAccountForHome(harness, serverId, { ...other, actionId: 'machines.provisioners.options', tokenEpoch: 0,
+        execute: () => { otherRead(); return otherOptions.promise; } });
+      try {
+        const chip = screen.tree.findAll(node => node.props.presentation === 'chip' && node.props.selection)[0];
+        const target = chip?.props.selection.candidates.find((candidate: { target: { machineId: string } }) =>
+          candidate.target.machineId === other.machineId)?.target;
+        expect(target).toBeDefined();
+        await act(async () => chip!.props.selection.selectTarget(target));
+        await waitForHomeGovernance(() => expect(otherRead).toHaveBeenCalled());
+        expect(screen.findByTestId('managed-config.error')).not.toBeNull();
+        expect(screen.findByTestId(repairId)).toBeNull();
+      } finally {
+        await act(async () => {
+          otherCheck.resolve({ available: true });
+          otherOptions.resolve(createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }]));
+        });
+      }
     } finally { await screen.unmount(); }
   });
   it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
