@@ -13,6 +13,8 @@ import {
 } from '../../../session/handoff/exportSessionHandoffState';
 import { importSessionHandoffAgentBundle, resolveExistingSessionHandoffState } from '../../../session/handoff/agentBundle/import';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { MachineMetadataFieldReadV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import { resolveSessionSpawnIsolation } from '@/session/creation/resolveSessionSpawnManagedDefaults';
 import { requiresRequesterWorkspaceCapture } from '../machineRpcAuthorization';
 import { SessionHandoffExistingStateCheckRequestV3Schema, type SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { SessionHandoffWorkspaceCaptureRequestV3Schema, SessionHandoffWorkspaceCaptureResultV3Schema,
@@ -124,6 +126,7 @@ export type SessionHandoffRuntimeDependencies = Readonly<{
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   localMachineId?: string;
+  readHandoffTargetMachineMetadata?: () => MachineMetadataFieldReadV1;
   prepareManagedDirectoryPlacement?: Parameters<typeof createSessionHandoffPrepareTargetActionHandler>[0]['prepareManagedDirectoryPlacement'];
   prepareMemberImport?: Parameters<typeof createSessionHandoffPrepareTargetActionHandler>[0]['prepareMemberImport'];
   requesterSessionRuntime?: NonNullable<Parameters<typeof registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>;
@@ -502,10 +505,26 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   });
 
   registerUnsupportedSessionHandoffRpcHandlers(rpcHandlerManager);
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, async (raw: unknown) => {
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, async (raw: unknown, context?: RpcHandlerContext) => {
     const empty = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0;
     // Governed peer preflight binds the diagnostic to the exact handoff tuple.
     if (!empty && !SessionHandoffExistingStateCheckRequestV3Schema.safeParse(raw).success) return invalidRequest();
+    const binding = context?.callerInputAuthorization?.binding;
+    const handoff = binding?.handoffAdmission;
+    if (binding?.handoffPreflight && handoff && handoff.sourceMachineId !== handoff.targetMachineId
+      && handoff.targetMachineId === params.localMachineId) {
+      const unavailable = { ok: false, errorCode: 'target_unavailable', error: 'The receiving machine’s isolation policy is unavailable.' };
+      const snapshot = params.readHandoffTargetMachineMetadata?.();
+      if (snapshot?.status !== 'ready') return unavailable;
+      try {
+        if (resolveSessionSpawnIsolation({}, snapshot.metadata)?.choice.kind === 'sandbox') {
+          return { ok: false, errorCode: 'handoff_target_requires_sandbox_preset',
+            error: 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.' };
+        }
+      } catch {
+        return unavailable;
+      }
+    }
     return {
       protocolVersion: 3,
       // The current handoff runner does not prove atomic launch acceptance or target cleanup.

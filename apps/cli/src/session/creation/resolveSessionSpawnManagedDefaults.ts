@@ -44,8 +44,12 @@ function isolationUnavailable(reason: string): never {
     details: { reason }, effectAttempted: false });
 }
 
-function resolveSessionSpawnIsolation(input: SpawnDefaultSelections, openedMetadata: unknown,
-  context: ActionExecutorContext | undefined, admittedWorkflowPlacement: SessionPlacementSelectionV1 | undefined): SessionSpawnIsolationDecision | null {
+export function resolveSessionSpawnIsolation(
+  input: Pick<SpawnDefaultSelections, 'configuration' | 'sourceContext' | 'sessionPlacement' | 'attestedContext' | 'identity' | 'isolationOverride'>,
+  openedMetadata: unknown,
+  context?: ActionExecutorContext,
+  admittedWorkflowPlacement?: SessionPlacementSelectionV1,
+): SessionSpawnIsolationDecision | null {
   let policy: MachineIsolationPolicyV1 | null;
   try { policy = readMachineIsolationPolicyV1(openedMetadata ?? {}); }
   catch { return isolationUnavailable('machine_isolation_policy_unreadable'); }

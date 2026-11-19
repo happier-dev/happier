@@ -498,7 +498,8 @@ function createSessionLifecycleActionSpecs() {
       description: 'Move to another machine or directory on the same machine. The daemon resolves the source and workspace endpoints.',
       fields: [
         { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
-        { path: 'targetMachineId', title: 'Target machine id', widget: 'text' },
+        { path: 'targetMachineId', title: 'Target machine id', widget: 'text',
+          description: 'Use an enrolled Machine id. For a new Machine, run machines.managed.acquire for the chosen preset, wait for its managed operation to finish and use the enrolled Machine id from machines.managed.get.' },
         { path: 'targetPath', title: 'Target directory', widget: 'text',
           description: 'Destination path on the target machine, including a directory move on the source machine.' },
         { path: 'targetSessionStorageMode', title: 'Target session storage', widget: 'select', options: [

@@ -1326,6 +1326,7 @@ const sessionHandoffTranslationExtensions = {
         relationshipReused: 'Este handoff reutilizou a sincronização de workspace que já existia.',
     },
     failure: {
+      targetRequiresSandboxPreset: 'Esta máquina executa novas sessões em um ambiente isolado. Transfira a sessão para uma configuração predefinida desse ambiente.',
       partialLinked: 'Alguns arquivos foram sincronizados, mas o próximo workspace vinculado precisa de atenção. A sessão não foi retomada no destino. Abra os detalhes para ver o vínculo bloqueado.',
       title: 'Falha ao transferir a sessao',
       message: 'Nao foi possivel concluir a transferencia. Voce pode tentar novamente.',

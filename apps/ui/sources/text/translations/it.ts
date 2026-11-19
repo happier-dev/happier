@@ -1292,6 +1292,7 @@ const sessionHandoffTranslationExtensions = {
     failure: {
       title: 'Trasferimento della sessione non riuscito',
       message: 'Non e stato possibile completare il trasferimento. Puoi riprovare.',
+      targetRequiresSandboxPreset: 'Questa macchina esegue le nuove sessioni in una sandbox. Trasferisci la sessione a una configurazione predefinita della sandbox.',
       partialLinked: 'Alcuni file sono stati sincronizzati, ma la prossima area di lavoro collegata richiede attenzione. La sessione non è stata ripresa nella destinazione. Apri i dettagli per vedere il collegamento bloccato.',
     },
     cancelled: {

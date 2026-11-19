@@ -1108,6 +1108,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     : undefined;
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,
+    readHandoffTargetMachineMetadata: params.deps?.sessionServerStart?.readMachineMetadataSnapshot,
     ...(params.deps?.prepareManagedSessionHandoffDirectoryPlacement ? { prepareManagedDirectoryPlacement: params.deps.prepareManagedSessionHandoffDirectoryPlacement } : {}),
     ...(params.deps?.currentMachineId ? { localMachineId: params.deps.currentMachineId } : {}),
     ...(admitExistingSessionState ? { admitExistingSessionState } : {}),

@@ -6,12 +6,13 @@ import { computeWorkspaceSyncPolicyDigest} from '@happier-dev/protocol/sessions/
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createInlinePopoverModuleMock } from '@/dev/testkit/mocks/popover';
 import { createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -21,6 +22,7 @@ import type { CustomModalChromeConfig } from '@/modal';
 import type { SessionHandoffPickerModalProps } from './SessionHandoffPickerModal';
 
 const pathBrowserModuleLoadedMock = vi.fn();
+vi.mock('@/components/ui/popover', async (importOriginal) => createInlinePopoverModuleMock(importOriginal));
 const handoffCapabilityRpc = vi.fn();
 let activeServerIdState = '';
 
@@ -164,7 +166,7 @@ async function renderScreen(element: React.ReactElement) {
 
 // This loader observation retains the real browser implementation and deferred
 // selection; only the modal presentation/user-response boundary is replaced.
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', async importOriginal => {
+vi.mock('@/components/ui/pathBrowser/MachinePathBrowserModal', async importOriginal => {
     pathBrowserModuleLoadedMock();
     return await importOriginal();
 });
@@ -361,6 +363,9 @@ describe('SessionHandoffPickerModal', () => {
 
     it('retains the real picker flow after native-state rejection and retries only the corrected choice', async () => {
         await applyFixtureState();
+        storage.setState({ machines: Object.fromEntries(Object.values(storage.getState().machines).map(machine => [
+            machine.id, createHydratedPlainMachineFixture({ id: machine.id, accountId: 'account-a', machine }),
+        ])) });
         modalMock.spies.show.mockClear();
         modalMock.spies.hide.mockClear();
         modalMock.spies.update.mockClear();
@@ -1432,10 +1437,10 @@ describe('SessionHandoffPickerModal', () => {
             { id: 'machine_source', metadata: { displayName: 'A source' } },
             { id: 'machine_shared', metadata: { displayName: 'A target' } },
         ]);
-        const selector = () => screen.tree.findByType(MachineSelector);
-        await vi.waitFor(() => expect(selector().findByType(DropdownMenu).props.items
-            .find((item: { id: string }) => item.id === 'machine_shared')?.disabled).toBe(false));
-        await act(async () => { invokeTestInstanceHandler(selector(), 'onSelect', selector().props.machines[1]); });
+        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
+        expect(screen.findByTestId('session-handoff-machine-option:machine_b_only')).toBeNull();
+        await screen.pressByTestIdAsync('session-handoff-machine-option:machine_shared');
         await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', '/target/happier'); });
         const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
         await vi.waitFor(() => expect(start().props.disabled).toBe(false));

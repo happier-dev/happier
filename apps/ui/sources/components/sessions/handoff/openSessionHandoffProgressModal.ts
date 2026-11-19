@@ -3,12 +3,13 @@ import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperat
 import type { ActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 
-import { SessionHandoffProgressModal } from './SessionHandoffProgressModal';
+import { SessionHandoffProgressModal, type SessionHandoffMachineCreationProgress } from './SessionHandoffProgressModal';
 
 export type SessionHandoffProgressPresentation = Readonly<{
     close: () => void;
     isAttached: () => boolean;
     showRequestFailure: (failure: Extract<ExecuteSessionHandoffActionResult, { ok: false }>) => void;
+    showMachineCreation: (creation: SessionHandoffMachineCreationProgress) => void;
 }>;
 
 export function openObservedSessionHandoffProgressModal(params: Readonly<{
@@ -17,6 +18,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
     serverId: string | null;
     accountId: string;
     workspaceSyncEnabled?: boolean;
+    machineCreation?: SessionHandoffMachineCreationProgress;
     store?: ActionOperationStore;
     onOpenConflicts?: (blockedRelationshipId: string | null) => void;
     onDismiss?: () => void;
@@ -33,6 +35,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
         props: {
             serverId: params.serverId,
             ...(params.workspaceSyncEnabled ? { workspaceSyncEnabled: true } : {}),
+            ...(params.machineCreation ? { machineCreation: params.machineCreation } : {}),
             ...(params.onOpenConflicts ? { onOpenConflicts: params.onOpenConflicts } : {}),
         },
         onRequestClose: () => { detach(); params.onDismiss?.(); },
@@ -56,6 +59,9 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
         isAttached: () => attached,
         showRequestFailure: (failure) => {
             if (attached) Modal.update(modalId, { requestFailure: failure });
+        },
+        showMachineCreation: (machineCreation) => {
+            if (attached) Modal.update(modalId, { machineCreation });
         },
     });
 }

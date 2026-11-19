@@ -13,6 +13,8 @@ import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protoco
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerMachineSessionHandoffRpcHandlers } from '@/api/machine/sessionHandoff/handlers';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows, subscribeActiveProjectAccountRowsSnapshot,
   withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
@@ -189,7 +191,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     expect(callMachine).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 }));
   });
 
-  it('preflights an accepted root without source-export custody and preserves its requester authority', async () => {
+  it.each(['existing', 'transfer'] as const)('preflights an accepted %s handoff before the source stops', async stateTransfer => {
     await withTempDir('handoff-read-only-root-', async activeServerDir => {
       const sessionId = `c${'f'.repeat(24)}`;
       handoffSourceHttpBoundary(sessionId);
@@ -212,12 +214,28 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           handoffPreflight: { rootRequestId: root.binding.requestId, rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest },
         } } };
       });
+      const targetDaemon = new RpcHandlerManager({ scopePrefix: 'target', localMachineId: 'target', encryptionMode: 'plain',
+        authorizeRequest: async () => ({ ok: true }), logger: () => undefined });
+      registerMachineSessionHandoffRpcHandlers({
+        rpcHandlerManager: targetDaemon, localMachineId: 'target', runtimeConfig: { activeServerDir },
+        readHandoffTargetMachineMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { isolationPolicyV1: {
+          configuredSandboxes: { local: { provisioner: { pluginId: 'custom.compute', localId: 'lima' }, presetId: 'local-preset' } },
+          workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+            botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
+        } } }),
+      });
       const callMachine = vi.fn(async (input: MachineCallInput) => {
-        expect(input.externalAction?.effectActionId).toBe('session.handoff');
-        expect(input.externalAction?.context.externalActionExecutionAuthorization?.binding.handoffPreflight).toEqual({
+        const signed = input.externalAction;
+        expect(signed?.effectActionId).toBe('session.handoff');
+        const authorization = signed?.context.externalActionExecutionAuthorization;
+        expect(authorization?.binding.handoffPreflight).toEqual({
           rootRequestId: root.binding.requestId, rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest,
         });
         if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) {
+          if (stateTransfer === 'transfer' && input.machineId === 'target') {
+            if (!authorization) throw new Error('Missing verified peer preflight');
+            return await targetDaemon.invokeLocal(input.method, input.request, { rpcContext: { callerInputAuthorization: authorization } });
+          }
           return { protocolVersion: 3, atomicTargetResume: false, targetCleanup: false, existingState: true };
         }
         expect(input.request).toMatchObject({ kind: 'requester_session_handoff_preflight_bootstrap_v1',
@@ -236,12 +254,14 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       });
       const start = vi.fn(async () => ({ ok: false as const, errorCode: 'source_stopped', error: 'source_stopped' }));
       expect(await coordinate({ operationId: 'original-request',
-        actionInput: { sessionId, targetMachineId: 'target', targetPath: '/target', stateTransfer: 'existing' },
+        actionInput: { sessionId, targetMachineId: 'target', targetPath: '/target', stateTransfer },
         start, signal: new AbortController().signal, publishOwnerUpdate: vi.fn(),
         context: { externalActionExecutionAuthorization: root },
-      })).toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });
+      })).toMatchObject({ ok: false, errorCode: stateTransfer === 'existing'
+        ? 'existing_session_state_unavailable' : 'handoff_target_requires_sandbox_preset' });
       expect(start).not.toHaveBeenCalled();
-      expect(callMachine).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 }));
+      expect(callMachine).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'target', method: stateTransfer === 'existing'
+        ? RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 : RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET }));
     });
   });
 
@@ -337,6 +357,14 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           return { status: 200, data: { v: 1, ok: true } };
         }
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+        if (request.handoffPreflight) {
+          expect(request.handoffPreflight).toEqual({ authorization: root });
+          return { status: 200, data: { v: 1, token: 'target-child', binding: { ...root.binding,
+            machineId: 'target', installationId: 'target-installation', target: request.envelope.target,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+            handoffPreflight: { rootRequestId: root.binding.requestId, rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest },
+          } } };
+        }
         expect(request.handoffContinuation).toEqual({ authorization: root, handoffId: 'handoff-cold' });
         return { status: 200, data: { v: 1, token: 'target-child', binding: { ...root.binding,
           machineId: 'target', installationId: 'target-installation', target: request.envelope.target,
@@ -402,6 +430,9 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         expect(typeof request.externalAction?.context.externalActionExecutionAuthorization?.requesterAccountProjection?.sealRequesterAccountContext)
           .toBe('function');
         expect(request.authorityCeiling).toBe('account_automation');
+        if (request.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) {
+          return { protocolVersion: 3, atomicTargetResume: false, targetCleanup: false, existingState: true };
+        }
         expect(request.request).toMatchObject({ kind: 'requester_session_handoff_bootstrap_v1',
           input: { handoffId: 'handoff-cold', sessionId, sourceMachineId: 'source', targetMachineId: 'target' },
           requesterBootstrap: { credentials: { token: 'bob-ordinary' } } });
@@ -434,7 +465,8 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       expect(getActiveProjectAccountRowsSnapshot()).toBe(installedSnapshot);
       expect(getActiveProjectAccountRowsSnapshot()?.scopeKey).toBe(installedSnapshot.scopeKey);
       expect(await installedRuntime.managedWorkspaceSync.listRelationships({ workspaceRefId: installedRefs[0]!.id })).toEqual(beforeRelationships);
-      expect(callMachine).toHaveBeenCalledTimes(scenario === 'continuation' ? 1 : 0);
+      expect(callMachine.mock.calls.map(([request]) => request.method)).toEqual(scenario === 'continuation'
+        ? [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3] : []);
       // Prove subscription wiring as well as initial loading: a real installed refresh must change discovery.
       installedRows[installedRows.length - 1] = ProjectAccountRowV1Schema.parse({ key: graphKey, revision: 2,
         content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } });

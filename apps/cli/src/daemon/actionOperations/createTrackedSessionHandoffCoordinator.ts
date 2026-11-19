@@ -7,6 +7,8 @@ import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/
 import { resolveWorkspaceSyncEndpoint } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionHandoffCapabilityV3Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { SessionHandoffWorkspaceCaptureResultV3Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
@@ -402,6 +404,26 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         });
       } catch (error) {
         return readWorkspaceFailure(error, 'workspace_root_unsafe');
+      }
+    }
+
+    // Existing-state admission already reads both capabilities. For transfer, give
+    // the receiving daemon the same chance to refuse before workspace or source effects.
+    if (stateTransfer !== 'existing' && hostInput.context?.externalActionExecutionAuthorization
+      && source.sourceMachineId !== targetMachineId) {
+      const preflightPath = targetSessionPath ?? source.sourceRootPath;
+      if (!preflightPath) return { ok: false, errorCode: 'target_unavailable', error: 'The target session directory is unavailable.' };
+      const capability = await preflightMachineRpc({
+        credentials, machineId: targetMachineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET,
+        request: { sessionId, sourceMachineId: source.sourceMachineId, targetMachineId,
+          targetPath: preflightPath, sourceSessionStorageMode: source.sessionStorageMode },
+        context: hostInput.context, signal: hostInput.signal,
+      });
+      hostInput.signal.throwIfAborted();
+      const refused = readActionFailureEnvelope(capability);
+      if (refused) return refused;
+      if (!SessionHandoffCapabilityV3Schema.safeParse(capability).success) {
+        return { ok: false, errorCode: 'target_unavailable', error: 'The target handoff capability is unavailable.' };
       }
     }
 

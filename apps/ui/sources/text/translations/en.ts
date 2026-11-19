@@ -9519,6 +9519,7 @@ const enSessionHandoff = {
   failure: {
     title: 'Session handoff failed',
     message: 'The handoff could not be completed. You can retry the transfer.',
+    targetRequiresSandboxPreset: 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.',
     partialLinked:
       'Some files synchronized, but the next linked workspace needs attention. The session did not resume on the target. Open details to see the blocked link.',
   },

@@ -24,6 +24,13 @@ import { ActionOperationDetailControls } from '@/components/inbox/actionOperatio
 import { resolveWorkspaceSyncErrorTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import type { ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
+import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
+
+export type SessionHandoffMachineCreationProgress = Readonly<{
+    name?: string;
+    progress: ManagedMachineCreationProgress;
+}>;
 
 type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
@@ -34,6 +41,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     onResume?: () => Promise<void> | void;
     workspaceSyncEnabled?: boolean;
     requestFailure?: Extract<ExecuteSessionHandoffActionResult, { ok: false }>;
+    machineCreation?: SessionHandoffMachineCreationProgress;
     onOpenConflicts?: (blockedRelationshipId: string | null) => void;
 }>;
 
@@ -424,10 +432,14 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, onResume, requestFailure, onOpenConflicts }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, onResume, requestFailure, onOpenConflicts, machineCreation }: Props) {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const styles = stylesheet;
+    const creationPending = machineCreation !== undefined && machineCreation.progress.kind !== 'ready';
+    const creationPresentation = machineCreation && creationPending
+        ? describeManagedCreationProgress(machineCreation.name ?? t('managedMachines.picker.newMachine'), machineCreation.progress)
+        : null;
 
     // Keep a monotonic "effective" status so the checkpoint selection never regresses when
     // daemon status updates arrive out of order or omit progress on terminal transitions.
@@ -547,11 +559,14 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                 : operationCancelled
                     ? t('sessionHandoff.cancelled.title')
                     : t('sessionHandoff.progress.title'));
-    const operationFailureTranslationKey = operationFailed || requestFailure
-        ? resolveWorkspaceSyncErrorTranslationKey(requestFailure?.errorCode ?? operation?.error?.errorCode)
-        : null;
+    const operationFailureCode = operationFailed || requestFailure ? requestFailure?.errorCode ?? operation?.error?.errorCode : null;
+    const operationFailureTranslationKey = operationFailureCode === 'handoff_target_requires_sandbox_preset'
+        ? 'sessionHandoff.failure.targetRequiresSandboxPreset'
+        : resolveWorkspaceSyncErrorTranslationKey(operationFailureCode);
     const resolvedMessage =
         message
+        ?? creationPresentation?.failureMessage
+        ?? creationPresentation?.label
         ?? (outcomeLabel && !isFailureState
             ? t('sessionHandoff.progress.completedMessage')
             : isAwaitingRecovery
@@ -574,12 +589,12 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const primaryProgressStep = outcomeLabel && !isFailureState
         ? 'ready'
         : resolvePrimaryProgressStep(operation, effectiveStatus, currentCheckpoint);
-    const primaryProgressStepIndex = PRIMARY_PROGRESS_STEPS.indexOf(primaryProgressStep);
+    const primaryProgressStepIndex = creationPending ? -1 : PRIMARY_PROGRESS_STEPS.indexOf(primaryProgressStep);
     const primaryProgressFraction = operation && canShowActiveProgress ? operationProgressFraction : progressFraction;
     const primaryProgressLabel = primaryProgressFraction === null ? null : `${Math.round(primaryProgressFraction * 100)}%`;
     const progressAnnouncement = [
         resolvedMessage,
-        translatePrimaryProgressStep(primaryProgressStep),
+        creationPending ? t('managedMachines.creation.create') : translatePrimaryProgressStep(primaryProgressStep),
         primaryProgressLabel,
     ].filter((part): part is string => Boolean(part)).join('. ');
     const operationTechnicalPhase = operationProgress?.kind === 'phase'
@@ -666,6 +681,18 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                 </View>
             ) : null}
             <View testID="session-handoff-primary-progress" style={styles.timeline}>
+                {machineCreation ? (
+                    <View testID="session-handoff-progress-step:create-machine" style={styles.timelineRow}>
+                        <View style={styles.timelineMarker}>
+                            {!creationPending ? <Icon name="check" size={16} color={theme.colors.accent.blue} />
+                                : requestFailure ? <Icon name="warning" size={16} color={theme.colors.state.danger.foreground} />
+                                    : <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.accent.blue} />}
+                        </View>
+                        <Text style={[styles.timelineLabel, creationPending && styles.timelineLabelCurrent]}>
+                            {t('managedMachines.creation.create')}
+                        </Text>
+                    </View>
+                ) : null}
                     {PRIMARY_PROGRESS_STEPS.map((step, index) => {
                         const isCurrent = index === primaryProgressStepIndex;
                         const isDone = index < primaryProgressStepIndex || (primaryProgressStep === 'ready' && isCurrent);

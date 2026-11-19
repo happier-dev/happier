@@ -658,6 +658,15 @@ not start a replacement handoff; preparation, commit and abort remain private
 lifecycle steps. The daemon's typed revision, identity and recovery failures
 remain visible to callers.
 
+For a sandbox preset, first run `machines.managed.acquire` and wait for its
+managed operation to settle. Read the enrolled Machine id with
+`machines.managed.get` and use it as the destination for the independently
+admitted `session.handoff`. A failed acquisition leaves the source running.
+For signed handoff between Machines, the receiving daemon applies the Session
+isolation policy during the existing capability preflight. A bare destination
+that requires a sandbox returns `handoff_target_requires_sandbox_preset` before
+workspace preparation or source cutover.
+
 In 0.3 development source, `actions.policy.get` and `actions.policy.reset` read or
 reset one exact `{ actionId, audience }` preference. `actions.policy.set` accepts
 that target with `mode: 'allowed' | 'ask_first' | 'off' | 'default'`, or a typed

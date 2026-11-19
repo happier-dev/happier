@@ -33,6 +33,13 @@ async function expandProgressDetails(screen: Awaited<ReturnType<typeof renderScr
 }
 
 describe('SessionHandoffProgressModal', () => {
+    it('shows how to recover when the receiving Machine requires a sandbox preset', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
+            requestFailure={{ ok: false, error: 'target refuses handoff', errorCode: 'handoff_target_requires_sandbox_preset' }} />);
+        expect(screen.findAll(node => node.props?.children === 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.').length).toBeGreaterThan(0);
+    });
+
     it('offers the blocked link from validated request-local failure without redispatching on return', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
         const onOpenConflicts = vi.fn();

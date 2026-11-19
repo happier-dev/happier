@@ -1294,6 +1294,7 @@ const sessionHandoffTranslationExtensions = {
     failure: {
       title: '工作階段移交失敗',
       message: '無法完成移交。你可以重新嘗試這次傳輸。',
+      targetRequiresSandboxPreset: '這部機器會在沙盒中執行新的工作階段。請將工作階段移交至沙盒預設。',
     },
     cancelled: {
       title: '工作階段移交已取消',

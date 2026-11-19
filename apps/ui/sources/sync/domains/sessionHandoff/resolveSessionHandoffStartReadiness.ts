@@ -80,7 +80,8 @@ export function resolveSessionHandoffStartReadiness(input: Readonly<{
     sourcePathAllowed: boolean;
     targetPathAllowed: boolean;
     sourceEngineReadiness: WorkspaceSyncEngineReadinessSnapshot;
-    targetEngineReadiness: WorkspaceSyncEngineReadinessSnapshot;
+    /** A reviewed managed destination will have a target engine only after enrollment. */
+    targetEngineReadiness: WorkspaceSyncEngineReadinessSnapshot | null;
 }>): SessionHandoffStartReadiness {
     if (!input.targetMachineSelected) {
         return { canStart: false, reason: 'target_machine_not_selected' };
@@ -97,7 +98,7 @@ export function resolveSessionHandoffStartReadiness(input: Readonly<{
     if (input.workspaceEngineRequired) {
         // The destination is reported first: it is the endpoint the user just
         // chose and the one they can still change here.
-        const blocked = engineBlock(input.targetEngineReadiness, input.machineCarrierRequired)
+        const blocked = (input.targetEngineReadiness && engineBlock(input.targetEngineReadiness, input.machineCarrierRequired))
             ?? engineBlock(input.sourceEngineReadiness, input.machineCarrierRequired);
         if (blocked) return blocked;
         if (!input.sourcePathAllowed) return { canStart: false, reason: 'source_path_unsafe' };

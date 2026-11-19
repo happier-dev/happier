@@ -1291,6 +1291,7 @@ const sessionHandoffTranslationExtensions = {
         relationshipReused: 'Aquest traspàs ha reutilitzat la sincronització de workspace que ja tenies.',
     },
     failure: {
+      targetRequiresSandboxPreset: 'Aquesta màquina executa les sessions noves en un entorn aïllat. Transfereix la sessió a una configuració predefinida d’aquest entorn.',
       partialLinked: 'S’han sincronitzat alguns fitxers, però el següent espai de treball enllaçat necessita atenció. La sessió no s’ha reprès a la destinació. Obre els detalls per veure l’enllaç bloquejat.',
       title: 'No s ha pogut transferir la sessio',
       message: 'No s ha pogut completar la transferencia. Pots tornar-ho a provar.',

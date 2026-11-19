@@ -7,9 +7,18 @@ import { Modal } from '@/modal';
 import { SessionHandoffPickerModalEntry } from './SessionHandoffPickerModalEntry';
 import type { SessionHandoffPickerModalProps } from './SessionHandoffPickerModal';
 import type { WorkspaceSyncConflictDetailsResource } from '@/components/workspaces/sync/WorkspaceSyncConflictDetailsView';
+import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
-export type SessionHandoffPickerResult = Readonly<{
-    targetMachineId: string;
+export type SessionHandoffPickerResult = (
+    | Readonly<{ targetMachineId: string; managedTarget?: never }>
+    | Readonly<{ targetMachineId?: never; managedTarget: Readonly<{
+        draft: ManagedMachineSelectionDraft;
+        lifetime: ServerAccountScopeLifetime;
+        onApprovalPending: (value: ActionApprovalRegistration) => void;
+    }> }>
+) & Readonly<{
     /** Display-only identity used by consequential confirmation copy. */
     targetMachineLabel?: string;
     targetPath?: string;

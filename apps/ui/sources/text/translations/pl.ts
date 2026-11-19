@@ -1292,6 +1292,7 @@ const sessionHandoffTranslationExtensions = {
     },
     failure: {
       title: 'Przekazanie sesji nie powiodło się',
+      targetRequiresSandboxPreset: 'Ta maszyna uruchamia nowe sesje w piaskownicy. Przekaż sesję do ustawienia wstępnego piaskownicy.',
       partialLinked: 'Niektóre pliki zsynchronizowano, ale kolejny połączony obszar roboczy wymaga uwagi. Sesja nie została wznowiona w miejscu docelowym. Otwórz szczegóły, aby sprawdzić zablokowane połączenie.',
       message: 'Nie udało się ukończyć przekazania. Możesz spróbować ponownie.',
     },

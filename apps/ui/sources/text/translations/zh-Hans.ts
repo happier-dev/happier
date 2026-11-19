@@ -1298,6 +1298,7 @@ const sessionHandoffTranslationExtensions = {
     failure: {
       title: '会话移交失败',
       message: '无法完成移交。你可以重试这次传输。',
+      targetRequiresSandboxPreset: '此机器在沙盒中运行新会话。请将会话移交到沙盒预设。',
       partialLinked: '部分文件已同步，但下一处关联工作区需要处理。会话未在目标位置恢复。请打开详情查看受阻的关联。',
     },
     cancelled: {

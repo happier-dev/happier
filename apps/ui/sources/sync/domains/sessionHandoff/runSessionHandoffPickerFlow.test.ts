@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import * as frontDoor from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import '@/components/settings/machines/managed/managedMachineCreation';
 
 const openSessionHandoffPickerMock = vi.hoisted(() => vi.fn());
 const executeSessionHandoffActionMock = vi.hoisted(() => vi.fn());
@@ -8,11 +15,13 @@ const acquireUserRequestLeaseMock = vi.hoisted(() => vi.fn(() => releaseUserRequ
 const presentationRegisterMock = vi.hoisted(() => vi.fn());
 const progressCloseMock = vi.hoisted(() => vi.fn());
 const showRequestFailureMock = vi.hoisted(() => vi.fn());
+const showMachineCreationMock = vi.hoisted(() => vi.fn());
 const openConflictDetailsMock = vi.hoisted(() => vi.fn());
 const openObservedProgressMock = vi.hoisted(() => vi.fn((_input: unknown) => ({
     close: progressCloseMock,
     isAttached: () => true,
     showRequestFailure: showRequestFailureMock,
+    showMachineCreation: showMachineCreationMock,
 })));
 const randomUUIDMock = vi.hoisted(() => vi.fn(() => 'new-request-id'));
 const getStorageMock = vi.hoisted(() => vi.fn(() => ({
@@ -70,9 +79,79 @@ describe('runSessionHandoffPickerFlow', () => {
         presentationRegisterMock.mockReset();
         progressCloseMock.mockReset();
         showRequestFailureMock.mockReset();
+        showMachineCreationMock.mockReset();
         openConflictDetailsMock.mockReset();
         openObservedProgressMock.mockClear();
         randomUUIDMock.mockClear();
+    });
+
+    it.each([true, false])('hands off only after managed enrollment succeeds (enrolled=%s)', async (enrolled) => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} };
+        const draft = createManagedMachineSelectionDraft({ enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+            selection: { kind: 'one-off', homeId: 'home', launch, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            receipt: { launch, controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const machine: ManagedMachineFullV1 = { id: 'managed', homeId: 'home', custodianAccountId: 'account', controller, launch,
+            allocation: enrolled ? 'bound' : 'confirmed-absent',
+            ...(enrolled ? { resource: { contributionRef: launch.provider, schemaVersion: 1, value: { nativeId: 'guest' } } } : {}),
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            ...(enrolled ? { enrolledMachineId: 'enrolled' } : {}) };
+        const effects: string[] = [];
+        const operation: ActionOperationSnapshotV1 = {
+            version: 1, operationId: 'creation', revision: 2, actionId: 'machines.managed.acquire',
+            state: enrolled ? 'succeeded' : 'failed', scope: { accountId: 'account', machineId: controller.machineId },
+            title: 'Create guest', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+            domainRef: { kind: 'managedMachine', id: machine.id, controller },
+            ...(!enrolled ? { error: { errorCode: 'controller_unavailable', error: 'controller_unavailable' } } : {}),
+        };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+            'machines.managed.acquire': ['ui'], 'machines.managed.get': ['ui'], 'action.operations.get': ['ui'], 'session.handoff': ['ui'],
+        } });
+        const sourceMachineId = 'source';
+        let runningOn = sourceMachineId;
+        const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+            readActionsSettings: () => settings,
+            managedMachineAction: async request => {
+                effects.push(request.actionId);
+                if (request.actionId === 'machines.managed.get') return machine;
+                return { managedId: machine.id, operation: { operationId: operation.operationId } };
+            },
+            actionOperationAction: async request => {
+                effects.push(request.actionId);
+                expect(request.input).toMatchObject({ operationId: 'creation', waitForTerminal: true });
+                return { kind: 'found', operation };
+            },
+            // The transport hands control to the source daemon only after both UI Actions are admitted.
+            sessionHandoffStart: async request => {
+                effects.push('session.handoff');
+                runningOn = request.targetMachineId;
+                return completedResult();
+            },
+        }), 'account', settings);
+        const managedExecute = frontDoor.createFrontDoorActionExecute(executor);
+        const managedFrontDoor = vi.spyOn(frontDoor, 'createFrontDoorActionExecute').mockReturnValueOnce(managedExecute);
+        openSessionHandoffPickerMock.mockResolvedValueOnce({
+            managedTarget: { draft, lifetime: {
+                scope: { serverId: 'server', accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }),
+            },
+                onApprovalPending: () => { throw new Error('Unexpected approval'); } },
+            workspaceAction: { kind: 'none' },
+        });
+        const { executeSessionHandoffAction } = await vi.importActual<typeof import('./executeSessionHandoffAction')>('./executeSessionHandoffAction');
+        executeSessionHandoffActionMock.mockImplementationOnce(executeSessionHandoffAction);
+        const { runSessionHandoffPickerFlow } = await import('./runSessionHandoffPickerFlow');
+        const result = await runSessionHandoffPickerFlow({ execute: executor.execute, sessionId: 'sess_1', sourceMachineId, serverId: 'server', placement: 'session_info' })
+            .finally(() => managedFrontDoor.mockRestore());
+
+        expect(effects).toEqual(['machines.managed.acquire', 'action.operations.get', 'machines.managed.get',
+            ...(enrolled ? ['session.handoff'] : [])]);
+        expect(openObservedProgressMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineCreation: { name: 'Guest', progress: { kind: 'idle' } },
+        }));
+        expect(result?.ok).toBe(enrolled);
+        expect(runningOn).toBe(enrolled ? 'enrolled' : sourceMachineId);
     });
 
     it('keeps a newly selected destination separate from an existing recoverable operation', async () => {

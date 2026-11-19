@@ -14,6 +14,8 @@ import { openWorkspaceSyncConflictDetails } from '@/components/workspaces/sync/o
 import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
+import { readManagedMachineSelectionName, type ManagedMachineAcquisitionDraft, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import {
     actionOperationStore,
@@ -53,6 +55,11 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
     let setInlineError = (_code: string | null) => {};
     let isPickerOpen = () => true;
     let submitting = false;
+    let managedAttempt: {
+        draft: ManagedMachineSelectionDraft;
+        acquisition: ManagedMachineAcquisitionDraft;
+        machineId?: string;
+    } | undefined;
     const runSelection = async (selection: SessionHandoffPickerResult): Promise<ExecuteSessionHandoffActionResult | null> => {
     if (submitting || !isPickerOpen()) return null;
     submitting = true;
@@ -60,9 +67,9 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
     setInlineError(null);
     const releaseUserRequestLease = sync.acquireUserRequestLease();
     const profileScope = getStorage().getState().profileScope;
-    const accountId = profileScope?.serverId === args.serverId
+    const accountId = selection.managedTarget?.lifetime.scope.accountId ?? (profileScope?.serverId === args.serverId
         ? profileScope.accountId ?? ''
-        : '';
+        : '');
     // Picking a new destination is a new submission. Reopening an already
     // admitted operation belongs to its existing Action Operation entry.
     const requestId = randomUUID();
@@ -70,12 +77,15 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         && selection.workspaceAction.kind !== 'none';
     let result: ExecuteSessionHandoffActionResult | null = null;
     let progressDismissed = false;
+    const machineName = readManagedMachineSelectionName(selection.managedTarget?.draft);
+    let creationProgress: ManagedMachineCreationProgress | undefined;
     const openProgress = () => openObservedSessionHandoffProgressModal({
         requestId,
         sessionId: args.sessionId,
         serverId: args.serverId,
         accountId,
         workspaceSyncEnabled,
+        ...(creationProgress ? { machineCreation: { name: machineName, progress: creationProgress } } : {}),
         onDismiss: () => { progressDismissed = true; if (result?.ok) closePicker(); },
         ...(selection.workspaceSyncReviewResource ? { onOpenConflicts: (blockedRelationshipId: string | null) => {
             const verifiedBlockedId = blockedRelationshipId && selection.workspaceSyncReviewRelationshipIds?.includes(blockedRelationshipId)
@@ -112,7 +122,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
     showAdmittedProgress();
     actionOperationPresentationCoordinator.register({
         serverId: args.serverId,
-        accountId: profileScope?.serverId === args.serverId ? profileScope.accountId : '',
+        accountId,
         requestId,
         onStart: 'current',
         origin: {
@@ -127,11 +137,58 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
             ),
         },
     });
+    let disposeScope = () => {};
     try {
+        let targetMachineId = selection.targetMachineId;
+        let signal: AbortSignal | undefined;
+        if (selection.managedTarget) {
+            const { draft, lifetime, onApprovalPending } = selection.managedTarget;
+            const cancellation = new AbortController();
+            signal = cancellation.signal;
+            const retirement = lifetime.onRetire(() => cancellation.abort());
+            disposeScope = () => retirement.dispose();
+            if (managedAttempt?.draft !== draft) {
+                managedAttempt = { draft, acquisition: { requestId: randomUUID(), selection: draft.selection } };
+            }
+            const attempt = managedAttempt;
+            const setCreation = (progress: ManagedMachineCreationProgress) => {
+                creationProgress = progress;
+                if (progressDismissed || !isPickerOpen()) return;
+                if (progressPresentation?.isAttached()) progressPresentation.showMachineCreation({ name: machineName, progress });
+                else ensureProgress();
+            };
+            if (!attempt.machineId && lifetime.isCurrent()) {
+                setCreation({ kind: 'idle' });
+                const { runManagedMachineCreation } = await import('@/components/settings/machines/managed/managedMachineCreation');
+                const acquired = await runManagedMachineCreation({
+                    draft,
+                    acquisition: attempt.acquisition,
+                    scope: lifetime.scope,
+                    signal: cancellation.signal,
+                    isCurrent: lifetime.isCurrent,
+                    onAcquisitionChange: value => { attempt.acquisition = value; },
+                    onProgress: setCreation,
+                    onApprovalPending,
+                });
+                if (acquired.kind === 'enrolled') attempt.machineId = acquired.machine.enrolledMachineId;
+                else {
+                    const errorCode = acquired.kind === 'failed' ? acquired.code : 'target_unavailable';
+                    result = { ok: false, error: errorCode, errorCode };
+                    if (!progressDismissed && isPickerOpen()) ensureProgress().showRequestFailure(result);
+                    return result;
+                }
+            }
+            if (!lifetime.isCurrent() || cancellation.signal.aborted) {
+                return { ok: false, error: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+            }
+            if (!isPickerOpen()) return null;
+            targetMachineId = attempt.machineId;
+        }
+        if (!targetMachineId) return { ok: false, error: 'invalid_parameters', errorCode: 'invalid_parameters' };
         result = await executeSessionHandoffAction({
             execute: args.execute,
             sessionId: args.sessionId,
-            targetMachineId: selection.targetMachineId,
+            targetMachineId,
             ...(selection.targetPath ? { targetPath: selection.targetPath } : {}),
             targetSessionStorageMode: selection.targetSessionStorageMode,
             stateTransfer: selection.stateTransfer,
@@ -142,6 +199,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
                 surface: 'ui',
                 placement: args.placement,
                 actionRequestId: requestId,
+                ...(selection.managedTarget ? { expectedAccountId: accountId, signal } : {}),
             },
         });
         setAwaitingAdmission(false);
@@ -170,6 +228,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         }
         return result;
     } finally {
+        disposeScope();
         unsubscribeAdmission();
         // Workspace outcomes and failures remain visible through the canonical
         // Action operation result. Only an ordinary handoff with no workspace

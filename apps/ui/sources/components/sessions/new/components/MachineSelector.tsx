@@ -5,7 +5,7 @@ import { SelectionList, type SelectionListSectionDescriptor } from '@/components
 import { supportsManagedMachineSelection, useMachineSelectionListModel } from './machineSelection/useMachineSelectionListModel';
 import type { ManagedMachineSelectionOffer } from './machineSelection/managedMachineSelection';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem, type DropdownMenuProps } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -91,19 +91,56 @@ export interface MachineSelectorProps {
     }>;
     /** The dropdown row sits inside the caller's own section instead of a section of its own. */
     dropdownInCallerSection?: boolean;
+    /** Hosts with a domain-owned list use the same machine row without mounting a second list model. */
+    renderDropdownContent?: NonNullable<DropdownMenuProps['renderContent']>;
 }
 
 export function MachineSelector(props: MachineSelectorProps) {
+    const [open, setOpen] = React.useState(false);
+    const onOpenChange = React.useCallback((next: boolean) => {
+        setOpen(next);
+        props.onDropdownOpenChange?.(next);
+    }, [props.onDropdownOpenChange]);
+    if (props.presentation === 'dropdown' && props.renderDropdownContent) {
+        return renderMachineSelectorDropdown(props, { open, onOpenChange,
+            renderContent: props.renderDropdownContent, items: EMPTY_DROPDOWN_ITEMS, onSelect: ignoreCustomContentSelect });
+    }
+    return <MachineSelectorWithListModel {...props} dropdownOpen={open} changeDropdownOpen={onOpenChange} />;
+}
+
+const EMPTY_DROPDOWN_ITEMS: readonly DropdownMenuItem[] = [];
+const ignoreCustomContentSelect = () => {};
+
+function renderMachineSelectorDropdown(
+    props: MachineSelectorProps,
+    menu: Pick<DropdownMenuProps, 'open' | 'onOpenChange' | 'renderContent' | 'items' | 'selectedId' | 'onSelect'>,
+    selectedTitle?: string | null,
+) {
+    const dropdown = <DropdownMenu
+        {...menu}
+        rowKind="item" variant="selectable" search={false}
+        emptyLabel={props.noItemsMessage ?? t('newSession.machinePicker.emptyMessage')}
+        matchTriggerWidth connectToTrigger popoverBoundaryRef={props.popoverBoundaryRef}
+        itemTrigger={{
+            title: props.dropdownTitle ?? t('newSession.selectMachineTitle'),
+            subtitle: props.dropdownSubtitle ?? selectedTitle ?? t('newSession.selectMachineDescription'),
+            showSelectedDetail: false, showSelectedSubtitle: false,
+            // A Machine choice is a preference row and carries no icon.
+            itemProps: { testID: props.dropdownTestID },
+        }} />;
+    return props.dropdownInCallerSection ? dropdown : <ItemGroup title="">{dropdown}</ItemGroup>;
+}
+
+function MachineSelectorWithListModel(props: MachineSelectorProps & Readonly<{
+    dropdownOpen: boolean;
+    changeDropdownOpen: (open: boolean) => void;
+}>) {
     const presentation = props.presentation ?? 'list';
     const purpose = props.purpose ?? 'session';
     const groupServerId = props.serverId ?? getAppliedActiveServerSnapshot().serverId;
     const { binding } = useServerCredentialAccountScopeBinding(groupServerId);
     const scope = binding?.isCurrent() ? binding.scope : null;
-    const [dropdownOpen, setDropdownOpen] = React.useState(false);
-    const changeDropdownOpen = React.useCallback((open: boolean) => {
-        setDropdownOpen(open);
-        props.onDropdownOpenChange?.(open);
-    }, [props.onDropdownOpenChange]);
+    const { dropdownOpen, changeDropdownOpen } = props;
     const requestClose = React.useCallback(() => {
         if (presentation === 'dropdown') changeDropdownOpen(false);
     }, [changeDropdownOpen, presentation]);
@@ -189,25 +226,17 @@ export function MachineSelector(props: MachineSelectorProps) {
     })), [dropdownOptions]);
     const selectedTitle = model.selectedOption?.label ?? (clearOption?.current ? clearOption.title : null);
     if (presentation !== 'dropdown') return renderList();
-    const dropdown = <DropdownMenu
-        open={dropdownOpen} onOpenChange={changeDropdownOpen}
-        renderContent={({ maxHeight }) => renderList(maxHeight)}
-        items={dropdownItems} selectedId={selectedOptionId}
-        onSelect={id => {
+    return renderMachineSelectorDropdown(props, {
+        open: dropdownOpen,
+        onOpenChange: changeDropdownOpen,
+        renderContent: ({ maxHeight }) => renderList(maxHeight),
+        items: dropdownItems,
+        selectedId: selectedOptionId,
+        onSelect: id => {
             const option = dropdownOptions.find(candidate => candidate.option.id === id)?.option;
             if (!option || option.disabled) return;
             option.onSelect?.();
             closeManagedSelection(id);
-        }}
-        rowKind="item" variant="selectable" search={false}
-        emptyLabel={props.noItemsMessage ?? t('newSession.machinePicker.emptyMessage')}
-        matchTriggerWidth connectToTrigger popoverBoundaryRef={props.popoverBoundaryRef}
-        itemTrigger={{
-            title: props.dropdownTitle ?? t('newSession.selectMachineTitle'),
-            subtitle: props.dropdownSubtitle ?? selectedTitle ?? t('newSession.selectMachineDescription'),
-            showSelectedDetail: false, showSelectedSubtitle: false,
-            // A Machine choice is a preference row (settings, Team defaults): preference rows carry no icon.
-            itemProps: { testID: props.dropdownTestID },
-        }} />;
-    return props.dropdownInCallerSection ? dropdown : <ItemGroup title="">{dropdown}</ItemGroup>;
+        },
+    }, selectedTitle);
 }

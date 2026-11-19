@@ -8239,6 +8239,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         failure: {
             title: 'Übergabe der Session fehlgeschlagen',
             message: 'Die Übergabe konnte nicht abgeschlossen werden. Du kannst die Übertragung wiederholen.',
+            targetRequiresSandboxPreset: 'Dieser Computer führt neue Sessions in einer Sandbox aus. Wähle für die Übergabe eine Sandbox-Vorlage.',
             partialLinked: 'Einige Dateien wurden synchronisiert, aber der nächste verknüpfte Workspace benötigt Aufmerksamkeit. Die Session wurde am Ziel nicht fortgesetzt. In den Details steht, welcher Link blockiert ist.',
         },
         cancelled: {

@@ -27,6 +27,21 @@ You can start handoff from:
 
 Open the action, choose the destination machine, review the handoff options, and confirm.
 
+### Move to a new managed machine
+
+In 0.3 development builds, the destination list includes managed machine presets.
+Choose and review a preset to create a machine for the move. Happier waits for the
+machine to finish enrolling before it starts the handoff. The progress dialog
+shows machine creation first.
+
+If creation fails, the session stays on its source machine. The selected preset's
+retention policy applies to any machine that was created. The guest still needs
+the Agent and Provider connection required to resume the session.
+
+If the receiving daemon says it requires a sandbox for new sessions, choose a
+sandbox preset from the destination list and retry. The source session keeps
+running when the receiving daemon refuses the move.
+
 ### Move to another directory on the same machine
 
 Development builds also let you select the current machine and choose a different working directory. This requires a daemon with same-machine handoff support; it is not available in older released builds.
