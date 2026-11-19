@@ -141,11 +141,19 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
         agentTargetKey: disposition.contextSelection.agentTargetKey,
         modelId: disposition.contextSelection.modelId };
     }
-    const acceptedBindingMatchesTeamRoute = Boolean(teamRoute && acceptedTeamProviderBinding?.teamId
+    const acceptedRouteBinding = teamRoute && acceptedTeamProviderBinding?.teamId
       && acceptedTeamProviderBinding.resourceId === teamRoute.resourceId
       && acceptedTeamProviderBinding.teamId === teamRoute.teamId
-      && acceptedTeamProviderBinding.expectedResourceRevision === teamRoute.expectedResourceRevision
-      && acceptedTeamProviderBinding.deliveryMode === teamRoute.deliveryMode);
+      && acceptedTeamProviderBinding.deliveryMode === teamRoute.deliveryMode
+      && (!session.active && teamRoute.deliveryMode !== 'vendor-native'
+        ? acceptedTeamProviderBinding.expectedResourceRevision >= teamRoute.expectedResourceRevision
+        : acceptedTeamProviderBinding.expectedResourceRevision === teamRoute.expectedResourceRevision)
+      ? acceptedTeamProviderBinding : null;
+    if (teamRoute && acceptedRouteBinding) {
+      // Home already projected the accepted revision. Use it for the catalog
+      // lookup while preserving the retained model and the running route.
+      teamRoute.expectedResourceRevision = acceptedRouteBinding.expectedResourceRevision;
+    }
     const routeProviderConnectionId = effectiveRoute
       ? 'providerConnectionId' in effectiveRoute ? effectiveRoute.providerConnectionId
         : effectiveRoute.source === 'native' ? null : undefined
@@ -204,7 +212,7 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
         if (resourceIds.size > 0 && [...resourceIds].every(resourceId => resources.some(resource => resource.id === resourceId))) break;
       }
       const routeResources: TeamCredentialResourceCatalogEntryV1[] = [];
-      if (teamRoute && !acceptedBindingMatchesTeamRoute) {
+      if (teamRoute && !acceptedRouteBinding) {
         const declarationContext = providerDeclarationContext(selectedMachineId, projection);
         const requirements = readAccountAgentProviderRequirements(teamRoute.agentTargetKey, declarationContext);
         const providers = readAccountProviderDeclarations(declarationContext).flatMap(declaration => {
@@ -240,10 +248,10 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
         const uniqueRoutes = [...new Map(inferredRoutes.map(route => [JSON.stringify(route), route])).values()];
         teamRoute = uniqueRoutes.length === 1 ? uniqueRoutes[0]! : null;
       }
-      const acceptedRouteResource = acceptedBindingMatchesTeamRoute && acceptedTeamProviderBinding?.teamId
-        ? resources.find(resource => resource.id === acceptedTeamProviderBinding.resourceId
-          && resource.teamId === acceptedTeamProviderBinding.teamId
-          && resource.resourceRevision === acceptedTeamProviderBinding.expectedResourceRevision) ?? null
+      const acceptedRouteResource = acceptedRouteBinding
+        ? resources.find(resource => resource.id === acceptedRouteBinding.resourceId
+          && resource.teamId === acceptedRouteBinding.teamId
+          && resource.resourceRevision === acceptedRouteBinding.expectedResourceRevision) ?? null
         : null;
       const projectedRouteResource = teamRoute ? [...routeResources, ...resources].find(resource =>
         findCurrentTeamCredentialProviderModel(resource, teamRoute!) !== null) ?? null : null;

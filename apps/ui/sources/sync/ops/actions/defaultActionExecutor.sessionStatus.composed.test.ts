@@ -1,7 +1,11 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import {
+  createHydratedPlainMachineFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture,
+} from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
@@ -10,17 +14,94 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { machineAgentInventoryStore } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
 
 const homes = createHomeGovernanceHarness();
 const httpBoundary = { ...homes, request: createSessionReadBatchFetchBoundary(homes.request) };
+const network = await installSessionOpsNetworkBoundary();
 installHomeGovernanceBoundaries(httpBoundary);
-installDisconnectedServerSocketBoundary();
 const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const initial = getStorage().getState();
-beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(httpBoundary); });
+beforeEach(async () => { network.resetRequests(); await homes.reset(); installHomeGovernanceBoundaries(httpBoundary); });
 afterEach(() => { getStorage().setState(initial, true); standardCleanup(); });
+afterAll(() => network.dispose());
+
+it.each([
+  { deliveryMode: 'brokered', resourceId: 'resource-1', teamId: 'team-1', revision: 2, ready: true },
+  { deliveryMode: 'brokered', resourceId: 'resource-1', teamId: 'team-1', revision: 4, ready: true },
+  { deliveryMode: 'direct', resourceId: 'resource-1', teamId: 'team-1', revision: 4, ready: true },
+  { deliveryMode: 'brokered', resourceId: 'other-resource', teamId: 'team-1', revision: 4, ready: false },
+  { deliveryMode: 'brokered', resourceId: 'resource-1', teamId: 'other-team', revision: 4, ready: false },
+  { deliveryMode: 'vendor-native', resourceId: 'resource-1', teamId: 'team-1', revision: 4, ready: false },
+] as const)('projects retained Team model readiness from the accepted $deliveryMode $teamId/$resourceId revision $revision', async ({
+  deliveryMode, resourceId, teamId, revision, ready,
+}) => {
+  const serverUrl = 'https://team-model-status.test';
+  const serverId = await homes.addHome({ name: 'Team route', serverUrl, accountId: 'alice', currentAccount: true });
+  const machineId = 'team-model-machine';
+  const agentTargetKey = 'agent:happier.agent.codex/codex';
+  const machine = createHydratedPlainMachineFixture({ id: machineId, accountId: 'alice', machine: { activeAt: Date.now() } });
+  await publishMachineInventoryForTest({ serverId, accountId: 'alice' }, [machine]);
+  homes.answer(serverId, `/v1/machines/${machineId}`, {
+    body: { machine: createPlainMachineRowFixture({ id: machineId, accountId: 'alice', machine }) },
+  });
+  const inventory = createReadyMachineAgentInventoryFixture([{ agentId: 'codex', title: 'Codex' }]);
+  const providerRequirements = readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' });
+  if (!providerRequirements) throw new Error('Expected bundled Codex Provider requirements');
+  network.respond(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, {
+    protocolVersion: 1, projection: { ...inventory.projection, agentsById: {
+      codex: { ...inventory.projection.agentsById.codex, identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, providerRequirements },
+    } },
+  });
+  network.respond(RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST, { jobs: [] });
+  network.respond('capabilities.detect', inventory.capabilities);
+  const retained = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: {
+    source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1', expectedResourceRevision: 2,
+    deliveryMode, agentTargetKey, modelId: 'shared-model',
+  } });
+  const accepted = sessionModelSelectionV2TeamBindingIntent(SessionModelSelectionV2Schema.parse({
+    ...retained, ref: { ...retained.ref, resourceId, teamId, expectedResourceRevision: revision },
+  }));
+  const session = createSessionFixture({ id: 'team-model-session', metadata: {
+    ...createSessionFixture().metadata!, machineId, flavor: 'codex', modelSelectionIntentV2: retained,
+  } });
+  const response = createPlainSessionByIdResponseFixture(session);
+  homes.answer(serverId, `/v2/sessions/${session.id}`, { body: { session: { ...response.session,
+    acceptedTeamCredentialBinding: accepted, effectiveAccess: { ...response.session.effectiveAccess!, primaryTeamId: 'team-1' },
+  } } });
+  const provider = { pluginId: 'happier.provider.muse', localId: 'muse' };
+  const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+    id: resourceId, teamId, resourceRevision: revision,
+    displayName: { content: { t: 'plain', v: 'Shared models' }, recipientEnvelope: null },
+    readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: deliveryMode === 'direct',
+    directMaterialState: deliveryMode === 'direct' ? 'current' : 'never_delivered',
+    sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
+    sourcePresentation: { kind: 'provider', provider: { identity: provider, definitionRevision: 1 } },
+    providerModels: [{
+      descriptor: { id: 'shared-model', name: 'Shared model' }, sourceRevision: 'source-current', availability: 'available',
+      selection: { kind: 'team_credential_provider_model', resourceId, teamId, expectedResourceRevision: revision,
+        deliveryMode, agentTargetKey, modelId: 'shared-model' },
+      application: { agentTargetKey, implementationIdentity: provider, endpointTemplateId: 'responses', protocol: 'openai-responses' },
+    }],
+  });
+  const entitledRequest = bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId });
+  homes.answer(serverId, `${entitledRequest.method} ${entitledRequest.path}`, { select: input => ({
+    body: { resources: input && typeof input === 'object' && 'teamId' in input && input.teamId === teamId ? [resource] : [], nextCursor: null },
+  }) });
+  const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: session.id, readiness: true },
+    { surface: 'ui', serverId, expectedAccountId: 'alice' });
+  expect(result, JSON.stringify({ result, rpcMethods: network.requests.map(request => request.method),
+    homePaths: homes.requests.map(request => request.path) })).toMatchObject({ ok: true, result: { readiness: {
+    status: ready ? 'ready' : 'unknown', cause: ready ? null : 'credential',
+    credential: { kind: 'team', teamId: 'team-1', resourceId: 'resource-1', readiness: ready ? { kind: 'available' } : null },
+  } } });
+});
 
 it('keeps supported, native unsupported and unknown compact evidence distinct in the public status Action', async () => {
   const serverId = await homes.addHome({ name: 'Compact', serverUrl: 'https://compact-status.test', accountId: 'alice', currentAccount: true });

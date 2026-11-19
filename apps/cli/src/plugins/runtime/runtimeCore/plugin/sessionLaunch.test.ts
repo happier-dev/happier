@@ -59,11 +59,11 @@ describe('plugin session launch binding', () => {
     });
   });
 
-  it('opens retained Team model intent after the same brokered resource grant is restored', () => {
+  it.each(['brokered', 'direct', 'vendor-native'] as const)('reconciles restored Team model intent for %s delivery', deliveryMode => {
     const retained = SessionModelSelectionV2Schema.parse({
       v: 2, updatedAt: 7, ref: {
         source: 'team_resource', teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 2,
-        deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
+        deliveryMode, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
       },
     });
     const restored = SessionModelSelectionV2Schema.parse({
@@ -75,7 +75,12 @@ describe('plugin session launch binding', () => {
     });
     const metadata = { modelSelectionIntentV2: retained };
     expect(resolvePublicSessionModelSelection({ sessionInput: input(retained), metadata })).toEqual(retained);
-    expect(resolvePublicSessionModelSelection({ sessionInput: input(restored), metadata })).toEqual(restored);
+    if (deliveryMode === 'vendor-native') {
+      expect(() => resolvePublicSessionModelSelection({ sessionInput: input(restored), metadata }))
+        .toThrow(expect.objectContaining({ code: 'team_credential_provider_selection_not_current' }));
+    } else {
+      expect(resolvePublicSessionModelSelection({ sessionInput: input(restored), metadata })).toEqual(restored);
+    }
     expect(() => resolvePublicSessionModelSelection({
       sessionInput: input(retained), metadata: { modelSelectionIntentV2: restored },
     })).toThrow(expect.objectContaining({ code: 'team_credential_provider_selection_not_current' }));
