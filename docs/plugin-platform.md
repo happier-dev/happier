@@ -13323,6 +13323,11 @@ and later invalidations name exact receipts. Each Event retains the receipt's
 actual Environment and controller context. For repository deployments, the
 Account-opened receipt also supplies the App context. Targeted observation and
 preview-child sources still require their Environment.
+The named Receipt and Target Link Artifact readers in the SDK's `/protocol`
+entry use the host Protocol's stored-content validators. The deployment protocol
+entry re-exports those same readers and validators. Both entrypoints keep the
+exact Artifact identity, revision, kind and body checks. This preserves the
+persisted content and both public reader signatures.
 The platform's finite `deployments.receipts.observe` Action dispatches the target's
 declared observe Action; provider-specific notice enrichment stays in the host
 platform adapter.

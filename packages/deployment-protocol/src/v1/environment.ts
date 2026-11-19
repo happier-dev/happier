@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentReleasePolicyV1Schema, OwnServerEnvironmentMigrationPolicyV1Schema, DeploymentServiceExportsV1Schema, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentConfigurationV1Schema, type OwnServerEnvironmentConfigurationV1, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -53,12 +53,7 @@ export function resolveDeploymentStoredDefinitionRevisionV1(
     return previous.contentRevision + (unchanged ? 0 : 1);
 }
 
-export const OwnServerEnvironmentConfigurationV1Schema = z.strictObject({
-    ...OwnServerEnvironmentReleasePolicyV1Schema.shape,
-    ...OwnServerEnvironmentMigrationPolicyV1Schema.shape,
-    serviceExports: z.optional(DeploymentServiceExportsV1Schema),
-});
-export type OwnServerEnvironmentConfigurationV1 = z.infer<typeof OwnServerEnvironmentConfigurationV1Schema>;
+export { OwnServerEnvironmentConfigurationV1Schema, type OwnServerEnvironmentConfigurationV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 /** Author defaults once for a newly selected own-server configuration; stored readers and edits preserve omissions. */
 export function createOwnServerEnvironmentConfigurationV1(

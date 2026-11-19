@@ -1,3 +1,4 @@
+import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
 import { z } from 'zod/mini';
 import { deploymentTargetFitFieldsV1 } from '@happier-dev/protocol/deployments/deployShapeV1';
 import { DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkMetadataV1Schema, DeploymentTargetLinkMemberV1Schema, DeploymentTargetSourceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -7,7 +8,7 @@ import { PluginLocalizedStringV2Schema } from '@happier-dev/protocol/plugins/con
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { DeploymentTargetPlanV1Schema, DeploymentTargetStatusIntervalMsV1Schema, createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema, DeploymentTargetLinkProviderContentV1Schema,
+import { DeploymentTargetPlanV1Schema, DeploymentTargetStatusIntervalMsV1Schema, createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema,
     type DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderIdentityV1Schema,
@@ -118,26 +119,14 @@ export function getDeploymentTargetLinkLineageV1(link: Readonly<{ id: string; en
 export { DeploymentTargetScopeV1Schema, DeploymentTargetLinksListInputV1Schema, DeploymentTargetLinksListResultV1Schema, DeploymentTargetLinkAlreadyLinkedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 export type { DeploymentTargetLinkHeaderV1, DeploymentTargetScopeV1, DeploymentTargetLinksListInputV1, DeploymentTargetLinksListResultV1,
     DeploymentTargetLinkAlreadyLinkedResultV1 } from '@happier-dev/protocol';
-/** Target-host capture only; Machine and installation identity stay on link membership. */
-export const DeploymentNativeComposeOriginV1Schema = z.strictObject({
-    projectName: z.string().check(z.minLength(1)),
-    dockerEndpoint: z.string().check(z.minLength(1)),
-    workingDirectory: z.string().check(z.minLength(1)),
-    capture: z.optional(z.strictObject({ installationId: id,
-    })),
-});
-export type DeploymentNativeComposeOriginV1 = z.infer<typeof DeploymentNativeComposeOriginV1Schema>;
-export const DeploymentOwnServerTargetLinkContentV1Schema = z.strictObject({
-    nativeOrigin: z.optional(DeploymentNativeComposeOriginV1Schema),
-});
-export type DeploymentOwnServerTargetLinkContentV1 = z.infer<typeof DeploymentOwnServerTargetLinkContentV1Schema>;
-export const DeploymentTargetLinkContentV1Schema = z.extend(DeploymentOwnServerTargetLinkContentV1Schema,
-    z.partial(DeploymentTargetLinkProviderContentV1Schema).shape,
-).check(z.refine(content => content.credentialPrincipal === undefined && content.providerEnvironment === undefined
-    && content.repositoryAccess === undefined || content.credentialPrincipal !== undefined
-        && content.providerEnvironment !== undefined && content.providerIdentity !== undefined,
-{ message: 'Operational platform links require the complete recorded principal, identity and native scope.' }));
-export type DeploymentTargetLinkContentV1 = z.infer<typeof DeploymentTargetLinkContentV1Schema>;
+export {
+    DeploymentNativeComposeOriginV1Schema,
+    type DeploymentNativeComposeOriginV1,
+    DeploymentOwnServerTargetLinkContentV1Schema,
+    type DeploymentOwnServerTargetLinkContentV1,
+    DeploymentTargetLinkContentV1Schema,
+    type DeploymentTargetLinkContentV1,
+} from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
 export const DeploymentTargetLinkStoredContentV1Schema = deploymentStoredContentV1Schema(DeploymentTargetLinkContentV1Schema);
 export type DeploymentTargetLinkStoredContentV1 = z.infer<typeof DeploymentTargetLinkStoredContentV1Schema>;
 export const DeploymentTargetLinkV1Schema = z.extend(DeploymentTargetLinkMetadataV1Schema, {

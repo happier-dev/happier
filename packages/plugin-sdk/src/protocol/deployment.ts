@@ -15,8 +15,8 @@ import type {
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     readDeploymentReceiptArtifactV1 as canonicalReadReceipt,
-    readDeploymentTargetLinkArtifactV1 as canonicalReadTargetLink,
-} from '@happier-dev/deployment-protocol/v1';
+} from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
+import { readDeploymentTargetLinkArtifactV1 as canonicalReadTargetLink } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
 
 import { projectProtocolValue } from './projectProtocolValue.js';
 import { readDeploymentDomainServingUrlV1 as canonicalReadDomainServingUrl } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
@@ -49,12 +49,12 @@ export const readDeploymentArtifactJsonBodyV1: (
     ...args: Parameters<typeof canonicalReadArtifact>
 ) => ReturnType<typeof canonicalReadArtifact> = projectProtocolValue(canonicalReadArtifact);
 
-/** Exact receipt content is read by the deployment protocol's canonical Artifact reader. */
+/** Exact receipt content is read by the canonical Receipt content validator. */
 export const readDeploymentReceiptArtifactV1: (
     ...args: Parameters<typeof canonicalReadReceipt>
 ) => ReturnType<typeof canonicalReadReceipt> = projectProtocolValue(canonicalReadReceipt);
 
-/** Provider target-link content retains the deployment protocol's identity and schema checks. */
+/** Provider target-link content retains its exact Artifact identity and schema checks. */
 export const readDeploymentTargetLinkArtifactV1: (
     ...args: Parameters<typeof canonicalReadTargetLink>
 ) => ReturnType<typeof canonicalReadTargetLink> = projectProtocolValue(canonicalReadTargetLink);

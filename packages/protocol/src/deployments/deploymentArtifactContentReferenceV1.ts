@@ -1,3 +1,4 @@
+import type { ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
@@ -69,6 +70,21 @@ export function readDeploymentArtifactJsonBodyV1(
   if (typeof artifact?.body !== 'string') return deploymentArtifactReadFailureV1('body');
   try { return { ...header, body: JSON.parse(artifact.body) as unknown }; }
   catch { return deploymentArtifactReadFailureV1('json'); }
+}
+
+/** Already opened by the canonical Artifact owner; this boundary never decrypts content. */
+export type DeploymentArtifactDocumentV1 = Pick<z.infer<typeof ArtifactDocumentV1Schema>, 'artifactId' | 'body' | 'revision'> & {
+    header: Readonly<Record<string, unknown>>;
+};
+export type DeploymentArtifactHeaderV1 = Omit<DeploymentArtifactDocumentV1, 'body'>;
+export type DeploymentArtifactReadResultV1<T> = { ok: true; content: T; title: string } | DeploymentArtifactReadFailureV1;
+
+export function readDeploymentArtifactContentV1<T>(reference: DeploymentArtifactContentReferenceV1, artifact: DeploymentArtifactDocumentV1 | null,
+    expectedKind: string, contentSchema: z.ZodMiniType<T>): DeploymentArtifactReadResultV1<T> {
+    const opened = readDeploymentArtifactJsonBodyV1(reference, artifact, expectedKind);
+    if (!opened.ok) return opened;
+    const content = contentSchema.safeParse(opened.body);
+    return content.success ? { ok: true, content: content.data, title: opened.title } : deploymentArtifactReadFailureV1('content');
 }
 
 /** Exact runtime content CAS shared by prepared deployment operation inputs. */

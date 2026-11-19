@@ -69,6 +69,13 @@ export const DeploymentPrivateServiceExportsV1Schema = lazyZodSchema(() => z.arr
     z.refine(value => value.exposure === 'privateNetwork' || value.transport?.kind === 'iroh',
         { message: 'Private authoring requires an exact private network or Iroh transport.' })))
     .check(z.refine(serviceExportKeysAreUnique, { message: 'Service export keys must be unique.' })));
+export const OwnServerEnvironmentConfigurationV1Schema = z.strictObject({
+    ...OwnServerEnvironmentReleasePolicyV1Schema.shape,
+    ...OwnServerEnvironmentMigrationPolicyV1Schema.shape,
+    serviceExports: z.optional(DeploymentServiceExportsV1Schema),
+});
+export type OwnServerEnvironmentConfigurationV1 = z.infer<typeof OwnServerEnvironmentConfigurationV1Schema>;
+
 /** Multi-server ingress intent. Source/placement admission validates the referenced edge. */
 export const DeploymentIngressV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('cloudflareTunnel') }),
