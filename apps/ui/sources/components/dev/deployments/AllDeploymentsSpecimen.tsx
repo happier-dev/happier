@@ -12,15 +12,13 @@ import {
 import { AllDeploymentsView } from '@/components/projects/deployments/AllDeploymentsScreen';
 import { useDeploymentCollection } from '@/components/projects/deployments/useDeploymentReads';
 import { useAllMachines } from '@/sync/store/hooks';
-import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
+import { BUNDLED_PLUGIN_UI_APP_DECLARATIONS } from '@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts';
 import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
 import {
   AppShellPluginUiProjectionValueProvider,
   useAppShellPluginUiProjectionCurrentness,
   type AppShellPluginUiProjectionValue,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import telemetryManifest from '../../../../../cli/assets/bundled-plugin-manifests/telemetry.json';
 
 /**
  * Dev-only specimen of Projects → All deployments over a fixture network boundary, drawn through the real page
@@ -190,12 +188,15 @@ function transportFor(state: string, machineId: string): DeploymentReadTransport
 function RequestsColumnSpecimen(props: Readonly<{ children: React.ReactNode }>) {
   const current = useAppShellPluginUiProjectionCurrentness();
   const value = React.useMemo(() => {
-    const manifest = PluginManifestV2Schema.parse(telemetryManifest);
+    const telemetry = BUNDLED_PLUGIN_UI_APP_DECLARATIONS.find(declaration => declaration.pluginId === 'happier.telemetry');
     return ({
-      pluginUiProjection: normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
-        id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
-        source: { kind: 'bundled' as const, locator: manifest.id },
-      }),
+      pluginUiProjection: telemetry ? normalizePluginInstalledUiDeclarations(telemetry.entriesById, undefined, {
+        id: telemetry.pluginId,
+        displayName: telemetry.displayName,
+        version: telemetry.pluginVersion,
+        enabled: true,
+        source: { kind: 'bundled', locator: telemetry.pluginId },
+      }) : null,
       pluginBrowserProjection: null,
       phase: 'current',
       interactionEnabled: false,
