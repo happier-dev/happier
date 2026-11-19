@@ -24,6 +24,9 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispa
     prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2,
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
@@ -56,6 +59,8 @@ import { handleActionsCommand } from '../../../../../../cli/src/cli/commands/act
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionExecutor } from '../../../../../../cli/src/session/actions/createCliActionExecutor';
 import { executeExternalAction } from '../../../../../../cli/src/daemon/externalActions/executeExternalAction';
+import type { RpcHandler } from '../../../../../../cli/src/api/rpc/types';
+import { registerExternalActionRpcHandler } from '../../../../../../cli/src/rpc/handlers/externalAction';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '../../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
 import { installAxiosFastifyAdapter } from '../../../../../../cli/src/testkit/http/axiosAdapter';
 import { accountSettingsParse, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -1990,6 +1995,109 @@ describe('composed CLI managed Action origination', () => {
                 .toMatchObject(actionId === 'machines.managed.cancel' ? { creationState: 'canceled', intentRevision: 1 }
                     : { machineSetup: { state: 'skipped' } });
         } finally { restoreHttp(); await sockets.close(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
+    });
+
+    it('dispatches immediate Stop of an E2EE managed guest using its foreign Manage grant', async () => {
+        const selected = await fixture(true, 'e2ee');
+        const requester = await fixture(true, 'e2ee');
+        const requesterToken = await auth.createToken(requester.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const dataKey = tweetnacl.randomBytes(32);
+        const custodianKey = selected.account.contentPublicKey!;
+        const recipientKey = requester.account.contentPublicKey!;
+        const sealFor = (recipientPublicKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({
+            dataKey, recipientPublicKey, randomBytes: tweetnacl.randomBytes,
+        }));
+        const ownerEnvelope = sealFor(custodianKey);
+        await db.machine.update({ where: { id: selected.controller.machineId }, data: { dataEncryptionKey: ownerEnvelope } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
+            accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
+        await db.machineKeyEnvelope.create({ data: { machineId: selected.controller.machineId,
+            recipientAccountId: requester.account.id, encryptedDataKey: sealFor(recipientKey),
+            machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(ownerEnvelope),
+            recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(recipientKey) } });
+        expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: selected.controller.machineId }))
+            .toMatchObject({ accessState: 'ready', owned: false, role: 'manage', encryptionMode: 'e2ee' });
+        const actionId = 'machines.managed.power.set';
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const acquireInput = ManagedAcquireInputV1Schema.parse(selected.input);
+        const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
+            requesterAccountId: selected.account.id, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+                v: 1, requestId: selected.requestId, target, input: acquireInput }),
+            input: { input: acquireInput, requestId: selected.requestId, continuationPresent: false } });
+        await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound',
+            enrolledMachineId: (await fixture(true, 'e2ee')).controller.machineId,
+            observation: { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained',
+                billing: { location: 'local', stoppedBilling: 'not-billed' } },
+            resource: { contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained-vm' } } } });
+        const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const,
+            encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(17) } };
+        const serverHttpBaseUrl = 'http://managed-seam.test';
+        const connection = { token: credentials.token, serverUrl: serverHttpBaseUrl, homeId,
+            controller: selected.controller, externalActionMachineRequestPrivateKey: selected.keys.secretKey } as ManagedMachineAcquisitionDriverInput;
+        const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
+        const operations = createHostActionOperationRuntime({ machineId: selected.controller.machineId,
+            custodyBinding: { serverId: homeId, installationId: selected.controller.installationId },
+            resolveAccountId: async () => selected.account.id });
+        let artifactWrites = 0;
+        const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'e2ee', ctx: null,
+            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, runtimeActionMachineId: selected.controller.machineId,
+            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId,
+            runActionOperation: operations.runActionOperation,
+            accountServerActionDeps: createAccountServerActionDeps({ token: credentials.token, credentials, serverId: homeId,
+                serverIdentityId: homeId, serverHttpBaseUrl }),
+            managedMachineAction: async ({ actionId, input, context }) => {
+                const client = createManagedMachineControllerClient(connection, { requestId: context.actionRequestId!, context }, actionId);
+                const result = await client.post('/v1/machines/managed/controller/admit-control',
+                    ManagedControlAdmissionInputV1Schema.parse({ action: actionId, input, requestId: context.actionRequestId }),
+                    ManagedAdmissionOutputV1Schema);
+                return { kind: 'accepted', managedId: result.machine.id, intentRevision: result.machine.intentRevision };
+            },
+        });
+        let receive: RpcHandler | undefined;
+        registerExternalActionRpcHandler({ registerHandler: (_method, handler) => { receive = handler; } }, {
+            executor: receiver, machineId: selected.controller.machineId,
+            resolveAccountId: async () => selected.account.id,
+            resolveInstallationId: () => selected.controller.installationId,
+            currentServerId: homeId, currentServerHttpBaseUrl: serverHttpBaseUrl,
+            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
+                privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
+            resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+            prepareRequesterAccountContext: async () => { throw new Error('Stop must not open requester Account custody'); },
+        });
+        const appInstance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            expect(dispatch.executionAuthorization?.binding).toMatchObject({ accountId: requester.account.id,
+                custodianAccountId: selected.account.id, authentication: { kind: 'terminal' } });
+            expect(request.admittedMachineTarget).toMatchObject({ custodianAccountId: selected.account.id,
+                machineId: selected.controller.machineId,
+                installationId: selected.controller.installationId });
+            if (!receive) throw new Error('Controller RPC handler was not registered');
+            return { ok: true, result: await receive(request.callParams, { authorization: request.authorization }) };
+        }, http => {
+            registerAccountProfileRoute(http);
+            registerAccountEncryptionRoutes(http);
+            artifactsRoutes(http);
+            http.addHook('onRequest', async request => {
+                if (request.method === 'POST' && request.url === '/v1/artifacts') artifactWrites++;
+            });
+        }, phases);
+        const restoreHttp = installAxiosFastifyAdapter({ app: appInstance, origin: serverHttpBaseUrl });
+        try {
+            const requestId = crypto.randomUUID();
+            const input = { homeId, managedId: admitted.machine.id, intent: 'stop', when: 'now', expectedRevision: 0 };
+            const execution = await dispatchOriginalAccountAction({ actionId, requestId, target, input,
+                credentials: { token: requesterToken, credentialProvenance: 'stored_session', encryption: null },
+                serverHttpBaseUrl, serverId: homeId, serverIdentityId: homeId, authority: 'present_user',
+                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+                onRequesterSessionCredentialDisclosure: async () => { throw new Error('Stop must not disclose requester credentials'); },
+            });
+            expect(execution, JSON.stringify({ execution, phases })).toMatchObject({ ok: true });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
+                .toMatchObject({ desired: 'stop', intentRevision: 1 });
+            expect(artifactWrites).toBe(0);
+        } finally { restoreHttp(); await appInstance.close(); }
     });
 
     it.each(['cli', 'mcp'] as const)('preserves the admitted %s power root through Ask and approved controller admission', async surface => {

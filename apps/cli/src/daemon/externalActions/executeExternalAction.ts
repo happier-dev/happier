@@ -927,6 +927,12 @@ async function executeExternalActionRequest(input: Readonly<{
     && originalRootCurrentness !== undefined && managedControllerCodec
     && nativeAdmission?.actionId === actionId.data && 'authority' in nativeAdmission
     && nativeAdmission.authority === 'creator_recovery' && sameStrictJsonValue(nativeAdmission.input, decodedInput);
+  // Home admitted this exact Stop under the Manage grant. Creating an Ask here
+  // would use the controller's credential for a private requester Artifact.
+  const approvedManagedStop = actionId.data === 'machines.managed.power.set'
+    && originalRootCurrentness !== undefined && managedControllerCodec
+    && nativeAdmission?.actionId === actionId.data && nativeAdmission.input.intent === 'stop'
+    && sameStrictJsonValue(nativeAdmission.input, decodedInput);
   const logsReference = logsOperands.resourceContinuation?.params.resource;
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
@@ -941,7 +947,8 @@ async function executeExternalActionRequest(input: Readonly<{
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
-    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery ? { bypassApprovals: true } : {}),
+    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery || approvedManagedStop
+      ? { bypassApprovals: true } : {}),
     // The exact compute effect is already admitted by Home; reading a source
     // Session profile here would borrow the controller's Account credential.
     ...(approvedDelegatedAcquire ? { approvalProfileId: null } : {}),
