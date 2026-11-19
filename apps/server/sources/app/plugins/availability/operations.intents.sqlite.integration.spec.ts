@@ -61,6 +61,31 @@ describe("Availability intent reads on SQLite", () => {
         expect(cleared.intent.revision).not.toBe(selected.intent.revision);
     });
 
+    it("keeps the stored declaration out of a metadata-only intent update", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const pluginId = "com.acme.metadata-only-intent";
+        const declaration = wideDeclaration(pluginId, "unchanged-declaration");
+        const claimed = await operations.claimCollectionWriters({ accountId: account.id, input: { manifest: declaration.manifest },
+            publisher: { machineId: "machine-a", installationId: "installation-a" } });
+        const where = { accountId_pluginId: { accountId: account.id, pluginId } };
+        const stored = await db.accountPluginIntent.findUniqueOrThrow({ where, select: { releaseLessDeclaration: true } });
+        await db.$executeRaw`CREATE TRIGGER prevent_unchanged_declaration_write
+            BEFORE UPDATE OF "releaseLessDeclaration" ON "AccountPluginIntent"
+            BEGIN SELECT RAISE(ABORT, 'metadata edit rewrote declaration'); END`;
+        try {
+            const projectScope = { kind: "only" as const, projectKeys: ["project"] };
+            const result = await operations.setIntent({ accountId: account.id, input: { pluginId, desiredVersion: null,
+                enabled: true, offlineUiHosting: "disabled", writableCollections: [], projectScope,
+                expectedRevision: claimed.intent.revision } });
+            expect(result.intent).toMatchObject({ projectScope });
+            expect(result.intent.revision).not.toBe(claimed.intent.revision);
+            await expect(db.accountPluginIntent.findUniqueOrThrow({ where, select: { releaseLessDeclaration: true } }))
+                .resolves.toEqual(stored);
+        } finally {
+            await db.$executeRaw`DROP TRIGGER prevent_unchanged_declaration_write`;
+        }
+    });
+
     it("lists declaration digests from the body-free summary for compacted and per-Machine stores", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const compactedId = "com.acme.sqlite-compacted";

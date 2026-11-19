@@ -17,7 +17,7 @@ export async function updateIntentRow(tx: Tx, input: Readonly<{
     projectScope: PluginAccountPluginIntentV1['projectScope'];
     offlineUiHosting: 'disabled' | 'enabled';
     writableCollections: readonly PluginCollectionContractRefV1[];
-    releaseLessDeclarationText: string | null;
+    releaseLessDeclarationText?: string | null;
 }>): Promise<number> {
     const prisma = getActivePrismaRuntime();
     const provider = getDbProviderFromEnv(process.env, 'postgres');
@@ -31,7 +31,8 @@ export async function updateIntentRow(tx: Tx, input: Readonly<{
             ${identifier('projectScope')} = ${json(input.projectScope === undefined ? null : JSON.stringify(input.projectScope))},
             ${identifier('offlineUiHosting')} = ${input.offlineUiHosting},
             ${identifier('writableCollections')} = ${json(JSON.stringify(input.writableCollections))},
-            ${identifier('releaseLessDeclaration')} = ${json(input.releaseLessDeclarationText)},
+            ${input.releaseLessDeclarationText === undefined ? prisma.empty
+                : prisma.sql`${identifier('releaseLessDeclaration')} = ${json(input.releaseLessDeclarationText)},`}
             ${identifier('revision')} = ${identifier('revision')} + 1,
             ${identifier('updatedAt')} = ${new Date()}
         WHERE ${identifier('accountId')} = ${input.accountId}

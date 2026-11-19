@@ -72,7 +72,6 @@ import {
     readCurrentPluginDeclarationV1,
     readCurrentMachinePluginDeclarationsV1,
     readReleaseLessDeclarationBodiesV1,
-    readReleaseLessDeclarationsV2,
     readReleaseLessDeclarationListSummary,
     mergeReleaseLessDeclarationV2,
     readStoredPluginManifestV2,
@@ -555,10 +554,12 @@ async function transitionIntentTx(input: Readonly<{
     // cleanup covers cancelled/replaced and no-row bindings without making
     // stages an activation owner.
     await retirePluginCollectionCandidatePreparationStagesTx({ tx, accountId, pluginId });
-    const admittedDeclarationText = next.storedReleaseLessDeclarationText
-        ?? (next.releaseLessDeclaration === null ? null : JSON.stringify(next.releaseLessDeclaration));
-    const releaseLessDeclarationText = admittedDeclarationText === null ? null
-        : JSON.stringify(compactReleaseLessDeclarations(JSON.parse(admittedDeclarationText), pluginId));
+    const keepsDeclaration = current !== null && current.desiredVersion === null && next.desiredVersion === null
+        && next.storedReleaseLessDeclarationText === undefined;
+    const admittedDeclaration = next.storedReleaseLessDeclarationText === undefined
+        ? next.releaseLessDeclaration : JSON.parse(next.storedReleaseLessDeclarationText) as unknown;
+    const releaseLessDeclarationText = keepsDeclaration ? undefined : admittedDeclaration === null ? null
+        : JSON.stringify(compactReleaseLessDeclarations(admittedDeclaration, pluginId));
     const data = {
         desiredVersion: next.desiredVersion,
         enabled: next.enabled,
@@ -572,7 +573,7 @@ async function transitionIntentTx(input: Readonly<{
         const created = await tx.accountPluginIntent.create({
             data: { accountId, pluginId, ...data, revision: BigInt(0),
                 projectScope: projectScope === undefined ? getActivePrismaRuntime().DbNull : toPrismaJson(projectScope),
-                releaseLessDeclaration: releaseLessDeclarationText === null ? getActivePrismaRuntime().DbNull
+                releaseLessDeclaration: releaseLessDeclarationText == null ? getActivePrismaRuntime().DbNull
                     : JSON.parse(releaseLessDeclarationText) as Prisma.InputJsonValue },
             select: INTENT_METADATA_SELECT,
         });
@@ -2350,9 +2351,6 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         releaseLessDeclaration: input.desiredVersion === null
                             ? readCurrentReleaseLessDeclarationV1(current, input.pluginId)
                             : null,
-                        ...(input.desiredVersion === null && current?.releaseLessDeclaration ? {
-                            storedReleaseLessDeclarationText: JSON.stringify(readReleaseLessDeclarationsV2(current.releaseLessDeclaration, input.pluginId)),
-                        } : {}),
                     },
                 });
             }, {
