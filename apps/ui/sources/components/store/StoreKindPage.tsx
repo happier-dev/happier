@@ -335,7 +335,12 @@ export function StoreKindFrameBody(props: Readonly<{
   children: React.ReactNode;
 }>): React.ReactNode {
   const paneOpen = React.useContext(StoreListingPaneOpenContext);
-  const accessory = props.accessory ?? (paneOpen ? undefined : props.registrySelect);
+  // With a listing open beside the directory, what narrows the page leaves the toolbar for the band ("what narrows
+  // the page sits in its band"): the catalog choice is the filter menu's Source condition, and the project scope
+  // chip stands in the band's filter row, so the toolbar keeps one row at 1440 (PAGE-ACCEPT-176 R3-D5).
+  const scopeInBand = paneOpen && props.scoped && !props.stacked;
+  const accessory = props.accessory ?? (paneOpen ? scopeInBand ? props.scopeChip : undefined : props.registrySelect);
+  const headerScope = scopeInBand ? null : props.scopeChip;
   return (
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
       <PageContentColumn>
@@ -345,8 +350,8 @@ export function StoreKindFrameBody(props: Readonly<{
           testID={`store.kind.${props.kind}.header`}
           title={props.title}
           description={props.description}
-          {...(props.stacked ? {} : props.scoped ? { actions: props.createEntry
-            ? <View style={styles.headerActions}>{props.createEntry}{props.scopeChip}</View> : props.scopeChip } : props.createEntry ? { actions: props.createEntry } : {})}
+          {...(props.stacked ? {} : props.scoped && headerScope ? { actions: props.createEntry
+            ? <View style={styles.headerActions}>{props.createEntry}{headerScope}</View> : headerScope } : props.createEntry ? { actions: props.createEntry } : {})}
           search={{
             value: props.query,
             onChangeText: props.onQueryChange,
