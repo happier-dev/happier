@@ -1,6 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
@@ -19,7 +19,11 @@ import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { Modal } from '@/modal';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture,
+    createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createDataKeyAccountEncryptionCurrentnessFixture,
+    createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 const disclosure = vi.hoisted(() => vi.fn(async () => true));
@@ -113,12 +117,15 @@ describe('original Account finite Project admission', () => {
             const path = new URL(String(url)).pathname;
             expect(new URL(String(url)).origin).toBe(serverUrl);
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+            const currentness = createPlainAccountEncryptionCurrentnessHttpResponse(path);
+            if (currentness) return currentness;
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                id => [{ metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, id: 'alice-guest', kind: 'persistent', active: false,
-                installationId: 'alice-installation', installationPublicKey: encodeBase64(installation.publicKey), revokedAt: null,
-                replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-                access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }].find(row => row.id === id) ?? null);
+                id => id === 'alice-guest' ? {
+                    ...createPlainSharedMachineRowFixture({ id, custodianAccountId: 'alice' }),
+                    active: false, installationId: 'alice-installation', installationPublicKey: encodeBase64(installation.publicKey),
+                } : null);
             // D24 disclosure belongs to the ordinary share/approval surface;
             // requester transport must not impose another mandatory confirmation.
             expect(disclosure).not.toHaveBeenCalled();
@@ -167,11 +174,16 @@ describe('original Account finite Project admission', () => {
         setRuntimeFetch(async (url, init) => {
             expect(new URL(String(url)).origin).toBe(serverUrl);
             const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption/currentness') return Response.json(
+                createDataKeyAccountEncryptionCurrentnessFixture({ machineKey: keys.secretKey, publicKey: keys.publicKey }));
+            if (path === '/v1/auth/ping') return Response.json({ ok: true });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
-            if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                id => [{ metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, id: 'guest', kind: 'persistent', active: false, installationId: 'installation',
-                revokedAt: null, replacedByMachineId: null, dataEncryptionKey: 'sealed-key', runnerContentKeyBinding: null,
-                access: { custodian: { accountId: 'encrypted-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } }].find(row => row.id === id) ?? null);
+            if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body, id => {
+                if (id !== 'guest') return null;
+                const row = createPlainMachineRowFixture({ id, accountId: 'encrypted-owner' });
+                return { ...row, active: false, installationId: 'installation',
+                    metadata: null, dataEncryptionKey: 'sealed-key', access: { ...row.access, resourceMode: 'e2ee' } };
+            });
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
             const envelope = ExternalActionRequestEnvelopeV2Schema.parse(request.envelope);
             expect(request.machineId).toBe('guest');
@@ -215,39 +227,42 @@ describe('original Account finite Project admission', () => {
                 : actionId === 'projects.script.run' ? { workspace, selection: { kind: 'named', name: 'check' }, choice: { kind: 'primary' } }
                 : { workspace, executable: 'make', argv: ['check'], cwd: '/repo', choice: { kind: 'primary' } };
             const result = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
-            const requests: unknown[] = [];
+            const boundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId: homeId,
+                accountId: 'finite-owner', machineId: workspace.machineId, installationId: 'guest-installation',
+                actionId, tokenEpoch: 2, requesterInvocation: 'none', execute: () => result });
+            const actionPath = `/v1/actions/${actionId}`;
+            const requests: string[] = [];
+            let minted: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
             setRuntimeFetch(async (url, init) => {
                 const parsedUrl = new URL(String(url));
                 expect(parsedUrl.origin).toBe(serverUrl);
                 expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+                const currentness = createPlainAccountEncryptionCurrentnessHttpResponse(parsedUrl.pathname);
+                if (currentness) return currentness;
+                if (parsedUrl.pathname === '/v1/auth/ping') return Response.json({ ok: true });
                 if (parsedUrl.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (parsedUrl.pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                id => [{ metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, id: workspace.machineId, kind: 'persistent', active: false,
-                    installationId: 'guest-installation', revokedAt: null, replacedByMachineId: null,
-                    dataEncryptionKey: null, runnerContentKeyBinding: null,
-                    access: { custodian: { accountId: 'finite-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }].find(row => row.id === id) ?? null);
+                    id => id === workspace.machineId ? { ...boundary.machine, active: false } : null);
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
                 expect(request.machineId).toBe(workspace.machineId);
                 expect(envelope).toEqual({ v: 1, requestId: 'original-finite-request', target: { kind: 'machine', machineId: workspace.machineId }, input });
-                if (parsedUrl.pathname === `/v1/actions/${actionId}/execution-authorization`) {
-                    return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'own-home-authorization', binding: {
-                        accountId: 'finite-owner', authentication: { kind: 'account', tokenEpoch: 2 }, serverIdentityId: homeId,
-                        machineId: workspace.machineId, installationId: 'guest-installation', custodianAccountId: 'finite-owner', accountEncryptionMode: 'plain',
-                        actionId, requestId: envelope.requestId, target: envelope.target,
-                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-                    } }));
+                requests.push(parsedUrl.pathname);
+                if (parsedUrl.pathname === `${actionPath}/execution-authorization`) {
+                    expect(request.executionAuthorization).toBeUndefined();
+                    const response = await boundary.handle(parsedUrl, init);
+                    if (!response) throw new Error('Expected finite authorization response');
+                    minted = ExternalActionExecutionAuthorizationV1Schema.parse(await response.clone().json());
+                    return response;
                 }
-                expect(parsedUrl.pathname).toBe(`/v1/actions/${actionId}`);
-                expect(request.executionAuthorization).toMatchObject({ token: 'own-home-authorization', binding: {
-                    actionId, requestId: envelope.requestId, machineId: workspace.machineId,
-                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-                } });
+                expect(parsedUrl.pathname).toBe(actionPath);
+                expect(minted).toBeDefined();
+                expect(request.executionAuthorization).toEqual(minted);
                 expect(request.executionAuthorization?.requesterAccountContext).toBeUndefined();
                 expect(init?.signal).toBeDefined();
-                requests.push(envelope);
-                return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
-                    execution: { ok: true, result } }));
+                const response = await boundary.handle(parsedUrl, init);
+                if (!response) throw new Error('Expected finite execution response');
+                return response;
             });
             onTestFinished(resetRuntimeFetch);
             const signal = new AbortController().signal;
@@ -255,12 +270,12 @@ describe('original Account finite Project admission', () => {
             onTestFinished(() => account.dispose());
             expect(await createUiProjectAction(account)({ actionId, input,
                 context: { surface: 'ui', authority: 'present_user', actionRequestId: 'original-finite-request', signal } })).toEqual(result);
-            expect(requests).toHaveLength(1);
+            expect(requests).toEqual([`${actionPath}/execution-authorization`, actionPath]);
             if (actionId === 'projects.prepare') {
                 expect(await createUiProjectAction(account)({ actionId, input,
                     context: { surface: 'agent', authority: 'account_automation', actionRequestId: 'unbound-hosted-request', signal } }))
                     .toEqual({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
-                expect(requests).toHaveLength(1);
+                expect(requests).toEqual([`${actionPath}/execution-authorization`, actionPath]);
             }
         });
 });
