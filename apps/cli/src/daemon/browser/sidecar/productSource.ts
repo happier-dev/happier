@@ -211,7 +211,9 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             };
             const stop = (): Promise<void> => {
                 session.closing = true;
-                cancellation.abort();
+                // Cancel an unfinished launch, but let an established adapter publish
+                // intentional closure before cancellation closes its native transport.
+                if (!session.result) cancellation.abort();
                 stopping ??= (async () => {
                     const result = await session.promise?.catch(() => undefined);
                     try {
@@ -221,6 +223,8 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                         // CDP cleanup failed. A purge still reports that failure.
                         if (result?.ok && result.isProcessAlive?.() === false) retire();
                         throw error;
+                    } finally {
+                        cancellation.abort();
                     }
                     retire();
                 })();

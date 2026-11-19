@@ -13,6 +13,7 @@ import { createBrowserExtensionService } from '../extensions/service';
 import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from './launchOwner';
+import { BrowserSidecarCdpTransportError } from './cdpTransport';
 import { createProductBrowserSidecarControlAdapterFactory } from './productSource';
 
 describe('persistent browser profile launch', () => {
@@ -46,13 +47,20 @@ describe('persistent browser profile launch', () => {
                     return Object.assign(child, { pid: 84, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
                         kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
                 },
-                connectTransport: async () => ({ transport: {
+                connectTransport: async (_pipe, scope) => {
+                    const closed = new Promise<BrowserSidecarCdpTransportError>(resolve => {
+                        // The native pipe closes when its containing launch is cancelled.
+                        scope?.signal?.addEventListener('abort', () => resolve(new BrowserSidecarCdpTransportError(
+                            'cdp_transport_closed', 'Browser sidecar CDP transport closed.')), { once: true });
+                    });
+                    return { transport: { closed,
                     openPage: async () => {
                         const page = ++openedPages;
                         return { targetId: `target_${page}`, sessionId: `cdp_${page}` };
                     },
                     dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }),
-                } }),
+                    } };
+                },
             }),
         });
         const runtime = await factory({ machineId: 'machine', readMachineMemory: () => ({ reported: true,
