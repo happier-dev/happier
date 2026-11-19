@@ -13979,23 +13979,16 @@ the value in the draft's engine options and never save it as a preference.
 
 ### Review source transcript delivery (0.3 development)
 
-A reviewer receives a source Session transcript only when its
-`includeSessionTranscript` selection is explicitly enabled and its profile
-supports transcript evidence. The concrete `review.start` Action reads the
-source through `session.transcript.get` at admission, using that Action's
-requester authority. A mixed Workflow retains the selection and source address;
-its concrete Review leaves perform the read when admitted. One admission shares
-its captured evidence across the selected reviewer fanout.
+A reviewer receives a source Session transcript when its
+`includeSessionTranscript` selection is enabled. Agent profiles must support
+transcript input; Session reviewers (including bots represented as Sessions)
+receive it in their first ordinary message. `review.start` reads the source
+through `session.transcript.get` once at admission, using that Action's requester
+authority, and follows its pages once for the selected reviewer fanout.
 
-The host carries the captured evidence privately and appends it at the native
-Agent input boundary. Happier excludes it from Review records, authored Run
-prompts and input publications, retained Run state, server storage and diagnostic
-logs. The Agent's ordinary native local history may retain the prompt. This
-exception does not change the explicit opt-in default. Partial source coverage
-remains partial in the normalized Review outcome, even if the Agent claims a
-complete review. Native input admission continues to own the input budget.
-
-Attached Session launches require the existing private local Session transport;
-its Windows pipe-server identity check is unavailable, so that path currently
-refuses the launch. Detached exact-machine launches use the in-process Machine
-transport.
+The transcript becomes ordinary reviewer instructions. Mixed Workflows retain
+those instructions in their generated reviewer prompts; concrete Review leaves
+do not read the source again. It may be stored like other input, including in
+Workflow and Run records or Session history. Partial source coverage is stated
+in the input. Native input admission continues to own the input budget. Existing
+secret and credential handling is unchanged.
