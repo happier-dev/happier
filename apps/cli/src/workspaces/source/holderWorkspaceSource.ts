@@ -180,7 +180,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
   };
   const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
     const child = holder().spawnStream(resolveHolderWorkspaceCommand(root, request, guestRoot));
-    if (request.stdoutFd !== undefined) child.stdout.pipe(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
+    if (request.stdoutFd !== undefined) child.pipeStdoutTo(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
     return child as unknown as WorkspaceChildProcess;
   };
   const readFile = async (target: string): Promise<Buffer> => {

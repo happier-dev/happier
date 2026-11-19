@@ -1,11 +1,11 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { renameSync } from 'node:fs';
+import { createWriteStream, renameSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Duplex } from 'node:stream';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 
@@ -30,6 +30,13 @@ import { createBareRemoteRepository, makeCloneTargetDescription, makeProviderReg
 
 const holderExecutable = resolveSessionHolderExecutablePath();
 const helperExecutable = resolveProcessCustodySupportExecutable('linux');
+
+// The writable filesystem boundary can delay completion while the real holder
+// and Git finish producing output. Internal SCM and holder logic stay real.
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return { ...actual, createWriteStream: vi.fn(actual.createWriteStream) };
+});
 
 describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExecutable)('placed Session SCM execution', () => {
     let directory: string;
@@ -68,6 +75,88 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         holder?.detach();
         await agent?.terminateGroup({ graceMs: 100 });
         await rm(directory, { recursive: true, force: true });
+    });
+
+    it('streams stdout files beyond the collector budget while retaining the stderr budget', async () => {
+        const repository = join(root, 'stdout-file-budget');
+        await mkdir(repository);
+        execFileSync('git', ['init', '-q'], { cwd: repository });
+        const contents = 'complete target stdout\n'.repeat(1024);
+        const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repository, input: contents, encoding: 'utf8' }).trim();
+        const source = createHolderWorkspaceSource({ id: 'stdout-file-budget', rootPath: root, holder, helperPath: helperExecutable! });
+        await runWithWorkspaceSource(source, async () => {
+            const outputPath = join(directory, 'stdout-file-output');
+            const result = await runScmCommand({ bin: 'git', cwd: repository, args: ['cat-file', 'blob', blob],
+                maxOutputBytes: 128, stdoutFilePath: outputPath });
+            expect(result).toMatchObject({ success: true, stdout: '', stderr: '', outputLimitExceeded: false });
+            expect(await readFile(outputPath, 'utf8')).toBe(contents);
+            expect(await runScmCommand({ bin: 'git', cwd: repository, args: ['missing-command-' + 'x'.repeat(512)],
+                maxOutputBytes: 128, stdoutFilePath: join(directory, 'stderr-budget-output') }))
+                .toMatchObject({ success: false, outputLimitExceeded: true });
+        });
+    });
+
+    it.each([false, true])('settles stdout files only after the asynchronous filesystem write finishes (cancel=%s)', async cancel => {
+        const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+        let releaseWrite: (() => void) | undefined;
+        let markWriteStarted!: () => void;
+        const writeStarted = new Promise<void>(resolve => { markWriteStarted = resolve; });
+        vi.mocked(createWriteStream).mockImplementationOnce((path, options) => {
+            const stream = actual.createWriteStream(path, options);
+            const write = stream._write.bind(stream);
+            stream._write = (chunk, encoding, callback) => write(chunk, encoding, error => {
+                releaseWrite = () => callback(error);
+                markWriteStarted();
+            });
+            return stream;
+        });
+        const source = createHolderWorkspaceSource({ id: 'stdout-file-drain', rootPath: root, holder, helperPath: helperExecutable! });
+        let markProcessExited!: () => void;
+        const processExited = new Promise<void>(resolve => { markProcessExited = resolve; });
+        const observedSource = { ...source, spawn: (request: Parameters<typeof source.spawn>[0]) => {
+            const child = source.spawn(request);
+            child.once('exit', markProcessExited);
+            return child;
+        } };
+        let settled = false;
+        const abort = new AbortController();
+        const outputPath = join(directory, `delayed-stdout-output-${cancel}`);
+        const command = runWithWorkspaceSource(observedSource, () => runScmCommand({ bin: 'git', cwd: root,
+            args: ['--version'], stdoutFilePath: outputPath, signal: abort.signal })).then(result => { settled = true; return result; });
+        try {
+            await writeStarted;
+            await processExited;
+            if (cancel) abort.abort();
+            // Flush readable EOF/close delivery without introducing a timing threshold.
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(settled).toBe(false);
+        } finally {
+            releaseWrite?.();
+            await command;
+            vi.mocked(createWriteStream).mockReset();
+            vi.mocked(createWriteStream).mockImplementation(actual.createWriteStream);
+        }
+        expect(await command).toMatchObject({ success: !cancel, stdout: '', aborted: cancel });
+        expect(await readFile(outputPath, 'utf8')).toMatch(/^git version /);
+    });
+
+    it('propagates stdout files write failures through the target command boundary', async () => {
+        const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+        vi.mocked(createWriteStream).mockImplementationOnce((path, options) => {
+            const stream = actual.createWriteStream(path, options);
+            stream._write = (_chunk, _encoding, callback) => callback(Object.assign(new Error('Sink write failed'), { code: 'EIO' }));
+            return stream;
+        });
+        const source = createHolderWorkspaceSource({ id: 'stdout-file-error', rootPath: root, holder, helperPath: helperExecutable! });
+        try {
+            await expect(runWithWorkspaceSource(source, () => runScmCommand({ bin: 'git', cwd: root,
+                args: ['--version'], stdoutFilePath: join(directory, 'failed-stdout-output') })))
+                .resolves.toMatchObject({ success: false, stdout: '', stderr: 'EIO', exitCode: -1 });
+        } finally {
+            vi.mocked(createWriteStream).mockReset();
+            vi.mocked(createWriteStream).mockImplementation(actual.createWriteStream);
+        }
     });
 
     it('captures a copied dirty workspace checkpoint through disjoint holder paths', async () => {

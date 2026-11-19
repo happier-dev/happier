@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join, posix } from 'node:path';
 import { createInterface } from 'node:readline';
-import { Readable, Writable, type Duplex } from 'node:stream';
+import { finished, Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
 import { clearTimeout, setTimeout } from 'node:timers';
 
@@ -446,6 +446,7 @@ export class SessionHolderStreamProcess extends ChildProcess {
     override exitCode: number | null = null;
     override signalCode: NodeJS.Signals | null = null;
     private exited = false;
+    private stdoutSink?: Writable;
 
     constructor(private readonly holder: SessionHolderChild) {
         super();
@@ -454,6 +455,13 @@ export class SessionHolderStreamProcess extends ChildProcess {
             final: (callback) => this.whenStarted(id => holder.sendStreamFrame('C', id, new Uint8Array(), callback), callback),
         });
         Object.defineProperty(this, 'stdio', { value: [this.stdin, this.stdout, this.stderr, undefined, undefined], configurable: true });
+    }
+
+    /** A redirected pipe is closed only after its destination has consumed every byte. */
+    pipeStdoutTo(sink: Writable): void {
+        this.stdoutSink = sink;
+        sink.once('error', error => this.emit('error', error));
+        this.stdout.pipe(sink);
     }
 
     private whenStarted(send: (id: number) => void, callback: (error?: Error | null) => void): void {
@@ -513,9 +521,11 @@ export class SessionHolderStreamProcess extends ChildProcess {
         this.stdout.push(null);
         this.stderr.push(null);
         this.emit('exit', code, signal);
-        // `close` once both pipes are consumed, as for a local child.
-        let pending = 2;
+        // `close` includes a redirected pipe's writable completion, so its owner
+        // can safely close the descriptor after observing this event.
+        let pending = this.stdoutSink ? 3 : 2;
         const done = () => { if (--pending === 0) this.emit('close', code, signal); };
+        if (this.stdoutSink) finished(this.stdoutSink, done);
         for (const stream of [this.stdout, this.stderr]) {
             if (stream.readableEnded) done();
             else { stream.once('end', done); if (stream.listenerCount('data') === 0) stream.resume(); }

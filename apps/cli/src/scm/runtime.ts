@@ -547,7 +547,7 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
             }
         };
 
-        child.stdout?.on('data', (chunk) => {
+        if (!input.stdoutFilePath) child.stdout?.on('data', (chunk) => {
             const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
             appendOutput('stdout', buffer);
             observeInteraction(buffer);
