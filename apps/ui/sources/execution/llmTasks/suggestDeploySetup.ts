@@ -1,4 +1,5 @@
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { ExecutionRunError } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import {
     DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1,
     DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
@@ -47,7 +48,12 @@ export type DeploySuggestionOutcome =
     | Readonly<{ kind: 'questions'; catalog: DeploySuggestionCatalogV1; questions: ReturnType<typeof normalizeInteractionTransientQuestionsV1> }>
     | Readonly<{ kind: 'nothing'; catalog: DeploySuggestionCatalogV1; dropped: DeploySuggestionCheckResultV1['dropped'] }>
     | Readonly<{ kind: 'noAgent'; machines: readonly DeploySuggestionUnavailableMachine[] }>
-    | Readonly<{ kind: 'failed'; code: string }>
+    /**
+     * Where it failed: before any agent ran (`setup`), in the agent's Run (`run`, with the Run's typed error when it
+     * settled), or on the agent's answer, which the check refused (`answer`).
+     */
+    | Readonly<{ kind: 'failed'; code: string; stage: 'setup' | 'answer' }>
+    | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError }>
     | Readonly<{ kind: 'stopped' }>;
 
 /** The one read of what can be offered (`deployments.suggestions.catalog`); a starter picked by hand reads the same snapshot. */
@@ -82,14 +88,14 @@ export async function suggestDeploySetup(params: Readonly<{
             if (params.signal?.aborted) return { kind: 'stopped' };
             const listed = await readDeploySuggestionCatalog(params);
             if (params.signal?.aborted) return { kind: 'stopped' };
-            if (listed.kind === 'failed') return listed;
+            if (listed.kind === 'failed') return { ...listed, stage: 'setup' };
             catalog = listed.catalog;
         }
         params.onProgress?.({ kind: 'catalog', counts: { starters: catalog.starters.length, apps: catalog.apps.length,
             targets: catalog.targets.length, machines: catalog.machines.length, stores: catalog.stores.length } });
         const input = DeploySuggestionInputV1Schema.safeParse({ description: params.description, catalog,
             ...(params.note === undefined ? {} : { note: params.note }), ...(params.answers === undefined ? {} : { answers: params.answers }) });
-        if (!input.success) return { kind: 'failed', code: 'invalid_parameters' };
+        if (!input.success) return { kind: 'failed', code: 'invalid_parameters', stage: 'setup' };
 
         const unavailable: DeploySuggestionUnavailableMachine[] = [];
         for (const machine of catalog.machines) {
@@ -106,7 +112,7 @@ export async function suggestDeploySetup(params: Readonly<{
             if (params.signal?.aborted) return { kind: 'stopped' };
             if (!resolved.ok) {
                 if (resolved.errorCode !== 'LLM_TASK_RUNNER_UNAVAILABLE' || !resolved.reason) {
-                    return { kind: 'failed', code: resolved.errorCode ?? 'runner_unavailable' };
+                    return { kind: 'failed', code: resolved.errorCode ?? 'runner_unavailable', stage: 'setup' };
                 }
                 unavailable.push({ machineId: machine.machineId, ...(machine.label ? { label: machine.label } : {}), online: true,
                     reason: resolved.reason, unavailableAgents: resolved.unavailableAgents ?? [] });
@@ -124,14 +130,15 @@ export async function suggestDeploySetup(params: Readonly<{
                 onStarted: runId => params.onProgress?.({ kind: 'run', ...runner, runId, stop: () => stopLlmTaskRun({ host, runId }) }),
             });
             if (!run.ok) return params.signal?.aborted && run.errorCode === 'cancelled'
-                ? { kind: 'stopped' } : { kind: 'failed', code: run.errorCode ?? 'execution_run_failed' };
+                ? { kind: 'stopped' } : { kind: 'failed', code: run.errorCode ?? 'execution_run_failed', stage: 'run',
+                    ...(run.runError ? { runError: run.runError } : {}) };
             if (params.signal?.aborted) return { kind: 'stopped' };
             const checked = await executeAction(DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, { catalog,
                 suggestion: run.terminal.latestToolResult ?? run.terminal.structuredMeta?.payload }, context);
             if (params.signal?.aborted) return { kind: 'stopped' };
-            if (!checked.ok) return { kind: 'failed', code: checked.errorCode };
+            if (!checked.ok) return { kind: 'failed', code: checked.errorCode, stage: 'answer' };
             const result = DeploySuggestionCheckResultV1Schema.safeParse(checked.result);
-            if (!result.success) return { kind: 'failed', code: 'invalid_action_output' };
+            if (!result.success) return { kind: 'failed', code: 'invalid_action_output', stage: 'answer' };
             if (result.data.recommendations.length) return { kind: 'recommendations', catalog,
                 recommendations: result.data.recommendations, dropped: result.data.dropped };
             if (result.data.questions) return { kind: 'questions', catalog, questions: normalizeInteractionTransientQuestionsV1(result.data.questions) };
@@ -141,6 +148,6 @@ export async function suggestDeploySetup(params: Readonly<{
     } catch (error) {
         if (params.signal?.aborted) return { kind: 'stopped' };
         const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-        return { kind: 'failed', code: typeof code === 'string' ? code : 'suggestion_failed' };
+        return { kind: 'failed', code: typeof code === 'string' ? code : 'suggestion_failed', stage: 'setup' };
     }
 }

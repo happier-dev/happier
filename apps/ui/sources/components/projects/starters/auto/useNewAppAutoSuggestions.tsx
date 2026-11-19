@@ -19,6 +19,7 @@ import {
   type DeploySuggestionProgress,
   type DeploySuggestionUnavailableMachine,
 } from '@/execution/llmTasks/suggestDeploySetup';
+import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -239,7 +240,7 @@ export function useNewAppAutoSuggestions(
       };
     }
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
-    if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code };
+    if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome) };
     return { kind: 'nothing' };
   }, [declaredPlans, openMachineSetup, params.serverId, phase, stop, theme.colors.text.secondary]);
 
@@ -373,4 +374,15 @@ function presentMachine(
         status: t(machine.reason === 'no_ready_agent' ? 'llmTaskRunner.noReadyAgent' : 'llmTaskRunner.noMatchingModel'),
         action: { label: t('machineAgents.setUp'), onPress: () => openSetup(machine.machineId) } };
   }
+}
+
+/**
+ * Why the suggestion failed, said for where it failed: a Run's cause in the run card's words (a usage limit is the
+ * limit), an answer the check refused as unusable, anything earlier as Happier not reaching an agent.
+ */
+function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>): string {
+    if (outcome.stage === 'answer') return t('newApp.auto.failedBody');
+    if (outcome.stage === 'setup') return t('newApp.auto.failedSetupBody');
+    const run = presentExecutionRunFailureSummary(outcome.runError ?? { code: outcome.code });
+    return run ? [run.summary, run.reset].filter(Boolean).join(' · ') : t('newApp.auto.failedSetupBody');
 }

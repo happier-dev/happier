@@ -205,6 +205,23 @@ export function presentExecutionRunFailure(error: Readonly<{ code: string; runti
 }
 
 /**
+ * A failed Run's one line where it is listed (a run row, a failed task card): its runtime issue's summary when it
+ * carries one, else the first line of its typed cause; with the limit's reset when it names one.
+ */
+export function presentExecutionRunFailureSummary(error: Readonly<{ code: string; runtimeIssueV1?: SessionRuntimeIssueV1 }> | null | undefined): Readonly<{
+    summary: string;
+    reset: string | null;
+}> | null {
+    if (!error) return null;
+    if (error.runtimeIssueV1) {
+        const issue = presentSessionRuntimeIssue(error.runtimeIssueV1);
+        if (issue.summary) return { summary: issue.summary, reset: issue.reset };
+    }
+    const presented = presentExecutionRunFailure(error);
+    return presented ? { summary: presented.message.split('\n')[0]!, reset: presented.reset } : null;
+}
+
+/**
  * The sentence for a failed Run's own result (a SubAgentRun marker that settled `failed` with a typed
  * error): the same words as the Run's failure, never the executor's raw text, which can carry SDK
  * output and local paths. Null when the result is not a typed failure.

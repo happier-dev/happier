@@ -525,11 +525,68 @@ it('a failed suggestion says so and keeps the owner’s code under Details, neve
     expect(failed()!.props.kind).toBe('error');
     expect(typeof failed()!.props.diagnosticCode, 'the typed code a person can hand to support').toBe('string');
     expect(failed()!.props.diagnosticCode.length).toBeGreaterThan(0);
+    const { t } = await import('@/text');
+    expect(failed()!.props.reason, 'no agent ran, so there was no answer to blame').not.toBe(t('newApp.auto.failedBody'));
     await screen.unmount();
   } finally {
     await standardCleanup();
     await fixture.dispose();
   }
+});
+
+/** The failed suggestion card's reason after one Suggest against `overrides`. */
+async function failedSuggestionReason(name: string, overrides: Ports, refuseCheck = false) {
+  suggestionBoundary(overrides);
+  if (refuseCheck) {
+    // The check owner refuses the agent's answer (the only failure after an answer; a well-formed but unusable one
+    // settles as 'nothing').
+    const real = execute.getMockImplementation()!;
+    execute.mockImplementation((async (actionId: string, ...rest: unknown[]) => actionId === 'deployments.suggestions.check'
+      ? { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' }
+      : (real as (...args: unknown[]) => unknown)(actionId, ...rest)) as typeof real);
+  }
+  const { fixture, screen } = await openDescribe(name);
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const failed = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.failed');
+    await waitForHomeGovernance(() => expect(failed()).toBeTruthy());
+    const { reason, diagnosticCode } = failed()!.props as { reason: string; diagnosticCode: string };
+    await screen.unmount();
+    return { reason, diagnosticCode };
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+}
+
+it('a run that hit a usage limit says the limit, as a run card does, never that the agent’s answer was unusable', async () => {
+  const run = terminal(undefined).run;
+  const { reason, diagnosticCode } = await failedSuggestionReason('auto-usage-limit', {
+    executionRunWait: async () => ({ ok: true, status: 'failed', result: { run: { ...run, status: 'failed', error: {
+      code: 'usage_limit',
+      message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
+      runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+        occurredAt: 1, agentId: 'codex', sanitizedPreview: 'Usage limit reached',
+        usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait', planType: null,
+          limitCategory: 'usage_limit' } },
+    } } } }),
+  });
+  const { t } = await import('@/text');
+  expect(diagnosticCode).toBe('usage_limit');
+  expect(reason).not.toBe(t('newApp.auto.failedBody'));
+  expect(reason).toContain(t('session.usageLimitRecovery.banner.title'));
+});
+
+it('an answer that fails the check says the agent’s answer couldn’t be used', async () => {
+  const { reason } = await failedSuggestionReason('auto-invalid-answer', {
+    executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
+  }, true);
+  const { t } = await import('@/text');
+  expect(reason).toBe(t('newApp.auto.failedBody'));
 });
 
 it('when every suggestion is dropped it says it couldn’t suggest, and Try again runs once more (journey-deploy F3)', async () => {

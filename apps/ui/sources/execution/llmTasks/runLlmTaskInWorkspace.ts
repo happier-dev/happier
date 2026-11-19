@@ -1,5 +1,5 @@
 import { executionRunKindForIntent } from '@happier-dev/protocol/execution/runs/startRequest';
-import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunGetResponse, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunError, type ExecutionRunGetResponse, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -14,7 +14,9 @@ const executeAction = createFrontDoorActionExecute();
 
 export type LlmTaskRunResult =
     | { ok: true; terminal: ExecutionRunGetResponse }
-    | { ok: false; error: string; errorCode?: string; runId?: string; outcome?: 'pending' | 'unknown'; reason?: 'no_ready_agent' | 'no_matching_model'; unavailableAgents?: readonly LlmTaskRunnerUnavailableAgentV1[] };
+    | { ok: false; error: string; errorCode?: string; runId?: string; outcome?: 'pending' | 'unknown'; reason?: 'no_ready_agent' | 'no_matching_model'; unavailableAgents?: readonly LlmTaskRunnerUnavailableAgentV1[];
+        /** The settled Run's own typed error (its runtime issue included), when the Run itself failed. */
+        runError?: ExecutionRunError };
 
 export type LlmTaskHostV1 =
     /** `machineId`: the Session's machine, where Auto resolves the runner; `agentTargetKey`: the Session's own Agent, which wins Auto's cost ties. */
@@ -218,7 +220,7 @@ function readLlmTaskRunResult(terminal: ExecutionRunGetResponse, runId: string):
         return {
             ok: false,
             error: runError?.message ?? 'Task failed',
-            ...(runError?.code ? { errorCode: runError.code } : {}),
+            ...(runError?.code ? { errorCode: runError.code, runError } : {}),
             runId,
         };
     }

@@ -9,7 +9,7 @@ import {
 } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { presentExecutionRunFailure, presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { Text } from '@/components/ui/text/Text';
 import { resolveExecutionRunAgentMarkId, resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -73,8 +73,7 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
     // A failed Run says its typed cause (the shared presenter's one line) instead of its process facts, first on
     // its line: a phone row ellipsizes what follows, so the cause stays visible.
     const failure = run.status !== 'failed' ? null
-        : run.error?.runtimeIssueV1 ? presentSessionRuntimeIssue(run.error.runtimeIssueV1).summary
-        : presentExecutionRunFailure(run.error ?? (run.errorCode ? { code: run.errorCode } : null))?.message.split('\n')[0] ?? null;
+        : presentExecutionRunFailureSummary(run.error ?? (run.errorCode ? { code: run.errorCode } : null))?.summary ?? null;
     const subtitle = failure ? null : typeof props.subtitle === 'string' && props.subtitle.trim() ? props.subtitle : null;
     const backendLabel = resolveExecutionRunBackendLabel(run.backendTarget);
     const agentMarkId = resolveExecutionRunAgentMarkId(run.backendTarget, theme);

@@ -65,8 +65,8 @@ export type NewAppAutoView =
   /** The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2). */
   | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[] }>
   | Readonly<{ kind: 'nothing' }>
-  /** The suggestion owner's typed failure code, kept for the Details disclosure. */
-  | Readonly<{ kind: 'failed'; code: string }>;
+  /** The suggestion owner's typed failure code, kept for the Details disclosure, and why, in words. */
+  | Readonly<{ kind: 'failed'; code: string; reason: string }>;
 
 export function NewAppAutoStep(
   props: Readonly<{
@@ -120,7 +120,7 @@ export function NewAppAutoStep(
         testID="newApp.auto.failed"
         kind="error"
         title={t('newApp.auto.nothingTitle')}
-        reason={t('newApp.auto.failedBody')}
+        reason={view.reason}
         diagnosticCode={view.code}
         action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
         secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}

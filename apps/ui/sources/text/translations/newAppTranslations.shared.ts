@@ -77,6 +77,8 @@ type Copy = Readonly<{
     nothingTitle: string;
     nothingBody: string;
     failedBody: string;
+    /** No agent ran: the suggestion failed before it could ask one. */
+    failedSetupBody: string;
     tryAgain: string;
   }>;
   codeSearchPlaceholder: string;
@@ -300,6 +302,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Couldn’t suggest a setup",
       nothingBody: "None of the suggestions fit what Happier can create and run for you. Try again, or choose a starter yourself.",
       failedBody: "The agent’s answer couldn’t be used. Try again, or choose a starter yourself.",
+      failedSetupBody: "Happier couldn’t ask an agent for a setup. Try again, or choose a starter yourself.",
       tryAgain: "Try again",
     },
     codeSearchPlaceholder: 'Search the catalog, or paste a GitHub or GitLab link',
@@ -505,6 +508,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "No s’ha pogut suggerir cap configuració",
       nothingBody: "Cap suggeriment encaixa amb el que Happier pot crear i executar per a tu. Torna-ho a provar o tria tu una plantilla.",
       failedBody: "No s’ha pogut fer servir la resposta de l’agent. Torna-ho a provar o tria tu una plantilla.",
+      failedSetupBody: "Happier no ha pogut demanar una configuració a cap agent. Torna-ho a provar o tria tu una plantilla.",
       tryAgain: "Torna-ho a provar",
     },
     codeSearchPlaceholder: 'Cerca al catàleg o enganxa un enllaç de GitHub o GitLab',
@@ -710,6 +714,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Kein Setup vorgeschlagen",
       nothingBody: "Keiner der Vorschläge passt zu dem, was Happier für dich erstellen und ausführen kann. Versuch es noch einmal oder wähle selbst eine Vorlage.",
       failedBody: "Die Antwort des Agenten ließ sich nicht verwenden. Versuch es noch einmal oder wähle selbst eine Vorlage.",
+      failedSetupBody: "Happier konnte keinen Agenten nach einem Setup fragen. Versuch es noch einmal oder wähle selbst eine Vorlage.",
       tryAgain: "Erneut versuchen",
     },
     codeSearchPlaceholder: 'Katalog durchsuchen oder GitHub-/GitLab-Link einfügen',
@@ -915,6 +920,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "No se pudo sugerir una configuración",
       nothingBody: "Ninguna sugerencia encaja con lo que Happier puede crear y ejecutar para ti. Inténtalo de nuevo o elige tú una plantilla.",
       failedBody: "No se pudo usar la respuesta del agente. Inténtalo de nuevo o elige tú una plantilla.",
+      failedSetupBody: "Happier no pudo pedir una configuración a ningún agente. Inténtalo de nuevo o elige tú una plantilla.",
       tryAgain: "Intentar de nuevo",
     },
     codeSearchPlaceholder: 'Busca en el catálogo o pega un enlace de GitHub o GitLab',
@@ -1120,6 +1126,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Aucune configuration proposée",
       nothingBody: "Aucune proposition ne correspond à ce que Happier peut créer et exécuter pour vous. Réessayez ou choisissez un modèle vous-même.",
       failedBody: "La réponse de l’agent n’a pas pu être utilisée. Réessayez ou choisissez un modèle vous-même.",
+      failedSetupBody: "Happier n’a pas pu demander de configuration à un agent. Réessayez ou choisissez un modèle vous-même.",
       tryAgain: "Réessayer",
     },
     codeSearchPlaceholder: 'Cherchez dans le catalogue ou collez un lien GitHub ou GitLab',
@@ -1325,6 +1332,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Nessuna configurazione suggerita",
       nothingBody: "Nessun suggerimento corrisponde a ciò che Happier può creare ed eseguire per te. Riprova o scegli tu un modello.",
       failedBody: "Non è stato possibile usare la risposta dell’agente. Riprova o scegli tu un modello.",
+      failedSetupBody: "Happier non è riuscito a chiedere una configurazione a un agente. Riprova o scegli tu un modello.",
       tryAgain: "Riprova",
     },
     codeSearchPlaceholder: 'Cerca nel catalogo o incolla un link GitHub o GitLab',
@@ -1530,6 +1538,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "構成を提案できませんでした",
       nothingBody: "Happier が作成・実行できるものに合う提案がありませんでした。もう一度試すか、自分でスターターを選んでください。",
       failedBody: "エージェントの回答を利用できませんでした。もう一度試すか、自分でスターターを選んでください。",
+      failedSetupBody: "Happier はエージェントに構成を尋ねられませんでした。もう一度試すか、自分でスターターを選んでください。",
       tryAgain: "もう一度試す",
     },
     codeSearchPlaceholder: 'カタログを検索、または GitHub / GitLab のリンク',
@@ -1735,6 +1744,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Nie udało się zaproponować konfiguracji",
       nothingBody: "Żadna propozycja nie pasuje do tego, co Happier może dla ciebie utworzyć i uruchomić. Spróbuj ponownie albo wybierz szablon sam.",
       failedBody: "Nie udało się użyć odpowiedzi agenta. Spróbuj ponownie albo wybierz szablon sam.",
+      failedSetupBody: "Happier nie mógł poprosić agenta o konfigurację. Spróbuj ponownie albo wybierz szablon sam.",
       tryAgain: "Spróbuj ponownie",
     },
     codeSearchPlaceholder: 'Szukaj w katalogu lub wklej link GitHub albo GitLab',
@@ -1940,6 +1950,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Não foi possível sugerir uma configuração",
       nothingBody: "Nenhuma sugestão combina com o que o Happier pode criar e rodar para você. Tente de novo ou escolha um modelo você mesmo.",
       failedBody: "Não foi possível usar a resposta do agente. Tente de novo ou escolha um modelo você mesmo.",
+      failedSetupBody: "O Happier não conseguiu pedir uma configuração a um agente. Tente de novo ou escolha um modelo você mesmo.",
       tryAgain: "Tentar de novo",
     },
     codeSearchPlaceholder: 'Pesquise no catálogo ou cole um link do GitHub ou GitLab',
@@ -2145,6 +2156,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "Не удалось предложить конфигурацию",
       nothingBody: "Ни одно предложение не подходит к тому, что Happier может создать и запустить для вас. Попробуйте ещё раз или выберите шаблон сами.",
       failedBody: "Ответ агента не удалось использовать. Попробуйте ещё раз или выберите шаблон сами.",
+      failedSetupBody: "Happier не смог запросить настройку у агента. Попробуйте ещё раз или выберите шаблон сами.",
       tryAgain: "Попробовать ещё раз",
     },
     codeSearchPlaceholder: 'Поиск в каталоге или ссылка GitHub / GitLab',
@@ -2350,6 +2362,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "无法推荐配置",
       nothingBody: "没有推荐符合 Happier 能为你创建和运行的内容。请重试，或自己选择一个模板。",
       failedBody: "无法使用代理的回答。请重试，或自己选择一个模板。",
+      failedSetupBody: "Happier 无法向代理请求配置。请重试，或自己选择一个模板。",
       tryAgain: "重试",
     },
     codeSearchPlaceholder: '搜索目录，或粘贴 GitHub / GitLab 链接',
@@ -2551,6 +2564,7 @@ export const newAppTranslations: Readonly<
       nothingTitle: "無法推薦設定",
       nothingBody: "沒有推薦符合 Happier 能為你建立和執行的內容。請重試，或自己選擇一個範本。",
       failedBody: "無法使用代理程式的回答。請重試，或自己選擇一個範本。",
+      failedSetupBody: "Happier 無法向代理程式請求設定。請重試，或自己選擇一個範本。",
       tryAgain: "重試",
     },
     codeSearchPlaceholder: '搜尋目錄，或貼上 GitHub / GitLab 連結',

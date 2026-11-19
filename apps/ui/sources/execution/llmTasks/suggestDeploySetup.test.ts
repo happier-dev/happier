@@ -141,7 +141,7 @@ it.each([false, true])('stops the accepted run once without hiding Stop failure 
     expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery',
         catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === 'ready') }, choice: runner, signal: abort.signal,
         onProgress: event => { if (event.kind === 'run') abort.abort(); } })).toEqual(refused
-            ? { kind: 'failed', code: 'stop_refused' } : { kind: 'stopped' });
+            ? { kind: 'failed', code: 'stop_refused', stage: 'run' } : { kind: 'stopped' });
     expect(stops).toBe(1);
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
 });
