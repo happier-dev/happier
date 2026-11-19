@@ -4109,10 +4109,20 @@ describe('the search field', () => {
     });
     view.measure(1440);
     const field = () => (view.query('search')!.matches('input') ? view.query('search')! : view.query('search')!.querySelector('input'))!;
-    const escape = () => act(async () => {
+    const escape = (isComposing = false) => act(async () => {
       field().focus();
-      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, isComposing }));
     });
+    await act(async () => {
+      field().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    });
+    await escape(true);
+    expect(changes).toEqual([]);
+    expect(view.openChanges).toEqual([]);
+    await act(async () => {
+      field().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    });
+    changes.length = 0;
     await escape();
     expect(changes).toEqual(['']);
     expect(view.openChanges).toEqual([]);
