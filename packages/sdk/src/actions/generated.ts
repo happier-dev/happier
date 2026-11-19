@@ -808,6 +808,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.tags.set",
   "session.target.primary.set",
   "session.target.tracked.set",
+  "session.tasks.set",
   "session.terminalComposer.clear",
   "session.terminals.close",
   "session.terminals.close_others",
@@ -3342,6 +3343,9 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly targets: Readonly<{
       readonly resolve: (input: PublicActionInputById["session.targets.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.targets.resolve">>;
+    }> ;
+    readonly tasks: Readonly<{
+      readonly set: (input: PublicActionInputById["session.tasks.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.tasks.set">>;
     }> ;
     readonly terminalComposer: Readonly<{
       readonly clear: (input: PublicActionInputById["session.terminalComposer.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminalComposer.clear">>;
@@ -6353,6 +6357,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       targets: {
         resolve: (input: PublicActionInputById["session.targets.resolve"], options?: ActionExecutionOptions) => execute("session.targets.resolve", input, options),
+      },
+      tasks: {
+        set: (input: PublicActionInputById["session.tasks.set"], options?: ActionExecutionOptions) => execute("session.tasks.set", input, options),
       },
       terminalComposer: {
         clear: (input: PublicActionInputById["session.terminalComposer.clear"], options?: ActionExecutionOptions) => execute("session.terminalComposer.clear", input, options),
