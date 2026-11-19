@@ -20,12 +20,16 @@ import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databa
 import { startFinJourneyFixture, type FinJourneyFixture } from '../../src/testkit/finJourney';
 import { writeFinMuseExecutable } from '../../src/testkit/finMuse';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { postEncryptedSessionMessage } from '../../src/testkit/memoryRpc';
+import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 
 const run = createRunDirs({ runLabel: 'core' });
 const muse = { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } } as const;
 const modelId = 'meta/muse-spark-1.3-contributor';
 const document = (text: string) => ({ text, references: [], attachments: [] });
+const sourceClaim = 'The assistant reported all tests passed, but the test command was skipped.';
 
 // Public Action -> encrypted Home/Postgres -> daemon -> retained Review and Check
 // executions -> real Muse adapter/stdio. Only the native executable is playback.
@@ -40,6 +44,16 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let recording: Awaited<ReturnType<typeof readMuseLoginRecording>>;
   let deepSecAuditPath: string;
   let deepSecExecutablePath: string;
+  async function createSourceSession(account = owner) {
+    const source = await createSessionWithCiphertexts({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
+      metadataCiphertextBase64: encryptLegacyBase64({ path: machine.workspaceDir }, account.auth.accountSigningSeed),
+    });
+    await postEncryptedSessionMessage({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
+      sessionId: source.sessionId, secret: account.auth.accountSigningSeed, messageRole: 'user',
+      payload: { role: 'user', content: { type: 'text', text: sourceClaim } },
+    });
+    return source.sessionId;
+  }
   async function nativeReply(value: unknown) {
     // Schema-derived model output inside the existing sanitized native capture.
     // Request/response framing and lifecycle remain the captured MSP protocol.
@@ -107,13 +121,16 @@ else {
       }
     }
   });
-  async function act(actionId: ActionId, input: unknown) {
+  async function execute(actionId: ActionId, input: unknown) {
     if (!ui) throw new Error('Review Action client is not mounted');
-    const result = await ui.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
+    return ui.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: fixture!.serverId,
       executionRunTargetMachineId: machine.target.machineId,
       actionRequestId: randomUUID(), externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
       project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } });
+  }
+  async function act(actionId: ActionId, input: unknown) {
+    const result = await execute(actionId, input);
     expect(result.ok, `${actionId}: ${JSON.stringify(result)}`).toBe(true);
     if (!result.ok) throw new Error(`${actionId}: ${result.errorCode}`);
     return result.result;
@@ -323,5 +340,20 @@ else {
     expect(commands.map(command => command.args[0])).toEqual(['scan', 'process', 'export']);
     expect(new Set(commands.map(command => command.dataRoot)).size).toBe(1);
     expect(commands[0]?.dataRoot).toBeTruthy();
+  });
+  it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
+    const other = await fixture!.createAccount('source-owner');
+    const inaccessibleSessionId = await createSourceSession(other);
+    const denied = await execute('review.start', { target: { kind: 'detached' },
+      sourceSession: { sessionId: inaccessibleSessionId, serverId: ui!.serverId },
+      reviewers: [{ kind: 'engine', engineId: 'muse', includeSessionTranscript: true }],
+      instructions: 'Review the actual workspace change.', reviewCommentAuthorIntent: 'open',
+    });
+    expect(denied).toMatchObject({ ok: false, errorCode: 'not_found' });
+    const nativeAudit = await readMuseMspProcessAudit(auditPath).catch((error: unknown) => {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    expect(nativeAudit?.turnInputs ?? []).toHaveLength(0);
   });
 });
