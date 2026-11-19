@@ -18,7 +18,7 @@ import { getThemeRegistryLifecycle, getThemeTryOnOwner } from '@/theme/profiles/
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import { t } from '@/text';
-import { describeStoreThemeModes, groupInstalledStoreThemes, projectStoreThemeCoverageFacts, projectInstalledStoreThemeRows, type InstalledStoreThemeEntry } from './catalog/storeThemes';
+import { describeStoreThemeModes, groupInstalledStoreThemes, projectStoreThemeListingFacts, projectInstalledStoreThemeRows, type InstalledStoreThemeEntry } from './catalog/storeThemes';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
@@ -27,6 +27,7 @@ type Opened = ThemeActionOutput<typeof THEME_ACTION_IDS.storeGet>;
 type Listing = Readonly<{ sourceId: string; itemId: string; version?: string }>;
 const noInstalledEntries: readonly InstalledStoreThemeEntry[] = [];
 const noRefresh = () => {};
+
 
 /** Selected acquisition, Actions and the shared overlay feed the existing Store listing presentation. */
 export function StoreThemeListingController(props: Readonly<{ listing: Listing;
@@ -53,7 +54,9 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const preference = useLocalSetting('themePreference');
     const mode = resolveThemeRuntimeVisualTheme(preference, useColorScheme());
     const listing = React.useMemo(() => ({ sourceId, itemId, ...(version ? { version } : {}) }), [sourceId, itemId, version]);
-    const [opened, setOpened] = React.useState<Opened | null>(null);
+    // A revalidation (a reconnect, a new scope) keeps the listing it last opened; only another listing starts empty.
+    const [settled, setSettled] = React.useState<Readonly<{ listing: Listing; opened: Opened }> | null>(null);
+    const opened = settled?.listing === listing ? settled.opened : null;
     const [failed, setFailed] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState<StoreThemeListingViewProps['busy']>(null);
     const [failedInstall, setFailedInstall] = React.useState<Readonly<{
@@ -62,12 +65,11 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     React.useEffect(() => {
         if (!ready) return;
         const interest = new AbortController();
-        setOpened(null);
         setFailed(null);
         void execute(THEME_ACTION_IDS.storeGet, { listing }, { signal: interest.signal }).then(result => {
             if (interest.signal.aborted) return;
             // The front door settles the published output schema before returning success.
-            if (result.ok) setOpened(result.result as Opened);
+            if (result.ok) setSettled({ listing, opened: result.result as Opened });
             else setFailed(result.error);
         }).catch(error => { if (!interest.signal.aborted) setFailed(error instanceof Error ? error.message : t('common.unknown')); });
         return () => {
@@ -87,7 +89,6 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const tryingSource = matching?.document?.profile.source;
     const tryingFaceId = tryingSource?.kind === 'store' ? tryingSource.contributionId : null;
     const coverage = opened?.coverage.find(row => row.faceId === (tryingFaceId ?? preferred?.id))?.coverage;
-    const coverageFacts = coverage ? projectStoreThemeCoverageFacts(coverage) : null;
     const installed = Boolean(faces?.length && faces.every(face => library.entries.some(entry => entry.source.contributionId === face.id)));
     const hasInstalledFaces = library.entries.length > 0;
     const installedRows = React.useMemo(() => scope ? projectInstalledStoreThemeRows(library.entries, scope) : [], [library.entries, scope]);
@@ -115,7 +116,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
                     : [{ faceName: matching?.document?.profile.name ?? opened?.listing.summary.title ?? '', code: result.errorCode ?? 'action_failed' }] });
             } else {
                 setFailedInstall(null);
-                if (kind === 'acquire') { setOpened(result.result as Opened); setFailed(null); }
+                if (kind === 'acquire') { setSettled({ listing, opened: result.result as Opened }); setFailed(null); }
                 if (kind === 'duplicate') {
                     const { entry } = result.result as ThemeActionOutput<typeof THEME_ACTION_IDS.duplicate>;
                     router.push({ pathname: '/settings/appearance/themes/[profileId]', params: { profileId: getThemePresetSourceReferenceId(entry.reference) } });
@@ -141,14 +142,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
         description: opened?.listing.summary.description ?? null,
         faces, facesState: opened ? 'ready' : failed ? 'error' : 'loading', facesError: failed, tryingFaceId,
         preferredFaceId: preferred?.id ?? null, here: t('themeDevices.here'), installed,
-        facts: [
-            { key: 'includes', value: opened ? t('themeStore.includesCount', { count: opened.listing.metadata.includes.length }) : t('common.unknown') },
-            { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
-            { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
-            { key: 'licence', value: opened?.listing.metadata.licenseKind === 'custom'
-                ? t('themeStore.customLicence') : opened?.listing.metadata.license ?? t('common.unknown'),
-                ...(opened?.listing.metadata.licenseUrl ? { url: opened.listing.metadata.licenseUrl } : {}) },
-        ], busy: check.checking ? 'check' : busy, installFailures: failedInstall?.faces ?? [],
+        facts: projectStoreThemeListingFacts(opened?.listing.metadata ?? null, coverage ?? null), busy: check.checking ? 'check' : busy, installFailures: failedInstall?.faces ?? [],
         updateAvailable, checkError: check.failed ? check.code : null,
         onTryFace: id => {
             const face = faces?.find(candidate => candidate.id === id);

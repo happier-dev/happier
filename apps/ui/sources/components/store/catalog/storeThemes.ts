@@ -1,11 +1,12 @@
-import type { ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
+import type { ThemeActionOutput, ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
+import type { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import type { ThemeLibraryEntry, ThemeMiniatureData, ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { t } from '@/text';
 import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import { joinList } from '@/utils/text/joinList';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { StoreThemeCardView } from '../storeThemeViewTypes';
+import type { StoreThemeCardView, StoreThemeListingFact } from '../storeThemeViewTypes';
 
 const NO_FACES: readonly ThemeMiniatureData[] = [];
 export type StorePluginThemeItem = Readonly<{ kind: 'pluginTheme'; entry: ThemeLibraryEntry;
@@ -62,6 +63,30 @@ export function projectStoreThemeCoverageFacts(coverage: Readonly<{
             : { value: t('themeStore.everywhere') },
     };
 }
+
+type StoreThemeListingMetadata = ThemeActionOutput<typeof THEME_ACTION_IDS.storeGet>['listing']['metadata'];
+type StoreThemeCoverage = Parameters<typeof projectStoreThemeCoverageFacts>[0];
+
+/**
+ * A theme listing's four facts. Until its content first opens, the keys hold their rows with no value, so the card keeps
+ * its shape and claims nothing (a pending listing is a stable shell). Once open, a fact the content does not state
+ * reads Unknown.
+ */
+export function projectStoreThemeListingFacts(metadata: StoreThemeListingMetadata | null,
+    coverage: StoreThemeCoverage | null): readonly StoreThemeListingFact[] {
+    if (!metadata) return PENDING_LISTING_FACTS;
+    const unknown = t('common.unknown');
+    const coverageFacts = coverage ? projectStoreThemeCoverageFacts(coverage) : null;
+    return [
+        { key: 'includes', value: t('themeStore.includesCount', { count: metadata.includes.length }) },
+        { key: 'changes', value: coverageFacts?.changes ?? unknown },
+        { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: unknown }) },
+        { key: 'licence', value: metadata.licenseKind === 'custom' ? t('themeStore.customLicence') : metadata.license ?? unknown,
+            ...(metadata.licenseUrl ? { url: metadata.licenseUrl } : {}) },
+    ];
+}
+const PENDING_LISTING_FACTS: readonly StoreThemeListingFact[] = (['includes', 'changes', 'worksOn', 'licence'] as const)
+    .map(key => ({ key, value: '' }));
 
 export type InstalledStoreThemeEntry = ThemeLibraryEntry & Readonly<{
     source: Extract<ThemeLibraryEntry['source'], { kind: 'store' }>;

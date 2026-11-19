@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import type { RegistryProvenanceV1 } from '@happier-dev/protocol/registries';
-import { projectStoreThemeCard, projectStoreThemeCoverageFacts, themeSummaryMatchesMode, groupInstalledStoreThemes, projectInstalledStoreThemeRows } from './storeThemes';
+import { projectStoreThemeCard, projectStoreThemeCoverageFacts, projectStoreThemeListingFacts, themeSummaryMatchesMode, groupInstalledStoreThemes, projectInstalledStoreThemeRows } from './storeThemes';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { t } from '@/text';
@@ -80,5 +80,18 @@ describe('Store theme listing coverage facts', () => {
         expect(reshaping.worksOn).toEqual({ value: t('themeStore.everywhere'), note: t('themeCard.coverage', { native: 11, total: 14 }) });
         const portable = projectStoreThemeCoverageFacts({ total: 2, native: 2, webOnly: 0, affectedSurfaces: [{ surface: 'composer' }] });
         expect(portable.worksOn).toEqual({ value: t('themeStore.everywhere') });
+    });
+});
+
+describe('Store theme listing facts', () => {
+    it('holds the four fact rows without a claim until the listing opens, then says what it knows', () => {
+        const pending = projectStoreThemeListingFacts(null, null);
+        expect(pending.map(fact => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
+        expect(pending.every(fact => fact.value === ''), 'a pending listing claims no fact, not even Unknown').toBe(true);
+
+        const opened = projectStoreThemeListingFacts({ includes: [{ key: 'dark', label: 'Dark', mode: 'dark' }], license: 'MIT' }, null);
+        expect(opened.map(fact => fact.value)).toEqual([
+            t('themeStore.includesCount', { count: 1 }), t('common.unknown'), t('common.unknown'), 'MIT',
+        ]);
     });
 });
