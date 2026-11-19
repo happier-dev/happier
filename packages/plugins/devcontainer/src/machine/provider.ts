@@ -65,11 +65,15 @@ function failedSetup(result: PluginProcessResult) {
   // The Dev Containers CLI reports exit 1 for `up`. The hook's exit code is in
   // the stderr diagnostic paired with its machine-readable failure description.
   const prefix = `${failure[1]} failed with exit code `;
-  const diagnostic = new TextDecoder().decode(result.stderr).split(/\r?\n/u)
-    .map(line => line.replace(/^\[\d{4}-\d{2}-\d{2}T[\d:.]+Z\] /u, ''))
-    .findLast(line => line.startsWith(prefix));
-  const exit = diagnostic && /^(\d+)\./u.exec(diagnostic.slice(prefix.length));
-  const exitCode = exit ? Number(exit[1]) : undefined;
+  const lines = new TextDecoder().decode(result.stderr).split(/\r?\n/u);
+  let exitCode: number | undefined;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!.replace(/^\[\d{4}-\d{2}-\d{2}T[\d:.]+Z\] /u, '');
+    if (!line.startsWith(prefix)) continue;
+    const exit = /^(\d+)\./u.exec(line.slice(prefix.length));
+    exitCode = exit ? Number(exit[1]) : undefined;
+    break;
+  }
   return { exitCode: exitCode && Number.isSafeInteger(exitCode) ? exitCode : undefined,
     containerId: typeof outcome.containerId === 'string' && /^[a-f0-9]{64}$/u.test(outcome.containerId) ? outcome.containerId : undefined };
 }
