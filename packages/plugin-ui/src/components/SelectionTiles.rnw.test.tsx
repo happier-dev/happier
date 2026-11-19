@@ -399,6 +399,26 @@ describe('SelectionTiles', () => {
     expect(onChange).toHaveBeenLastCalledWith('cozy');
     mount.unmount();
   });
+  it('drops picture columns before a filling tile would fall under its minimum width', async () => {
+    // A theme listing's faces in a 420 px pane (Themes C2): two large previews per row, never four thumbnails.
+    const options = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, title: id.toUpperCase() }));
+    const mount = mountThroughReactNativeWeb(<HappierSelectionTiles
+      variant="visual" tileSizing="fill" maximumColumns={4} minimumTileWidth={160}
+      accessibilityLabel="Faces" options={options} value="a" onChange={() => {}}
+      colors={TILE_COLORS}
+      renderText={({ text }) => <span>{text}</span>}
+      renderGlyph={() => null}
+    />);
+    const grid = radios(mount.container)[0]!.parentElement!;
+    const handler = Reflect.get(grid, '__reactLayoutHandler');
+    const widths = () => radios(mount.container).map((tile) => Number.parseFloat(tile.style.width));
+    act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 372, height: 400 } } }));
+    expect(widths()).toEqual(Array(6).fill((372 - 10) / 2));
+    // A wide row still stops at the requested maximum.
+    act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 900, height: 400 } } }));
+    expect(widths()).toEqual(Array(6).fill((900 - 30) / 4));
+    mount.unmount();
+  });
   it('keeps every wrapped row of natural-size visual tiles at one width, so a short last row lines up', async () => {
     const options = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, title: id.toUpperCase() }));
     const mount = mountThroughReactNativeWeb(<HappierSelectionTiles

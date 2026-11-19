@@ -215,9 +215,10 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
   minimumColumns?: number;
   maximumColumns?: number;
   /**
-   * Card variant: the narrowest a tile may be before the grid drops a column (a choice inside a
-   * narrow panel reads as one per line rather than squeezed pairs). Absent, the width breakpoints
-   * alone decide.
+   * The narrowest a tile may be before the grid drops a column (a choice inside a narrow panel reads
+   * as one per line rather than squeezed pairs). Card variant: absent, the width breakpoints alone
+   * decide. Visual `fill`: the measured row keeps up to `maximumColumns` tiles of at least this width
+   * (a listing's pictures in a narrow pane stay large).
    */
   minimumTileWidth?: number;
   /**
@@ -420,7 +421,11 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
   const fill = props.tileSizing === 'fill';
   const [gridWidth, setGridWidth] = useState(0);
   const count = props.options.length;
-  const maximumColumns = Math.min(count, Math.max(1, props.maximumColumns ?? count));
+  const requestedColumns = Math.min(count, Math.max(1, props.maximumColumns ?? count));
+  // A filling grid with a minimum tile width drops columns once measured, before its tiles would fall under it.
+  const maximumColumns = fill && props.minimumTileWidth !== undefined && gridWidth > 0
+    ? Math.min(requestedColumns, Math.max(1, Math.floor((gridWidth + VISUAL_GRID_GAP_PX) / (props.minimumTileWidth + VISUAL_GRID_GAP_PX))))
+    : requestedColumns;
   // A filling grid has the requested column count. A natural grid has as many natural-width
   // columns as the measured width fits, and never fewer than three, which a phone row shrinks to fit.
   const columns = fill || gridWidth === 0

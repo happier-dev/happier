@@ -134,11 +134,12 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
           scroll="page"
           tileSizing="fill"
           maximumColumns={phone ? 2 : 4}
+          minimumTileWidth={FACE_TILE_MIN_WIDTH_PX}
           previewAspectRatio={phone ? 1.1 : 1.6}
           options={faceTiles}
           value={props.tryingFaceId}
           onChange={next => { if (next) props.onTryFace(next); }}
-          labelLines={1}
+          labelLines={2}
           accessibilityLabel={t('themeStore.faces')}
           testIdPrefix={id('face')}
         />
@@ -237,6 +238,9 @@ const FACT_LABEL_KEY = {
   worksOn: 'themeStore.factWorksOn',
   licence: 'themeStore.factLicence',
 } as const;
+
+/** A face is a picture to judge: in the 420 px listing pane two sit side by side (lab C2), never four thumbnails. */
+const FACE_TILE_MIN_WIDTH_PX = 160;
 
 function themeFactRow(fact: StoreThemeListingFact): StoreListingFactRow {
   return { ...fact, label: t(FACT_LABEL_KEY[fact.key]) };

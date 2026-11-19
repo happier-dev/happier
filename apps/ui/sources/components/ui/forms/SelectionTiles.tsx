@@ -96,7 +96,7 @@ type SelectionTilesBaseProps<T extends string> = {
     density?: 'regular' | 'compact';
     minimumColumns?: number;
     maximumColumns?: number;
-    /** Card variant: the narrowest tile before the grid drops a column. */
+    /** Cards and visual `fill` tiles: the narrowest tile before the grid drops a column. */
     minimumTileWidth?: number;
     /** Card variant: description lines before it ellipsizes (default 4); the tile announces all of it. */
     subtitleLines?: number;
