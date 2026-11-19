@@ -73,6 +73,7 @@ import {
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { CORE_COLLECTION_ADD_MENU_HOST } from '@/components/ui/lists/collection/CollectionAddMenu';
 import { t } from '@/text';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -377,6 +378,19 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
 function PluginUiPrivateSavedSecretChoice({ unavailableLabel: _unavailable, ...input }: SavedSecretChoiceListProps): React.ReactElement {
     const scope = useAccountSettingsScope();
     return <SavedSecretReferenceChoice scope={scope} {...input} />;
+}
+
+/**
+ * A details pane's "Open as page". Where no pane fits beside the page (a phone, panes off) the detail is already shown
+ * as the page, behind Back, so there is nothing to open.
+ */
+function DetailsPaneOpenAsPageIconButton(input: import('@happier-dev/plugin-ui/components').DetailsPaneOpenAsPageButtonProps) {
+    const besidePage = useDetailsPaneAvailable();
+    if (!besidePage) return null;
+    const label = input.accessibilityLabel ?? t('settingsPlugins.surfaces.openAsPage');
+    return <IconButton testID={input.testID} iconName="arrow-square-out"
+        accessibilityLabel={label} tooltip={label} variant="plain"
+        disabled={input.disabled} onPress={input.onPress} />;
 }
 
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
@@ -766,10 +780,7 @@ export function createPluginUiPrivatePresentationHost(
             },
         } : {}),
         renderDetailsPaneOpenAsPageButton(input: import('@happier-dev/plugin-ui/components').DetailsPaneOpenAsPageButtonProps) {
-            const label = input.accessibilityLabel ?? t('settingsPlugins.surfaces.openAsPage');
-            return <IconButton testID={input.testID} iconName="arrow-square-out"
-                accessibilityLabel={label} tooltip={label} variant="plain"
-                disabled={input.disabled} onPress={input.onPress} />;
+            return <DetailsPaneOpenAsPageIconButton {...input} />;
         },
         ...(options?.markdownWorkspace ? { renderMarkdown(input: HappierMarkdownRenderInput) {
             return <PluginUiMarkdown input={input} workspace={options.markdownWorkspace} />;

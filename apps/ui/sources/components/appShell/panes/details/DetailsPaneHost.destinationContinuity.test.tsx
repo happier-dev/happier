@@ -78,14 +78,20 @@ describe('destination details presentation continuity', () => {
         }
     });
 
-    it('heads a details pane retained at full width with Back, and a pane beside the page with Close', async () => {
+    it('heads a details pane retained at full width with Back and no Open as page, and a pane beside the page with Close', async () => {
         const { DetailsPaneHost } = await import('./DetailsPaneHost');
         const { AppPaneProvider } = await import('../AppPaneProvider');
+        const { CorePluginUiPresentationScope } = await import('@/components/plugins/surfaces/CorePluginUiPresentationScope');
+        const { DetailsPaneOpenAsPageButton } = await import('@happier-dev/plugin-ui/components');
         const closes: string[] = [];
+        // The drawn button, not the public component element that carries the same testID.
+        const openAsPage = () => screen.root.findAll((node) => typeof node.type === 'string' && node.props.testID === 'listing.openAsPage')[0] ?? null;
         const tree = () => <AppPaneProvider><DetailsPaneHost
             testID="listing"
             main={<div />}
-            details={{ header: { title: 'Theme' }, content: <div /> }}
+            details={{ header: { title: 'Theme', actions: <CorePluginUiPresentationScope>
+                <DetailsPaneOpenAsPageButton testID="listing.openAsPage" accessibilityLabel="Open as page" onPress={() => {}} />
+            </CorePluginUiPresentationScope> }, content: <div /> }}
             onCloseDetails={() => { closes.push('closed'); }}
         /></AppPaneProvider>;
         const screen = await renderScreen(tree());
@@ -98,10 +104,12 @@ describe('destination details presentation continuity', () => {
             if (width === 390 || !enabled) {
                 expect(back, `${width}/${enabled}: the full-width pane leads with Back`).not.toBeNull();
                 expect(close, `${width}/${enabled}: no second way out beside Back`).toBeNull();
+                expect(openAsPage(), `${width}/${enabled}: already a full page`).toBeNull();
                 await act(async () => { back!.props.onPress(); });
             } else {
                 expect(back).toBeNull();
                 expect(close).not.toBeNull();
+                expect(openAsPage()).not.toBeNull();
                 await act(async () => { close!.props.onPress(); });
             }
         }
