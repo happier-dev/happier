@@ -328,7 +328,8 @@ async function withExternalTaskSource(
                                     // Genuine Action RPC boundary: the aggregate admission and opaque source handles remain real.
                                     executeAdmittedTargetedOperation: async () => {
                                         const error = new PluginError({ code: options.sourceWriteTransport === 'denied' || options.sourceWriteTransport === 'cancelled'
-                                            ? options.sourceWriteTransport : 'unavailable', retryable: false });
+                                            ? options.sourceWriteTransport : 'unavailable', retryable: false,
+                                            effectAttempted: options.sourceWriteTransport !== 'notStarted' });
                                         // Mirrors the host's registration/actionHandlerInvocation.ts transport error, including its wire data.
                                         throw options.sourceWriteTransport === 'notStarted'
                                             ? Object.assign(error, { actionHandlerInvocation: 'notStarted',
@@ -424,7 +425,7 @@ describe('Tasks through a separately authored source and registered aggregate Ac
         await withExternalTaskSource(async ({ aggregate, writes }) => {
             const expected = sourceWriteTransport === 'notStarted'
                 // 8db81218583 preserves the host's author payload and retryability.
-                ? { kind: 'refused', reason: 'unavailable', details: {}, retryable: false }
+                ? { kind: 'refused', reason: 'unavailable', details: { effectAttempted: false }, retryable: false }
                 : { kind: 'uncertain', failure: { class: 'unknown', code: sourceWriteTransport === 'responseLost' ? 'unavailable' : sourceWriteTransport } };
             expect(await aggregate.invokeAction('tasks/create-v1', {
                 v: 1, source, sourceInstanceId: instanceId, kindId: 'issue', fields: { title: 'A task' },
