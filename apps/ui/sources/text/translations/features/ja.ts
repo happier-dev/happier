@@ -5396,6 +5396,7 @@ const ja = {
     eventAutomationComposer: {
         payloadFields: 'ペイロードフィールド',
         payloadSample: 'サンプルペイロード',
+        technicalDetails: '技術的な詳細',
         noFilterableFields: 'このイベントは、フィルター可能なペイロード フィールドを宣言しません。',
         addFilterClause: '条件の追加',
         filterField: 'フィルターフィールド',

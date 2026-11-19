@@ -5337,6 +5337,7 @@ const zhHant = {
     eventAutomationComposer: {
         payloadFields: '有效負載字段',
         payloadSample: '範例有效負載',
+        technicalDetails: '技術細節',
         noFilterableFields: '此事件不聲明可過濾的有效負載欄位。',
         addFilterClause: '新增條件',
         filterField: '過濾字段',

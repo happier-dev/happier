@@ -5447,6 +5447,7 @@ const it = {
     eventAutomationComposer: {
         payloadFields: 'CAMPI DI CARICO UTILE',
         payloadSample: 'Carico utile del campione',
+        technicalDetails: 'Dettagli tecnici',
         noFilterableFields: 'Questo evento non dichiara campi di payload filtrabili.',
         addFilterClause: 'Aggiungi condizione',
         filterField: 'Campo filtro',

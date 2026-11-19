@@ -5434,6 +5434,7 @@ const pt = {
     eventAutomationComposer: {
         payloadFields: 'CAMPOS DE CARGA',
         payloadSample: 'Exemplo de carga útil',
+        technicalDetails: 'Detalhes técnicos',
         noFilterableFields: 'Este evento não declara campos de carga filtráveis.',
         addFilterClause: 'Adicionar condição',
         filterField: 'Campo de filtro',

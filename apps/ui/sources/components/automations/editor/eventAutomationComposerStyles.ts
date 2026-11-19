@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
-import { EYEBROW_TYPOGRAPHY, Typography } from '@/constants/Typography';
+import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const minimumInteractiveTargetSize = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
@@ -159,19 +159,12 @@ export const eventAutomationComposerStyles = StyleSheet.create((theme) => ({
         ...Typography.mono(),
         color: theme.colors.text.primary,
     },
-    payloadSampleLabel: {
-        ...EYEBROW_TYPOGRAPHY,
-        color: theme.colors.text.secondary,
-    },
-    payloadSample: {
-        ...Typography.mono(),
-        color: theme.colors.text.primary,
-    },
     payloadFieldList: {
         gap: theme.space.s4,
     },
+    // A field's label in people's words; its pointer lives under Technical details.
     payloadField: {
-        ...Typography.mono(),
+        ...Typography.variant('body'),
         color: theme.colors.text.primary,
     },
     filterBuilder: {

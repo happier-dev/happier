@@ -2,12 +2,21 @@ import type {
     PluginJsonSchemaV2,
     PluginJsonValueV2,
 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { humanizeIdentifier } from '@/components/settings/home/governance/homeFeatureLabels';
+
+/** One segment's words: the schema's declared title, else the key in words ("issueFingerprint" → "Issue fingerprint"). */
+function segmentLabel(name: string, schema: PluginJsonSchemaV2): string {
+    const title = typeof schema.title === 'string' ? schema.title.trim() : '';
+    return title || humanizeIdentifier(name);
+}
 
 export type PluginEventAutomationPayloadScalarKind = 'string' | 'number' | 'boolean' | 'null';
 
 export type PluginEventAutomationPayloadField = Readonly<{
     /** RFC 6901 pointer for one declared scalar payload leaf. */
     pointer: string;
+    /** What a person reads: each segment's declared title, else its key in words, joined from the root. */
+    label: string;
     scalarKind: PluginEventAutomationPayloadScalarKind;
     /** A conservative display/default value, never a schema-validation result. */
     sampleValue: null | boolean | number | string;
@@ -90,6 +99,7 @@ type BrowseObjectResult = Readonly<{
 function browseDeclaredObject(
     schema: PluginJsonSchemaV2,
     pointerPrefix: string,
+    labelPrefix: readonly string[] = [],
 ): BrowseObjectResult | null {
     if (
         schema.type !== 'object'
@@ -105,17 +115,19 @@ function browseDeclaredObject(
     const value: Record<string, PluginJsonValueV2> = {};
     for (const [name, propertySchema] of Object.entries(schema.properties ?? {})) {
         const pointer = `${pointerPrefix}/${escapePointerSegment(name)}`;
+        const labels = [...labelPrefix, segmentLabel(name, propertySchema)];
         const scalar = readScalarSample(propertySchema);
         if (scalar) {
             fields.push(Object.freeze({
                 pointer,
+                label: labels.join(' · '),
                 scalarKind: scalar.scalarKind,
                 sampleValue: scalar.value,
             }));
             value[name] = scalar.value;
             continue;
         }
-        const nested = browseDeclaredObject(propertySchema, pointer);
+        const nested = browseDeclaredObject(propertySchema, pointer, labels);
         if (!nested) continue;
         fields.push(...nested.fields);
         value[name] = nested.value;

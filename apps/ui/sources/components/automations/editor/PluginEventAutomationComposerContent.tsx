@@ -16,7 +16,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
-import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { useMachineDisplayNamesById, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { Text } from '@/components/ui/text/Text';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -43,7 +43,8 @@ function watcherKey(origin: PluginMachineExecutionOriginV1): string {
         : JSON.stringify(origin);
 }
 
-function watcherDisplayLabel(origin: PluginMachineExecutionOriginV1): string {
+/** The watcher's raw identity: support's words, shown only under Technical details. */
+function watcherTechnicalId(origin: PluginMachineExecutionOriginV1): string {
     const ref = getPluginMachineExecutionOriginRef(origin);
     return `${ref.machineId} / ${'materializationRef' in origin ? origin.materializationRef.materializationId : ref.pluginId}`;
 }
@@ -134,6 +135,15 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const selectedEvent = props.model.selectedEvent;
     const catalogMachineLabel = useServerScopedMachineLabel(props.model.catalogServerId, props.model.catalogMachineId);
     const selectedWatcher = props.model.selectedWatcherOrigin;
+    // A watcher is a Machine to the person: named as the Machine list names it (name · short suffix).
+    const watcherMachineIds = React.useMemo(() => [
+        ...props.model.watcherCandidates.map((candidate) => getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId),
+        ...(selectedWatcher ? [getPluginMachineExecutionOriginRef(selectedWatcher).machineId] : []),
+    ], [props.model.watcherCandidates, selectedWatcher]);
+    const watcherMachineNames = useMachineDisplayNamesById(watcherMachineIds,
+        props.model.catalogServerId ? { serverId: props.model.catalogServerId } : {});
+    const watcherDisplayLabel = React.useCallback((origin: PluginMachineExecutionOriginV1): string =>
+        watcherMachineNames[getPluginMachineExecutionOriginRef(origin).machineId] ?? t('machine.unnamedMachine'), [watcherMachineNames]);
     const observationPlacementTitle = props.model.observationTransport === 'durablePush'
         ? t('automations.detail.event.observationPlacementTitle')
         : t('automations.detail.event.watcherTitle');
@@ -172,7 +182,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 // The descriptor name leads; the raw Event id stays findable by search.
                 searchText: event.event.id,
                 exactSearchText: event.event.id,
-                accessibilityLabel: `${presentation.title}, ${plugin.displayName}`,
+                accessibilityLabel: [presentation.title, plugin.displayName].filter(Boolean).join(', '),
                 icon: (
                     <EventPluginBrand
                         presentation={plugin}
@@ -222,7 +232,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 disabled: failure !== null,
             };
         }),
-        [props.model.watcherCandidates, watcherFailureByOrigin],
+        [props.model.watcherCandidates, watcherFailureByOrigin, watcherDisplayLabel],
     );
     // An unavailable row cannot carry its own control (a disabled row disables its secondary
     // actions), so the settings pages that fix them follow the list, once per page. A transient
@@ -657,16 +667,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
 
                                     <Text style={styles.fieldLabel}>{t('settingsPlugins.eventAutomationComposer.payloadFields')}</Text>
                                     <View testID="automation-event-payload-browser" style={styles.payloadBrowser}>
-                                        {props.model.payloadBrowser.samplePayload === null ? null : (
-                                            <>
-                                                <Text style={styles.payloadSampleLabel}>
-                                                    {t('settingsPlugins.eventAutomationComposer.payloadSample')}
-                                                </Text>
-                                                <Text testID="automation-event-payload-sample" style={styles.payloadSample}>
-                                                    {formatPayloadSample(props.model.payloadBrowser.samplePayload)}
-                                                </Text>
-                                            </>
-                                        )}
                                         {props.model.payloadBrowser.fields.length === 0 ? (
                                             <Text style={styles.unavailableText}>
                                                 {t('settingsPlugins.eventAutomationComposer.noFilterableFields')}
@@ -679,12 +679,26 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         testID={`automation-event-payload-field-${index}`}
                                                         style={styles.payloadField}
                                                     >
-                                                        {field.pointer}
+                                                        {field.label}
                                                     </Text>
                                                 ))}
                                             </View>
                                         )}
                                     </View>
+                                    {/* Raw identities, pointers and the sample JSON are support's words: on request only. */}
+                                    <TechnicalDetailsDisclosure
+                                        testID="automation-event-technical-details"
+                                        title={t('settingsPlugins.eventAutomationComposer.technicalDetails')}
+                                        lines={[
+                                            ...(selectedWatcher === null ? [] : [{ key: 'watcher', label: observationPlacementTitle,
+                                                value: watcherTechnicalId(selectedWatcher) }]),
+                                            ...props.model.payloadBrowser.fields.map((field) => ({ key: `field:${field.pointer}`,
+                                                label: field.label, value: field.pointer })),
+                                            ...(props.model.payloadBrowser.samplePayload === null ? [] : [{ key: 'sample',
+                                                label: t('settingsPlugins.eventAutomationComposer.payloadSample'),
+                                                value: formatPayloadSample(props.model.payloadBrowser.samplePayload) }]),
+                                        ]}
+                                    />
 
                                     <AutomationEventFilterFields model={props.model} disclosure={{
                                         filterFieldPickerOpenFor, filterOperatorPickerOpenFor,

@@ -89,7 +89,8 @@ type WebhookEndpointRefreshRequest = Readonly<{
  */
 export type PluginEventAutomationPluginPresentation = Readonly<{
     eventKey: string;
-    displayName: string;
+    /** The plugin's display name; null when this client has none to show (never the raw plugin id). */
+    displayName: string | null;
     availability: 'loading' | 'available' | 'unavailable';
     installedPackage: PluginProjectionInstalledPackageV2 | null;
     expectedOccurrenceId: string | null;
@@ -409,7 +410,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         if (!facts) {
             return Object.freeze({
                 eventKey: eventPresentationKey(event),
-                displayName: event.event.identity.pluginId,
+                displayName: null,
                 availability: 'unavailable' as const,
                 installedPackage: null,
                 expectedOccurrenceId: null,

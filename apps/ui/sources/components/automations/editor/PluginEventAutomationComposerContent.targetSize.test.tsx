@@ -165,7 +165,7 @@ describe('PluginEventAutomationComposerContent interactive targets', () => {
             },
             selectWatcher: vi.fn(),
             payloadBrowser: {
-                fields: [{ pointer: '/action', scalarKind: 'string', sampleValue: 'opened' }],
+                fields: [{ pointer: '/action', label: 'Action', scalarKind: 'string', sampleValue: 'opened' }],
                 samplePayload: { action: 'opened' },
             },
             filterClauses: [{ id: 'filter-0', field: '/action', op: 'eq', valueText: '"opened"' }],

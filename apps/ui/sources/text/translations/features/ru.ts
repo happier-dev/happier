@@ -5464,6 +5464,7 @@ const ru = {
     eventAutomationComposer: {
         payloadFields: 'ПОЛЯ ПОЛЕЗНОЙ НАГРУЗКИ',
         payloadSample: 'Пример полезной нагрузки',
+        technicalDetails: 'Технические сведения',
         noFilterableFields: 'Это событие не объявляет фильтруемые поля полезной нагрузки.',
         addFilterClause: 'Добавить условие',
         filterField: 'Поле фильтра',

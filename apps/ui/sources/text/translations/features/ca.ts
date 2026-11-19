@@ -5440,6 +5440,7 @@ const ca = {
     eventAutomationComposer: {
         payloadFields: 'CAMPS DE CÀRREGA ÚTIL',
         payloadSample: 'Càrrega útil de mostra',
+        technicalDetails: 'Detalls tècnics',
         noFilterableFields: 'Aquest esdeveniment no declara camps de càrrega útil filtrables.',
         addFilterClause: 'Afegeix condició',
         filterField: 'Camp de filtre',

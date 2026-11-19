@@ -22,12 +22,13 @@ export function readEligibleEventPresentation(
     };
 }
 
-/** The name a catalog Event's plugin goes by: its installed package's name, else its projection title, else its id. */
+/** The name a catalog Event's plugin goes by: its installed package's name, else its projection title, else none. */
 export function readEligibleEventPluginName(
     inputs: Pick<DaemonMergedProjectionInputs, 'pluginProjectionById' | 'pluginProjectionV2'> | null | undefined,
     pluginId: string,
-): string {
+): string | null {
     const candidate = inputs?.pluginProjectionV2?.installedPackagesById[pluginId] ?? null;
     const installed = candidate?.id === pluginId ? candidate : null;
-    return installed?.displayName ?? inputs?.pluginProjectionById[pluginId]?.title ?? pluginId;
+    // A plugin is named by its display name; without one it goes unnamed, never by its raw id (#184 F3).
+    return installed?.displayName ?? inputs?.pluginProjectionById[pluginId]?.title ?? null;
 }

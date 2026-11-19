@@ -5463,6 +5463,7 @@ const pl = {
     eventAutomationComposer: {
         payloadFields: 'POLA ŁADUNKU',
         payloadSample: 'Przykładowy ładunek',
+        technicalDetails: 'Szczegóły techniczne',
         noFilterableFields: 'To zdarzenie nie deklaruje możliwych do filtrowania pól ładunku.',
         addFilterClause: 'Dodaj warunek',
         filterField: 'Pole filtra',

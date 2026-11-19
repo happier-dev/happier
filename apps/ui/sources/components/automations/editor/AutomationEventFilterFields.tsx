@@ -154,7 +154,7 @@ export function AutomationEventFilterFields(props: Readonly<{
                                                         }}
                                                         style={({ pressed }) => [styles.filterPicker, pressed ? styles.pressed : null]}
                                                     >
-                                                        <Text numberOfLines={1} style={styles.filterPickerText}>{clause.field}</Text>
+                                                        <Text numberOfLines={1} style={styles.filterPickerText}>{props.model.payloadBrowser.fields.find((field) => field.pointer === clause.field)?.label ?? clause.field}</Text>
                                                         <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
                                                     </HappierPressable>
                                                     <HappierPressable
@@ -212,7 +212,7 @@ export function AutomationEventFilterFields(props: Readonly<{
                                                                     pressed ? styles.pressed : null,
                                                                 ]}
                                                             >
-                                                                <Text style={styles.filterOptionText}>{field.pointer}</Text>
+                                                                <Text style={styles.filterOptionText}>{field.label}</Text>
                                                             </HappierPressable>
                                                         ))}
                                                     </View>

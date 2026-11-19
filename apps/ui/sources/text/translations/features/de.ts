@@ -5453,6 +5453,7 @@ const eventAutomationComposerTranslations = { de: {
     eventAutomationComposer: {
         payloadFields: 'PAYLOAD-FELDER',
         payloadSample: 'Beispiel-Payload',
+        technicalDetails: 'Technische Details',
         noFilterableFields: 'Dieses Ereignis gibt keine filterbaren Payload-Felder an.',
         addFilterClause: 'Bedingung hinzufügen',
         filterField: 'Filterfeld',

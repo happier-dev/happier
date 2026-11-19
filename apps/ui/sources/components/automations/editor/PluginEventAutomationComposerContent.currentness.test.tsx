@@ -143,7 +143,7 @@ function createModel(options: Readonly<{
         },
         selectWatcher: vi.fn(),
         payloadBrowser: {
-            fields: [{ pointer: '/action', scalarKind: 'string', sampleValue: 'opened' }],
+            fields: [{ pointer: '/action', label: 'Action', scalarKind: 'string', sampleValue: 'opened' }],
             samplePayload: { action: 'opened' },
         },
         filterClauses: [],
@@ -404,5 +404,16 @@ describe('PluginEventAutomationComposerContent webhook endpoint readiness', () =
         });
         expect(disclosed.getTextContent())
             .toContain('automations.form.trigger.webhookEndpointSecret');
+    });
+    it('speaks to people: the watcher by its Machine name and payload fields by label; raw ids and JSON only under Technical details (#184 F3)', async () => {
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={createModel({ eventAvailable: true })} />);
+        const text = screen.getTextContent();
+        // Raw identifiers and the sample JSON never read as the editor's words.
+        for (const raw of ['watcher-machine', 'github-materialization', 'acme.github', '/action', '"action"']) {
+            expect(text).not.toContain(raw);
+        }
+        expect(text).toContain('Action');
+        // They remain reachable on request, behind the one Technical details fold.
+        expect(screen.findByTestId('automation-event-technical-details')).not.toBeNull();
     });
 });

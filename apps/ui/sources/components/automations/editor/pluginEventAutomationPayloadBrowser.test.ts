@@ -7,8 +7,8 @@ describe('Plugin Event Automation payload browser', () => {
     it('offers the canonical nullable Session habit facts to the shared filter controls', () => {
         const browser = buildPluginEventAutomationPayloadBrowser(AUTOMATION_SESSION_LIFECYCLE_FILTER_PAYLOAD_SCHEMA_V1);
         expect(browser.fields).toEqual([
-            { pointer: '/launchProfileId', scalarKind: 'string', sampleValue: '' },
-            { pointer: '/changedFiles', scalarKind: 'boolean', sampleValue: true },
+            { pointer: '/launchProfileId', label: 'Launch profile id', scalarKind: 'string', sampleValue: '' },
+            { pointer: '/changedFiles', label: 'Changed files', scalarKind: 'boolean', sampleValue: true },
         ]);
     });
     it('exposes only declared scalar leaves of a strict payload object and renders a bounded sample', () => {
@@ -30,10 +30,10 @@ describe('Plugin Event Automation payload browser', () => {
         });
 
         expect(browser.fields).toEqual([
-            { pointer: '/action', scalarKind: 'string', sampleValue: 'opened' },
-            { pointer: '/repository/id', scalarKind: 'number', sampleValue: 1 },
-            { pointer: '/repository/display~1name', scalarKind: 'string', sampleValue: 'happier' },
-            { pointer: '/draft', scalarKind: 'boolean', sampleValue: true },
+            { pointer: '/action', label: 'Action', scalarKind: 'string', sampleValue: 'opened' },
+            { pointer: '/repository/id', label: 'Repository · Id', scalarKind: 'number', sampleValue: 1 },
+            { pointer: '/repository/display~1name', label: 'Repository · Display/name', scalarKind: 'string', sampleValue: 'happier' },
+            { pointer: '/draft', label: 'Draft', scalarKind: 'boolean', sampleValue: true },
         ]);
         expect(browser.samplePayload).toEqual({
             action: 'opened',
@@ -96,11 +96,11 @@ describe('Plugin Event Automation payload browser', () => {
         });
 
         expect(browser.fields).toEqual([
-            { pointer: '/kind', scalarKind: 'string', sampleValue: 'push' },
-            { pointer: '/eventId', scalarKind: 'string', sampleValue: 'event-1' },
-            { pointer: '/repository/id', scalarKind: 'number', sampleValue: 1 },
-            { pointer: '/ref', scalarKind: 'string', sampleValue: 'refs/heads/main' },
-            { pointer: '/issue/number', scalarKind: 'number', sampleValue: 1 },
+            { pointer: '/kind', label: 'Kind', scalarKind: 'string', sampleValue: 'push' },
+            { pointer: '/eventId', label: 'Event id', scalarKind: 'string', sampleValue: 'event-1' },
+            { pointer: '/repository/id', label: 'Repository · Id', scalarKind: 'number', sampleValue: 1 },
+            { pointer: '/ref', label: 'Ref', scalarKind: 'string', sampleValue: 'refs/heads/main' },
+            { pointer: '/issue/number', label: 'Issue · Number', scalarKind: 'number', sampleValue: 1 },
         ]);
         expect(browser.samplePayload).toEqual({
             kind: 'push',
@@ -115,5 +115,21 @@ describe('Plugin Event Automation payload browser', () => {
             type: 'object',
             properties: { action: { type: 'string' } },
         })).toEqual({ fields: [], samplePayload: null });
+    });
+    it('names each field for people: its declared title, else its key path in words (#184 F3)', () => {
+        const browser = buildPluginEventAutomationPayloadBrowser({
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+                issueFingerprint: { type: 'string' },
+                providerUpdatedAt: { type: 'integer', title: 'Last changed in Sentry' },
+                evidence: { type: 'object', additionalProperties: false, properties: { v: { const: 1 } } },
+            },
+        });
+        expect(browser.fields.map((field) => [field.pointer, field.label])).toEqual([
+            ['/issueFingerprint', 'Issue fingerprint'],
+            ['/providerUpdatedAt', 'Last changed in Sentry'],
+            ['/evidence/v', 'Evidence · V'],
+        ]);
     });
 });

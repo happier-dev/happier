@@ -5336,6 +5336,7 @@ const zhHans = {
     eventAutomationComposer: {
         payloadFields: '有效负载字段',
         payloadSample: '示例有效负载',
+        technicalDetails: '技术细节',
         noFilterableFields: '此事件不声明可过滤的有效负载字段。',
         addFilterClause: '添加条件',
         filterField: '过滤字段',

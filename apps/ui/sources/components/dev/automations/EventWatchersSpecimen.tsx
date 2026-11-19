@@ -84,7 +84,7 @@ export const EVENT_WATCHERS_SPECIMEN_MODEL: PluginEventAutomationComposerModel =
         return failure ? [{ ...failure, origin: getPluginExecutionOriginCandidateOrigin(candidate) }] : [];
     }),
     selectedWatcherOrigin: null, selectWatcher: noop,
-    payloadBrowser: { fields: [{ pointer: '/action', scalarKind: 'string', sampleValue: 'opened' }], samplePayload: { action: 'opened' } },
+    payloadBrowser: { fields: [{ pointer: '/action', label: 'Action', scalarKind: 'string', sampleValue: 'opened' }], samplePayload: { action: 'opened' } },
     filterClauses: [], addFilterClause: noop, removeFilterClause: noop, setFilterClauseField: noop,
     setFilterClauseOperator: noop, setFilterClauseValueText: noop, filterValid: true,
     maximumObservationAgeMsText: '', setMaximumObservationAgeMsText: noop, maximumObservationAgeMsValid: true,
