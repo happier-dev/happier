@@ -137,7 +137,6 @@ export function areStoredSessionsEqual(
         && areSessionValueEqual(previous.metadata, next.metadata)
         && areSessionValueEqual(previous.ownerMetadataView ?? null, next.ownerMetadataView ?? null)
         && areSessionValueEqual(previous.agentState, next.agentState)
-        && areSessionValueEqual(previous.todos ?? null, next.todos ?? null)
         && areSessionValueEqual(previous.latestUsage ?? null, next.latestUsage ?? null)
         && areSessionValueEqual(previous.ownerProfile ?? null, next.ownerProfile ?? null);
 }

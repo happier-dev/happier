@@ -1,3 +1,4 @@
+import { projectSessionTaskProgressV1, type SessionWorkDisplayItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import * as React from 'react';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -62,11 +63,12 @@ describe('Sized agent plan', () => {
     });
 
     it('leads a compact body with the current step and restores source order in a tall body without dropping steps', async () => {
-        const plan = projectSessionAgentPlan([
-            { id: 'done', content: 'Prepared', status: 'completed', priority: 'medium' },
-            { id: 'now', content: 'Verifying', status: 'in_progress', priority: 'medium' },
-            { id: 'next', content: 'Handing off', status: 'pending', priority: 'medium' },
-        ]);
+        const planTasks: readonly SessionWorkDisplayItemV1[] = [
+            { id: 'done', title: 'Prepared', status: 'complete', kind: 'todo' },
+            { id: 'now', title: 'Verifying', status: 'active', kind: 'todo' },
+            { id: 'next', title: 'Handing off', status: 'pending', kind: 'todo' },
+        ];
+        const plan = projectSessionAgentPlan(planTasks, projectSessionTaskProgressV1(planTasks));
         const render = (size: 'small' | 'tall') => <WidgetPresentationProvider value={{ size,
             footprint: { columns: 2, columnSpan: 1, rowSpan: size === 'small' ? 1 : 4,
                 width: 'half', height: size === 'small' ? 'compact' : 'tall' } }}>

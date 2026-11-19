@@ -253,7 +253,6 @@ describe('reducer', () => {
                 localId: initial.localId, seq: initial.seq, createdAt: initial.createdAt,
                 event: { type: 'message', message: 'Context was reset' } })]);
             expect(state.latestUsage).toBeUndefined();
-            expect(state.latestTodos).toBeUndefined();
             expect(state.messages.size).toBe(1001);
             expect(state.messages.get(rows[0]!.id)).toBe(untouched);
             expect(reducer(state, [structuredClone({ ...corrected, isAuthoritativeUpdate: true })]).messages).toEqual([]);
@@ -828,8 +827,8 @@ describe('reducer', () => {
         });
     });
 
-    describe('Claude task-list tracking', () => {
-        it('tracks TodoWrite tool inputs as session todos', () => {
+    describe('Claude checklist transcript', () => {
+        it('preserves TodoWrite steps on the transcript tool call', () => {
             const state = createReducer();
 
             const result = reducer(state, [{
@@ -854,37 +853,15 @@ describe('reducer', () => {
                 }],
             }]);
 
-            expect(result.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
-                ['todo-1', 'Patch parser', 'in_progress'],
-                ['todo-2', 'Run tests', 'pending'],
+            expect(result.messages).toEqual([
+                expect.objectContaining({ kind: 'tool-call', tool: expect.objectContaining({ name: 'TodoWrite',
+                    input: { todos: [
+                        { id: 'todo-1', content: 'Patch parser', status: 'in_progress', priority: 'high' },
+                        { id: 'todo-2', content: 'Run tests', status: 'pending', priority: 'medium' },
+                    ] },
+                }) }),
             ]);
         });
-
-        it('does not derive session todos from Claude TaskCreate tool rows in the UI reducer', () => {
-            const state = createReducer();
-
-            const result = reducer(state, [{
-                id: 'msg-task-create',
-                localId: null,
-                createdAt: 1000,
-                role: 'agent',
-                isSidechain: false,
-                content: [{
-                    type: 'tool-call',
-                    id: 'toolu_task_create_ui_owner',
-                    name: 'TaskCreate',
-                    input: {
-                        subject: 'Patch task projection',
-                    },
-                    description: null,
-                    uuid: 'uuid_task_create_ui_owner',
-                    parentUUID: null,
-                }],
-            }]);
-
-            expect(result.todos).toBeUndefined();
-        });
-
     });
 
     describe('agent text message handling', () => {

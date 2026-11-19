@@ -179,8 +179,11 @@ describe('useSessionSummaryModel', () => {
     it('projects awareness from the live Session row, not the stabilised shell object', async () => {
         const shellSession = session(homeA, { activeAt: Date.now() - SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS - 1 });
         storage.setState({ sessions: { [shellSession.id]: session(homeA, {
-            metadata: { ...shellSession.metadata!, name: 'Live session' },
-            todos: [{ id: 'step', content: 'Check live state', status: 'in_progress', priority: 'medium' }],
+            metadata: { ...shellSession.metadata!, name: 'Live session',
+                sessionWorkStateV1: { v: 1, backendId: 'claude', updatedAt: 1, items: [
+                    { id: 'step', kind: 'todo', origin: 'vendor', title: 'Check live state', status: 'active', updatedAt: 1 },
+                ] },
+            },
         }) } });
         const hook = await renderHook(() => useSessionSummaryModel({ session: shellSession, serverId: homeA }));
         expect(hook.getCurrent()).toMatchObject({ title: 'Live session', stale: false, progress: { step: 1, total: 1 } });

@@ -1,3 +1,4 @@
+import { projectSessionTaskProgressV1, type SessionWorkDisplayItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
@@ -58,12 +59,13 @@ function item(id: string): SessionBoardItemProjection {
     return projected;
 }
 
-export const PLAN = projectSessionAgentPlan([
-    { id: 'p1', content: 'Add backoff with jitter', status: 'completed', priority: 'medium' },
-    { id: 'p2', content: 'Cover the 503 path', status: 'completed', priority: 'medium' },
-    { id: 'p3', content: 'Soak test 30 min on devbox', status: 'in_progress', priority: 'medium' },
-    { id: 'p4', content: 'Write the changelog entry', status: 'pending', priority: 'medium' },
-]);
+const PLANTasks: readonly SessionWorkDisplayItemV1[] = [
+    { id: 'p1', title: 'Add backoff with jitter', status: 'complete', kind: 'todo' },
+    { id: 'p2', title: 'Cover the 503 path', status: 'complete', kind: 'todo' },
+    { id: 'p3', title: 'Soak test 30 min on devbox', status: 'active', kind: 'todo' },
+    { id: 'p4', title: 'Write the changelog entry', status: 'pending', kind: 'todo' },
+];
+export const PLAN = projectSessionAgentPlan(PLANTasks, projectSessionTaskProgressV1(PLANTasks));
 
 const NOOP = (): void => {};
 

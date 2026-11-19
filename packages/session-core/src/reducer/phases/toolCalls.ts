@@ -165,17 +165,6 @@ export function runToolCallsPhase(params: Readonly<{
                                 applyRuntimeTerminalToolSnapshotState(message.tool, message.tool.input, msg.createdAt);
                             }
                             changed.add(existingMessageId);
-
-                            // Track TodoWrite tool inputs when updating existing messages
-                            if (message.tool.name === 'TodoWrite' && message.tool.state === 'running' && message.tool.input?.todos) {
-                                // Only update if this is newer than existing todos
-                                if (!state.latestTodos || message.tool.createdAt > state.latestTodos.timestamp) {
-                                    state.latestTodos = {
-                                        todos: message.tool.input.todos,
-                                        timestamp: message.tool.createdAt
-                                    };
-                                }
-                            }
                         }
                     } else {
                         if (enableLogging) {
@@ -233,17 +222,6 @@ export function runToolCallsPhase(params: Readonly<{
                             messageId: mid,
                             changed,
                         });
-
-                        // Track TodoWrite tool inputs
-                        if (toolCall.name === 'TodoWrite' && toolCall.state === 'running' && toolCall.input?.todos) {
-                            // Only update if this is newer than existing todos
-                            if (!state.latestTodos || toolCall.createdAt > state.latestTodos.timestamp) {
-                                state.latestTodos = {
-                                    todos: toolCall.input.todos,
-                                    timestamp: toolCall.createdAt
-                                };
-                            }
-                        }
                     }
                 }
             }

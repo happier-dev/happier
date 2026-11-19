@@ -26,7 +26,6 @@ import {
     type SessionSummaryUsageFacts,
 } from './sessionSummaryProjection';
 import { useSessionRecap } from './useSessionRecap';
-import { projectSessionAgentPlan } from '../plan/sessionAgentPlan';
 import { listPendingRequestListsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
@@ -111,7 +110,7 @@ export function useSessionSummaryModel(input: Readonly<{
     serverId?: string | null;
 }>): SessionSummaryCardModel {
     const { session } = input;
-    const { address, awarenessSource, awareness, turnStartedAtMs } = useSessionSummaryAwareness(input);
+    const { address, awarenessSource, awareness, turnStartedAtMs, plan } = useSessionSummaryAwareness(input);
     const approvals = useOpenApprovalArtifactsForSession(address);
     const activity = useSessionAgentActivity({
         sessionId: session.id,
@@ -154,9 +153,6 @@ export function useSessionSummaryModel(input: Readonly<{
             : Object.freeze({ permissionRequests, userActionRequests });
     }, [awarenessSource, pendingRequests]);
     const recap = useSessionRecap(address);
-    // Pending asks and the Plan come from the live row: both are exactly the facts
-    // the stabilised shell Session omits from its render signature.
-    const plan = projectSessionAgentPlan(awarenessSource.todos);
     const scm = React.useMemo(() => buildSessionScmSummary(scmSnapshot), [scmSnapshot]);
     const agentLabel = React.useMemo(() => readSessionAgentLabel(session), [session]);
     const agentId = React.useMemo(() => readSessionPresentationAgentId(session), [session]);

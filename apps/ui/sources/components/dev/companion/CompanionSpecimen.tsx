@@ -1,3 +1,4 @@
+import { projectSessionTaskProgressV1, type SessionWorkDisplayItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
@@ -35,13 +36,14 @@ const ASK: SessionPendingRequest = {
     createdAt: Date.now() - 134_000,
 };
 
-const PLAN = projectSessionAgentPlan([
-    { id: 'p1', content: 'Find why the modal remounts', status: 'completed', priority: 'medium' },
-    { id: 'p2', content: 'Key the modal by route', status: 'completed', priority: 'medium' },
-    { id: 'p3', content: 'Add a resize test at 3 widths', status: 'completed', priority: 'medium' },
-    { id: 'p4', content: 'Run the full UI suite', status: 'in_progress', priority: 'medium' },
-    { id: 'p5', content: 'Push and open the PR', status: 'pending', priority: 'medium' },
-]);
+const PLANTasks: readonly SessionWorkDisplayItemV1[] = [
+    { id: 'p1', title: 'Find why the modal remounts', status: 'complete', kind: 'todo' },
+    { id: 'p2', title: 'Key the modal by route', status: 'complete', kind: 'todo' },
+    { id: 'p3', title: 'Add a resize test at 3 widths', status: 'complete', kind: 'todo' },
+    { id: 'p4', title: 'Run the full UI suite', status: 'active', kind: 'todo' },
+    { id: 'p5', title: 'Push and open the PR', status: 'pending', kind: 'todo' },
+];
+const PLAN = projectSessionAgentPlan(PLANTasks, projectSessionTaskProgressV1(PLANTasks));
 
 function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummaryCardModel {
     return {

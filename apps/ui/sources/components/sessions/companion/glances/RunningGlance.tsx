@@ -18,10 +18,7 @@ import { resolveMachineDaemonReadServerId } from '@/sync/domains/machines/useMac
 import { useLocalServiceInventoryRunningCount } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryRunningCount';
 import { t } from '@/text';
 
-import {
-  projectSessionAgentPlan,
-  type SessionAgentPlan,
-} from '../plan/sessionAgentPlan';
+import type { SessionAgentPlan } from '../plan/sessionAgentPlan';
 import { SessionElapsedClock } from '../summary/SessionSummaryStatusLine';
 import { useSessionSummaryAwareness } from '../summary/useSessionSummaryAwareness';
 import {
@@ -66,11 +63,10 @@ export function RunningGlance(props: RunningGlanceProps) {
 
 function RunningLiveGlance(props: RunningGlanceProps) {
   const { theme } = useUnistyles();
-  const { awarenessSource } = useSessionSummaryAwareness({
+  const { plan } = useSessionSummaryAwareness({
     session: props.session,
     serverId: props.serverId,
   });
-  const plan = projectSessionAgentPlan(awarenessSource.todos);
   const activity = useSessionAgentActivity({
     sessionId: props.sessionId,
     ...(props.serverId ? { serverId: props.serverId } : {}),

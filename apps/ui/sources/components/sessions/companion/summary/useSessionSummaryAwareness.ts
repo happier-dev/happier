@@ -2,6 +2,9 @@ import * as React from 'react';
 import { useSessionAwareness } from '@/sync/domains/session/awareness/useSessionAwareness';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readDisplayableSessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { projectSessionAgentPlan } from '../plan/sessionAgentPlan';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 /** Incumbent Summary exact-Home live facts, kept below the memoized Session shell. */
@@ -15,5 +18,11 @@ export function useSessionSummaryAwareness(input: Readonly<{ session: Session; s
     // The shell deliberately omits heartbeat/turn freshness from its render
     // signature. Subscribe below it, never project status from that frozen row.
     const binding = useSessionAwareness(address?.sessionId ?? '', address?.serverId ?? null, session);
-    return { address, awarenessSource: binding.session, awareness: binding.awareness, turnStartedAtMs: binding.turnStartedAtMs };
+    const taskProgress = binding.awareness.taskProgress;
+    const rawWork = taskProgress ? readSessionOwnerMetadataView(binding.session)?.sessionWorkStateV1 : undefined;
+    const taskItems = React.useMemo(() => readDisplayableSessionWorkStateV1(rawWork)?.items, [rawWork]);
+    const plan = projectSessionAgentPlan(taskItems, taskProgress);
+    return { address, awarenessSource: binding.session, awareness: binding.awareness, turnStartedAtMs: binding.turnStartedAtMs,
+        plan };
+
 }

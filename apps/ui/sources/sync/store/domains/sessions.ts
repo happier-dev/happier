@@ -1617,19 +1617,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             latestUsage: updated.sessionLatestUsage,
                         };
                     }
-                    if (
-                        updated.sessionTodos !== undefined
-                        && mergedSessions[session.id]?.todos !== updated.sessionTodos
-                        && !areSessionValuesDeepEqual(mergedSessions[session.id]?.todos ?? null, updated.sessionTodos)
-                    ) {
-                        if (mergedSessions === state.sessions) {
-                            mergedSessions = { ...state.sessions };
-                        }
-                        mergedSessions[session.id] = {
-                            ...mergedSessions[session.id],
-                            todos: updated.sessionTodos,
-                        };
-                    }
                 }
             });
 

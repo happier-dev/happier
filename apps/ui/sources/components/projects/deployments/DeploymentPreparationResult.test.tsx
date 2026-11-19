@@ -73,17 +73,15 @@ it('shows the Session owner plan and updates locally without reading PRs for met
 it("shows the preparing agent's own steps while it works (lab f1agent), from the Session's plan", async () => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected the real Account lifetime');
-    storage.getState().applySessions([{ ...ownerSession('Prepare invoices for deploy'), thinking: true }]);
-    // The agent's plan arrives the way it does live: a TodoWrite call in the transcript, reduced into the Session.
-    storage.getState().applyMessages('s1', [{ id: 'plan-call', localId: null, seq: 1, createdAt: 10, role: 'agent', isSidechain: false,
-        content: [{ type: 'tool-call', id: 'plan', name: 'TodoWrite', description: null, uuid: 'plan-call', parentUUID: null, input: { todos: [
-            { id: 'read', content: 'Read the repository', status: 'completed', priority: 'medium' },
-            { id: 'compose', content: 'Write compose.yaml', status: 'in_progress', priority: 'medium' },
-            { id: 'pr', content: 'Open a pull request', status: 'pending', priority: 'medium' },
-        ] } }] }]);
-    // The next Session snapshot reconciles its loaded transcript and carries the reduced plan onto the Session.
-    storage.getState().applySessions([{ ...ownerSession('Prepare invoices for deploy', 2), thinking: true,
-        agentState: { requests: {}, completedRequests: {}, localControl: null, capabilities: {} }, agentStateVersion: 2 }]);
+    const prepared = ownerSession('Prepare invoices for deploy');
+    const workState = SessionWorkStateV1Schema.parse({ v: 1, backendId: 'claude', updatedAt: 10, items: [
+        { id: 'read', kind: 'todo', origin: 'vendor', title: 'Read the repository', status: 'complete', updatedAt: 10 },
+        { id: 'compose', kind: 'todo', origin: 'vendor', title: 'Write compose.yaml', status: 'active', updatedAt: 10 },
+        { id: 'pr', kind: 'todo', origin: 'vendor', title: 'Open a pull request', status: 'pending', updatedAt: 10 },
+    ] });
+    storage.getState().applySessions([{ ...prepared, thinking: true,
+        metadata: { ...prepared.metadata!, sessionWorkStateV1: workState },
+    }]);
     const screen = await renderScreen(<DeploymentPreparationResult
         session={{ sessionId: 's1', serverId: runtime.serverId }} lifetime={lifetime} />, { wrapper: runtime.Wrapper });
     try {

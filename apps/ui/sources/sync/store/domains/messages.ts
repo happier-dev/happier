@@ -409,7 +409,6 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     sessionMessages: SessionMessages;
     messageChanges: readonly SessionMessageChange[];
     sessionLatestUsage?: Session['latestUsage'];
-    sessionTodos?: Session['todos'];
 } {
     const existing = coerceSessionMessages(params.existing);
     const reducerResult = reducer(existing.reducerState, [], params.agentState, undefined, {
@@ -491,7 +490,6 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             sessionMessages: existing,
             messageChanges,
             sessionLatestUsage: latestUsage,
-            sessionTodos: reducerResult.todos,
         };
     }
 
@@ -522,7 +520,6 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             lastAppliedAgentStateVersion: existing.lastAppliedAgentStateVersion,
         },
         sessionLatestUsage: latestUsage,
-        sessionTodos: reducerResult.todos,
     };
 }
 
@@ -892,20 +889,13 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     && latestCommittedMessageSeq !== null
                     && latestCommittedMessageSeq > currentSessionSeq;
                 // Only produce a new Session identity when a session-visible
-                // value actually changed. The reducer surfaces `todos` and
-                // holds `latestUsage` on every apply, so presence alone must
-                // not churn every `useSession` subscriber at streaming rate.
+                // value actually changed. The reducer retains `latestUsage`
+                // across applies, so check its value before publishing the Session.
                 const reducerLatestUsage = existingSession.reducerState.latestUsage ?? null;
                 const didLatestUsageChange =
                     session != null
                     && reducerLatestUsage !== null
                     && !areSessionValuesDeepEqual(session.latestUsage ?? null, reducerLatestUsage);
-                const didTodosChange =
-                    session != null
-                    && reducerResult.todos !== undefined
-                    && session.todos !== reducerResult.todos
-                    && !areSessionValuesDeepEqual(session.todos ?? null, reducerResult.todos);
-                const needsUpdate = didTodosChange || didLatestUsageChange;
                 const didApplyNewAgentStateVersion =
                     shouldApplyAgentState
                     && agentStateVersion !== null
@@ -929,7 +919,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     (session!.permissionMode ?? 'default') !== inferredPermissionMode;
                 let nextSessionForRenderable = session ?? null;
 
-                if (needsUpdate || shouldWritePermissionMode || shouldAdvanceSessionSeq || (session && didReadyMetadataChange && didSessionReadyMetadataChange)) {
+                if (didLatestUsageChange || shouldWritePermissionMode || shouldAdvanceSessionSeq || (session && didReadyMetadataChange && didSessionReadyMetadataChange)) {
                     const baseSession: Session = {
                         ...session,
                         ...(shouldAdvanceSessionSeq && { seq: latestCommittedMessageSeq }),
@@ -937,7 +927,6 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             latestReadyEventSeq: nextLatestReadyEventSeq,
                             latestReadyEventAt: nextLatestReadyEventAt,
                         }),
-                        ...(didTodosChange && { todos: reducerResult.todos }),
                         // Copy latestUsage from the mutable reducerState only when
                         // its value actually changed, so the Session identity (and
                         // every useSession subscriber) stays stable per tick.

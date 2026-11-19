@@ -82,11 +82,7 @@ export function runMessageToEventConversion({
       msg.content.type === 'message' &&
       msg.content.message === 'Context was reset'
     ) {
-      // Reset todos to empty array and reset usage to zero
-      state.latestTodos = {
-        todos: [],
-        timestamp: msg.createdAt, // Use message timestamp, not current time
-      };
+      // A context reset returns the usage snapshot to zero.
       state.latestUsage = {
         inputTokens: 0,
         outputTokens: 0,

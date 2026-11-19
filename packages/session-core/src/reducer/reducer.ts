@@ -240,15 +240,6 @@ export type ReducerState = {
      * even when providers emit interleaved keepalive chunks or the reducer processes messages in separate invocations.
      */
     sidechainThinkingMergeCursors: Map<string, string>;
-    latestTodos?: {
-        todos: Array<{
-            content: string;
-            status: 'pending' | 'in_progress' | 'completed';
-            priority: 'high' | 'medium' | 'low';
-            id: string;
-        }>;
-        timestamp: number;
-    };
     latestUsage?: {
         inputTokens: number;
         outputTokens: number;
@@ -342,12 +333,6 @@ const ENABLE_LOGGING = false;
 
 export type ReducerResult = {
     messages: Message[];
-    todos?: Array<{
-        content: string;
-        status: 'pending' | 'in_progress' | 'completed';
-        priority: 'high' | 'medium' | 'low';
-        id: string;
-    }>;
     usage?: {
         inputTokens: number;
         outputTokens: number;
@@ -721,7 +706,6 @@ export function reducer(
 
     return {
         messages: newMessages,
-        todos: state.latestTodos?.todos,
         usage: state.latestUsage ? {
             inputTokens: state.latestUsage.inputTokens,
             outputTokens: state.latestUsage.outputTokens,

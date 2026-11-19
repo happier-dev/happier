@@ -1,3 +1,4 @@
+import { projectSessionTaskProgressV1, type SessionWorkDisplayItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
@@ -222,13 +223,14 @@ function pending(id: string, createdAt: number): SessionPendingRequest {
     return { id, kind: 'permission', tool: 'Bash', arguments: { command: 'yarn test:ui' }, createdAt };
 }
 
-const fivePlan = projectSessionAgentPlan([
-    { id: 'a', content: 'Find why', status: 'completed', priority: 'medium' },
-    { id: 'b', content: 'Key it', status: 'completed', priority: 'medium' },
-    { id: 'c', content: 'Test it', status: 'completed', priority: 'medium' },
-    { id: 'd', content: 'Run the suite', status: 'in_progress', priority: 'medium' },
-    { id: 'e', content: 'Open the PR', status: 'pending', priority: 'medium' },
-]);
+const fivePlanTasks: readonly SessionWorkDisplayItemV1[] = [
+    { id: 'a', title: 'Find why', status: 'complete', kind: 'todo' },
+    { id: 'b', title: 'Key it', status: 'complete', kind: 'todo' },
+    { id: 'c', title: 'Test it', status: 'complete', kind: 'todo' },
+    { id: 'd', title: 'Run the suite', status: 'active', kind: 'todo' },
+    { id: 'e', title: 'Open the PR', status: 'pending', kind: 'todo' },
+];
+const fivePlan = projectSessionAgentPlan(fivePlanTasks, projectSessionTaskProgressV1(fivePlanTasks));
 
 describe('the live hero (lab CA)', () => {
     it.each([

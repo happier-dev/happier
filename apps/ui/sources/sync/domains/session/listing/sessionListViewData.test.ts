@@ -38,7 +38,6 @@ function makeSession(partial: Partial<Session> & Pick<Session, 'id'>): Session {
         ownerProfile: partial.ownerProfile,
         accessLevel: partial.accessLevel,
         canApprovePermissions: partial.canApprovePermissions,
-        todos: partial.todos,
         draft: partial.draft,
         permissionMode: partial.permissionMode ?? null,
         permissionModeUpdatedAt: partial.permissionModeUpdatedAt ?? null,

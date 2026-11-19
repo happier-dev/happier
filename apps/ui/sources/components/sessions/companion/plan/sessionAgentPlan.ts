@@ -1,11 +1,4 @@
-import type { Session } from '@/sync/domains/state/storageTypes';
-
-/**
- * The agent's Plan: a read-only projection of the latest to-do list the
- * transcript reducer already keeps on the Session (`session.todos`, from the
- * agent's own TodoWrite calls). It owns no state and adds no source of truth —
- * the Companion's Plan card and the Summary's "step N of M" line both read it.
- */
+import { isSessionTaskItemV1, type SessionTaskProgressV1, type SessionWorkDisplayItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 
 export type SessionAgentPlanStepStatus = 'done' | 'current' | 'todo';
 
@@ -25,40 +18,40 @@ export type SessionAgentPlan = Readonly<{
     nextStep: number | null;
 }>;
 
-type SessionTodos = NonNullable<Session['todos']>;
+const projected = new WeakMap<readonly SessionWorkDisplayItemV1[], SessionAgentPlan>();
 
-// The reducer replaces the list only when it changes, so the list's identity is
-// the projection's cache key: an unchanged list keeps the same plan object.
-const projected = new WeakMap<SessionTodos, SessionAgentPlan>();
-
-function stepStatus(status: SessionTodos[number]['status']): SessionAgentPlanStepStatus {
-    if (status === 'completed') return 'done';
-    if (status === 'in_progress') return 'current';
+function stepStatus(status: SessionWorkDisplayItemV1['status']): SessionAgentPlanStepStatus {
+    if (status === 'complete') return 'done';
+    if (status === 'active') return 'current';
     return 'todo';
 }
 
-export function projectSessionAgentPlan(todos: Session['todos'] | null | undefined): SessionAgentPlan | null {
-    if (!todos || todos.length === 0) return null;
-    const cached = projected.get(todos);
+export function projectSessionAgentPlan(
+    items?: readonly SessionWorkDisplayItemV1[] | null,
+    progress?: SessionTaskProgressV1,
+): SessionAgentPlan | null {
+    if (!items || !progress) return null;
+    const cached = projected.get(items);
     if (cached) return cached;
 
-    let doneCount = 0;
     let currentStep: number | null = null;
     let nextStep: number | null = null;
-    const steps = todos.map((todo, index): SessionAgentPlanStep => {
-        const status = stepStatus(todo.status);
-        if (status === 'done') doneCount += 1;
-        if (status === 'current' && currentStep === null) currentStep = index + 1;
-        if (status !== 'done' && nextStep === null) nextStep = index + 1;
-        return Object.freeze({ id: todo.id || `step-${index}`, text: todo.content, status });
-    });
-    const plan: SessionAgentPlan = Object.freeze({
+    const steps: SessionAgentPlanStep[] = [];
+    for (const item of items) {
+        if (!isSessionTaskItemV1(item)) continue;
+        const status = stepStatus(item.status);
+        const position = steps.length + 1;
+        if (status === 'current' && currentStep === null) currentStep = position;
+        if (status !== 'done' && nextStep === null) nextStep = position;
+        steps.push(Object.freeze({ id: item.id, text: item.title, status }));
+    }
+    const plan = Object.freeze({
         steps: Object.freeze(steps),
-        doneCount,
-        total: steps.length,
+        doneCount: progress.done,
+        total: progress.total,
         currentStep,
         nextStep,
     });
-    projected.set(todos, plan);
+    projected.set(items, plan);
     return plan;
 }

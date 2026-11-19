@@ -166,12 +166,6 @@ export interface Session {
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
     resumingAt?: number | null; // Local-only: set at resume initiation; cleared by post-attach activity, definitive failure, or a bounded post-acceptance fallback.
     lastTurnCompletedAt?: number | null; // Local-only explicit terminal lifecycle timestamp used for completion surfaces
-    todos?: Array<{
-        content: string;
-        status: 'pending' | 'in_progress' | 'completed';
-        priority: 'high' | 'medium' | 'low';
-        id: string;
-    }>;
     draft?: string | null; // Local draft message, not synced to server
     permissionMode?: PermissionMode | null; // Local permission mode, not synced to server
     permissionModeUpdatedAt?: number | null; // Local timestamp to coordinate inferred (from last message) vs user-selected mode, not synced to server

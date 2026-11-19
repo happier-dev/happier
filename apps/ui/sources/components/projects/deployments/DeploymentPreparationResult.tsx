@@ -9,7 +9,6 @@ import { formatSessionWorkStateBadgeLabel } from '@/components/sessions/workStat
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { getScmUserFacingError } from '@/scm/scmUserFacingErrors';
 import { Item } from '@/components/ui/lists/Item';
-import { useShallow } from 'zustand/react/shallow';
 import { SessionAgentPlanCard } from '@/components/sessions/companion/plan/SessionAgentPlanCard';
 import { projectSessionAgentPlan } from '@/components/sessions/companion/plan/sessionAgentPlan';
 import { useSessionSelector } from '@/sync/domains/state/storage';
@@ -26,10 +25,8 @@ export function DeploymentPreparationResult(props: Readonly<{ session: SessionAd
     const work = projectSessionWorkDisplayV1(read.workState);
     const workLabel = formatSessionWorkStateBadgeLabel(work?.primaryItem ?? null, t);
     const publication = read.publication;
-    // Lab f1agent: the preparing agent's own steps, from the Session's plan (the Companion's Plan owners).
-    const planSource = useSessionSelector(props.session.sessionId, props.session.serverId, useShallow(value => ({
-        todos: value?.todos ?? null, thinking: value?.thinking === true })));
-    const plan = projectSessionAgentPlan(planSource.todos);
+    const thinking = useSessionSelector(props.session.sessionId, props.session.serverId, value => value?.thinking === true);
+    const plan = projectSessionAgentPlan(read.workState?.items, work?.taskProgress);
     const cause = read.phase === 'publicationFailed' && publication?.failure
         ? publication.outcome && 'errorCode' in publication.outcome
             ? getScmUserFacingError({ errorCode: publication.outcome.errorCode, fallback: t('errors.operationFailed') })
@@ -41,7 +38,7 @@ export function DeploymentPreparationResult(props: Readonly<{ session: SessionAd
                 onPress={() => router.push(buildScopedSessionRouteHref(props.session))} />
         </ItemGroup>
         {plan ? <SessionAgentPlanCard plan={plan} agentLabel={null} presentation="body"
-            activity={planSource.thinking ? 'working' : 'idle'} testID="project-deployments.prepare.result.plan" /> : null}
+            activity={thinking ? 'working' : 'idle'} testID="project-deployments.prepare.result.plan" /> : null}
         {cause ? <SurfaceStateCard testID="project-deployments.prepare.result.publication-failed" size="line" kind="error"
             title={t('toolView.actionOutcome.failed')} reason={cause} /> : null}
         <SessionScmPullRequestSurface session={props.session} fallback={null} />

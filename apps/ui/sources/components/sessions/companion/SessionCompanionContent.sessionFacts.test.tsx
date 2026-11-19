@@ -33,22 +33,25 @@ function RailFacts() {
 
 describe('Companion rail real Session facts', () => {
     it('renders live status, the oldest permission, context metrics and the current Plan without a Board read', async () => {
-        const { todos, latestUsage, ...session } = createSessionFixture({ id: 's1', serverId: runtime.serverId, active: true, activeAt: Date.now(),
+        const { latestUsage, ...session } = createSessionFixture({ id: 's1', serverId: runtime.serverId, active: true, activeAt: Date.now(),
             thinking: true, thinkingAt: Date.now(), presence: 'online',
             agentState: { controlledByUser: false, requests: { ask: { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 1 } } },
-            todos: [{ id: 'first', content: 'Read the owner', status: 'completed', priority: 'high' },
-                { id: 'second', content: 'Verify the change', status: 'in_progress', priority: 'high' }],
+            metadata: { path: '/tmp/project', host: 'test-host',
+                sessionWorkStateV1: { v: 1, backendId: 'claude', updatedAt: 1, items: [
+                    { id: 'first', kind: 'todo', origin: 'vendor', title: 'Read the owner', status: 'complete', updatedAt: 1 },
+                    { id: 'second', kind: 'todo', origin: 'vendor', title: 'Verify the change', status: 'active', updatedAt: 1 },
+                ] },
+            },
             latestUsage: { inputTokens: 1, outputTokens: 1, cacheCreation: 0, cacheRead: 0, contextSize: 42000,
                 timestamp: Date.now(), contextSnapshotStale: false, contextSnapshot: { v: 1, modelId: null,
                     usedTokens: 42000, windowTokens: 100000, totalProcessedTokens: null, baselineTokens: null,
                     isAutoCompactEnabled: null, categories: null, observedAtMs: Date.now(), source: 'provider_turn' } },
         });
         storage.getState().applySessions([session]);
-        // Plan and usage are transcript projections; feed their real reducer producer.
+        // Usage continues to arrive on the transcript; the plan comes from Session metadata.
         storage.getState().applyMessages('s1', [{
             id: 'companion-facts', localId: null, seq: 1, createdAt: Date.now(), role: 'agent', isSidechain: false,
-            content: [{ type: 'tool-call', id: 'companion-plan', name: 'TodoWrite', input: { todos },
-                description: null, uuid: 'companion-plan', parentUUID: null }],
+            content: [{ type: 'text', text: 'Checking the work', uuid: 'companion-facts', parentUUID: null }],
             usage: { input_tokens: latestUsage!.inputTokens, output_tokens: latestUsage!.outputTokens,
                 contextSnapshot: latestUsage!.contextSnapshot ?? undefined },
         }]);
