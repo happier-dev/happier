@@ -95,6 +95,8 @@ DeepSec 2.3.12 receives selected files as a line-separated list and trims each
 entry. Happier refuses filenames containing line breaks or leading or trailing
 whitespace before launching it, so the review cannot silently select a different
 file. Embedded spaces and Unicode filenames remain supported.
+On Linux and macOS, filenames containing a literal backslash are also refused:
+the native tool treats that character as a directory separator.
 
 ## What Happier can drive
 
