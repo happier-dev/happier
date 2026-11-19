@@ -2149,6 +2149,15 @@ describe('createActionExecutor (session control)', () => {
     if (result.ok) expect(getActionSpec('session.archive').outputSchema.parse(result.result)).toEqual(result.result);
   });
 
+  it('returns the pending physical Stop from the Archive owner', async () => {
+    const stopOutcome = { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' };
+    const executor = createExecutor({
+      sessionArchiveSet: async () => ({ ok: true, archivedAt: 1234, stopOutcome }),
+    });
+    const result = await executor.execute('session.archive', { sessionId: 's1' }, { surface: 'cli' });
+    expect(result).toEqual({ ok: true, result: { success: true, sessionId: 's1', archivedAt: 1234, stopOutcome } });
+  });
+
   it('does not discover reports by default or cascade after the parent is refused', async () => {
     let reads = 0;
     const effects: string[] = [];

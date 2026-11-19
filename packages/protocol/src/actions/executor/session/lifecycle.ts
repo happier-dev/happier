@@ -229,7 +229,8 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
           }
           const archivedSessionId = readNonEmptyString(native.sessionId) ?? sessionId;
           const result = { success: true as const, sessionId: archivedSessionId,
-            ...(typeof native.archivedAt === 'number' ? { archivedAt: native.archivedAt } : {}) };
+            ...(typeof native.archivedAt === 'number' ? { archivedAt: native.archivedAt } : {}),
+            ...(native.stopOutcome === undefined ? {} : { stopOutcome: native.stopOutcome }) };
           if (SessionArchiveActionInputV1Schema.parse(data).alsoArchiveReports !== true) {
             return completeActionResult(SessionArchiveActionResultV1Schema.parse(result));
           }
@@ -291,9 +292,11 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
                 archived = { ok: false, ...normalizeActionExecutorThrownError(error) };
               }
               const approval = archived.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(archived.result) : null;
+              const childArchive = archived.ok ? SessionArchiveActionResultV1Schema.safeParse(archived.result) : null;
               reports.push(!archived.ok ? { ...identity, status: 'failed', errorCode: archived.errorCode, error: archived.error }
                 : approval?.success ? { ...identity, status: 'approval_pending', artifactId: approval.data.artifactId }
-                : { ...identity, status: 'archived' });
+                : { ...identity, status: 'archived',
+                  ...(childArchive?.success && childArchive.data.stopOutcome ? { stopOutcome: childArchive.data.stopOutcome } : {}) });
             }
             if (reportsError) break;
             if (!page.hasNext) break;

@@ -151,6 +151,10 @@ An active session that cannot be attached fails with a clear error; Happier does
 The development resume flow keeps the same session and private working folder after a daemon
 restart. Unarchive an archived session before resuming; archiving retains its files.
 
+In the 0.3 development build, a session can keep running while its daemon is offline.
+If Archive reports that Stop is pending, the archive is saved and the daemon ends the
+session when it reconnects to its host.
+
 If that folder is missing, or the daemon cannot prove that it belongs to this session,
 resume will stop rather than silently create an empty folder. The app will offer
 **Continue in a fresh folder** and explain that the previous files are unavailable.

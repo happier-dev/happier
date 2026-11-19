@@ -48,6 +48,45 @@ afterEach(async () => {
     await db.account.deleteMany();
 });
 
+it.each([
+    { machineOnline: false, sessionActive: true },
+    { machineOnline: false, sessionActive: false },
+    { machineOnline: true, sessionActive: true },
+])('reports physical Stop pending for an offline Machine with Session active=$sessionActive, Machine online=$machineOnline', async ({
+    machineOnline, sessionActive,
+}) => {
+    const { account, machine } = await createFixture();
+    await db.machine.update({ where: { id: machine.id }, data: { active: machineOnline } });
+    const session = await db.session.create({ data: { accountId: account.id,
+        tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}', active: sessionActive } });
+    await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+        homeId: 'archive-test-home', accountId: account.id, sessionId: session.id,
+        machineId: machine.id, installationId: machine.installationId,
+    } } });
+    const { app } = await createApp(async () => machine.id);
+    try {
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const response = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/archive`,
+            payload: {}, headers: { authorization: `Bearer ${token}` } });
+        if (machineOnline) {
+            expect(response.statusCode, response.body).toBe(409);
+            expect(response.json()).toEqual({ error: 'session-active' });
+            return;
+        }
+        expect(response.statusCode, response.body).toBe(200);
+        const persisted = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(persisted.active).toBe(sessionActive);
+        expect(persisted.archivedAt).toBeInstanceOf(Date);
+        expect(response.json()).toEqual({
+            success: true,
+            archivedAt: persisted.archivedAt?.getTime(),
+            stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' },
+        });
+    } finally {
+        await app.close();
+    }
+});
+
 it('publishes only real archive edges and preserves receipts and Account cursors on repeated requests', async () => {
     const fixture = await createFixture();
     const session = await db.session.create({ data: { accountId: fixture.account.id,

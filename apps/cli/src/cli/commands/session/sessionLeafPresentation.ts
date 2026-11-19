@@ -123,12 +123,18 @@ function archivePresentation(kind: string, verb: string): ActionCliPresentation 
     presentSuccess: async (payload, context) => {
       const result = readRecord(payload);
       const sessionId = readSessionId(payload, context.input);
+      const stopOutcome = readRecord(result.stopOutcome);
       if (context.json) {
         await printJsonEnvelope({
           ok: true,
           kind,
-          data: { sessionId, archivedAt: result.archivedAt ?? null },
+          data: { sessionId, archivedAt: result.archivedAt ?? null,
+            ...(result.stopOutcome ? { stopOutcome: result.stopOutcome } : {}) },
         });
+        return true;
+      }
+      if (stopOutcome.status === 'physical_stop_unconfirmed' && stopOutcome.reason === 'target_daemon_unavailable') {
+        console.log(chalk.yellow('!'), `${verb} ${sessionId}. Stop will be applied when the Machine reconnects.`);
         return true;
       }
       console.log(chalk.green('✓'), `${verb} ${sessionId}`);

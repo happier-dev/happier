@@ -382,6 +382,18 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
     });
   });
 
+  it('retains the pending physical Stop when Archive is recorded on an offline Machine', async () => {
+    vi.resetModules();
+    const { setSessionArchivedStateById } = await import('../../services/sessionArchivedStateById');
+    const stopOutcome = { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' };
+    vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 200, data: { success: true, archivedAt: 1234, stopOutcome },
+    });
+
+    await expect(setSessionArchivedStateById({ token: 'token-1', sessionId: 'sess-1', archived: true }))
+      .resolves.toEqual({ archivedAt: 1234, stopOutcome });
+  }, 120_000);
+
   it('does not treat an unclassified archive server error as proof that the mutation failed', async () => {
     vi.resetModules();
     const { archiveSession, unarchiveSession } = await import('./sessionsHttp');

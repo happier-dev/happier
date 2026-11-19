@@ -8240,10 +8240,17 @@ longer runs is observed as ended; a broken connection is the host's death
 (`process-missing`, respawn as above). A live host of the daemon's current runtime
 takes new Sessions.
 
+For each admitted watch, re-adoption reads the Session's recorded Archive and
+explicit Stop hold in its Account context. It uses the ordinary exact-runner
+Stop to end only that Session. An offline Archive response can carry a
+`physical_stop_unconfirmed` outcome with reason `target_daemon_unavailable`
+alongside the committed Archive timestamp.
+
 Host update uses the crash path, without its loss. When a reattached live host runs
 an older runtime than the daemon (`isCurrentRuntime`, the runner staleness owner
 `resolveProcessCommandVersionState`), the daemon first re-observes each of its
-Sessions, then asks it to hand over (`/v1/session-host/handover`). The old host stops
+Sessions and applies recorded Stops and Archives, then asks it to hand over
+(`/v1/session-host/handover`). The old host stops
 admitting, removes its descriptor, has every attached holder client acknowledge what
 it delivered and close its channel (`handOverSessionHolderClients`), and exits with
 `SESSION_HOST_HANDOVER_EXIT_CODE` (75) without ending any Session, so no Agent is

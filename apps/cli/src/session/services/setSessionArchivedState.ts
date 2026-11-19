@@ -6,6 +6,7 @@ import { isSessionActiveArchiveError, setSessionArchivedStateById } from './sess
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { readSessionStopConfirmationFailure } from '@happier-dev/protocol/actions/executor/session/stopConfirmation';
+import type { SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 
 export { setSessionArchivedStateById } from './sessionArchivedStateById';
 
@@ -21,7 +22,7 @@ export async function setSessionArchivedState(params: Readonly<{
   | { sessionId: string; idOrPrefix?: never }
   | { idOrPrefix: string; sessionId?: never }
 )>): Promise<
-  | Readonly<{ ok: true; sessionId: string; archivedAt: number | null }>
+  | Readonly<{ ok: true; sessionId: string; archivedAt: number | null; stopOutcome?: SessionStopOutcome }>
   | Extract<Awaited<ReturnType<typeof requestSessionStop>>, { ok: false }>
 > {
   const actionId = params.archived ? 'session.archive' : 'session.unarchive';
@@ -95,6 +96,6 @@ export async function setSessionArchivedState(params: Readonly<{
   return {
     ok: true,
     sessionId: resolved.sessionId,
-    archivedAt: result.archivedAt,
+    ...result,
   };
 }

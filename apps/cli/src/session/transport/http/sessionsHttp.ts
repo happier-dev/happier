@@ -13,6 +13,7 @@ import { z } from 'zod/mini';
 import { agentEventLocalIdAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionAttentionSetResultV1, SessionManagerSetActionInputV1, SessionManagerSetResultV1 } from '@happier-dev/protocol';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionStopOutcomeSchema, type SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionTranscriptSurfaceItemReferenceInputV1Schema, type SessionTranscriptSurfaceItemReferenceInputV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, SessionExternalIdentityClaimConflictV1Schema, SessionExternalIdentityClaimRequestV1Schema, SessionExternalIdentityClaimResponseV1Schema, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema, type SessionExternalIdentityClaimConflictV1, type SessionExternalIdentityClaimResponseV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
@@ -1757,7 +1758,7 @@ async function postArchiveMutation(params: Readonly<{
   originRunId?: string;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: (request: Readonly<{ method: 'POST'; path: string; body: unknown }>) => Readonly<Record<string, string>> | null;
-}>): Promise<{ archivedAt: number | null }> {
+}>): Promise<{ archivedAt: number | null; stopOutcome?: SessionStopOutcome }> {
   params.signal?.throwIfAborted();
   const serverUrl = resolveServerHttpBaseUrl();
   const path = `/v2/sessions/${encodeSessionIdPathSegment(params.sessionId)}/${params.op}`;
@@ -1814,14 +1815,18 @@ async function postArchiveMutation(params: Readonly<{
     throw new Error(`Unexpected status from /v2/sessions/${params.sessionId}/${params.op}: ${response.status}`);
   }
 
-  const ok = response.data && typeof response.data === 'object' && (response.data as any).success === true;
-  if (!ok) {
+  const data: unknown = response.data;
+  if (!data || typeof data !== 'object' || !('success' in data) || data.success !== true || !('archivedAt' in data)) {
     throw new Error(`Unexpected /v2/sessions/${params.sessionId}/${params.op} response shape`);
   }
 
-  const archivedAt = (response.data as any).archivedAt;
+  const archivedAt = data.archivedAt;
   if (archivedAt === null) return { archivedAt: null };
-  if (typeof archivedAt === 'number' && Number.isFinite(archivedAt) && archivedAt >= 0) return { archivedAt };
+  if (typeof archivedAt === 'number' && Number.isFinite(archivedAt) && archivedAt >= 0) {
+    const stopOutcome = params.op === 'archive' && 'stopOutcome' in data
+      ? SessionStopOutcomeSchema.safeParse(data.stopOutcome).data : undefined;
+    return { archivedAt, ...(stopOutcome ? { stopOutcome } : {}) };
+  }
   throw new Error(`Unexpected /v2/sessions/${params.sessionId}/${params.op} response shape`);
 }
 
@@ -1830,12 +1835,12 @@ export async function archiveSession(params: Readonly<{
   originRunId?: string;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: Parameters<typeof postArchiveMutation>[0]['resolveAuthorizationHeaders'];
-}>): Promise<{ archivedAt: number }> {
+}>): Promise<{ archivedAt: number; stopOutcome?: SessionStopOutcome }> {
   const res = await postArchiveMutation({ ...params, op: 'archive' });
   if (typeof res.archivedAt !== 'number') {
     throw new Error('Unexpected archive response (archivedAt is null)');
   }
-  return { archivedAt: res.archivedAt };
+  return { ...res, archivedAt: res.archivedAt };
 }
 
 export async function unarchiveSession(params: Readonly<{

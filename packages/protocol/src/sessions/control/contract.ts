@@ -821,6 +821,7 @@ export function isSessionStopConfirmed(result: SessionStopResult): boolean {
 export const SessionArchiveResultSchema = lazyZodSchema(() => z.looseObject({
   sessionId: z.string().check(z.minLength(1)),
   archivedAt: z.number().check(z.int(), z.nonnegative()),
+  stopOutcome: z.optional(SessionStopOutcomeSchema),
 }));
 export type SessionArchiveResult = z.infer<typeof SessionArchiveResultSchema>;
 
@@ -840,7 +841,7 @@ const SessionArchiveReportIdentityV1 = {
   title: z.optional(z.string()),
 };
 export const SessionArchiveReportOutcomeV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
-  z.strictObject({ ...SessionArchiveReportIdentityV1, status: z.literal('archived') }),
+  z.strictObject({ ...SessionArchiveReportIdentityV1, status: z.literal('archived'), stopOutcome: z.optional(SessionStopOutcomeSchema) }),
   z.strictObject({ ...SessionArchiveReportIdentityV1, status: z.literal('failed'), errorCode: z.string(), error: z.string() }),
   z.strictObject({ ...SessionArchiveReportIdentityV1, status: z.literal('approval_pending'), artifactId: z.string().check(z.minLength(1)) }),
 ]));
@@ -849,6 +850,7 @@ export const SessionArchiveActionResultV1Schema = lazyZodSchema(() => z.strictOb
   success: z.literal(true),
   sessionId: z.string().check(z.minLength(1)),
   archivedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  stopOutcome: z.optional(SessionStopOutcomeSchema),
   reports: z.optional(z.array(SessionArchiveReportOutcomeV1Schema)),
   reportsError: z.optional(z.strictObject({ errorCode: z.string(), error: z.string() })),
 }));

@@ -1,12 +1,14 @@
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { z } from "zod/mini";
-import { SessionArchiveHttpBodyV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionArchiveHttpBodyV1Schema, SessionStopOutcomeSchema } from '@happier-dev/protocol/sessions/control/contract';
 
+import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from "@/app/machines/machineStateGuards";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { prepareSessionAccountCursorLocks } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { clearSessionRuntimeActivityProjectionInTx } from "@/app/session/sessionWriteService";
+import { readRetainedCommittedSessionInputMachineTarget } from "@/app/session/messages/sessionInputAdmission";
 import { transitionSessionArchiveStateInTx } from "@/app/session/archive/transitionSessionArchiveStateInTx";
 import { isAutomationOriginRunPublisherTx } from "@/app/automations/automationTriggerCauseChain";
 import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from "@/app/plugins/installations/publisherProof";
@@ -30,7 +32,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             params: z.object({ sessionId: z.string() }),
             body: SessionArchiveHttpBodyV1Schema,
             response: {
-                200: z.object({ success: z.literal(true), archivedAt: z.number() }),
+                200: z.object({ success: z.literal(true), archivedAt: z.number(), stopOutcome: z.optional(SessionStopOutcomeSchema) }),
                 403: z.union([z.object({ error: z.literal("Forbidden") }), z.object({ error: z.literal("team_authentication_required") })]),
                 404: z.object({ error: z.literal("Session not found") }),
                 409: z.object({ error: z.literal("session-active") }),
@@ -77,6 +79,8 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 where: { id: sessionId },
                 select: withSessionContentSelect({
                     id: true,
+                    accountId: true,
+                    runtimeMachineTarget: true,
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
                     pendingBlockedCount: true,
@@ -89,7 +93,18 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             if (!session) {
                 return { ok: false as const, error: "not-found" as const };
             }
-            if (session.active) {
+            // Presence can lag either way when the daemon goes offline. A committed Machine
+            // placement lets us record Archive while leaving physical Stop to re-adoption.
+            const target = readRetainedCommittedSessionInputMachineTarget(session);
+            const machine = target ? await tx.machine.findFirst({
+                where: { id: target.machineId, installationId: target.installationId },
+                select: { active: true, revokedAt: true, replacedByMachineId: true },
+            }) : null;
+            const stopOutcome = machine && classifyMachineAvailabilityState(machine) === "available"
+                && readMachineOnlineAvailabilityDiagnostic(machine, true)
+                ? { status: "physical_stop_unconfirmed", reason: "target_daemon_unavailable" } as const
+                : undefined;
+            if (session.active && !stopOutcome) {
                 return { ok: false as const, error: "session-active" as const };
             }
 
@@ -101,7 +116,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 ...(originRunId !== undefined ? { originRunId } : {}),
             });
             if (!updated.didWrite) {
-                return { ok: true as const, didWrite: false as const, archivedAt: updated.session.archivedAt!.getTime() };
+                return { ok: true as const, didWrite: false as const, archivedAt: updated.session.archivedAt!.getTime(), stopOutcome };
             }
             const runtimeActivityClear = await clearSessionRuntimeActivityProjectionInTx({ tx, sessionId });
 
@@ -118,6 +133,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 ok: true as const,
                 didWrite: true as const,
                 archivedAt,
+                stopOutcome,
                 projection: {
                     archivedAt,
                     ...(runtimeActivityClear.didWrite ? runtimeActivityClear.projection : {}),
@@ -142,7 +158,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
 
         // The durable mutation owns the receipt. Publication may perform slow
         // reads after commit; it must neither hold nor contradict that receipt.
-        reply.send({ success: true, archivedAt: res.archivedAt });
+        reply.send({ success: true, archivedAt: res.archivedAt, ...(res.stopOutcome ? { stopOutcome: res.stopOutcome } : {}) });
         if (!res.didWrite) return reply;
         log({ module: "session-archive", sessionId, operation: "archive", phase: "committed" }, "Session archive transition committed");
         log({ module: "session-archive", sessionId, operation: "archive", phase: "publication_started" }, "Publishing Session archive transition");

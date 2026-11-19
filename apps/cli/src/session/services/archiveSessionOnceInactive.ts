@@ -12,7 +12,7 @@ export async function archiveSessionOnceInactive(params: Readonly<{
   signal?: AbortSignal;
   serverFeaturesSnapshot?: Parameters<typeof fetchSessionByIdCompat>[0]['serverFeaturesSnapshot'];
   resolveAuthorizationHeaders?: Parameters<typeof resolveSessionIdOrPrefix>[0]['resolveAuthorizationHeaders'];
-}>): Promise<Readonly<{ archivedAt: number | null }>> {
+}>): ReturnType<typeof setSessionArchivedStateById> {
   params.signal?.throwIfAborted();
   const deadlineMs = params.timeoutMs === undefined ? null : Date.now() + params.timeoutMs;
   const events = openSessionEventSource(params);
