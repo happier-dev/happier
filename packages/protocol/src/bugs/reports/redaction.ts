@@ -17,6 +17,12 @@ const SECRET_TEXT_BOUNDARY = String.raw`(?:\b|(?<=\\[nrt]))`;
 function secretTextPattern(source: string, flags: string): RegExp {
   return new RegExp(`${SECRET_TEXT_BOUNDARY}${source}`, flags);
 }
+// The same boundary for a scanner that finds its candidate by hand.
+const SECRET_TEXT_START = new RegExp(SECRET_TEXT_BOUNDARY, 'y');
+function startsSecretText(text: string, index: number): boolean {
+  SECRET_TEXT_START.lastIndex = index;
+  return SECRET_TEXT_START.test(text);
+}
 
 // Happier's own Account API tokens have a fixed minted shape, so like the vendor
 // prefixes below they need no label: in a JSON-escaped tool result neither the
@@ -314,17 +320,17 @@ const JSON_WEB_TOKEN_RUN_PATTERN = /([^A-Za-z0-9._-]|^)([A-Za-z0-9._-]{35}[A-Za-
  * the same dot-free stretch and only ever moving right, which is why one cursor
  * serves the whole run.
  *
- * A candidate starts a segment only where the previous character is a dot, a
- * hyphen, or the run boundary itself; anywhere else `eyJ` is interior to a
- * base64url segment. That is exactly the word boundary the previous pattern
- * required, expressed without looking behind, because this redactor is reachable
- * from Hermes.
+ * A candidate starts a token only at the shared start-of-secret boundary: inside
+ * a run that is a preceding dot, hyphen or run edge, or a JSON line escape
+ * (`\n`, `\t`, `\r`) whose letter opens the run; anywhere else `eyJ` is interior
+ * to a base64url segment. `runStart` is the run's offset in `text`, so the
+ * boundary sees the characters before the run.
  *
  * The redaction runs to the end of the run rather than to the last word
  * character, so a token whose signature ends in `-` or `.` no longer leaves that
  * tail visible. Everything the pattern removed is still removed.
  */
-function redactJsonWebTokensInBase64UrlRun(run: string): string {
+function redactJsonWebTokensInBase64UrlRun(run: string, text: string, runStart: number): string {
   const signatureDot = run.lastIndexOf('.', run.length - JSON_WEB_TOKEN_SEGMENT_MINIMUM_LENGTH - 1);
   if (signatureDot < 0) return run;
 
@@ -338,8 +344,7 @@ function redactJsonWebTokensInBase64UrlRun(run: string): string {
       headerEnd = run.indexOf('.', start + 3);
       if (headerEnd < 0) return run;
     }
-    const previous = start === 0 ? '' : run.charAt(start - 1);
-    if (previous !== '' && previous !== '.' && previous !== '-') continue;
+    if (!startsSecretText(text, runStart + start)) continue;
     if (headerEnd - (start + 3) < JSON_WEB_TOKEN_SEGMENT_MINIMUM_LENGTH) continue;
     if (signatureDot - headerEnd - 1 < JSON_WEB_TOKEN_SEGMENT_MINIMUM_LENGTH) continue;
     return `${run.slice(0, start)}[REDACTED]`;
@@ -381,7 +386,8 @@ function redactKnownSensitiveText(input: string): string {
     )
     .replace(
       JSON_WEB_TOKEN_RUN_PATTERN,
-      (_match, delimiter: string, run: string) => `${delimiter}${redactJsonWebTokensInBase64UrlRun(run)}`,
+      (_match, delimiter: string, run: string, offset: number, text: string) =>
+        `${delimiter}${redactJsonWebTokensInBase64UrlRun(run, text, offset + delimiter.length)}`,
     )
     .replace(ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN, '[REDACTED]')
     .replace(ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN, '[REDACTED]')

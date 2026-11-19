@@ -343,6 +343,24 @@ describe('JSON Web Tokens in diagnostic text', () => {
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
+  it.each(['\n', '\t', '\r'])('redacts a token that starts a JSON-escaped line after %j', (whitespace) => {
+    // Escaped, the line break is the two characters `\` `n`, so the token's run starts with the escape letter.
+    const line = JSON.stringify(`Exit code: 1${whitespace}${jwt}${whitespace}done`);
+    expect(redactBugReportSensitiveText(line))
+      .toBe(JSON.stringify(`Exit code: 1${whitespace}[REDACTED]${whitespace}done`));
+  });
+
+  it.each(['\n', '\t', '\r'])('keeps base64url prose and glued tokens that start a JSON-escaped line after %j', (whitespace) => {
+    const prose = JSON.stringify([
+      'eyJhbGciOiJIUzI1NiJ9.short.tooshort',
+      'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+      `prefix_${jwt}`,
+    ].join(whitespace));
+    expect(redactBugReportSensitiveText(prose)).toBe(prose);
+    // Only the JSON line escapes admit a token; any other escaped letter is interior to a segment.
+    expect(redactBugReportSensitiveText(String.raw`\q${jwt}`)).toBe(String.raw`\q${jwt}`);
+  });
+
   it.each([
     ['ordinary text', '', null],
     ['GitHub token', 'ghp_', '[REDACTED]'],
