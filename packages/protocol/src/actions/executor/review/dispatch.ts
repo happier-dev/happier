@@ -346,7 +346,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             const options = engineInput.profileId ? profileOptions : defaultOptions;
             return options.find(option => option.value === normalizeExecutionBackendOptionValue(selection.engineId)
               && (!engineInput.profileId || option.profileId === engineInput.profileId))?.capabilities.sessionTranscript !== true;
-          })) return { ok: false, errorCode: 'review_transcript_unsupported', error: 'review_transcript_unsupported' };
+          })) return { ok: false, errorCode: 'invalid_input', error: 'The selected review profile does not accept ordinary instructions.' };
         }
         const transcript = transcriptReviewers.length > 0 && reviewInput.sourceSession
           ? await readReviewTranscriptInput(reviewInput.sourceSession, executeHostChild, ctx) : null;

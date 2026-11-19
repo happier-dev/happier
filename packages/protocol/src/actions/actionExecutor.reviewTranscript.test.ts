@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor as createCoreActionExecutor, type ActionExecutorDeps } from './actionExecutor';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit';
 import { WorkflowRunStartRequestV1Schema } from '../workflows/actionsV1';
+import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants';
 
 function createActionExecutor(deps: ActionExecutorDeps) {
   const records = createInMemoryReviewRecordPortV1();
@@ -16,7 +17,7 @@ const engine = (engineId: string) => ({ value: engineId, engineId, label: engine
 
 describe('review.start selected source transcript', () => {
 
-  it('reads once at admission and supplies ordinary input to engine and Session Workflow reviewers', async () => {
+  it('reads once at admission and supplies the same ordinary input to engine, Session/bot and model Workflow reviewers', async () => {
     let reads = 0;
     let request: unknown;
     const executor = createActionExecutor({
@@ -30,16 +31,24 @@ describe('review.start selected source transcript', () => {
     });
     const reviewer = { kind: 'engine', engineId: 'codex', includeSessionTranscript: true };
     const sourceSession = { serverId: 'home', sessionId: 'source' };
+    const bot = normalizeExecutableParticipantSelectionV1({ kind: 'bot', session: { serverId: 'home', sessionId: 'other-reviewer' } });
+    if (!bot) throw new Error('Expected a canonical Bot Session');
+    const model = { kind: 'model', launch: { executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'default' } } },
+      includeSessionTranscript: true };
     expect(await executor.execute('review.start', { sessionId: 'review-session', scope: 'repository', instructions: 'Review.',
-      sourceSession, reviewers: [reviewer, { kind: 'session', session: { serverId: 'home', sessionId: 'other-reviewer' }, includeSessionTranscript: true }] },
+      sourceSession, reviewers: [reviewer, { ...bot, includeSessionTranscript: true }, model,
+        { kind: 'session', session: { serverId: 'home', sessionId: 'diff-only-reviewer' } }] },
     { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
     expect(reads).toBe(1);
     const admitted = WorkflowRunStartRequestV1Schema.parse(request);
     if (admitted.source.kind !== 'inline') throw new Error('Expected an inline Review Workflow');
     const stage = admitted.source.definition.blocks.find(block => block.kind === 'parallel');
     if (stage?.kind !== 'parallel') throw new Error('Expected the mixed Review stage');
-    expect(JSON.stringify(stage.branches[0])).toContain('The test command was skipped.');
-    expect(JSON.stringify(stage.branches[1])).toContain('The test command was skipped.');
+    const sourceInput = 'Session transcript (complete coverage):\n' + JSON.stringify({ sourceSession,
+      items: [{ id: 'm1', createdAt: 1, semanticRole: 'assistant', role: 'assistant', kind: 'text', text: 'The test command was skipped.' }] });
+    for (const branch of stage.branches.slice(0, 3)) expect(JSON.stringify(branch)).toContain(JSON.stringify(sourceInput).slice(1, -1));
+    expect(JSON.stringify(stage.branches[3])).not.toContain('The test command was skipped.');
     expect(JSON.stringify(stage.branches[0])).not.toContain('includeSessionTranscript');
   });
 
@@ -90,7 +99,7 @@ describe('review.start selected source transcript', () => {
     expect(starts).toBe(0);
   });
 
-  it.each(['direct', 'mixed', 'steps'] as const)('refuses an unsupported transcript profile at %s admission before reading the source', async route => {
+  it.each(['direct', 'mixed', 'steps'] as const)('refuses instructions an unsupported profile cannot consume at %s admission before reading the source', async route => {
     let reads = 0;
     let starts = 0;
     let workflowStarts = 0;
@@ -125,7 +134,7 @@ describe('review.start selected source transcript', () => {
     starts = 0;
     workflowStarts = 0;
     expect(await executor.execute('review.start', input, { surface: 'ui', serverId: 'home' }))
-      .toMatchObject({ ok: false, errorCode: 'review_transcript_unsupported' });
+      .toMatchObject({ ok: false, errorCode: 'invalid_input' });
     expect(reads).toBe(0);
     expect(starts + workflowStarts).toBe(0);
   });
