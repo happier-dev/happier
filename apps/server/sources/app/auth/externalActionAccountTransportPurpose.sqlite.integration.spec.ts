@@ -60,7 +60,7 @@ afterAll(async () => {
 });
 
 describe('signed Account Action transport purpose', () => {
-  it('admits a Can-use member Archive carrier but reserves native Prepare to the custodian', async () => {
+  it('refuses a Can-use member Archive carrier before disclosing credentials and retains custodian Archive', async () => {
     const owner = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const member = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const keys = tweetnacl.sign.keyPair();
@@ -86,17 +86,25 @@ describe('signed Account Action transport purpose', () => {
     enableAuthentication(app);
     registerExternalActionRoutes(app, { dispatch: async () => ({ kind: 'placement_error', code: 'target_unavailable' }) });
     try {
-      const bind = async (actionId: 'machines.presets.archive' | 'machines.presets.prepare') => await app.inject({
+      const bind = async (actionId: 'machines.presets.archive' | 'machines.presets.prepare', bearer = token, selectedPreset = preset) => await app.inject({
         method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
-        headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: machine.id,
+        headers: { authorization: `Bearer ${bearer}` }, payload: { v: 1, machineId: machine.id,
           envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
-            input: { homeId, id: preset.id, expectedRevision: preset.revision,
+            input: { homeId, id: selectedPreset.id, expectedRevision: selectedPreset.revision,
               ...(actionId === 'machines.presets.prepare' ? { machineId: machine.id } : {}) } } },
       });
       const archived = await bind('machines.presets.archive');
-      expect(archived.statusCode, archived.body).toBe(200);
-      expect(ExternalActionExecutionAuthorizationV1Schema.parse(archived.json()).binding).toMatchObject({
-        accountId: member.id, custodianAccountId: owner.id, admittedMachineRole: 'use',
+      expect(archived.statusCode, archived.body).toBe(403);
+      expect(archived.json()).toMatchObject({ error: 'credential_scope_denied', failureCause: {
+        nativeErrorReason: 'prepared_image_custodian_required',
+      } });
+      const ownPreset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: owner.id,
+        name: '', launch: preset.launch } });
+      const ownerToken = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+      const ownArchive = await bind('machines.presets.archive', ownerToken, ownPreset);
+      expect(ownArchive.statusCode, ownArchive.body).toBe(200);
+      expect(ExternalActionExecutionAuthorizationV1Schema.parse(ownArchive.json()).binding).toMatchObject({
+        accountId: owner.id, custodianAccountId: owner.id,
       });
       const prepared = await bind('machines.presets.prepare');
       expect(prepared.statusCode, prepared.body).toBe(409);

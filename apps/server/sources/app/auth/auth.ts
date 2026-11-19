@@ -692,6 +692,12 @@ class AuthModule {
             }
             const { admitMachinePresetFiniteOperationInTx } = await import('@/app/machines/managed/machinePresetService');
             const { ManagedMachineError } = await import('@/app/machines/managed/managedRows');
+            if (input.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1 && machine.accountId !== input.accountId) {
+                throw refuse('preset_image_custodian', 'credential_scope_denied', { failureCause: {
+                    phase: 'machines.presets.archive', errorClass: 'Error', errorCode: 'credential_scope_denied',
+                    nativeErrorReason: 'prepared_image_custodian_required', httpStatus: null,
+                } });
+            }
             try {
                 await inTx(tx => admitMachinePresetFiniteOperationInTx(tx, { accountId: input.accountId, input: presetPreparationAdmission,
                     actionId: input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 ? 'prepare' : 'archive',
