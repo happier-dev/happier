@@ -3,7 +3,8 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { randomUUID } from 'node:crypto';
 import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { materializeActionRequestAttributionV1, readAuthenticatedActionRequesterAccountIdV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -1649,14 +1650,17 @@ export async function sendSessionMessage(
   } catch {
     return { ok: false, code: 'admission_rejected', admissionResult: { status: 'rejected', code: 'session_input_invalid' } };
   }
-  const usesSharedAccountPending = protectedAdmission?.request.v === 1 && protectedAdmission.request.caller?.kind === 'host'
+  const sessionRole = readSessionAccessProjectionRoleV1(sessionTarget.rawSession);
+  const usesAccountPending = protectedAdmission?.request.v === 1 && protectedAdmission.request.caller?.kind === 'host'
     && params.executionAuthority !== 'account_automation' && !params.callerInputAuthorization && !params.targetMachineId
-    && readSessionAccessProjectionRoleV1(sessionTarget.rawSession) === 'recipient'
     && supportsAccountPendingForSessionInput({
       request: protectedAdmission.request, wait: params.wait, recipient,
+      cliSession: { role: sessionRole, pairedTerminal: sessionRole === 'owner'
+        && readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true })?.provenance.kind === 'terminal' },
       structuredInput: params.messageMeta?.[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1],
     });
-  const requiresMachineAdmission = !usesSharedAccountPending && requiresMachineAdmissionForSessionInput({
+  const usesSharedAccountPending = usesAccountPending && sessionRole === 'recipient';
+  const requiresMachineAdmission = !usesAccountPending && requiresMachineAdmissionForSessionInput({
     request: protectedAdmission?.request ?? null,
     mode: sessionTarget.mode,
     ...(params.callerInputAuthorization ? { callerInputAuthorization: params.callerInputAuthorization } : {}),
@@ -2014,6 +2018,8 @@ export async function sendSessionMessage(
       const targetMachineId = usesSharedAccountPending ? null : resolveSessionInputTargetMachineId({ decryptedMetadata,
         rawSession: sessionTarget.rawSession as Readonly<Record<string, unknown>>,
         ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}) });
+      if (!targetMachineId && usesAccountPending && sessionRole === 'owner') return { ok: false, code: 'admission_rejected',
+        admissionResult: { status: 'rejected', code: 'session_input_machine_binding_unavailable' } };
       if (!targetMachineId && params.targetMachineId) return { ok: false, code: 'admission_rejected',
         admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } };
       enqueueResult = await enqueuePendingQueueV2MessageViaHttp({

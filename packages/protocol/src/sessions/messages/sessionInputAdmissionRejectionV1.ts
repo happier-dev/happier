@@ -13,6 +13,7 @@ export const SESSION_INPUT_ADMISSION_REJECTION_CODES_V1 = [
   'session_input_archived',
   'session_input_unauthorized',
   'session_input_target_unavailable',
+  'session_input_machine_binding_unavailable',
   'session_input_muted',
   'session_input_storage_unavailable',
   'session_input_target_update_required',

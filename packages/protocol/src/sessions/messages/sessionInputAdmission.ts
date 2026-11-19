@@ -786,8 +786,9 @@ export function requiresAuthenticatedMachineAdmissionForSessionInput(
   return parsed.v === 2 || requiresAuthenticatedMachineAdmissionForSessionInputV1(parsed);
 }
 
-/** Whether a direct human Send can use Account Pending on a shared Session. */
+/** Whether a direct Send can use Account Pending, with Home admitting the Session placement. */
 export function supportsAccountPendingForSessionInput(input: Readonly<{
+  cliSession?: Readonly<{ role: 'owner' | 'recipient' | 'unavailable'; pairedTerminal?: boolean }>;
   request?: SessionInputRequest | null;
   reply?: 'none' | 'wait' | 'return';
   wait?: boolean;
@@ -798,7 +799,9 @@ export function supportsAccountPendingForSessionInput(input: Readonly<{
   idempotencyKey?: string;
   toolAnswerDelivery?: unknown;
 }>): boolean {
-  return (input.reply === undefined || input.reply === 'none')
+  return (!input.cliSession || input.cliSession.role === 'recipient'
+    || input.cliSession.role === 'owner' && input.cliSession.pairedTerminal === true)
+    && (input.reply === undefined || input.reply === 'none')
     && input.wait !== true
     && input.recipient === undefined
     && input.attachments === undefined

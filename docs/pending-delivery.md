@@ -1285,6 +1285,12 @@ These are development contracts. Target support must be negotiated independently
 
 ## Human authorship in development
 
+An ordinary CLI terminal uses Account Pending for direct Session Send. Home
+authorizes the Session relationship and checks the owner's exact Machine
+binding before writing. A missing binding returns
+`session_input_machine_binding_unavailable` to the owner. This leaves
+Session history readable and allows a new Send after access is restored.
+
 The authenticated input-admission receipt records who submitted an accepted human input. Pending admission derives it from the request's Session access decision, resolved once before publication locks. Authenticated queue edits and delivery-recovery mutations retain that admission through their transaction; access withdrawal refuses the next request. Direct authenticated input uses the same admission builder; runtime observations and transcript-only Voice writes do not become human-authored merely because their message role is `user`.
 
 `SessionPendingMessage.authorAccountId` and `SessionMessage.authorAccountId` are nullable relational projections of that receipt. The committed projection supports historical-contribution filtering before Session pagination. It does not grant access, assign responsibility, create a participant roster, or enroll anyone for notifications. Pending materialization and provider-anchor rejoin retain the original receipt and refuse a conflicting non-null author projection. Deleting an Account clears its foreign-key projection while preserving the immutable receipt.

@@ -1408,6 +1408,34 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toBe(0);
     });
 
+    it("reports a missing owner Machine binding before retaining main Session input", async () => {
+        const owner = await createAccount("owner-machine-binding-refusal");
+        const session = await createSession(owner.id);
+        const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id });
+        const installationId = `install-${publisher.machineId}`;
+        await db.machine.update({ where: { id: publisher.machineId }, data: { installationId } });
+        await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+            homeId: await getOrCreateServerIdentityId(), accountId: owner.id, sessionId: session.id,
+            machineId: publisher.machineId, installationId,
+        } } });
+        await db.accessKey.delete({ where: { accountId_machineId_sessionId: {
+            accountId: owner.id, sessionId: session.id, machineId: publisher.machineId,
+        } } });
+
+        await withAuthenticatedTestApp(sessionPendingRoutes, async (app) => {
+            const response = await app.inject({
+                method: "POST",
+                url: `/v2/sessions/${session.id}/pending`,
+                headers: { "x-test-user-id": owner.id },
+                payload: { localId: "owner-input", ciphertext: "ciphertext",
+                    targetMachineId: publisher.machineId, requestedAction: { v: 1, kind: "enqueue" } },
+            });
+            expect(response.statusCode).toBe(403);
+            expect(response.json()).toEqual({ error: "forbidden", code: "session_input_machine_binding_unavailable" });
+        });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+    });
+
     it("blocks only the exact target from authoritative current-publisher evidence before claim", async () => {
         const owner = await createAccount("target-block-owner");
         const session = await createSession(owner.id);

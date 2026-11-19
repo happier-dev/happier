@@ -1214,7 +1214,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
         machinePresetAction: (readEffectiveDeps?.() ?? actionDeps).machinePresetAction,
       });
       if (refusal) return refusal;
-      const wake = await prepareCliManagedMachineWake(request, {
+      const demand = request.machineRuntimeDemand;
+      const usesAccountPending = request.actionId === 'session.message.send'
+        && demand?.target.kind === 'session' && demand.target.sessionId === request.context.accountPendingSessionId;
+      const wake = usesAccountPending ? null : await prepareCliManagedMachineWake(request, {
         localMachineId,
         provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,

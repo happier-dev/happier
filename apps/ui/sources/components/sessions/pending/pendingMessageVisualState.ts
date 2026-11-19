@@ -273,6 +273,7 @@ const sessionInputFailureLabelKeys = {
     session_input_archived: 'session.pendingMessages.admissionRejected.archived',
     session_input_unauthorized: 'session.pendingMessages.admissionRejected.unauthorized',
     session_input_target_unavailable: 'session.pendingMessages.admissionRejected.targetUnavailable',
+    session_input_machine_binding_unavailable: 'session.pendingMessages.admissionRejected.targetUnavailable',
     session_input_storage_unavailable: 'session.pendingMessages.admissionRejected.storageUnavailable',
     session_input_target_update_required: 'session.pendingMessages.admissionRejected.targetUpdateRequired',
     session_input_cancelled: 'session.pendingMessages.admissionRejected.cancelled',

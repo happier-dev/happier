@@ -18,12 +18,15 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner'] as const)(
+    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner', 'terminal owner after Machine use withdrawal'] as const)(
         'sends to a live shared encrypted Session with the correct admission route for %s', async role => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-shared-send-' }, async () => {
-            const accountId = role === 'owner' ? 'alice' : 'bob';
+            const withdrawn = role === 'terminal owner after Machine use withdrawal';
+            const owner = role === 'owner' || withdrawn;
+            const accountId = owner ? 'alice' : 'bob';
             const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
-                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+                provenance: withdrawn ? { v: 1, kind: 'terminal', authority: 'account_automation' }
+                    : { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
             const machineKey = new Uint8Array(32).fill(17);
             const publicKey = nacl.box.keyPair.fromSecretKey(machineKey).publicKey;
             const credentials = { token, credentialProvenance: 'stored_session' as const,
@@ -35,7 +38,7 @@ describe('original CLI Session Action delivery', () => {
                 metadata: encryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' }, payload: { v: 1 } }),
                 dataEncryptionKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey, recipientPublicKey: publicKey,
                     randomBytes: length => new Uint8Array(length).fill(22) })).toString('base64'),
-                ...(role === 'owner' ? { share: null, machineId: 'alice-machine',
+                ...(owner ? { share: null, machineId: 'alice-machine',
                     ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
                         material: credentials.encryption, ownerMetadata: { v: 1 },
                         randomBytes: length => new Uint8Array(length).fill(23),
@@ -57,9 +60,13 @@ describe('original CLI Session Action delivery', () => {
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
                 throw new Error(`Unexpected Home read: ${url}`);
             });
+            let machineUseWithdrawn = withdrawn;
             const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
                 if (role === 'outsider' && url.endsWith('/lookup-by-tags')) {
                     return { status: 200, data: { sessions: [] } };
+                }
+                if (withdrawn && url === `https://home.test/v1/actions/${actionId}`) {
+                    return { status: 404, data: { error: 'invalid_request', code: 'target_unavailable' } };
                 }
                 if (role === 'owner') {
                     expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
@@ -78,10 +85,14 @@ describe('original CLI Session Action delivery', () => {
                 }
                 expect(url).toBe(`https://home.test/v2/sessions/${sessionId}/pending`);
                 expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+                if (machineUseWithdrawn) throw Object.assign(new Error('Publisher binding unavailable'), { response: {
+                    status: 403, data: { error: 'forbidden', code: 'session_input_machine_binding_unavailable' },
+                } });
                 if (role === 'viewer') throw Object.assign(new Error('Forbidden'), { response: { status: 403, data: { error: 'forbidden' } } });
-                expect(body).toMatchObject({ localId: input.localId, requestedAction: input.requestedAction });
+                expect(body).toMatchObject({ localId: withdrawn ? 'restored-input' : input.localId, requestedAction: input.requestedAction });
                 expect(body).not.toHaveProperty('e2eeTag');
-                expect(body).not.toHaveProperty('targetMachineId');
+                if (withdrawn) expect(body).toHaveProperty('targetMachineId', 'alice-machine');
+                else expect(body).not.toHaveProperty('targetMachineId');
                 const opened = decryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' },
                     ciphertextBase64: body.ciphertext });
                 expect(opened).toMatchObject({ content: { text: input.message } });
@@ -94,6 +105,14 @@ describe('original CLI Session Action delivery', () => {
                     v: 1, approvalWaivedSurfaces: { [actionId]: ['cli'] },
                 }) } });
             const result = await executor.execute(actionId, input, { surface: 'cli' });
+            if (withdrawn) {
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                    result: { status: 'rejected', code: 'session_input_machine_binding_unavailable' } });
+                machineUseWithdrawn = false;
+                expect(await executor.execute(actionId, { ...input, localId: 'restored-input' }, { surface: 'cli' }))
+                    .toMatchObject({ ok: true, result: { status: 'accepted', localId: 'restored-input' } });
+                return;
+            }
             if (role === 'outsider') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'session_not_found' });
                 expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toEqual([]);

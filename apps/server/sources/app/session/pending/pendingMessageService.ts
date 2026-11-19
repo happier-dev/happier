@@ -982,9 +982,12 @@ async function enqueuePendingMessageWithAdmission(
             let transactionAdmittedTarget: SessionInputMachineTargetV1 | undefined;
             const committedTarget = !requiresMachineTarget || session.runtimeMachineTarget == null ? undefined
                 : await readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx, { ...session, id: sessionId });
-            if (requiresMachineTarget && session.runtimeMachineTarget != null && !committedTarget) return {
-                ok: false, error: "session-not-found", admissionRejectionCode: "session_input_target_unavailable",
-            } as const;
+            const bindingUnavailable = admission.kind === 'account' && access.access.level === 'owner' && targetExecutionRunId === null
+                ? { error: 'forbidden', admissionRejectionCode: 'session_input_machine_binding_unavailable' } as const
+                : { error: 'session-not-found', admissionRejectionCode: 'session_input_target_unavailable' } as const;
+            if (requiresMachineTarget && session.runtimeMachineTarget != null && !committedTarget) {
+                return { ok: false, ...bindingUnavailable } as const;
+            }
             if (requiresMachineTarget && (admission.kind === "machine" || targetExecutionRunId !== null || params.targetMachineId !== undefined || committedTarget)) {
                 if (admission.kind === "machine" && session.accountId !== actorUserId) {
                     return {
@@ -1058,18 +1061,7 @@ async function enqueuePendingMessageWithAdmission(
                     || targetAccess.machine.replacedByMachineId !== null
                     || !admittedTarget && !legacyOwnedTarget
                 ) {
-                    if (targetExecutionRunId !== null) {
-                        return {
-                            ok: false,
-                            error: "session-not-found",
-                            admissionRejectionCode: "session_input_target_unavailable",
-                        } as const;
-                    }
-                    return {
-                        ok: false,
-                        error: "session-not-found",
-                        admissionRejectionCode: "session_input_target_unavailable",
-                    } as const;
+                    return { ok: false, ...bindingUnavailable } as const;
                 }
                 if (
                     !legacyOwnedTarget && (typeof targetAccess.machine.operationProtocolCapabilitiesRevision !== "number"

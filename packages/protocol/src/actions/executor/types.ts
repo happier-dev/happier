@@ -693,6 +693,8 @@ export type ActionExecutorContext = Readonly<{
   expectedSessionAddress?: import('../sessionTargetV1.js').ActionSessionAddressV1;
   /** Host-only placement fact read from the admitted Session for target routing. */
   expectedSessionMachineId?: string;
+  /** Exact Session selected for original CLI Account Pending before managed wake preparation. */
+  accountPendingSessionId?: string;
   /** Host-only read admission for Coach mutations; ordinary usage.query remains progressive. Never wire input. */
   usageQueryReadiness?: 'coach_evidence' | 'public_profile';
   /** Exact prepared public disclosure, retained only by the live host invocation. Never wire input. */

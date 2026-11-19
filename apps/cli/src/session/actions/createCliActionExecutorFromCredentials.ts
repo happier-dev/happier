@@ -2066,13 +2066,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const request = buildTrustedHostSessionInputAdmissionV1(context.surface, context.actionRequestAttributionV1).request;
         if (actionId === 'session.message.send' && (ordinary || pairedTerminal && context.authority !== 'account_automation')
           && !requireDaemonIngress
-          && !params.machineId && context.externalActionTarget?.kind !== 'machine'
-          && readSessionAccessProjectionRoleV1(transport.rawSession) === 'recipient') {
+          && !params.machineId && context.externalActionTarget?.kind !== 'machine') {
           const send = SessionSendMessageInputSchema.safeParse(admittedInput);
-          if (send.success && 'message' in send.data && supportsAccountPendingForSessionInput({ ...send.data, request })) {
-            // A shared recipient's Account receipt is issued by Pending. Exit
-            // before the external client selects a signed Machine carrier.
-            return { context };
+          if (send.success && 'message' in send.data && supportsAccountPendingForSessionInput({
+            ...send.data, request, cliSession: { role: readSessionAccessProjectionRoleV1(transport.rawSession), pairedTerminal },
+          })) {
+            // Home Pending admits the Account and exact Session placement before accepting input.
+            return { context: { ...context, accountPendingSessionId: transport.sessionId } };
           }
         }
         // Session Actions enter their owning daemon. Protected message input
