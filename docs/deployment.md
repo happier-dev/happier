@@ -4288,9 +4288,12 @@ installation's final release proof, not merely a list of link members.
 
 `projectDeploymentHealthAggregateV1` owns the active-runtime-plus-edge reduction.
 Joining members are excluded, a Machine in both roles counts once, and Production
-unknown coverage counts down. Its input is the observer's current admitted fact
-snapshot, not an incremental event stream; the observer still owns cross-call
-currentness and withdrawal. The read controller carries this one strict aggregate
+unknown coverage counts down. A current native observation of a running service
+without a readiness check contributes unverified liveness. It clears a prior
+runtime outage when all the affected services recover and leaves authoritative
+health recovery pending until a check succeeds. Stops, starts and restarts use
+the same Machine Services push. The observer owns cross-call currentness and
+withdrawal and supplies the projector with the current admitted snapshot. The read controller carries this one strict aggregate
 without another reducer. The development-only
 `createDeploymentHealthAggregateLeaseV1` wraps that projector and the existing
 semantic publication owner. Producers adopt complete admitted snapshots;

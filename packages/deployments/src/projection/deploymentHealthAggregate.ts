@@ -45,7 +45,17 @@ export type DeploymentHealthServicesObservationV1 = Readonly<Omit<DeploymentHeal
 type Observation = DeploymentHealthObservationV1 | DeploymentHealthServicesObservationV1;
 type Member = Readonly<Pick<DeploymentHealthMemberV1, 'machineId' | 'installationId' | 'roles'>>;
 const key = (machineId: string, role: DeploymentHealthRoleV1) => JSON.stringify([machineId, role]);
-const rank: Record<DeploymentHealthStatusV1, number> = { up: 0, degraded: 1, unknown: 2, down: 3 };
+const rank: Record<DeploymentHealthStatusV1, number> = { up: 0, degraded: 2, unknown: 3, down: 4 };
+export const DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1 = 'running_unverified';
+
+function isRunningUnverified(evidence?: Readonly<{ status: DeploymentHealthStatusV1; reason?: string }>): boolean {
+    return evidence?.status === 'unknown' && evidence.reason === DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1;
+}
+
+// A liveness observation can never mask a failing sibling or missing coverage.
+function evidenceRank(evidence?: Readonly<{ status: DeploymentHealthStatusV1; reason?: string }>): number {
+    return isRunningUnverified(evidence) ? 1 : rank[evidence?.status ?? 'unknown'];
+}
 
 function sameMember(a: Member, b: Member) {
     return a.machineId === b.machineId && a.installationId === b.installationId
@@ -69,10 +79,11 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
                 continue;
             }
             const status = service.observation?.status ?? 'unknown';
-            const previousStatus = worst?.observation?.status ?? 'unknown';
-            if (!worst || rank[status] > rank[previousStatus]
-                || (rank[status] === rank[previousStatus] && service.serviceId < worst.serviceId)) worst = service;
-            if (status === 'unknown' && (!unavailable || service.serviceId < unavailable.serviceId)) unavailable = service;
+            const priority = evidenceRank(service.observation);
+            const previous = evidenceRank(worst?.observation);
+            if (!worst || priority > previous || (priority === previous && service.serviceId < worst.serviceId)) worst = service;
+            if (status === 'unknown' && (!unavailable || priority > evidenceRank(unavailable.observation)
+                || (priority === evidenceRank(unavailable.observation) && service.serviceId < unavailable.serviceId))) unavailable = service;
         }
         // Keep unavailable coverage alongside a proved outage. Neither fact
         // changes the other, and both count the same Machine only once.
@@ -151,7 +162,7 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
         if (incumbentServices && !services) continue;
         const evidence = roleEvidence(observation.role, observation);
         if (!incumbent || (services && !incumbentServices) || observation.observedAtMs > incumbent.observation.observedAtMs
-            || (observation.observedAtMs === incumbent.observation.observedAtMs && rank[evidence[0].status] > rank[incumbent.evidence[0].status])) {
+            || (observation.observedAtMs === incumbent.observation.observedAtMs && evidenceRank(evidence[0]) > evidenceRank(incumbent.evidence[0]))) {
             current.set(identity, { observation, evidence });
         }
     }
@@ -176,7 +187,8 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
     });
     const production = environment.protection === 'production';
     const down = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && (value.status === 'down'
-        || (production && value.status === 'unknown')))).length;
+        || (production && value.status === 'unknown'
+            && !(value.role === 'runtime' && value.source === 'native' && isRunningUnverified(value)))))).length;
     const degraded = rows.filter(member => member.status === 'degraded').length;
     const unknown = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && value.status === 'unknown')).length;
     const edge = rows.flatMap(member => member.evidence.filter(value => value.role === 'edge'));

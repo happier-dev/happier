@@ -1,4 +1,5 @@
 import type { MachineServiceDiscoveryCandidateV1, MachineServiceIdentityV1, MachineServiceRowV1, MachineServiceWatchV1 } from '@happier-dev/protocol';
+import { DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1 } from '@happier-dev/deployments';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -84,7 +85,10 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                     || snapshot.readiness === 'not_ready' ? 'down'
                     : snapshot.state === 'healthy' ? 'up' : 'unknown';
             const reason = freshness !== 'current' ? 'coverage_unavailable'
-                : snapshot.nativePhase === 'stopped' ? 'stopped' : snapshot.readiness === 'not_ready' ? 'not_ready' : undefined;
+                : snapshot.nativePhase === 'stopped' ? 'stopped'
+                    : snapshot.readiness === 'not_ready' ? 'not_ready'
+                        : status === 'unknown' && snapshot.nativePhase === 'running' && snapshot.readiness === 'not_reported'
+                            ? DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1 : undefined;
             const nativeHealth: NonNullable<MachineServiceRowV1['health']> = {
                 status, observedAtMs: facts?.observedAt ?? null, freshness,
                 ...(facts?.healthSince === undefined ? {} : { since: facts.healthSince }),
