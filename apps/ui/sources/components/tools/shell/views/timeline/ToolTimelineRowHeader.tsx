@@ -116,6 +116,8 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
             onPointerMove={trackHoverState ? hoverProps.onPointerMove : undefined}
             onPointerLeave={trackHoverState ? hoverProps.onPointerLeave : undefined}
         >
+            {/* The title and its reveal slots stay one line; only the outcome after them moves beneath. */}
+            <View style={styles.titleLine}>
             <Pressable
                 testID={props.testID}
                 onPress={props.onPress ?? undefined}
@@ -216,6 +218,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                     ) : null}
                 </View>
             ) : null}
+            </View>
             {props.terminalStatus ? (
                 <Pressable
                     testID="tool-timeline-row-status-slot"
@@ -237,10 +240,24 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
 const styles = StyleSheet.create((theme, _runtime) => ({
     container: {
         flexDirection: 'row',
+        // Phones recompose: when the title and how the call ended do not share one line, the outcome moves
+        // beneath (still at the trailing edge) so the tool title stays whole instead of ending in an ellipsis (C10b).
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        columnGap: theme.space.s6,
+        rowGap: theme.space.s2,
+    },
+    titleLine: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 'auto',
+        minWidth: 0,
+        flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
     },
     terminalStatusSlot: {
+        marginLeft: 'auto',
         // The title and its subtitle keep priority on a narrow row: the status shrinks (and ellipsizes) after
         // taking at most half of it, instead of leaving the title a few characters.
         flexShrink: 1,

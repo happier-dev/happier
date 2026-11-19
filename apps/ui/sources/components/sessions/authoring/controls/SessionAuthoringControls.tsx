@@ -82,6 +82,9 @@ const styles = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         alignItems: 'center',
         gap: theme.space.s8,
+        // Never wider than its column, also inside a host's row (a step card's header): the chip anchors cap at
+        // this width, so a long value truncates inside its chip instead of running past the card edge (C24).
+        maxWidth: '100%',
     },
     fields: {
         alignSelf: 'stretch',
