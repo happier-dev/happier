@@ -140,3 +140,33 @@ test('a change to a module only the Vitest config imports (shared tooling outsid
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('first-open browser journey reaches UI and Home auth changes across spawned processes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'affected-first-open-'));
+  try {
+    const spec = 'packages/tests/suites/ui-e2e/firstOpen.browser.spec.ts';
+    const webSetup = 'packages/tests/suites/ui-e2e/setup.onboardingWizard.web.spec.ts';
+    const config = 'packages/tests/vitest.core.config.ts';
+    await mkdir(join(root, spec, '..'), { recursive: true });
+    await writeFile(join(root, spec), 'export {};');
+    await writeFile(join(root, webSetup), 'export {};');
+    await writeFile(join(root, config), "export default { test: { include: ['suites/ui-e2e/**/*.spec.ts'] } };");
+    const fixtures = 'packages/tests/fixtures/cli-backends';
+    await cp(fixtures, join(root, fixtures), { recursive: true });
+
+    const options = { journeysOnly: true };
+    const ui = await selectAffectedTests(root, ['apps/ui/sources/components/onboarding/preAuth/removedDoor.tsx'], options);
+    assert.deepEqual(ui.journeyFiles, [spec]);
+    const server = await selectAffectedTests(root, ['apps/server/sources/app/api/routes/auth/registerAccountAuthRoutes.ts'], options);
+    assert.deepEqual(server.journeyFiles, [spec]);
+    const webHandoff = await selectAffectedTests(root, ['apps/ui/sources/components/onboarding/surfaces/OnboardingWizardSurface.tsx'], options);
+    assert.deepEqual(webHandoff.journeyFiles, [spec, webSetup]);
+    const unrelated = await selectAffectedTests(root, [
+      'apps/ui/sources/components/sessions/list/SessionList.tsx',
+      'apps/ui/sources/components/onboarding/preAuth/WelcomeDecisionPanel.test.tsx',
+    ], options);
+    assert.deepEqual(unrelated.journeyFiles, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

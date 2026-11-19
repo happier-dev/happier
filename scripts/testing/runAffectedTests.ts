@@ -18,11 +18,13 @@ import { resolveRootUnitCommandOwners, runRootTests } from './runRootTests.ts';
  * Journey tests (packages/tests: contracts, core-layer, core-e2e fast and slow, ui-e2e, agents) and the
  * owner unit tests whose import graph reaches a changed file (selectGraphUnitTests) are selected. The import graph stops at a
  * process boundary: code a test reaches only through a spawned server, daemon or browser is not
- * selected here except for the documented stub subprocess bridges below; the nightly full run covers the rest.
+ * selected here except for the subprocess bridges below; the nightly full run covers the rest.
  */
 
 const TESTS_DIR = 'packages/tests';
 const UI_E2E_PREFIX = `${TESTS_DIR}/suites/ui-e2e/`;
+const FIRST_OPEN_BROWSER_SPEC = `${UI_E2E_PREFIX}firstOpen.browser.spec.ts`;
+const FIRST_OPEN_WEB_SETUP_SPEC = `${UI_E2E_PREFIX}setup.onboardingWizard.web.spec.ts`;
 const AGENT_PREFIX = `${TESTS_DIR}/suites/agents/`;
 const MATRIX_FILE = `${AGENT_PREFIX}provider.matrix.test.ts`;
 type ProviderMatrixEntry = { preset: string; tier: 'smoke' | 'extended'; scenarios: string[] };
@@ -255,6 +257,35 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
   // The matrix starts a server and CLI/daemon processes; these shared owners are
   // loaded in those children, not imported by the test process.
   const runtimeChanges = changedFiles.filter(file => !/\.(test|spec)\.[cm]?[jt]sx?$/u.test(file));
+  // The first-open spec loads these owners through Expo and a real server, outside Vitest's graph.
+  const firstOpenOwners = [
+    'apps/ui/sources/app/(app)/join/',
+    'apps/ui/sources/app/(app)/restore/',
+    'apps/ui/sources/app/(app)/settings/account.tsx',
+    'apps/ui/sources/app/_layout.tsx',
+    'apps/ui/sources/auth/',
+    'apps/ui/sources/components/account/auth/',
+    'apps/ui/sources/components/account/restore/',
+    'apps/ui/sources/components/atmosphere/',
+    'apps/ui/sources/components/hub/HomeHub.tsx',
+    'apps/ui/sources/components/onboarding/',
+    'apps/ui/sources/components/settings/account/',
+    'apps/ui/sources/components/teams/join/',
+    'apps/ui/sources/components/ui/motion/',
+    'apps/ui/sources/sync/domains/state/onboardingUiState.ts',
+    'apps/ui/sources/sync/engine/settings/syncSettings.ts',
+    'apps/server/sources/app/api/routes/auth/',
+  ];
+  if (!journeyFiles.includes(FIRST_OPEN_BROWSER_SPEC)
+      && runtimeChanges.some(file => firstOpenOwners.some(owner => owner.endsWith('/') ? file.startsWith(owner) : file === owner))
+      && existsSync(resolve(rootDir, FIRST_OPEN_BROWSER_SPEC))) {
+    journeyFiles.push(FIRST_OPEN_BROWSER_SPEC);
+  }
+  if (!journeyFiles.includes(FIRST_OPEN_WEB_SETUP_SPEC)
+      && runtimeChanges.some(file => file.startsWith('apps/ui/sources/components/onboarding/surfaces/'))
+      && existsSync(resolve(rootDir, FIRST_OPEN_WEB_SETUP_SPEC))) {
+    journeyFiles.push(FIRST_OPEN_WEB_SETUP_SPEC);
+  }
   // cliLaunchSpec starts src/index.ts, which dynamically loads cli/bootstrap.
   const sharedProcesses = runtimeChanges.some(file => file === 'apps/cli/src/index.ts' || [
     'apps/cli/src/cli/', 'apps/cli/src/agent/acp/', 'apps/cli/src/daemon/', 'apps/cli/src/session/',
