@@ -3,23 +3,19 @@ import { readTeamCredentialProviderModelSelection, replaceProviderModelCredentia
 import * as React from 'react';
 import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
-import { isMachineAgentExecutionStateBlockingV1, resolveMachineAgentExecutionStateV1, type MachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { isMachineAgentExecutionStateBlockingV1, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { projectMachineAgentForAuthoredSelection } from '@/agents/machineAgents/machineAgentModel';
 import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { t } from '@/text';
+import { formatMachineAgentExecutionState } from '@/components/machines/agents/machineAgentCopy';
 import { resolveSessionAgentPickerSelectionFields } from '@/components/sessions/agentPicker/sessionAgentPickerSelectionFields';
 import type { SessionAuthoringControlFacts, SessionAuthoringFieldOption } from './sessionAuthoringFieldControls';
 import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '@/components/roles/rail/buildRolesRailPickerOption';
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
 
 const EMPTY_TARGETS: NonNullable<SessionAuthoringControlFacts['agentTargets']> = [];
-
-function readSessionAuthoringReadinessLabel(readiness: MachineAgentExecutionStateV1): string {
-    return readiness === 'needsSignIn' ? t('machineAgents.needsSignIn')
-        : readiness === 'notInstalled' ? t('machineAgents.notInstalled') : t('machineAgents.unsupported');
-}
 
 /** The Session engine picker, adapted only at its controlled authoring writer. */
 export function useSessionAuthoringEnginePicker(params: Readonly<{
@@ -139,7 +135,7 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
         options, selectedOptionId: selected?.id ?? null, onSelect,
         agentId: selected?.agentId,
         onAgentClick: React.useCallback(() => {}, []),
-        label: selected ? (selectedBlocked ? `${selected.label} · ${readSessionAuthoringReadinessLabel(selectedReadiness)}` : selected.label)
+        label: selected ? (selectedBlocked ? `${selected.label} · ${formatMachineAgentExecutionState(selectedReadiness)}` : selected.label)
             : (params.values.agentTarget ? t('workflows.input.unavailable') : t('common.default')),
     };
 }

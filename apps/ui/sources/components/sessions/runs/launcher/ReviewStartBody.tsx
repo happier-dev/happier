@@ -62,7 +62,8 @@ export function ReviewStartBody(props: Props) {
                 const offset = steps.slice(0, stepIndex).reduce((total, step) => total + step.reviewers.length, 0);
                 const choice = reviewer.kind === 'engine' ? props.choices.find(choice => (choice.reviewEngineId ?? choice.backendId) === reviewer.engineId) : null;
                 return { name: choice?.title ?? labels[offset + index] ?? (reviewer.kind === 'engine' ? reviewer.engineId : t('session.collaboration.discussion.controls.whoFilterPeople')),
-                    mark: choice ? <ExecutionRunAgentMark agentId={choice.agentId} size={16} /> : null };
+                    mark: choice ? <ExecutionRunAgentMark agentId={choice.agentId} size={16} /> : null,
+                    warning: choice?.unavailableReason };
             }}
             renderWho={stepIndex => <StepWho {...props} stepIndex={stepIndex} steps={steps} onStepsChange={update} />} />
         {props.children}

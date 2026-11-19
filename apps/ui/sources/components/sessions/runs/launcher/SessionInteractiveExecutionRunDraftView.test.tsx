@@ -201,6 +201,7 @@ let backends: Record<string, { available: boolean; intents: string[] }>;
 let reviewCostConsent: ReturnType<typeof ReviewEngineListItemSchema.parse>['costConsent'];
 let reviewCostEngineId = 'claude';
 let uninstalledAgentId: string | null = null;
+let omittedMachineAgentId: string | null = null;
 let reviewProfileIds: Readonly<Record<string, string>> = {};
 let protocolSupported = true;
 let detachedScopeSupported = true;
@@ -240,7 +241,7 @@ function teamResource(application?: unknown) {
 const secretRef = 'happier:shared-secret:v1:personal-secret';
 function reviewAgentIds() { return ['claude', 'codex', ...(['coderabbit', 'deepsec'] as const).filter(id => id in backends)] as const; }
 function reviewAgentProjection() { return PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
-    agentsById: Object.fromEntries(reviewAgentIds().map(agentId => [agentId, { id: agentId,
+    agentsById: Object.fromEntries(reviewAgentIds().filter(agentId => agentId !== omittedMachineAgentId).map(agentId => [agentId, { id: agentId,
         title: t(BUNDLED_CANONICAL_AGENTS_CORE[agentId]!.displayNameKey),
         identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId],
         providerRequirements: BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId]?.providerRequirements ?? undefined,
@@ -424,6 +425,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         reviewCostConsent = undefined;
         reviewCostEngineId = 'claude';
         uninstalledAgentId = null;
+        omittedMachineAgentId = null;
         reviewProfileIds = {};
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
@@ -2002,6 +2004,24 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(selectedAgentIds()).toEqual(selected);
         expect(emittedStarts).toEqual([]);
         expect(emittedWorkflowStarts).toEqual([]);
+    });
+
+    it.each(['coderabbit', 'deepsec'] as const)('names the daemon Review refusal without a MachineAgent row and never selects a fallback (%s)', async engineId => {
+        // Captured public Q14 shape: qualified vendor target, enabled/available false,
+        // readiness and unavailableCode notInstalled. Its setup catalog can be absent.
+        omittedMachineAgentId = engineId;
+        backends[engineId] = { available: false, intents: ['review'] };
+        await mount({ intent: 'review' });
+        await showAgentChoices();
+        await waitFor(() => expect(agentRows().find(option => option.testID === `contextual-start-agent:${engineId}`)).toBeDefined());
+        const row = agentRows().find(option => option.testID === `contextual-start-agent:${engineId}`)!;
+        expect(row.disabled).toBe(true);
+        expect(selectedAgentIds()).toEqual([]);
+        await screen.pressByTestIdAsync(row.testID!);
+        expect(selectedAgentIds()).toEqual([]);
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(row.subtitle).toContain(t('machineAgents.notInstalled'));
     });
 
     it('removes a retained unavailable reviewer from its own step without changing another roster', async () => {

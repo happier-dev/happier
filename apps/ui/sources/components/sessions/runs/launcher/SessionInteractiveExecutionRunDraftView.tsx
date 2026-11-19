@@ -1175,12 +1175,13 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             return {
                 id: choice.targetKey, testID: `contextual-start-agent:${choice.agentId}`,
                 label: choice.title, disabled: choice.disabled,
+                ...(choice.unavailableReason ? { subtitle: choice.unavailableReason } : {}),
                 icon: <ExecutionRunAgentMark agentId={choice.agentId} size={16} />,
                 ...(choice.setup ? presentMachineAgentSetupListRow(choice.setup) : {}),
                 ...(intent !== 'review' && selectedChoice?.targetKey === choice.targetKey
                     && (draftModelSelection || options.inheritedDraftSelection || teamCredential.selected)
                     ? { subtitle: exactModelPresentation.subtitle } : {}),
-                ...(intent === 'review' && reviewModelSubtitle && options.selectedBackendChoice?.targetKey === choice.targetKey
+                ...(intent === 'review' && !choice.unavailableReason && reviewModelSubtitle && options.selectedBackendChoice?.targetKey === choice.targetKey
                     ? { subtitle: reviewModelSubtitle } : {}),
                 ...(setup ? {} : { onSelect: () => selectBackend(choice.targetKey) }),
             };

@@ -1,8 +1,21 @@
 import { presentAgentInstallJobFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { t } from '@/text';
+import type { MachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
 import type { MachineAgentRowAction, MachineAgentStatus } from './machineAgentPresentation';
+
+/** Read-only wording for the execution prerequisite already decided by the inventory owner. */
+export function formatMachineAgentExecutionState(state: MachineAgentExecutionStateV1): string {
+    switch (state) {
+        case 'ready': return t('machineAgents.signedInHere');
+        case 'needsSignIn': return t('machineAgents.needsSignIn');
+        case 'notInstalled': return t('machineAgents.notInstalled');
+        case 'unsupported': return t('machineAgents.unsupported');
+        case 'checking': return t('machineAgents.checking');
+        case 'unknown': return t('machineAgents.unknown');
+    }
+}
 
 /** The words of a status line; one message per state (the presentation resolver picked the state). */
 export function formatMachineAgentStatus(status: MachineAgentStatus): string {
@@ -10,17 +23,17 @@ export function formatMachineAgentStatus(status: MachineAgentStatus): string {
         case 'ready': {
             const base = status.label
                 ? (status.via === 'connected' ? t('machineAgents.signedInWith', { label: status.label }) : t('machineAgents.signedInAs', { label: status.label }))
-                : t('machineAgents.signedInHere');
+                : formatMachineAgentExecutionState(status.kind);
             return status.updateTo ? `${base} · ${t('machineAgents.updateTo', { version: status.updateTo })}` : base;
         }
-        case 'needsSignIn': return t('machineAgents.needsSignIn');
+        case 'needsSignIn': return formatMachineAgentExecutionState(status.kind);
         case 'waitingForSignIn': return t('machineAgents.waitingForSignIn');
         case 'notInstalled':
             if (status.manual) return t('machineAgents.installYourself');
             return status.sizeBytes
-                ? `${t('machineAgents.notInstalled')} · ${t('machineAgents.downloadSize', { size: formatHappierDataBytes(status.sizeBytes, { kind: 'storage' }) })}`
-                : t('machineAgents.notInstalled');
-        case 'unsupported': return t('machineAgents.unsupported');
+                ? `${formatMachineAgentExecutionState(status.kind)} · ${t('machineAgents.downloadSize', { size: formatHappierDataBytes(status.sizeBytes, { kind: 'storage' }) })}`
+                : formatMachineAgentExecutionState(status.kind);
+        case 'unsupported': return formatMachineAgentExecutionState(status.kind);
         case 'installing': {
             const step = status.stepLabel ?? t('machineAgents.installing');
             if (status.bytesDone !== null && status.bytesTotal) {
@@ -29,7 +42,7 @@ export function formatMachineAgentStatus(status: MachineAgentStatus): string {
             return step;
         }
         case 'failed': return presentAgentInstallJobFailure(status.failure).title;
-        case 'checking': return t('machineAgents.checking');
+        case 'checking': return formatMachineAgentExecutionState(status.kind);
         case 'offline':
             switch (status.lastKnown) {
                 case 'signedIn': return t('machineAgents.offlineSignedIn');
@@ -41,7 +54,7 @@ export function formatMachineAgentStatus(status: MachineAgentStatus): string {
         // The classified reason stays on the typed status for diagnostics. It is not product copy.
         case 'unavailable': return t('machineAgents.unknown');
         case 'signInUnknown': return t('machineAgents.signInUnknown');
-        case 'unknown': return t('machineAgents.unknown');
+        case 'unknown': return formatMachineAgentExecutionState(status.kind);
     }
 }
 

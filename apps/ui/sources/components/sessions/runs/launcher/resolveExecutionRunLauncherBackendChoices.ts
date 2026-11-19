@@ -3,6 +3,8 @@ import { resolveBundledAgentIdFromContributionIdentity } from '@happier-dev/agen
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { isMachineAgentExecutionStateBlockingV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { formatMachineAgentExecutionState } from '@/components/machines/agents/machineAgentCopy';
 import type { ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 
 import {
@@ -33,6 +35,8 @@ export type ExecutionRunLauncherBackendChoice = Readonly<{
     agentId: string;
     title: string;
     disabled: boolean;
+    /** The daemon inventory's prerequisite reason, even without a MachineAgent setup descriptor. */
+    unavailableReason?: string;
     /**
      * The Machine's own inventory says this Agent is not ready there: the shared Agent-picker rule
      * presents it placed and opening setup. It is never a fresh choice, but a saved one stays chosen.
@@ -155,6 +159,8 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
                 agentId,
                 title: item.label,
                 disabled: !item.enabled,
+                ...(!item.enabled && item.readiness && isMachineAgentExecutionStateBlockingV1(item.readiness)
+                    ? { unavailableReason: formatMachineAgentExecutionState(item.readiness) } : {}),
                 ...(setup ? { setup } : {}),
             };
         });
