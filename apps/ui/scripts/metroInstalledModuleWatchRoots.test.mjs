@@ -225,3 +225,50 @@ for (const race of [false, true]) test(`Metro excludes mutable package-manager s
     } finally { fsPromises.readlink = readlink; }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
+
+test('a captured web bundle resolves import-only packages from the published generation', { skip: process.platform === 'win32' }, async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'metro-captured-export-')));
+  try {
+    const sourceDir = path.join(fixture, 'source');
+    const captureDir = path.join(fixture, 'capture');
+    const { flipDependencyGeneration, resolveDependencyGenerationContainer } =
+      await import('../../stack/scripts/utils/proc/dependency_generations.mjs');
+    const { mountCapturedWorkspaceDependencies } =
+      await import('../../../scripts/workspaces/buildInputConvergence.mjs');
+    const genRoot = path.join(resolveDependencyGenerationContainer(sourceDir), 'g000000001-12345678');
+    const packageDir = path.join(genRoot, 'node_modules', 'capture-import-only');
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+      name: 'capture-import-only',
+      type: 'module',
+      exports: { '.': { import: './implementation.js' } },
+    }));
+    writeFileSync(path.join(packageDir, 'implementation.js'), 'export default "captured-generation-esm";\n');
+    await flipDependencyGeneration(sourceDir, { genRoot, projects: [] });
+    await mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs: [] });
+
+    const entry = path.join(captureDir, 'entry.js');
+    writeFileSync(entry, 'import value from "capture-import-only"; export default value;\n');
+    const { default: Server } = require('metro/private/Server');
+    const config = await require('metro-config').getDefaultConfig(captureDir);
+    const installedRoots = resolveInstalledModuleWatchRoots([path.join(captureDir, 'node_modules')]);
+    const runtimeRoot = path.dirname(require.resolve('metro-runtime/package.json'));
+    config.watchFolders = [captureDir, ...installedRoots, runtimeRoot];
+    config.transformer.asyncRequireModulePath = path.join(runtimeRoot, 'src/modules/asyncRequire.js');
+    config.resolver.useWatchman = false;
+    config.resolver.unstable_enablePackageExports = true;
+    config.maxWorkers = 1;
+    config.cacheStores = [];
+    config.fileMapCacheDirectory = path.join(fixture, 'filemap');
+    mkdirSync(config.fileMapCacheDirectory);
+    config.reporter = { update() {} };
+    config.serializer.getModulesRunBeforeMainModule = () => [];
+    config.serializer.getPolyfills = () => [];
+    const server = new Server(config, { watch: false });
+    try {
+      const bundle = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+        entryFile: entry, platform: 'web', dev: false, minify: false, lazy: false });
+      assert.match(bundle.code, /captured-generation-esm/);
+    } finally { await server.end(); }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});

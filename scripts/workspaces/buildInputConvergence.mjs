@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readCachedFileDigest } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { createHash } from 'node:crypto';
 import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+import { readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from '../../apps/stack/scripts/utils/proc/dependency_generations.mjs';
 import { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
 import cliDistBuildManifest from '../../packages/cli-common/cliDistBuildManifest.cjs';
 import { packageNameOfSpecifier, readWorkspacePackages } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -239,8 +240,13 @@ export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir
       }
     }
   }
+  // The checkout's root contains mutable links to the published generation.
+  // Mount the selected installed tree directly so file-map consumers can follow
+  // captured links without watching the checkout's intermediate node_modules.
+  const generation = readCurrentDependencyGeneration(sourceDir);
+  const installedRoot = generation ? join(resolveDependencyGenerationContainer(sourceDir), generation) : sourceDir;
   for (const dir of ['', ...workspaceDirs]) {
-    const sourceModules = join(sourceDir, dir, 'node_modules');
+    const sourceModules = join(installedRoot, dir, 'node_modules');
     const modules = join(captureDir, dir, 'node_modules');
     await mountInstalledNodeModules({ sourceModules, targetModules: modules, excludedNames: ['@happier-dev'] });
     await mkdir(join(modules, '@happier-dev'), { recursive: true });
