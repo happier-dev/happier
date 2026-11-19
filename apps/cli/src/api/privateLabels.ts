@@ -69,7 +69,7 @@ export function deriveCliPrivateLabelAccountKey(
   if (!encryption) return null;
   const source = encryption.type === 'legacy' ? encryption.secret : encryption.machineKey;
   if (source.byteLength !== tweetnacl.box.secretKeyLength) return null;
-  return resolveAccountContentSecretKey(encryption).slice();
+  return resolveAccountContentSecretKey(encryption);
 }
 
 function censusUrl(endpoint: string, recipientCensusPath: string): string {

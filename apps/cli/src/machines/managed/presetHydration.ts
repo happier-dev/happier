@@ -5,7 +5,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import type { MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ManagedMachinePresetPreparationExecutionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
     type ManagedMachineFullV1, type ManagedMachineV1, type ManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetStoredContentV1Schema, openManagedMachinePresetContentV1,
@@ -126,9 +126,7 @@ function accountKeySnapshot(credentials: StoredCredentials) {
     try {
         const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: credentials.encryption,
             ...(credentials.encryption.type === 'dataKey' ? { dataKeyPublicKey: credentials.encryption.publicKey } : {}) });
-        const accountKey = snapshot.material.type === 'legacy'
-            ? deriveAccountMachineKeyFromRecoverySecret(snapshot.material.secret)
-            : new Uint8Array(snapshot.material.machineKey);
+        const accountKey = resolveAccountContentSecretKey(snapshot.material);
         return { accountKey, fingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint) };
     } catch {
         return null;

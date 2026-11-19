@@ -14,7 +14,7 @@ import { sameAccountEncryptionIdentity } from '@happier-dev/sync-client';
 import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { ActionExecutorContext, JsonValue } from '@happier-dev/protocol';
@@ -184,10 +184,8 @@ async function prepareBootstrapCredential(params: ManagedMachineReconciliationIn
                 ? sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', content, resourceDataKey, randomBytes })
                 : sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content });
             const material = cryptoSnapshot?.material;
-            recipientMachineKey = material?.type === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(material.secret) : null;
-            const recipientPublicKey = material ? tweetnacl.box.keyPair.fromSecretKey(
-                material.type === 'dataKey' ? material.machineKey : recipientMachineKey!,
-            ).publicKey : null;
+            recipientMachineKey = material ? resolveAccountContentSecretKey(material) : null;
+            const recipientPublicKey = recipientMachineKey ? tweetnacl.box.keyPair.fromSecretKey(recipientMachineKey).publicKey : null;
             if (resourceDataKey && !recipientPublicKey) throw new ManagedMachineControllerError('credential_unavailable');
             const credential = SharedSavedSecretCreateInputV1Schema.parse({
                 resourceId, displayName: content.name, kind: content.kind, encryptionMode: currentness.mode, storedContent,

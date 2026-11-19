@@ -3,7 +3,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { openManagedMachinePresetContentV1, type ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import type { MachineIsolationConfiguredSandboxV1, MachineIsolationReferenceValidationV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 import type { MachineTerminalOwnSessionReadRuntime } from '@/api/machine/rpcHandlers.terminal';
@@ -82,15 +82,14 @@ export async function validateMachineIsolationConfiguredSandboxes(input: Readonl
     }
     const snapshot = readRequesterAccountEncryptionMaterialSnapshot(authorization);
     if (!snapshot || !authorization) return 'unavailable';
-    const accountKey = snapshot.material.type === 'legacy'
-      ? deriveAccountMachineKeyFromRecoverySecret(snapshot.material.secret) : snapshot.material.machineKey;
+    const accountKey = resolveAccountContentSecretKey(snapshot.material);
     try {
       const opened = openManagedMachinePresetContentV1({ presetId: preset.id, mode: 'e2ee', content: preset.content,
         recipients: preset.recipients, accountId: runtime.accountId,
         accountKey });
       if (!opened) return 'locked';
       if (accept(opened) !== 'valid') return 'invalid';
-    } finally { if (snapshot.material.type === 'legacy') accountKey.fill(0); }
+    } finally { accountKey.fill(0); }
   }
   return 'valid';
 }

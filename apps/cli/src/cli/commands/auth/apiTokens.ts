@@ -149,7 +149,7 @@ async function prepareEncryption(
   if ((material.type === 'legacy' ? material.secret : material.machineKey).length !== 32) {
     throw new ApiTokenCommandError('api_token_encryption_not_ready');
   }
-  const contentPrivateKey = resolveAccountContentSecretKey(material).slice();
+  const contentPrivateKey = resolveAccountContentSecretKey(material);
   try {
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(contentPrivateKey).publicKey;
     if ((material.type === 'dataKey' && !tweetnacl.verify(material.publicKey, publicKey))

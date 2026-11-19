@@ -574,7 +574,7 @@ export function prepareSavedSecretResourceCreateForOperation(input: Readonly<{
   if (!hasUsableAccountSettingsEncryptionMaterial(input.credentials)) throw new Error('saved_secret_encryption_unavailable');
   const encryption = input.credentials.encryption;
   const randomBytes = input.randomBytes ?? getRandomBytes;
-  const recipientMachineKey = encryption.type === 'legacy' ? resolveAccountContentSecretKey(encryption).slice() : null;
+  const recipientMachineKey = encryption.type === 'legacy' ? resolveAccountContentSecretKey(encryption) : null;
   const resourceDataKey = randomBytes(32);
   try {
     const publicKey = encryption.type === 'dataKey' ? encryption.publicKey : tweetnacl.box.keyPair.fromSecretKey(recipientMachineKey!).publicKey;
