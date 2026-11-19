@@ -199,7 +199,7 @@ describe('row-level Account Availability refresh', () => {
         const inFlight = refreshPluginAccountAvailabilityProjection(hydrator);
         // A second plugin's hint lands while the first read is in flight and retires it.
         hydrator.invalidate([home.changePlugin(home.pluginIds[2]!, home.machineIds[1]!, home.machineIds[0]!)]);
-        await inFlight;
+        await expect(inFlight).rejects.toMatchObject({ name: 'ServerFetchReadSupersededError' });
         home.resetCounts();
         await refreshPluginAccountAvailabilityProjection(hydrator);
         // Both named plugins' intents in one exact request.

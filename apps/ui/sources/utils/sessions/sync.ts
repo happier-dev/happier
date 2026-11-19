@@ -316,7 +316,12 @@ export class InvalidateSync {
             } catch (e) {
                 // Retry replaces a cancelled read inside this same queue owner.
                 // Keep its waiters and failure budget; no backoff is warranted.
-                if (isServerFetchReadSupersededError(e)) continue;
+                if (isServerFetchReadSupersededError(e)) {
+                    // The replacement starts after the queued invalidations and serves their waiters too.
+                    this._invalidatedDouble = false;
+                    this._promoteNextCyclePendings();
+                    continue;
+                }
                 // Bootstrap observes a settled attempt; ordinary refresh callers
                 // still wait for this cycle's retry recovery.
                 this._notifyCyclePendings({ ok: false, error: e }, true);

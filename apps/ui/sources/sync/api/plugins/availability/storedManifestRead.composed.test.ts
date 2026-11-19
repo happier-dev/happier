@@ -14,6 +14,7 @@ import { InvalidateSync } from '@/utils/sessions/sync';
 import { refreshPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/refreshProjection';
 import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { ServerFetchAbortedForServerSwitchError, ServerFetchReadSupersededError } from '@/sync/http/client';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
@@ -63,6 +64,63 @@ afterEach(() => {
 });
 
 describe('stored manifest Account Availability read', () => {
+    it('waits for Collection admission when the claim publication supersedes its explicit refresh', async () => {
+        const activeScope = await activateStorageAccountScope(scope);
+        const writer = { pluginId, collectionId: 'tasks', schemaVersion: 1, contractDigest: 'a'.repeat(43) };
+        const firstNamedRead = createDeferred<void>();
+        const releaseFirstNamedRead = createDeferred<void>();
+        const replacementStarted = createDeferred<void>();
+        const releaseReplacement = createDeferred<void>();
+        let namedReads = 0;
+        const hydrator = createActivePluginAccountAvailabilityProjectionHydrator({
+            captureLifetime: captureActiveServerAccountScopeLifetime,
+            getServerSnapshot: () => ({ serverId: scope.serverId, generation: 1 }),
+            captureRequestAuthority: async () => ({ request: async (path, init) => {
+                if (path === materializationsPath) return jsonResponse({ availabilityCursor: 2, snapshots: [] });
+                expect(path).toBe(intentsPath);
+                const { pluginIds } = JSON.parse(String(init?.body)) as { pluginIds?: string[] };
+                if (pluginIds?.includes(pluginId)) {
+                    if (++namedReads === 1) {
+                        firstNamedRead.resolve();
+                        await releaseFirstNamedRead.promise;
+                    } else {
+                        replacementStarted.resolve();
+                        await releaseReplacement.promise;
+                    }
+                    const response = { ...intentRead(), availabilityCursor: 2, release: null,
+                        intent: { ...intentRead().intent!, desiredVersion: null, writableCollections: [writer] } };
+                    return jsonResponse({ availabilityCursor: 2, pluginIds, failedPluginIds: [],
+                        intentReads: [{ pluginId, response }] });
+                }
+                return jsonResponse({ availabilityCursor: 1, pluginIds: [], failedPluginIds: [], intentReads: [] });
+            } }),
+        });
+        const queue = new InvalidateSync(() => refreshPluginAccountAvailabilityProjection(hydrator));
+        const reader = readPluginAccountAvailability(scope);
+        const read = () => reader.readCurrentCollectionContract({ pluginId, collectionId: writer.collectionId });
+        try {
+            await queue.invalidateAndAwait({ settleOnFirstAttempt: true });
+            expect(read()).toMatchObject({ kind: 'unavailable', code: 'artifact_not_current' });
+            hydrator.requestPlugins([pluginId]);
+            const refresh = queue.invalidateAndAwait({ settleOnFirstAttempt: true }).then(read);
+            await firstNamedRead.promise;
+            hydrator.invalidate([availabilityChange()]);
+            queue.invalidate();
+            releaseFirstNamedRead.resolve();
+            await replacementStarted.promise;
+            releaseReplacement.resolve();
+            expect(await refresh).toMatchObject({ kind: 'available', ref: writer });
+            await queue.awaitQueue();
+            expect(namedReads).toBe(2);
+        } finally {
+            releaseFirstNamedRead.resolve();
+            releaseReplacement.resolve();
+            await queue.awaitQueue();
+            queue.stop();
+            activeScope.dispose();
+        }
+    });
+
     it.each([
         { inventoryComplete: true, canMerge: true },
         { inventoryComplete: false, canMerge: false },
@@ -436,7 +494,8 @@ describe('stored manifest Account Availability read', () => {
                     if (control === 'retirement') { current = false; retire(); }
                     else hydrator.invalidate([availabilityChange()]);
                     heldResponse.reject(new TypeError('Network request failed'));
-                    expect(await pending).toBeUndefined();
+                    if (control === 'invalidation') expect(await pending).toBeInstanceOf(ServerFetchReadSupersededError);
+                    else expect(await pending).toBeUndefined();
                 }
                 await pending;
                 expect(observations).not.toContainEqual({ kind: 'unavailable', code: 'plugin_availability_unavailable' });

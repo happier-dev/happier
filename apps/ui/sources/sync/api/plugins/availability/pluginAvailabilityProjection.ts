@@ -9,7 +9,7 @@ import {
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes';
 
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import type { ServerFetch } from '@/sync/http/client';
+import { ServerFetchReadSupersededError, type ServerFetch } from '@/sync/http/client';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -212,9 +212,11 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         serverSnapshot: ProjectionServerSnapshot,
         epoch: number,
     ): boolean => {
-        return requestEpoch === epoch
-            && lifetime.isCurrent()
-            && sameServerSnapshot(dependencies.getServerSnapshot(), serverSnapshot);
+        if (!lifetime.isCurrent() || !scopesEqual(trackedScope, lifetime.scope)
+            || !sameServerSnapshot(dependencies.getServerSnapshot(), serverSnapshot)) return false;
+        // Same-Account waiters need the replacement attempt to publish before they resume.
+        if (requestEpoch !== epoch) throw new ServerFetchReadSupersededError('Plugin Availability read superseded');
+        return true;
     };
 
     const requestPlugins = (pluginIds: readonly string[]): void => {

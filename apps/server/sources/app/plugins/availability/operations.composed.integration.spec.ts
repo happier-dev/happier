@@ -2067,9 +2067,23 @@ describe("plugin Availability operations", () => {
                 const published = await claim(current);
                 expect(published.statusCode, published.body).toBe(200);
                 const parsed = PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(published.json());
-                expect(parsed.intent?.writableCollections.map(ref => [ref.collectionId, ref.schemaVersion])).toEqual([
-                    ["session-links", 2], ["source-instances", 4], ["user-marks", 2],
-                ]);
+                const currentRefs = normalizePluginAccountCollectionContractsV1({ pluginId, contributions: current })
+                    .map(({ pluginId, collectionId, schemaVersion, contractDigest }) => ({ pluginId, collectionId, schemaVersion, contractDigest }));
+                expect(parsed.intent?.writableCollections).toEqual(currentRefs);
+                const exactRead = await app.inject({
+                    method: "POST",
+                    url: PluginAvailabilityActionHttpPathsV1["account.plugins.availability.intents.list"],
+                    headers: { "x-test-user-id": ACCOUNT_ID },
+                    payload: { pluginIds: [pluginId] },
+                });
+                expect(exactRead.statusCode, exactRead.body).toBe(200);
+                const listed = PluginAvailabilityIntentsListActionOutputV1Schema.parse(exactRead.json());
+                expect(listed.failedPluginIds).toEqual([]);
+                expect(listed.intentReads).toMatchObject([{ pluginId, response: {
+                    intent: parsed.intent,
+                    release: null,
+                    currentDeclaration: { declarationDigestSha256: expect.any(String) },
+                } }]);
                 const repeated = await claim(current);
                 expect(repeated.statusCode, repeated.body).toBe(200);
                 expect(PluginAvailabilityCollectionWritersClaimActionOutputV1Schema.parse(repeated.json()).intent).toEqual(parsed.intent);

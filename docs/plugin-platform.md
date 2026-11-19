@@ -5670,6 +5670,9 @@ a held Machine the filtered answer omits has left the inventory, as a complete
 read would show. An incomplete filtered answer falls back to the complete read.
 Named plugins stay pending until their read is adopted, so a superseded or
 failed row-level read keeps them for the trailing refresh.
+When a change supersedes an in-flight read in the same Account, the Sync queue
+keeps callers awaiting that read on the replacement attempt. A caller awaiting
+an explicit post-claim refresh can then read the published Collection intent.
 On the wire, `materializations.read` sends each distinct Machine UI-artifact list
 once in `uiArtifactSets`; a materialization row names it by index
 (`uiArtifactSet`) instead of repeating it (every Machine reporting the same

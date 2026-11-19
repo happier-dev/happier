@@ -223,8 +223,8 @@ export class ServerFetchReadSupersededError extends Error {
     // Action adapters preserve this existing cancellation code instead of presenting a failed read.
     readonly code = 'cancelled';
     readonly retryable = false;
-    constructor() {
-        super('Server recovery read superseded by manual retry');
+    constructor(message = 'Server recovery read superseded by manual retry') {
+        super(message);
         this.name = 'ServerFetchReadSupersededError';
     }
 }

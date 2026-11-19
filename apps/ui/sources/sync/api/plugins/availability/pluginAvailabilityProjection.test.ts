@@ -948,7 +948,8 @@ describe('active Plugin Account Availability projection hydrator', () => {
                     : jsonResponse(materializationSnapshot(23, [pluginId])),
             );
 
-            await expect(pending).resolves.toBeNull();
+            if (supersession === 'reset') await expect(pending).resolves.toBeNull();
+            else await expect(pending).rejects.toMatchObject({ name: 'ServerFetchReadSupersededError' });
         },
     );
 
