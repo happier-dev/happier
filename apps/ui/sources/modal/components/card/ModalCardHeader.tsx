@@ -3,6 +3,7 @@ import { type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierModalHeader, type HappierModalHeaderTextRender, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
 
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -19,14 +20,17 @@ type ModalCardHeaderProps = Readonly<{
     /** A form's completion control (Done) in the close control's place: it keeps the title's row on a phone too. */
     completion?: React.ReactNode;
     onClose?: () => void;
-    /** `wide`: the band stands on the content's 24 edge; a phone keeps the page gutter. */
-    inset?: 'wide';
+    /** `wide`: the band stands on the content's 24 edge; a phone keeps the page gutter. `menu`: the menu text edge. */
+    inset?: 'wide' | 'menu';
     testID?: string;
     titleTestID?: string;
     subtitleTestID?: string;
     closeButtonTestID?: string;
     style?: StyleProp<ViewStyle>;
 }>;
+
+/** A menu's sheet: its title band, group titles and rows share one text edge (D8). */
+const MENU_TEXT_EDGE = Object.freeze({ paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx });
 
 const stylesheet = StyleSheet.create((theme) => ({
     title: {
@@ -74,7 +78,11 @@ export function ModalCardHeader(props: ModalCardHeaderProps) {
             titleTestID={props.titleTestID}
             subtitleTestID={props.subtitleTestID}
             // The app's own header style overrides (a card's `headerStyle`) are React Native view styles.
-            style={[props.inset === 'wide' && !compact ? { paddingHorizontal: theme.space.s24 } : null, props.style] as HappierStyleProp}
+            style={[
+                props.inset === 'wide' && !compact ? { paddingHorizontal: theme.space.s24 } : null,
+                props.inset === 'menu' ? MENU_TEXT_EDGE : null,
+                props.style,
+            ] as HappierStyleProp}
         />
     );
 }

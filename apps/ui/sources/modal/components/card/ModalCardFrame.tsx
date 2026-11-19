@@ -29,8 +29,11 @@ type ModalCardFrameProps = Readonly<{
     material?: 'glass' | 'solid' | 'overContent';
     /** `none`: no title band; the content is the top of the card. The title remains the accessible name. */
     header?: 'band' | 'none';
-    /** `wide`: the band's text and close stand on the content's 24 edge (a phone keeps the page gutter). */
-    headerInset?: 'wide';
+    /**
+     * `wide`: the band's text and close stand on the content's 24 edge (a phone keeps the page gutter).
+     * `menu`: the band stands on the menu text edge, with the menu's group titles and rows below it (a popover's sheet).
+     */
+    headerInset?: 'wide' | 'menu';
     leading?: React.ReactNode;
     /** `above`: on a phone the leading slot takes its own row; the title stands beneath it. */
     leadingPlacement?: 'above' | null;

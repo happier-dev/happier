@@ -529,6 +529,8 @@ function PhonePopoverSheet(props: PopoverShellProps) {
             scrollHost="bounded"
             bodyScroll="auto"
             header={pushed ? 'band' : props.sheetHeader}
+            // The band stands on the menu text edge, over the menu's group titles and rows (D8).
+            headerInset="menu"
             material={props.sheetMaterial}
             sheetBottomInset={insets.bottom}
             leading={pushed ? <ModalBackButton testID="popover-sheet.back" onPress={pushStack.back} /> : undefined}
