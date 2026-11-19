@@ -80,6 +80,9 @@ mod desktop_http;
 mod desktop_downloads;
 
 #[cfg(any(desktop, test))]
+mod desktop_workspace_file;
+
+#[cfg(any(desktop, test))]
 mod browser;
 
 #[cfg(any(desktop, test))]

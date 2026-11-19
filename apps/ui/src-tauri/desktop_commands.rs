@@ -9,6 +9,7 @@ macro_rules! with_desktop_commands {
             desktop_downloads::desktop_download_cache_write,
             desktop_downloads::desktop_download_cache_close,
             desktop_downloads::desktop_download_cache_remove,
+            desktop_workspace_file::desktop_handoff_workspace_file,
             desktop_dialog::desktop_pick_folder,
             desktop_dialog::desktop_capture_recent_choose_file,
             desktop_dialog::desktop_pick_ssh_identity_file,

@@ -16,6 +16,7 @@
     "core:window:allow-set-badge-label",
     "dialog:allow-open",
     "allow-desktop-download-cache",
+    "allow-desktop-handoff-workspace-file",
     {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$TEMP/happier-downloads/**" }]
