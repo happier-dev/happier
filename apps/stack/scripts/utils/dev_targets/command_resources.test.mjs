@@ -64,11 +64,11 @@ for (const [compiler, expectedGiB] of [['tsrs', 10], ['microsoft', 20]]) {
       { cwd, repoRoot: fixture.root, env: { HAPPIER_TYPESCRIPT_COMPILER: compiler === 'tsrs' ? 'microsoft' : 'tsrs' } });
     assert.equal(resolveHeavyweightMemoryFloorKiB(manifestOverride.heavyClass), expectedGiB * 1024 * 1024,
       'manifest environment assignments must reach the compiler selection owner');
-    // The compiler-specific calibration must not shrink the finalizer or a build.
+    // The finalizer and builds use the calibrated general compilation class.
     const build = resolveTypeScriptCliInvocation({ args: ['--build'], admissionClass: 'compilation', env,
       platform: 'linux', arch: 'x64' });
     assert.ok(build.argsPrefix.includes('--class=compilation'));
-    assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES.compilation.memoryKiB, 38 * 1024 * 1024);
+    assert.equal(resolveHeavyweightMemoryFloorKiB('compilation'), 17 * 1024 * 1024);
     assert.equal(HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB, 5.5 * 1024 * 1024);
     const general = resolveTypeScriptCliInvocation({ args: ['--noEmit'], admissionClass: 'compilation', env,
       platform: 'linux', arch: 'x64' });

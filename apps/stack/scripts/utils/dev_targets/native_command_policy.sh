@@ -78,14 +78,14 @@ heavyweight_memory_floor_kib() {
     dependency-install) heavyweight_policy_floor='3145728' ;;
     package-dist) heavyweight_policy_floor='5767168' ;;
     runtime-build) heavyweight_policy_floor='18874368' ;;
-    compilation) heavyweight_policy_floor='39845888' ;;
+    compilation) heavyweight_policy_floor='17825792' ;;
     compilation-ui) heavyweight_policy_floor='20971520' ;;
     compilation-ui-tsrs) heavyweight_policy_floor='10485760' ;;
     compilation-cli) heavyweight_policy_floor='15728640' ;;
     compilation-server) heavyweight_policy_floor='16777216' ;;
     targeted-validation) heavyweight_policy_floor='2097152' ;;
     full-validation) heavyweight_policy_floor='2097152' ;;
-    *) heavyweight_policy_floor='39845888' ;;
+    *) heavyweight_policy_floor='17825792' ;;
   esac
   if [ "$1" = source-web-export ]; then
     case "${3-}" in ''|*[!0-9]*|0) ;;

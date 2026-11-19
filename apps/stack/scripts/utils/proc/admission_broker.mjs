@@ -295,15 +295,23 @@ export function createAdmissionBroker({ root,
     return nearestRank(supersets, 0.5) ?? nearestRank(family, 0.5)
       ?? nearestRank(sameProjects, 0.5) ?? nearestRank(sameClass, 0.5);
   }
+  function requestedColdFloorKiB(item) {
+    // Pre-calibration clients retain the old catalog default in their acquire
+    // message across broker succession. Translate only that class and value.
+    if (item.resourceClass === 'compilation' && item.floorKiB === 38 * 1024 * 1024) {
+      return HEAVYWEIGHT_COMMAND_RESOURCES.compilation.memoryKiB;
+    }
+    return item.floorKiB;
+  }
   function recordedIdentityFloorKiB(item) {
     const peak = recordedIdentityPeakKiB(item);
-    return peak === undefined ? item.floorKiB : roundPeak(peak);
+    return peak === undefined ? requestedColdFloorKiB(item) : roundPeak(peak);
   }
   /** Worker-count options follow the same identity rule: with a recorded peak,
    * offer the worker counts whose modelled floor fits inside it (else the
    * smallest), each reserving that peak, never the modelled maximum. */
   function sizeWaitingItem(item, peak = recordedIdentityPeakKiB(item)) {
-    if (peak !== undefined) item.floorKiB = roundPeak(peak);
+    item.floorKiB = peak === undefined ? requestedColdFloorKiB(item) : roundPeak(peak);
     const options = item.requestedFloorOptions;
     if (peak === undefined || !options) {
       item.floorOptions = options;

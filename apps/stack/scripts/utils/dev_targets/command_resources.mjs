@@ -77,18 +77,18 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Retain that envelope: its original capture is unavailable, and Protocol
   // alone cannot recalibrate the larger full-runtime workload.
   'runtime-build': { memoryKiB: 18874368, cpuCores: 'host', diskClass: 'runtime-build' },
-  // General compilation also covers commit coherence across CLI + UI.
-  // 2026-11-04 admission holder 2355054: sampled tree RSS 38,992,620 KiB,
-  // rounded to 38 GiB without margin. Its recorded 26 GiB floor uniquely
-  // identifies this class; package-specific classes were not identified.
-  // Evidence: .project/tmp/compile-reservation-peaks-1104/holder-snapshot.json.
-  compilation: { memoryKiB: 38 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
+  // 2026-11-19 controller compilation class, four completed identities:
+  // max dedicated-cgroup working set 11,364,896 KiB (commit type coherence).
+  // No completed general-compilation rows on nl1, nl3 or windows2-linux.
+  // Max × 1.5, rounded up to a whole GiB, gives a 17 GiB cold reservation.
+  // Evidence: .project/tmp/P03-ADMISSION-4/cold-floor-before-controller.log.
+  compilation: { memoryKiB: Math.ceil(11_364_896 * 1.5 / (1024 * 1024)) * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
   'compilation-ui': { memoryKiB: 20 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
   // Host memory: 2026-11-07, 51 live snapshots over 25 minutes, three tsrs UI
   // holders. Max live VmHWM sum 9,477,228 KiB + measured within-holder RSS
   // range 41,512 KiB, rounded up to whole GiB, gives 10 GiB. Evidence:
   // .project/tmp/finalizer-floor-1106/live-holders-summary.json. Microsoft UI
-  // retains 20 GiB (18,909,772 KiB historical peak); general compilation 38.
+  // retains 20 GiB (18,909,772 KiB historical peak).
   // Waiting diagnostics show this floor; capacity/OOM refusal owns recovery.
   'compilation-ui-tsrs': { memoryKiB: 10 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
   'compilation-cli': { memoryKiB: 15 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },

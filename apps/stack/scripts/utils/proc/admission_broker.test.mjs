@@ -1019,12 +1019,13 @@ test('identity keys on component and entry, never the argument list; unrecorded 
   const entryB = join(root, 'entry-b.mjs');
   const record = `import{writeFileSync}from"node:fs";writeFileSync(${JSON.stringify(floorFile)},process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB)`;
   await writeFile(entryA, record); await writeFile(entryB, record);
-  const run = (entry, files, peakKiB, className = 'compilation') => runAdmissionCommand({ root, className, floorKiB: 38 * gib,
+  const coldFloorKiB = HEAVYWEIGHT_COMMAND_RESOURCES.compilation.memoryKiB;
+  const run = (entry, files, peakKiB, className = 'compilation') => runAdmissionCommand({ root, className, floorKiB: coldFloorKiB,
     machine: 'fixture', repoDir: root, cacheBaseDir: root, env: {}, projects: ['.'], readJobPeakKiB: () => peakKiB,
     command: process.execPath, args: [entry, ...files] });
   const admittedFloor = async () => Number(await readFile(floorFile, 'utf8'));
   assert.equal(await run(entryA, ['alpha.test.mjs'], 1 * gib), 0); await settle();
-  assert.equal(await admittedFloor(), 38 * gib, 'a class without kernel history reserves its floor');
+  assert.equal(await admittedFloor(), coldFloorKiB, 'a class without kernel history reserves its floor');
   assert.equal(await run(entryB, ['beta.test.mjs'], 9 * gib), 0); await settle();
   assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded identity uses the 1 GiB related history so far');
   assert.equal(await run(entryA, ['gamma.test.mjs', 'delta.test.mjs'], 1 * gib), 0); await settle();
@@ -2809,4 +2810,21 @@ test('an already queued compilation uses its class history as soon as the first 
   const admitted = await waiting.admit();
   assert.equal(admitted.reserved.floorKiB, 4.5 * gib);
   await admitted.release();
+});
+
+test('a retained compilation acquire uses the current cold floor', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 20 * gib, totalMemoryKiB: 64 * gib }),
+    admitDisk: () => ({ admitted: true }),
+  });
+  const retained = await acquire(root, 38 * gib, t, {
+    arrivedAt: Date.now() - headReservationDelayMs,
+    className: 'compilation', resourceClass: 'compilation',
+  });
+  const sampled = await requestAdmissionSample(root);
+  assert.equal(sampled.activeCount, 1, 'the reconnecting waiter fits the successor’s available memory');
+  const granted = await retained.admit();
+  assert.equal(granted.reserved.floorKiB, 17 * gib);
+  await granted.release();
 });
