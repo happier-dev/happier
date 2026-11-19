@@ -122,15 +122,19 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
     }
     catch { /* A private cause accessor cannot replace the original failure. */ }
   }
-  const failure = carried ?? classifyActionExecutorThrownError(error, fallbackErrorCode);
+  const failure = carried ?? classifyActionExecutorThrownError(error, fallbackErrorCode, phase);
   // Native Action adapters spread these fields into a failure; terminal projection removes the sidecar.
   const normalized = withActionFailureCauseDiagnostic({ ...failure, error: redactBugReportSensitiveText(failure.error),
-    failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) },
+    failureCause: readCarriedActionFailureCause(error) ?? failure.failureCause ?? projectActionFailureCauseV1(error, phase) },
     error, phase ?? 'dispatch');
   return carryActionFailureDiagnostic(normalized, normalized, { enumerable: true });
 }
 
-function classifyActionExecutorThrownError(error: unknown, fallbackErrorCode: 'action_failed' | 'cancelled'): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {
+function classifyActionExecutorThrownError(
+  error: unknown,
+  fallbackErrorCode: 'action_failed' | 'cancelled',
+  phase?: string,
+): Pick<ActionExecuteFailure, 'errorCode' | 'error' | 'details' | 'effectAttempted' | 'failureCause'> {
   if (error instanceof ActionCatalogUnavailableError) return { errorCode: error.code, error: error.code };
   if (error instanceof ApprovalRequestInvalid || error instanceof ApprovalRequestConflict)
     return { errorCode: error.code, error: error.code, ...(error.details ? { details: error.details } : {}) };
@@ -240,6 +244,7 @@ function classifyActionExecutorThrownError(error: unknown, fallbackErrorCode: 'a
       errorCode: sessionListUnavailable.data.code,
       error: sessionListUnavailable.data.code,
       details: sessionListUnavailable.data,
+      failureCause: { ...projectActionFailureCauseV1(error, phase), errorCode: sessionListUnavailable.data.code },
     };
   }
   const protocolCode = readActionErrorCodeV1(error);
