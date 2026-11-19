@@ -18,6 +18,8 @@ const AGENT_EXTERNAL_SESSIONS_FAILURE_CODES = [
     'invalid_request',
     'cancelled',
     'agent_error',
+    /** The native session store uses a format this plugin version cannot read. The message is a safe format token. */
+    'format_unsupported',
     'timeout',
 ] as const;
 

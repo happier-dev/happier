@@ -69,6 +69,19 @@ describe('External Sessions structural error diagnostics', () => {
         expect(mapExternalSessionCorridorFailureToExternalSessionsError(new Error('ordinary host defect'))).toBeNull();
     });
 
+    it('answers an unsupported session format with its own typed code and the safe format token, for any Agent', () => {
+        expect(isAgentExternalSessionsFailureCode('format_unsupported')).toBe(true);
+        expect(mapExternalSessionProviderFailureToExternalSessionsError(new ExternalSessionProviderFailureError({
+            code: 'format_unsupported', operation: 'pageTranscript', retryable: false,
+            message: 'cursor_cli_store_format_unsupported',
+        }))).toEqual({ ok: false, errorCode: 'agent_format_unsupported', error: 'cursor_cli_store_format_unsupported', retryable: false });
+        // A free-form Agent message never crosses as the format token.
+        expect(mapExternalSessionProviderFailureToExternalSessionsError(new ExternalSessionProviderFailureError({
+            code: 'format_unsupported', operation: 'listCandidates', retryable: false, message: SENTINELS[0],
+        }))).toEqual({ ok: false, errorCode: 'agent_format_unsupported', error: 'agent_format_unsupported', retryable: false });
+        expectNoSentinels(debugLog.mock.calls);
+    });
+
     it('names transcript producer overflow through the exact safe-token owner without leaking failure prose', () => {
         mapExternalSessionProviderFailureToExternalSessionsError(new ExternalSessionProviderFailureError({
             code: 'agent_error', operation: 'pageTranscript', retryable: false,

@@ -83,6 +83,7 @@ function mapProviderFailureCodeToExternalSessionsErrorCode(code: string): Extern
     if (AGENT_FAILURE_CODES_ANSWERED_AS_INVALID_REQUEST.has(code)) return 'invalid_request';
     if (code === 'timeout') return 'agent_timeout';
     if (code === 'agent_error') return 'agent_error';
+    if (code === 'format_unsupported') return 'agent_format_unsupported';
     if (isAgentExternalSessionsFailureCode(code)) return 'agent_unavailable';
     return 'internal_error';
 }
@@ -161,9 +162,18 @@ export function mapExternalSessionProviderFailureToExternalSessionsError(
         ...diagnostic,
     });
     return {
-        ...externalSessionsError(errorCode),
-        retryable: error.retryable,
+        ...externalSessionsError(errorCode, errorCode === 'agent_format_unsupported' ? readUnsupportedFormatToken(error.message) : undefined),
+        retryable: errorCode === 'agent_format_unsupported' ? false : error.retryable,
     };
+}
+
+/**
+ * An unsupported-format failure names its native format with a plugin-authored
+ * token such as `cursor_cli_store_format_unsupported`. Only a token shape
+ * crosses; any other message stays behind and the code stands alone.
+ */
+function readUnsupportedFormatToken(message: string): string | undefined {
+    return /^[a-z][a-z0-9_.-]{0,95}$/u.test(message) ? message : undefined;
 }
 
 /** Host-owned page branches use the same closed safe-token diagnostic owner. */
