@@ -7880,6 +7880,8 @@ channels and exits when the holder closes that connection.
     including after delete intent has revoked target IO. Only that row's
     `confirmed-absent` allocation invokes the daemon's existing Stop owner for
     the exact tracked placement, using the Session's Account metadata context.
+    The signed controller read for an exact managed id includes that terminal
+    row, even after archival; the fleet census still selects only pending work.
     Restored relays carry the committed Session id separately from their holder
     custody key. A dropped channel, unavailable Home read or admission revocation
     alone does not establish native death; holder reconnect remains recoverable.

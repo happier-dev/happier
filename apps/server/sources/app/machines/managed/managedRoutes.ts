@@ -253,13 +253,15 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 ? await resolveSignedManagedAccountExecutorInTx(tx, current, { custodianAccountId: request.userId }) ? [managedId] : []
                 : targets.filter(target => !target.controller).map(target => target.managedId);
             const rows = await tx.managedMachine.findMany({ where: { homeId, custodianAccountId: request.userId,
-                ...(managedId ? { id: managedId } : {}),
+                // Exact observers need the terminal allocation fact to end a placed Session.
+                // Only the fleet census selects outstanding reconciliation work.
+                ...(managedId ? { id: managedId } : { archivedAt: null,
+                    OR: [{ allocation: 'bound', creationState: 'active' },
+                        { allocation: { in: ['bound', 'may-exist'] }, creationState: 'canceled', desired: 'delete', desiredWhen: 'now' }] }),
                 AND: [{ OR: [{ controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId },
                     { controllerMachineId: null, id: { in: accountManagedIds } },
                     { controllerMachineId: null, enrolledMachineId: controller.machineId,
-                        retention: jsonPathEquals(['effect'], 'stop') }] }],
-                archivedAt: null, OR: [{ allocation: 'bound', creationState: 'active' },
-                    { allocation: { in: ['bound', 'may-exist'] }, creationState: 'canceled', desired: 'delete', desiredWhen: 'now' }] } });
+                        retention: jsonPathEquals(['effect'], 'stop') }] }] } });
             const retentionContinuations = rows.flatMap(row => {
                 const admitted = readManagedAdmissionState(row.admittedInput);
                 return admitted.currentAdmission?.kind === 'policy'

@@ -357,6 +357,20 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 expect(fleet.queries.some(query => query.model === 'session')).toBe(true);
                 expect(fleet.queries.some(query => query.model === 'automationRun')).toBe(true);
             }
+            // A placed Session observes its exact allocation after Delete has settled,
+            // while the scheduler must stop treating that row as available work.
+            await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                allocation: 'confirmed-absent', desired: 'delete', archivedAt: new Date(),
+            } });
+            const absent = await read(test.row.id);
+            expect(absent.statusCode, absent.body).toBe(200);
+            expect(absent.json().machines).toEqual([expect.objectContaining({
+                id: test.row.id, allocation: 'confirmed-absent', desired: 'delete',
+            })]);
+            const afterDelete = await read();
+            expect(afterDelete.statusCode, afterDelete.body).toBe(200);
+            expect(afterDelete.json().machines.map((machine: { id: string }) => machine.id)).not.toContain(test.row.id);
+
             const stranger = await setup();
             expect((await read(test.row.id, stranger.account.id)).statusCode).toBe(403);
             for (const invalid of [
