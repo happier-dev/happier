@@ -221,6 +221,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
                 defaultSessionId: sessionActionOrigin.caller.sessionId,
                 callerPermissionMode: sessionActionOrigin.callerPermissionMode,
                 causalPermissionAuthority: sessionActionOrigin.causalPermissionAuthority,
+                actionRequestAttributionV1: sessionActionOrigin.actionRequestAttributionV1,
                 ...(sessionActionOrigin.workspaceWrites
                   ? { workspaceWrites: sessionActionOrigin.workspaceWrites } : {}),
                 sessionInputSource: { sourceSessionId: sessionActionOrigin.caller.sessionId,
