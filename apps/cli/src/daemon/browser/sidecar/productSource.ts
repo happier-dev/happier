@@ -217,7 +217,9 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 stopping ??= (async () => {
                     const result = await session.promise?.catch(() => undefined);
                     try {
-                        if (result?.ok) await result.dispose?.();
+                        const disposal = result?.ok ? result.dispose?.() : undefined;
+                        cancellation.abort();
+                        await disposal;
                     } catch (error) {
                         // An observed child exit releases its memory slot even if
                         // CDP cleanup failed. A purge still reports that failure.

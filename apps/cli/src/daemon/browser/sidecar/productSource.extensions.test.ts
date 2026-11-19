@@ -58,7 +58,13 @@ describe('persistent browser profile launch', () => {
                         const page = ++openedPages;
                         return { targetId: `target_${page}`, sessionId: `cdp_${page}` };
                     },
-                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }),
+                    dispatchPageCommand: async () => ({}),
+                    dispatchBrowserCommand: async (command: Readonly<{ method: string; params?: Record<string, unknown> }>) => {
+                        // Pending native cleanup must settle when the launch is cancelled.
+                        if (command.method === 'Browser.setDownloadBehavior' && command.params?.behavior === 'default'
+                            && !scope?.signal?.aborted) throw await closed;
+                        return { success: true };
+                    },
                     } };
                 },
             }),
