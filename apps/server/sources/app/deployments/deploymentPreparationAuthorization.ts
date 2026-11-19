@@ -1,5 +1,8 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import * as managedIds from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import * as sourceActionIds from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
@@ -1646,6 +1649,50 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
  * requester's access. A signing custodian other than the requester (a Team
  * member's Machine) chose the operand itself, so it may name only Environments
  * its own Account can already read: no requester material crosses to it. */
+async function readCurrentDeploymentReferenceInput(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    child: ReviewedActionChildHttpProofV1 | undefined, signerAccountId: string) {
+    const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
+    if (operation !== 'deploy' && operation !== 'rollback' && operation !== 'promote'
+        || child?.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+        || child.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 || !child.environmentId) return null;
+    const input = { serverId: binding.serverIdentityId, environmentId: child.environmentId };
+    if (child.inputDigest !== computeActionInputApprovalDigestV1(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input)) return null;
+    // The signed root is the admission while its Deploy review renders runtime
+    // bindings, before Home accepts a receipt; once accepted, the job must still run.
+    if (await readAcceptedDeploymentReceiptInTx(tx, binding, undefined,
+        { state: { notIn: deploymentInProgressStates() } })) return null;
+    if (signerAccountId !== binding.accountId && !(await loadDeploymentEnvironmentInTx(tx, signerAccountId,
+        binding.serverIdentityId, child.environmentId)).ok) return null;
+    return input;
+}
+
+export function isDeploymentReferenceServiceListChild(binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'actionId'>,
+    effectActionId: string, child: ReviewedActionChildHttpProofV1 | undefined): boolean {
+    return binding.actionId === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1
+        && effectActionId === RPC_METHODS.MACHINES_SERVICE_LIST && MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.includes(effectActionId)
+        && child?.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+        && child.role === deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && Boolean(child.environmentId);
+}
+
+/** Service inventory is narrower than the reference's metadata and artifact reads. */
+export async function readDeploymentReferenceServiceListInTx(tx: Tx,
+    binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string, child: ReviewedActionChildHttpProofV1 | undefined,
+    signerAccountId: string, machineId: string) {
+    if (!isDeploymentReferenceServiceListChild(binding, effectActionId, child)) return null;
+    const input = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
+    if (!input) return null;
+    const { environmentId, serverId } = input;
+    const environment = await loadDeploymentEnvironmentInTx(tx, binding.accountId, serverId, environmentId);
+    if (!environment.ok || environment.row.deletedAt || !environment.row.runtimeTargetLinkId) return null;
+    const member = await tx.deploymentTargetLinkMachine.findFirst({ where: { targetLinkId: environment.row.runtimeTargetLinkId,
+        machineId, state: 'active', targetLink: { environmentId, role: 'runtime', sourceKind: 'host', targetKind: 'ownServer',
+            deletedAt: null, detachedAt: null }, machine: { kind: 'persistent', revokedAt: null, replacedByMachineId: null } },
+        select: { installationId: true, machine: { select: { installationId: true, account: { select: { encryptionMode: true } } } } } });
+    if (!member || member.machine.installationId !== member.installationId) return null;
+    const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(member.machine.account);
+    return mode.status === 'ready' ? { serverId, environmentId, machineId, installationId: member.installationId, encryptionMode: mode.mode } : null;
+}
+
 export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
@@ -1654,23 +1701,23 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
 ): Promise<boolean | null> {
     const child = proof.reviewedChild;
     if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
-    const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
-    if (operation !== 'deploy' && operation !== 'rollback' && operation !== 'promote'
-        || effectActionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || child?.actionId !== effectActionId
-        || child.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 || !child.environmentId
-        || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
-    const input = { serverId: binding.serverIdentityId, environmentId: child.environmentId };
-    if (child.inputDigest !== computeActionInputApprovalDigestV1(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input)) return false;
-    // The signed root is the admission while its Deploy review renders runtime
-    // bindings, before Home accepts a receipt; once accepted, the job must still run.
-    if (await readAcceptedDeploymentReceiptInTx(tx, binding, undefined,
-        { state: { notIn: deploymentInProgressStates() } })) return false;
-    if (signerAccountId !== binding.accountId && !(await loadDeploymentEnvironmentInTx(tx, signerAccountId,
-        binding.serverIdentityId, child.environmentId)).ok) return false;
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    if (isDeploymentReferenceServiceListChild(binding, effectActionId, child)) {
+        const match = /^\/v1\/machines\/([^/?#]+)$/u.exec(proof.path);
+        if (!match) return false;
+        let machineId: string;
+        try { machineId = decodeURIComponent(match[1]); } catch { return false; }
+        return encodeURIComponent(machineId) === match[1]
+            && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { id: machineId }))
+            && Boolean(await readDeploymentReferenceServiceListInTx(tx, binding, effectActionId, child, signerAccountId, machineId));
+    }
+    if (effectActionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) return false;
+    const input = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
+    if (!input) return false;
     if (transports.isEnvironmentRead()) return sameStrictJsonValue(proof.routeInput, input);
     if (transports.isCurrentnessRead()) return proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, {});
     const artifactId = transports.readArtifactId();
-    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, undefined, undefined, undefined, undefined, false, child.environmentId);
+    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, undefined, undefined, undefined, undefined, false, input.environmentId);
     if (!scope) return false;
     if (artifactId) return scope.artifactIds.has(artifactId);
     return [...scope.machineIds, binding.machineId, ...(referenceReceiverMachineId ? [referenceReceiverMachineId] : [])].some(machineId =>

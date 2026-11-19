@@ -61,7 +61,7 @@ import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterT
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { readDeploymentReferenceServiceListEnvironmentIdV1, resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
 import { readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -680,7 +680,19 @@ export class RpcHandlerManager {
                 || !isDeepStrictEqual(workspaceSyncSourceExecution.data.externalActionExecution.authorization, parsedInputAuthorization.data))) {
             return await deny('workspace_source_execution');
         }
-        if (workspaceSyncSourceExecution && ((!serviceMoveChild && !deploymentArchiveChild && !isProjectSource && !isFiniteSource && !projectWriterTarget && !seedInputAuthorizationMatchesRequest) || !workspaceSyncSourceExecution.success)
+        const referenceServiceExecution = workspaceSyncSourceExecution?.success ? workspaceSyncSourceExecution.data : null;
+        const referenceServiceChild = referenceServiceExecution?.externalActionExecution;
+        // Home carried the reviewed read without distributing requester custody.
+        const homeReferenceServiceRead = source === 'authenticated_home_socket' && machineAdmission?.success
+            && this.authorizeRequest && !parsedInputAuthorization && !originalActionEnvelope
+            && this.scopePrefix === this.localMachineId && targetMethod === RPC_METHODS.MACHINES_SERVICE_LIST
+            && request.method === `${this.scopePrefix}:${targetMethod}` && machineAdmission.data.machineId === this.scopePrefix
+            && referenceServiceExecution?.method === request.method
+            && sameStrictJsonValue(referenceServiceExecution.params, request.params)
+            && readDeploymentReferenceServiceListEnvironmentIdV1(referenceServiceChild?.authorization.binding.actionId,
+                referenceServiceChild?.effectActionId, referenceServiceChild?.reviewedChild);
+        if (workspaceSyncSourceExecution && ((!homeReferenceServiceRead && !serviceMoveChild && !deploymentArchiveChild
+            && !isProjectSource && !isFiniteSource && !projectWriterTarget && !seedInputAuthorizationMatchesRequest) || !workspaceSyncSourceExecution.success)
             || originalActionEnvelope && (!originalActionEnvelope.success || !parsedInputAuthorization?.success
                 || !(serviceMoveChild || parsedInputAuthorization.data.binding.actionId === 'projects.open' && targetMethod === RPC_METHODS.PROJECTS_OPEN
                     || parsedInputAuthorization.data.binding.actionId === 'projects.script.run' && targetMethod === RPC_METHODS.DAEMON_PROJECTS_SCRIPT_RUN

@@ -1495,7 +1495,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
-            const moveChildExecution = (deploymentArchiveChild || originalActionEnvelope && originalActionEnvelopeKind === 'child')
+            const deploymentReferenceServices = verifiedExternalAction?.deploymentReferenceServiceList;
+            const moveChildExecution = (deploymentArchiveChild || deploymentReferenceServices || originalActionEnvelope && originalActionEnvelopeKind === 'child')
                 && externalActionExecution?.success ? WorkspaceSyncSourceExecutionV1Schema.parse({ method,
                     requestId: callerRequestId, ...(callParams === undefined ? {} : { params: callParams }),
                     externalActionExecution: externalActionExecution.data, ...(originalActionEnvelope ? { originalActionEnvelope } : {}) }) : null;
@@ -2195,6 +2196,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         reverseClientContinuation ? params.socket : undefined);
                 }
             }
+            if (deploymentReferenceServices && (machineAdmission?.machineId !== deploymentReferenceServices.machineId
+                || machineAdmission.installationId !== deploymentReferenceServices.installationId)) {
+                callback?.(buildForbiddenRpcResponse());
+                return;
+            }
             if (machineAdmission && structuredMessageRouting) machineAdmission = { ...machineAdmission, structuredMessageRouting };
             const targetUserId = sessionWriteTargetUserId ?? machineAdmission?.custodianAccountId ?? actorAccountId;
             const admittedMethod = method;
@@ -2373,7 +2379,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(liveApprovalOrigin ? { answeringClient: { requireSingle: true } } : answeringClient ? { answeringClient } : {}),
                 callerSocket: params.socket,
                 ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
-                ...(verifiedExternalAction && externalActionExecution?.success
+                ...(verifiedExternalAction && externalActionExecution?.success && !deploymentReferenceServices
                     ? { createCallerInputAuthorization: async () => externalActionExecution.data.authorization }
                     : {}),
                 ...(callerInputViewer && callerInputActionId ? { createCallerInputAuthorization: async ({ target, requestId }) => {

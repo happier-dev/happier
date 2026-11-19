@@ -41,7 +41,9 @@ import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import {
   createExternalActionAuthorizedRequestHeaders,
+  resolveExternalActionRequesterServerRequestHeaders,
   resolveExternalActionServerRequestHeaders,
+  readDeploymentReferenceServiceListEnvironmentIdV1,
   createExternalActionMachineRpcExecution,
   createExternalActionSourceMachineRpcExecution,
   readExternalActionSourceMachineRpcSigner,
@@ -234,6 +236,9 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   const path = `/v1/machines/${encodeURIComponent(params.machineId)}`;
   const externalAuthorization = params.externalAction?.context.externalActionExecutionAuthorization;
   const externalTarget = params.externalAction?.context.externalActionTarget;
+  const referenceServiceList = params.method === RPC_METHODS.MACHINES_SERVICE_LIST
+    && readDeploymentReferenceServiceListEnvironmentIdV1(externalAuthorization?.binding.actionId, params.externalAction?.effectActionId,
+      readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined);
   const readinessAction = readSessionAgentReadinessChildActionV1(externalAuthorization?.binding,
     readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined,
     params.externalAction ? { machineId: params.machineId, installationId: params.externalAction.installationId } : undefined);
@@ -258,7 +263,12 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
     ? readRequesterAccountActionContext(externalAuthorization)?.credentials
     : params.credentials;
   if (!contentCredentials) throw new MachineRpcTargetNotCurrentError(params.machineId, 'requester_unavailable');
-  const requesterProjection = params.externalAction && externalAuthorization && externalTarget
+  const referenceHeaders = referenceServiceList && params.externalAction
+    ? await resolveExternalActionRequesterServerRequestHeaders({ context: params.externalAction.context,
+      effectActionId: params.externalAction.effectActionId,
+      serverHttpBaseUrl: params.serverUrl ?? resolveServerHttpBaseUrl(), method: 'GET', path }) : undefined;
+  if (referenceServiceList && !referenceHeaders) throw new MachineRpcTargetNotCurrentError(params.machineId, 'requester_unavailable');
+  const requesterProjection = !referenceServiceList && params.externalAction && externalAuthorization && externalTarget
     && !params.deploymentArchiveExecution && !params.deploymentSetupExecution
     ? resolveExternalActionServerRequestHeaders({
         context: params.externalAction.context,
@@ -279,7 +289,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   }
   const headers = {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-        ...(requesterHeaders?.ok ? requesterHeaders.headers
+        ...(referenceHeaders || (requesterHeaders?.ok ? requesterHeaders.headers
           : params.externalAction && externalAuthorization && externalTarget && (!moveChildRead || params.deploymentArchiveExecution || params.deploymentSetupExecution)
           ? createExternalActionAuthorizedRequestHeaders({
               authorization: externalAuthorization,
@@ -295,7 +305,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
               path,
               privateKey: params.externalAction.privateKey,
             })
-          : { Authorization: `Bearer ${params.credentials.token}` }),
+          : { Authorization: `Bearer ${params.credentials.token}` })),
       };
   const response = await axios.get(
     `${params.serverUrl ?? resolveServerHttpBaseUrl()}${path}`,
@@ -462,6 +472,9 @@ export async function callExactMachineRpc(params: Readonly<{
     const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: moveAuthorization?.binding.actionId,
       effectActionId: params.externalAction?.effectActionId, method: params.method });
     const reviewedChild = readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined;
+    const referenceServiceList = params.method === RPC_METHODS.MACHINES_SERVICE_LIST
+      && readDeploymentReferenceServiceListEnvironmentIdV1(moveAuthorization?.binding.actionId, params.externalAction?.effectActionId, reviewedChild);
+    const referenceExecution = referenceServiceList ? readRequesterAccountActionContext(moveAuthorization)?.deploymentChildExecution : undefined;
     const creationChild = params.externalAction?.effectActionId === readSessionActionChildCreationRpcEffectV1(params.method,
       moveAuthorization?.binding, params.externalAction ? { machineId, installationId: params.externalAction.installationId } : undefined, reviewedChild);
     const readinessAction = readSessionAgentReadinessChildActionV1(moveAuthorization?.binding, reviewedChild,
@@ -507,7 +520,7 @@ export async function callExactMachineRpc(params: Readonly<{
         const authorization = transportAuthorization;
         const target = stopChildTarget ?? externalAction.context.externalActionTarget;
         const sourceMachineId = authorization ? readExternalActionSourceMachineRpcSigner(authorization)?.machineId : undefined;
-        const execution = !deploymentArchive && isOriginalRequesterSource(externalAction) && authorization && target && sourceMachineId
+        const execution = !deploymentArchive && !referenceServiceList && isOriginalRequesterSource(externalAction) && authorization && target && sourceMachineId
           ? createExternalActionSourceMachineRpcExecution({ authorization, target, sourceMachineId, context: externalAction.context,
             sourceInstallationId: externalAction.installationId, effectActionId: externalAction.effectActionId,
             ...(deploymentChild ? { deploymentChildRouting: projectDeploymentChildRoutingV1(deploymentChild) } : {}),
@@ -519,6 +532,7 @@ export async function callExactMachineRpc(params: Readonly<{
           ...(deploymentChild ? { deploymentChildRouting: projectDeploymentChildRoutingV1(deploymentChild) } : {}),
           ...(deploymentArchive ? { deploymentChildExecution: deploymentArchive.execution,
             deploymentArchiveOrigin: archiveOrigin } : {}),
+          ...(referenceExecution ? { deploymentChildExecution: referenceExecution } : {}),
           ...request,
           privateKey: externalAction.privateKey,
         });
@@ -655,6 +669,10 @@ export async function callExactMachineRpc(params: Readonly<{
           // An admitted Account template child uses native Account admission;
           // its controller root cannot be resealed as destination authority.
           let transportAuthorization = accountRpc ? undefined : externalAction?.context.externalActionExecutionAuthorization;
+          if (referenceServiceList && transportAuthorization?.requesterAccountContext) {
+            const { requesterAccountContext: _privateCustody, ...carrier } = transportAuthorization;
+            transportAuthorization = carrier;
+          }
           const seal = transportAuthorization?.requesterAccountProjection?.sealRequesterAccountContext;
           const hasPrivateBootstrap = request && typeof request === 'object'
             && (Reflect.get(request, 'kind') === 'requester_session_bootstrap_v1'
@@ -663,7 +681,7 @@ export async function callExactMachineRpc(params: Readonly<{
               || Reflect.get(request, 'kind') === 'requester_session_handoff_workspace_capture_v1');
           if (deploymentArchive) await assertDeploymentArchiveChildCurrentForHost({ context: externalAction!.context,
             machineId: deploymentArchive.job.machineId, installationId: externalAction!.installationId });
-          if (seal && transportAuthorization && !hasPrivateBootstrap && !deploymentArchive) {
+          if (seal && transportAuthorization && !hasPrivateBootstrap && !deploymentArchive && !referenceServiceList) {
             const encodedKey = machineTarget.installationPublicKey;
             if (!moveChild && (machineTarget.installationId !== transportAuthorization.binding.installationId
               || transportAuthorization.binding.machineId !== machineId)) {

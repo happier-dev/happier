@@ -126,6 +126,7 @@ import {
 } from '@/api/client/httpStatusError';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@/api/externalActionExecutionAuthorization';
 import {
   ManagedInstallationServerOriginV1Schema,
   ManagedInstallationCapabilityRequestV1Schema,
@@ -1279,6 +1280,14 @@ export async function authorizeMachineRpcRequest(
   machine?: MachineRpcAdmissionBoundary,
   source?: 'authenticated_home_socket',
 ): Promise<RpcAuthorizationResult> {
+  const referenceExecution = request.workspaceSyncSourceExecution?.externalActionExecution;
+  const referenceEnvironmentId = readDeploymentReferenceServiceListEnvironmentIdV1(referenceExecution?.authorization.binding.actionId,
+    referenceExecution?.effectActionId, referenceExecution?.reviewedChild);
+  if (referenceEnvironmentId && referenceExecution && (source !== 'authenticated_home_socket' || !machine || !request.machineAdmission
+    || request.method !== `${machine.machineId}:${RPC_METHODS.MACHINES_SERVICE_LIST}`
+    || request.machineAdmission.actorAccountId !== referenceExecution.authorization.binding.accountId
+    || !sameStrictJsonValue(request.params, { serverId: referenceExecution.authorization.binding.serverIdentityId,
+      machineId: machine.machineId, environmentId: referenceEnvironmentId }))) return forbidden('machine_target');
   if (request.authorization?.kind === 'session.browser') {
     const access = request.authorization;
     const method = machine && request.method.startsWith(`${machine.machineId}:`)

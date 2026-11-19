@@ -23,6 +23,9 @@ export type { DeploymentChildExecutionProofV1 } from '../deployments/deploymentC
 import type { ApprovalRequesterConfirmationV1 } from '../approvals/approvalRequestV1.js';
 import { ManagedCredentialInstallInputV1Schema } from '../machines/managed/credentialDeliveryV1.js';
 import { projectWorkspaceSyncAdmissionInputV1, deriveWorkspaceSyncRelationshipId } from '../workspaces/workspaceSyncAdmissionV1.js';
+import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../local/services/actionIdsV1.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
+  DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 } from '../deployments/deploymentActionIdsV1.js';
 
 export type ExternalActionMachineRpcEventV1 = typeof SOCKET_RPC_EVENTS.CALL
   | typeof SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1
@@ -377,13 +380,23 @@ function machineRpcRequestBytes(request: MachineRpcRequest, payloadProof?: Reado
   if (request.deploymentArchiveOrigin && !controllerProof) throw new TypeError('Archive origin requires its exact parent proof');
   if (controllerProof) {
     const routing = controllerProof.externalActionExecution.deploymentChildRouting;
-    if (event !== SOCKET_RPC_EVENTS.CALL || !routing || routing.kind === 'dataRole' || routing.kind === 'review' || routing.kind === 'prepare'
-      || routing.kind === 'member' && routing.phase === 'cleanup'
-      || readDeploymentArchiveRpcEffectV1(request.method.slice(request.method.indexOf(':') + 1)) !== request.effectActionId
+    const separator = request.method.indexOf(':');
+    const method = request.method.slice(separator + 1);
+    const archivePhase = routing && routing.kind !== 'dataRole' && routing.kind !== 'review' && routing.kind !== 'prepare'
+      && !(routing.kind === 'member' && routing.phase === 'cleanup')
+      && readDeploymentArchiveRpcEffectV1(method) === request.effectActionId;
+    const referenceInventory = (routing?.kind === 'review' || routing?.kind === 'member' && routing.phase !== 'cleanup')
+      && !controllerProof.archiveOrigin && !controllerProof.nativeIncumbentSource
+      && controllerProof.externalActionExecution.authorization.binding.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1
+      && separator > 0 && method === RPC_METHODS.MACHINES_SERVICE_LIST && method === request.effectActionId
+      && MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.includes(method)
+      && request.reviewedChild?.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+      && request.reviewedChild.role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && Boolean(request.reviewedChild.environmentId);
+    if (event !== SOCKET_RPC_EVENTS.CALL || !routing || (!archivePhase && !referenceInventory)
       || request.installationId !== routing.installationId
       || request.authorizationToken !== controllerProof.externalActionExecution.authorization.token
       || encodeExternalActionResolvedTargetV1(request.target) !== encodeExternalActionResolvedTargetV1(controllerProof.externalActionExecution.target)
-      || request.deploymentChildRouting !== undefined) throw new TypeError('Archive phases require their exact admitted receiver proof');
+      || request.deploymentChildRouting !== undefined) throw new TypeError('Deployment RPC effects require their exact admitted receiver proof');
   }
   return encodeCanonicalLengthDelimited([
     'happier-external-action-machine-rpc-v1', request.authorizationToken,

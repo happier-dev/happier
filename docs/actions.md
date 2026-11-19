@@ -6225,9 +6225,12 @@ approval request. When a remote review renders a saved private-service
 reference, its receiving installation signs the Environment read with the
 controller's existing deployment child packet. Home verifies that packet
 against the same request and current placement. The referenced Environment,
-its content, and the Machine reads keep their existing access rules. After
-approval, member activation uses the accepted deployment receipt for the
-same reference read.
+its content, and the Machine reads keep their existing access rules. Deploy
+preparation can read service inventory on a current installed runtime Machine
+of that referenced Environment. The inventory request carries the same signed
+reference and selects that exact Environment and Machine. After approval,
+member activation uses the accepted deployment receipt for the same reference
+read.
 
 An explicit Domain Add to reconcile after a restart starts a new Domain
 operation. Home admits it against the current Environment, runtime Link, and

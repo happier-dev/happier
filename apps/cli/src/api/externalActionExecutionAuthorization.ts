@@ -29,7 +29,7 @@ import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
 import { machineSetupPlanNeedsHomeSources } from '@/machines/setup/machineSetupPlanHomeSources';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
-  DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+  DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
@@ -58,7 +58,7 @@ import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/acti
 import type { ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionMachineRpcExecutionV1, ExternalActionRequestEnvelope, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import { readHostReviewedParentV1, readHostAdmittedReviewedChildV1,
   readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { readHostAdmittedReviewedRootV1, readHostAdmittedReviewedChildHttpProofV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { readHostAdmittedReviewedRootV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 
 import { deriveDeploymentPrepareSessionSpawnInputV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { isSessionActionChildCreationRootV1, readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
@@ -120,6 +120,7 @@ import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
@@ -1416,6 +1417,7 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   const effectActionId = ExternalActionActionIdV1Schema.parse(input.effectActionId);
   const admittedChild = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const reviewedChild = admittedChild?.actionId === effectActionId
+    || readDeploymentReferenceServiceListEnvironmentIdV1(authorization.binding.actionId, effectActionId, admittedChild)
     ? admittedChild : undefined;
   return {
     v: 1,
@@ -1754,8 +1756,10 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
         // Remote review and activation both render saved references. Home admits
         // the exact Environment read carried alongside the signed parent packet.
         const reference = request.reviewedChild?.role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 ? request.reviewedChild : undefined;
+        const referenceServices = readDeploymentReferenceServiceListEnvironmentIdV1(authorization.binding.actionId, request.effectActionId, reference);
         const referenceRead = reference !== undefined && (child.kind === 'review' || child.kind === 'member')
-          && reference.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && request.effectActionId === reference.actionId;
+          && reference.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+          && (request.effectActionId === reference.actionId || Boolean(referenceServices));
         if ((!domainController && !childReceiver) || !packet || child.actionId !== deploymentChildEffectActionIdForRootV1(
           authorization.binding.actionId, authorization.binding.deploymentPreparationAdmission, child.actionId)
           || (reference ? !referenceRead : request.effectActionId !== child.actionId)) {
@@ -1767,7 +1771,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
         // keeps its original grant in the signed child HTTP proof.
         // The retained packet already binds its review; no second root proof is needed.
         return await locallyCurrent(request.signal) ? createExternalActionAuthorizedRequestHeaders({
-          authorization, effectActionId: referenceRead ? reference.actionId : child.actionId, target: input.target,
+          authorization, effectActionId: referenceRead ? request.effectActionId : child.actionId, target: input.target,
           installationId: input.installationId,
           privateKey: input.privateKey, method: request.method, path: request.path, body: request.body,
           deploymentChildExecution: packet, ...(referenceRead ? { reviewedChild: reference } : {}),
@@ -2074,6 +2078,17 @@ export async function prepareExternalActionRequesterAccountAuthorization(
   return (await prepareExternalActionRequesterAccountAuthorizationWithEnvelope(input))?.authorization ?? null;
 }
 
+export function readDeploymentReferenceServiceListEnvironmentIdV1(
+  rootActionId: string | undefined,
+  effectActionId: string | undefined,
+  child: ReturnType<typeof readHostAdmittedReviewedChildHttpProofV1>,
+): string | undefined {
+  if (rootActionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId !== RPC_METHODS.MACHINES_SERVICE_LIST
+    || !MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.includes(effectActionId)
+    || child?.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || child.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1) return undefined;
+  return child.environmentId;
+}
+
 /** Spend the existing requester projection without substituting an Account bearer. */
 export async function resolveExternalActionRequesterServerRequestHeaders(input: Readonly<{
   context: Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'>;
@@ -2083,16 +2098,18 @@ export async function resolveExternalActionRequesterServerRequestHeaders(input: 
   path: string;
   body?: unknown;
 }>): Promise<RequesterAccountAuthorizationHeaders | null> {
-  const authorization = input.context.externalActionExecutionAuthorization;
+  const child = readHostAdmittedReviewedChildHttpProofV1(input.context);
+  const carried = input.context.externalActionExecutionAuthorization;
+  const servicesRead = readDeploymentReferenceServiceListEnvironmentIdV1(carried?.binding.actionId, input.effectActionId, child);
+  const authorization = servicesRead ? readHostReviewedChildOriginalAuthorizationV1(input.context) : carried;
   const projection = authorization?.requesterHttpProjection;
   if (!authorization || !projection || projection.accountId !== authorization.binding.accountId
     || normalizeServerHttpBaseUrl(projection.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)
     || input.context.signal?.aborted || !await projection.isCurrent()) return null;
-  const child = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const headers = await projection.createRequestHeaders({ effectActionId: input.effectActionId, method: input.method, path: input.path,
     ...(input.body === undefined ? {} : { body: input.body }),
     ...(input.context.signal ? { signal: input.context.signal } : {}),
-    ...(child?.actionId === input.effectActionId ? { reviewedChild: child } : {}),
+    ...(child && (child.actionId === input.effectActionId || servicesRead) ? { reviewedChild: child } : {}),
   });
   return headers ? { ...headers, ...(projection.accountEncryptionMode === undefined ? {}
     : { [requesterAccountEncryptionMode]: projection.accountEncryptionMode }) } : null;
