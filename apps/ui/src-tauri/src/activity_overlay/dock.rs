@@ -336,6 +336,25 @@ mod tests {
         }
     }
     #[test]
+    fn a_pinned_conversation_grows_with_its_content_to_the_visible_frame() {
+        // The renderer asks for every turn; the planner alone decides how much of it the island gets.
+        for dock in [Dock::Left, Dock::Right, Dock::Top] {
+            let tall = Rect { x: 0., y: 25., width: 1512., height: 2000. };
+            let asked = FrameInput {
+                visible: tall,
+                extent: (464., 1400.),
+                surface: DesktopActivityOverlaySurface::Pinned,
+                top: 25.,
+                ..input(dock)
+            };
+            let island = frame_plan(asked).presentation.island_rect;
+            assert_eq!(island.height, 1400., "{dock:?} keeps the conversation's full height on a tall screen");
+            let capped = frame_plan(FrameInput { extent: (464., 5000.), ..asked }).presentation.island_rect;
+            assert_eq!(capped.height, 2000., "{dock:?} caps the island at the visible frame");
+            assert!(capped.y >= 0. && capped.y + capped.height <= frame_plan(FrameInput { extent: (464., 5000.), ..asked }).rect.height);
+        }
+    }
+    #[test]
     fn close_retains_the_envelope_until_settlement() {
         let open = Rect {
             x: 200.,

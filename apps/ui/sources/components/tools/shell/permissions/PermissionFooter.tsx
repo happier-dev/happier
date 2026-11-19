@@ -1,6 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import { McpAlwaysAllowDecision } from './McpAlwaysAllowDecision';
-import { resolveSessionPermissionChoices, isBroadShellGrantEligible, getSessionPermissionChoiceKind } from '@/sync/ops/sessionPermissionChoices';
+import { resolveSessionPermissionChoices, isBroadShellGrantEligible, getSessionPermissionChoiceKind, selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 import { PermissionAnswerUnconfirmedNotice } from './PermissionAnswerUnconfirmedNotice';
 import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import type { SessionPermissionDecisionActorV1 } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -28,7 +28,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { PermissionDecisionButton } from './PermissionDecisionButton';
 import { PermissionFooterOfferedChoices } from './PermissionFooterOfferedChoices';
 import { PermissionFooterCatalogChoice } from './PermissionFooterCatalogChoice';
-import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from './offeredChoiceLayout';
+import { isOfferedPermissionChoice } from './offeredChoiceLayout';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     clearPermissionAnswerUnconfirmed,
@@ -846,7 +846,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             choices: offeredChoices,
             nativeSource: nativeChoices?.source,
             permissionOwnerLabel: projectedRequest?.permissionOwnerLabel ?? permission.permissionOwnerLabel,
-            primaryId: selectPrimaryOfferedChoice(offeredChoices),
+            primaryId: selectPrimaryPermissionChoice(offeredChoices),
             disabled: !isPending || answerUnconfirmed || isCurrentRequestLoading,
             busyChoiceId: loadingChoiceId,
             onChoose: handleChoose,

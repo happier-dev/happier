@@ -314,6 +314,31 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.visible).toBe(false);
     });
 
+    it('fills the one primary on the narrowest allow by its kind, whatever the producer names it', () => {
+        const permissionChoices = resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices: {
+            requirementId: 'native-allow', source: 'muse', choices: [
+                { id: 'muse:allow_once', label: 'Allow once', decision: 'approved', scope: 'once',
+                    response: { approved: true, decision: 'approved' } },
+                { id: 'muse:allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
+                    response: { approved: true, decision: 'approved_for_session' } },
+                { id: 'muse:reject', label: 'Reject', decision: 'denied', scope: 'once',
+                    response: { approved: false, decision: 'denied' } },
+            ],
+        } });
+        const request = (choices: typeof permissionChoices | undefined) => buildDesktopActivityOverlayModel({ snapshot: createSnapshot({ permissionRequests: [{
+            kind: 'permission_request', requestId: 'native-command', serverId: 'server-1', sessionId: 'session-primary',
+            title: 'Approve command', summary: 'touch file', toolLabel: 'Bash', questionText: null, count: 1,
+            openActionIdentifier: 'open-session:session-primary', allowActionIdentifier: 'session.permission.respond',
+            denyActionIdentifier: 'session.permission.respond', directOptions: [], ...(choices ? { permissionChoices: choices } : {}),
+        }] }), policy: createPolicy() }).expanded.cards?.[0]?.actions?.filter(action => !action.id.startsWith('open:'))
+            .map(action => [action.id, action.tone]);
+        expect(request(permissionChoices)).toEqual([
+            ['muse:allow_once', 'primary'], ['muse:allow_session', 'quiet'], ['muse:reject', 'danger'],
+        ]);
+        // A stored occurrence's own allow-once stays the primary, and its broader grants stay quiet.
+        expect(request(undefined)?.filter(([, tone]) => tone === 'primary')).toEqual([['allow', 'primary']]);
+    });
+
     it('marks offered native refusals by their kind rather than their opaque IDs', () => {
         const permissionChoices = resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices: {
             requirementId: 'native-refusals', source: 'codex', choices: [
@@ -927,6 +952,26 @@ describe('buildDesktopActivityOverlayModel', () => {
             ['attention', 'claude', 'machine-1'],
             ['neutral', 'codex', null],
         ]);
+    });
+
+    it('lists the Sessions that need you first, in the shared order, before the cap', () => {
+        const entry = (sessionId: string, activity: 'needsYou' | 'working') => ({
+            id: sessionAddressKey({ serverId: 'server-1', sessionId }), dismissKey: sessionId,
+            address: { serverId: 'server-1', sessionId }, sessionId,
+            activity, title: sessionId, subtitle: null, contextLine: null, accessibilityContext: null,
+        });
+        const base = createSnapshot().sessions[1]!;
+        const failed = Array.from({ length: 8 }, (_, index) => ({ ...base, sessionId: `failed-${index}`, tone: 'danger' as const }));
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({ sessions: [...failed, { ...base, sessionId: 'asked-b' }, { ...base, sessionId: 'asked-a' }] }),
+            policy: createPolicy(),
+            sharedActivity: { ...QUIET_ACTIVITY, visible: true, activity: 'needsYou', word: 'Needs you',
+                entries: [entry('failed-0', 'working'), entry('asked-a', 'needsYou'), entry('asked-b', 'needsYou')] },
+        });
+        const order = ['asked-a', 'asked-b', 'failed-0', 'failed-1', 'failed-2', 'failed-3', 'failed-4', 'failed-5'];
+        expect(model.expanded.rows.map(row => row.sessionId)).toEqual(order);
+        const list = model.expanded.cards?.find(card => card.kind === 'multi_session_list');
+        expect(list && 'rows' in list ? list.rows.map(row => row.sessionId) : null).toEqual(order);
     });
 
     it('marks every Session that needs you and has no face, in the shared order, with its own identity', () => {

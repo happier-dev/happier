@@ -1,6 +1,6 @@
 import { t } from '@/text';
-import { activityInstanceKey, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
+import { activityInstanceKey, normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice, selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import type { DesktopActivityOverlayExpandedCard, DesktopActivityOverlaySessionRowModel } from './desktopActivityOverlayModelTypes';
 import type { DesktopActivityOverlaySnapshot } from '../snapshot/desktopActivityOverlaySnapshotTypes';
@@ -22,11 +22,22 @@ function distinctBody(title: string, ...candidates: readonly (string | null | un
     return null;
 }
 
-/** The overlay's Session rows: at most eight, each carrying its state tone and Agent identity. */
+/**
+ * The overlay's Session rows: at most eight, each carrying its state tone and Agent identity. The Sessions
+ * that need you lead, in the shared activity's order (the same order the rest marks stack), then the rest
+ * in the selected order, so the rows the rail points at are never under the fold.
+ */
 export function buildDesktopActivityOverlaySessionRows(
     sessions: DesktopActivityOverlaySnapshot['sessions'],
+    needsYouOrder: readonly string[] = [],
 ): readonly DesktopActivityOverlaySessionRowModel[] {
-    return sessions.slice(0, 8).map((session) => ({
+    const rank = new Map(needsYouOrder.map((key, index) => [key, index]));
+    const rankOf = (session: DesktopActivityOverlaySnapshot['sessions'][number]) => session.serverId
+        ? rank.get(sessionAddressKey({ serverId: session.serverId, sessionId: session.sessionId })) ?? rank.size : rank.size;
+    const ordered = rank.size === 0 ? sessions
+        : sessions.map((session, index) => ({ session, index, rank: rankOf(session) }))
+            .sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ session }) => session);
+    return ordered.slice(0, 8).map((session) => ({
         sessionId: session.sessionId,
         serverId: session.serverId,
         title: session.title,
@@ -65,7 +76,9 @@ function buildSessionScopedCardId(
 function buildPermissionActions(
     request: DesktopActivityOverlaySnapshot['permissionRequests'][number],
 ) {
-    const actions = (request.permissionChoices ?? []).map((choice) => {
+    const choices = request.permissionChoices ?? [];
+    const primaryId = selectPrimaryPermissionChoice(choices);
+    const actions = choices.map((choice) => {
         const response = buildSessionPermissionChoiceActionAnswer(choice);
         return {
             id: choice.id,
@@ -73,7 +86,7 @@ function buildPermissionActions(
             actionIdentifier: choice.catalog ? 'overlay-mcp-always-allow' : 'session.permission.respond',
             data: withServerScope({ requestId: request.requestId,
                 ...(request.turnId ? { turnId: request.turnId } : {}), sessionId: request.sessionId, ...response }, request.serverId),
-            tone: choice.id === 'allow' ? 'primary' as const
+            tone: choice.id === primaryId ? 'primary' as const
                 : isRefusingPermissionChoice(choice) ? 'danger' as const : 'quiet' as const,
         };
     });
@@ -134,6 +147,7 @@ function buildUserQuestionActions(
 
 export function buildDesktopActivityOverlayExpandedCards(
     snapshot: DesktopActivityOverlaySnapshot,
+    rows: readonly DesktopActivityOverlaySessionRowModel[],
 ): readonly DesktopActivityOverlayExpandedCard[] {
     if (snapshot.state === 'idle') {
         return [
@@ -264,7 +278,7 @@ export function buildDesktopActivityOverlayExpandedCards(
             id: 'multi-session-list',
             kind: 'multi_session_list',
             title: snapshot.labels.sessionsTitle,
-            rows: buildDesktopActivityOverlaySessionRows(snapshot.sessions),
+            rows,
         });
     }
 

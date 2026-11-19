@@ -21,8 +21,9 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
     policy: DesktopOverlayPolicy;
     sharedActivity: SharedActivityProjection;
 }>): DesktopActivityOverlayModel {
-    const rows = buildDesktopActivityOverlaySessionRows(params.snapshot.sessions);
-    const cards = buildDesktopActivityOverlayExpandedCards(params.snapshot);
+    const needsYou = params.sharedActivity.entries.flatMap(entry => entry.activity === 'needsYou' ? [entry.id] : []);
+    const rows = buildDesktopActivityOverlaySessionRows(params.snapshot.sessions, needsYou);
+    const cards = buildDesktopActivityOverlayExpandedCards(params.snapshot, rows);
 
     return {
         visible: params.policy.enabled && (params.sharedActivity.visible || params.snapshot.conversation !== null),

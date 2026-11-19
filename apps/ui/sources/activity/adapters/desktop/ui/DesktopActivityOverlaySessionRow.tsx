@@ -159,9 +159,26 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                 ) : null}
             </View>
             <View style={styles.textWrap}>
-                <Text variant="body" emphasis="medium" numberOfLines={1} style={styles.title}>
-                    {props.title}
-                </Text>
+                {/* The quiet meta ends the first line, on the name's baseline (DESIGN: meta closes line 1). */}
+                <View style={styles.titleLine}>
+                    <Text variant="body" emphasis="medium" numberOfLines={1} style={styles.title}>
+                        {props.title}
+                    </Text>
+                    {asking && asking.count > 1 ? (
+                        <Text
+                            testID={props.testID ? `${props.testID}-ask-count` : undefined}
+                            variant="meta"
+                            numberOfLines={1}
+                            style={styles.askCount}
+                        >
+                            {t('settingsDesktop.overlay.notchAskCount', { count: asking.count })}
+                        </Text>
+                    ) : props.meta ? (
+                        <Text variant="meta" numberOfLines={1} style={styles.meta}>
+                            {props.meta}
+                        </Text>
+                    ) : null}
+                </View>
                 {asking ? (
                     props.subtitle ? (
                         <DesktopActivityOverlayContextLine
@@ -182,20 +199,6 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                     </Text>
                 ) : null}
             </View>
-            {asking && asking.count > 1 ? (
-                <Text
-                    testID={props.testID ? `${props.testID}-ask-count` : undefined}
-                    variant="meta"
-                    numberOfLines={1}
-                    style={styles.askCount}
-                >
-                    {t('settingsDesktop.overlay.notchAskCount', { count: asking.count })}
-                </Text>
-            ) : props.meta ? (
-                <Text variant="meta" numberOfLines={1} style={styles.meta}>
-                    {props.meta}
-                </Text>
-            ) : null}
         </Pressable>
     );
 }
@@ -233,8 +236,16 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
     },
+    titleLine: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: theme.space.s8,
+        minWidth: 0,
+    },
     title: {
         color: theme.colors.text.primary,
+        flexShrink: 1,
+        flexGrow: 1,
     },
     detailLine: {
         flexDirection: 'row',

@@ -77,8 +77,8 @@ export function buildDesktopActivityOverlayQaModel(mode) {
     switch (mode) {
         case 'idle':
             return seedModel({
-                collapsed: seedCollapsed({ title: 'Sessions', defaultTarget: 'open-inbox', primaryCardKind: 'idle_state', level: 'idle' }),
-                cards: [{ id: 'idle', kind: 'idle_state', title: 'Sessions' }],
+                collapsed: seedCollapsed({ title: 'No active sessions', defaultTarget: 'open-inbox', primaryCardKind: 'idle_state', level: 'idle' }),
+                cards: [{ id: 'idle', kind: 'idle_state', title: 'No active sessions' }],
             });
         case 'active_session': {
             const session = seedSession({

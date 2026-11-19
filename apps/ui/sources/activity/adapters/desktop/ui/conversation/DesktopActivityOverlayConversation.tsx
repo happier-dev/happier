@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -41,6 +40,8 @@ import {
 } from '../DesktopActivityOverlaySessionRow';
 import { NOTCH_FACE_PANEL_SIZE } from '../faces/DesktopActivityOverlayFaces';
 import { DesktopActivityOverlayConversationLiftContext } from './conversationLift';
+import { resolveConversationTurnsLayout } from './conversationTurnsLayout';
+import { DesktopActivityOverlayPanelRoomContext } from '../panelRoom';
 import { DesktopActivityOverlayQuickReplyComposer } from '../quickReply/DesktopActivityOverlayQuickReplyComposer';
 import type { DesktopActivityOverlayFocusTargetRef } from '../resolveDesktopActivityOverlayInitialFocusTarget';
 import type {
@@ -49,10 +50,6 @@ import type {
   DesktopActivityOverlaySessionRowModel,
 } from '../shared/desktopActivityOverlayUiModel';
 
-/** Each recent message is shown as a short excerpt. */
-const REPLY_MAX_LINES = 4;
-/** The turns area stays short (lab `ntshape` C): two excerpts at their full glance, then it scrolls. */
-const TURNS_MAX_HEIGHT = HAPPIER_TYPE_SCALE.body.lineHeight * REPLY_MAX_LINES * 2;
 
 /** "Needs you · 6 min": the Bot's state word in the attention owner's words, then its age, ticking in this leaf only. */
 function BotStateLine(
@@ -166,16 +163,46 @@ export function DesktopActivityOverlayConversation(
     [turnFades.visibility, theme.space.s16],
   );
   const onTurnsContentSizeChange = turnFades.onContentSizeChange;
+  // The turns grow into the panel's room and scroll only past it (owner 11-19); the island asks the planner
+  // for every turn, so the conversation grows to the screen's height.
+  const room = React.useContext(DesktopActivityOverlayPanelRoomContext);
+  const [measured, setMeasured] = React.useState({ container: 0, turnsViewport: 0, turnsContent: 0 });
+  const measure = React.useCallback((key: keyof typeof measured, value: number) => {
+    setMeasured((previous) => previous[key] === value ? previous : { ...previous, [key]: value });
+  }, []);
+  const turnsShown = conversation.reply.state === 'ready' && conversation.reply.messages.length > 0;
+  const turnsLayout = resolveConversationTurnsLayout({
+    available: turnsShown ? room?.available ?? null : null,
+    chromeHeight: Math.max(0, measured.container - measured.turnsViewport),
+    turnsContentHeight: measured.turnsContent,
+  });
+  const reportOverflow = room?.reportOverflow;
+  React.useEffect(() => {
+    reportOverflow?.(turnsLayout.overflow);
+  }, [reportOverflow, turnsLayout.overflow]);
+  React.useEffect(() => () => reportOverflow?.(0), [reportOverflow]);
   // Newest at the bottom: the area opens on the latest turn and follows new ones.
   const followLatest = React.useCallback((width: number, height: number) => {
     onTurnsContentSizeChange(width, height);
+    measure('turnsContent', height);
     turnsRef.current?.scrollToEnd({ animated: false });
-  }, [onTurnsContentSizeChange]);
+  }, [measure, onTurnsContentSizeChange]);
+  const onTurnsViewportLayout = turnFades.onViewportLayout;
+  const handleTurnsLayout = React.useCallback((event: LayoutChangeEvent) => {
+    onTurnsViewportLayout(event);
+    measure('turnsViewport', event.nativeEvent.layout.height);
+    // The room changed with the island: keep the newest turn in view.
+    turnsRef.current?.scrollToEnd({ animated: false });
+  }, [measure, onTurnsViewportLayout]);
+  const handleContainerLayout = React.useCallback((event: LayoutChangeEvent) => {
+    measure('container', event.nativeEvent.layout.height);
+  }, [measure]);
 
   return (
     <View
       testID="desktop-activity-overlay-conversation"
       style={styles.container}
+      onLayout={handleContainerLayout}
     >
       <View
         testID="desktop-activity-overlay-conversation-header"
@@ -292,11 +319,11 @@ export function DesktopActivityOverlayConversation(
           <ScrollView
             ref={turnsRef}
             testID="desktop-activity-overlay-conversation-turns"
-            style={[styles.turns, turnMask]}
+            style={[styles.turns, { maxHeight: turnsLayout.maxHeight }, turnMask]}
             contentContainerStyle={styles.turnsContent}
             showsVerticalScrollIndicator={false}
             scrollEventThrottle={16}
-            onLayout={turnFades.onViewportLayout}
+            onLayout={handleTurnsLayout}
             onContentSizeChange={followLatest}
             onScroll={turnFades.onScroll}
             onMomentumScrollEnd={turnFades.onMomentumScrollEnd}
@@ -304,7 +331,7 @@ export function DesktopActivityOverlayConversation(
             {reply.messages.map((message) => message.role === 'user' ? (
               <View key={message.id} style={styles.yourTurn}>
                 <UserMessageBubble testID="desktop-activity-overlay-conversation-yours">
-                  <Text variant="body" numberOfLines={REPLY_MAX_LINES} style={styles.reply}>{message.text}</Text>
+                  <Text variant="body" style={styles.reply}>{message.text}</Text>
                 </UserMessageBubble>
               </View>
             ) : (
@@ -312,7 +339,6 @@ export function DesktopActivityOverlayConversation(
                 key={message.id}
                 testID="desktop-activity-overlay-conversation-reply"
                 variant="body"
-                numberOfLines={REPLY_MAX_LINES}
                 style={[styles.reply, styles.agentTurn]}
               >
                 {message.text}
@@ -365,6 +391,7 @@ export function DesktopActivityOverlayConversation(
         {asking ? (
           <DesktopActivityOverlayExpandedCards
             model={cardsModel}
+            askerShown
             visualMode="notch_integrated"
             onOpenSession={() => runExtract()}
             onAction={props.onAction}
@@ -447,7 +474,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   turns: {
     flexGrow: 0,
-    maxHeight: TURNS_MAX_HEIGHT,
   },
   turnsContent: {
     gap: theme.space.s8,

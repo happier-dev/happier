@@ -45,7 +45,7 @@ export type {
 function buildDesktopActivityOverlaySnapshotLabels(): DesktopActivityOverlaySnapshotLabels {
     return {
         sessionsTitle: t('tabs.sessions'),
-        emptyTitle: t('tabs.sessions'),
+        emptyTitle: t('components.emptySessionsTablet.noActiveSessions'),
     };
 }
 
@@ -64,10 +64,7 @@ function resolveAskerContextLine(
     const machine = machineId ? machineDisplays?.[machineId] : undefined;
     const machineName = machine ? getSettledMachineDisplayName(machine, Object.values(machineDisplays ?? {})) : null;
     if (!machineName && !candidate.context?.workspace) return null;
-    const context = resolveSessionContextLine(
-        { segments: candidate.context?.segments.filter(segment => segment.kind !== 'home') ?? [] },
-        { showWorkspace: true },
-    );
+    const context = resolveSessionContextLine(candidate.context, { showWorkspace: true, showHome: false });
     return [context, machineName].filter(Boolean).join(' · ');
 }
 

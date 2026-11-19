@@ -139,6 +139,7 @@ describe('notch.N3.F3.pin conversation demand', () => {
                 'bot-a': createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: recent.map(message => message.id), messagesById: Object.fromEntries(recent.map(message => [message.id, message])) }),
             } })); });
             expect(hook.getCurrent()).toMatchObject({ reply: { state: 'ready', messages: [
+                { id: 'older', role: 'agent', text: 'Older reply' },
                 { id: 'prompt', role: 'user', text: 'The prompt' },
                 { id: 'reply', role: 'agent', text: 'The reply' },
                 { id: 'followup', role: 'user', text: 'Follow up' },

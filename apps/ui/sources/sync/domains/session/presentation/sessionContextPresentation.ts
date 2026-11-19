@@ -88,11 +88,13 @@ export type SessionContextPresentation = Readonly<{
 
 export function resolveSessionContextLine(
     presentation: Pick<SessionContextPresentation, 'segments'> | null | undefined,
-    options: Readonly<{ showWorkspace: boolean }>,
+    /** `showHome: false` drops the Home where it would only repeat on every row of a one-Home surface. */
+    options: Readonly<{ showWorkspace: boolean; showHome?: boolean }>,
 ): string | null {
     if (!presentation) return null;
     const labels = presentation.segments
-        .filter((segment) => options.showWorkspace || segment.kind !== 'workspace')
+        .filter((segment) => (options.showWorkspace || segment.kind !== 'workspace')
+            && (options.showHome !== false || segment.kind !== 'home'))
         .map((segment) => normalizeLabel(segment.label))
         .filter((label): label is string => label !== null);
     return labels.length > 0 ? labels.join(' · ') : null;

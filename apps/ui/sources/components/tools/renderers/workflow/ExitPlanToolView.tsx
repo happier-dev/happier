@@ -19,12 +19,12 @@ import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from '@/co
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { useToolFindState } from '../core/ToolFindText';
 import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
-import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
+import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices, selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
 import { recordPermissionActionFailure } from '@/components/tools/shell/permissions/permissionActionFailure';
 import { PermissionFooterOfferedChoices } from '@/components/tools/shell/permissions/PermissionFooterOfferedChoices';
 import { PermissionFeedbackInput } from '@/components/tools/shell/permissions/PermissionFeedbackInput';
-import { isOfferedPermissionChoice, selectPrimaryOfferedChoice } from '@/components/tools/shell/permissions/offeredChoiceLayout';
+import { isOfferedPermissionChoice } from '@/components/tools/shell/permissions/offeredChoiceLayout';
 
 function resolvePlan(tool: ToolViewProps['tool']): string {
     const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
@@ -372,7 +372,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                     <PermissionFooterOfferedChoices
                         choices={nativePermissionChoices.filter(isOfferedPermissionChoice)}
                         permissionOwnerLabel={pendingRequest?.permissionOwnerLabel}
-                        primaryId={selectPrimaryOfferedChoice(nativePermissionChoices.filter(isOfferedPermissionChoice))}
+                        primaryId={selectPrimaryPermissionChoice(nativePermissionChoices.filter(isOfferedPermissionChoice))}
                         disabled={isApproving || isRejecting}
                         busyChoiceId={nativeBusyChoiceId}
                         onChoose={(choiceId, feedback) => {

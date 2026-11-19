@@ -5,8 +5,9 @@ export type RecentActivityMessage = Readonly<{ id: string; role: 'user' | 'agent
 
 const NO_MESSAGES: readonly RecentActivityMessage[] = Object.freeze([]);
 
-// The notch shows the three most recent conversational excerpts.
-const RECENT_MESSAGE_COUNT = 3;
+// The notch's pinned conversation reads the recent turns: enough to fill a tall island, which scrolls past
+// its room (owner 11-19: the conversation grows to the screen's height instead of three excerpts).
+const RECENT_MESSAGE_COUNT = 20;
 
 /** Read newest-first from the stored order, then display the selected excerpts chronologically. */
 export function readRecentActivityMessages(transcript: Readonly<{

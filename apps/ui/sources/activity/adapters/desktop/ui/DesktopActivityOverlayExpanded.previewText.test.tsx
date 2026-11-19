@@ -377,7 +377,7 @@ describe('DesktopActivityOverlayExpanded', () => {
         );
 
         expect(screen.getTextContent()).toContain('No active sessions');
-        expect(screen.getTextContent()).toContain('will wake up when new activity arrives');
+        expect(screen.getTextContent()).not.toContain('will wake up when new activity arrives');
         expect(screen.findByTestId('desktop-activity-overlay-card-idle-idle')).toBeTruthy();
     });
 

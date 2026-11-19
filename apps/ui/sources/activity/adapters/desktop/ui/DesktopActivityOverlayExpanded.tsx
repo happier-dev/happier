@@ -3,6 +3,7 @@ import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { DesktopActivityOverlayPanelRoomContext, type DesktopActivityOverlayPanelRoom } from './panelRoom';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -68,10 +69,20 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     const insetTop = props.underStatusRow ? theme.space.s8 : theme.space.s12;
     const insetBottom = theme.space.s12;
     const contentHeightRef = React.useRef(0);
+    const overflowRef = React.useRef(0);
     const { onNaturalHeight } = props;
     const reportNaturalHeight = React.useCallback(() => {
-        onNaturalHeight?.(insetTop + contentHeightRef.current + insetBottom);
+        onNaturalHeight?.(insetTop + contentHeightRef.current + overflowRef.current + insetBottom);
     }, [insetBottom, insetTop, onNaturalHeight]);
+    const reportOverflow = React.useCallback((overflow: number) => {
+        if (overflowRef.current === overflow) return;
+        overflowRef.current = overflow;
+        reportNaturalHeight();
+    }, [reportNaturalHeight]);
+    const room = React.useMemo<DesktopActivityOverlayPanelRoom>(() => ({
+        available: props.maxHeight === undefined ? null : Math.max(0, props.maxHeight - insetTop - insetBottom),
+        reportOverflow,
+    }), [insetBottom, insetTop, props.maxHeight, reportOverflow]);
     const onScrollContentSizeChange = scrollFades.onContentSizeChange;
     const handleContentSizeChange = React.useCallback((width: number, height: number) => {
         contentHeightRef.current = height;
@@ -138,7 +149,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                     contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} scrollEventThrottle={16}
                     onLayout={scrollFades.onViewportLayout} onContentSizeChange={handleContentSizeChange}
                     onScroll={scrollFades.onScroll} onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}>
-                    {props.content}
+                    <DesktopActivityOverlayPanelRoomContext.Provider value={room}>{props.content}</DesktopActivityOverlayPanelRoomContext.Provider>
                 </ScrollView>
             ) : (
                 <DesktopActivityOverlayExpandedCards bots={props.bots} model={props.model} visualMode={props.visualMode}

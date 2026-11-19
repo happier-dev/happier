@@ -43,6 +43,21 @@ export function isRefusingPermissionChoice(choice: Pick<SessionPermissionChoice,
     return kind === 'deny' || kind === 'stop';
 }
 
+const SCOPE_BREADTH: Readonly<Record<NonNullable<SessionPermissionChoice['scope']>, number>> = { once: 0, session: 1, localPersistent: 2 };
+
+/**
+ * The one primary: the narrowest-scope allow the viewer can choose (once before session before always).
+ * Ties keep the agent's order. A refusal is never primary, and a choice with no scope is never chosen over one.
+ */
+export function selectPrimaryPermissionChoice(choices: readonly SessionPermissionChoice[]): string | null {
+    let primary: SessionPermissionChoice | null = null;
+    for (const choice of choices) {
+        if (choice.scope === undefined || isRefusingPermissionChoice(choice) || choice.availability?.allowed === false) continue;
+        if (primary?.scope === undefined || SCOPE_BREADTH[choice.scope] < SCOPE_BREADTH[primary.scope]) primary = choice;
+    }
+    return primary?.id ?? null;
+}
+
 /** Yes grants this occurrence; No prefers Deny, otherwise the offered Stop. */
 export function selectSessionPermissionChoiceForDecision(
     choices: readonly SessionPermissionChoice[],
@@ -131,7 +146,7 @@ function resolveStoredSessionPermissionChoices(input: SessionPermissionChoicesIn
     if (!answers.includes('allowOnce')) return [deny];
     const copy = getPermissionFooterCopy(permissionBehavior?.promptProtocol);
     if (copy.protocol === 'unavailable') return [deny];
-    const choices: SessionPermissionChoice[] = [{ id: 'allow', label: t('settingsDesktop.overlay.notchAllowOnce'),
+    const choices: SessionPermissionChoice[] = [{ id: 'allow', label: t('settingsDesktop.overlay.notchAllowOnce'), scope: 'once',
         response: { approved: true, ...(copy.protocol === 'codexDecision' ? { decision: 'approved' as const } : {}) } }];
     const persistent = supportsSessionPermissionPersistence(input.source);
     if (copy.protocol === 'codexDecision') {

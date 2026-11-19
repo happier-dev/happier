@@ -27,10 +27,25 @@ describe('buildActivityPreviewText', () => {
             messagesById: Object.fromEntries(messages.map(message => [message.id, message])),
         };
         expect(readRecentActivityMessages(transcript, false)).toEqual([
+            { id: 'older', role: 'agent', text: 'Older reply' },
             { id: 'prompt', role: 'user', text: 'The prompt' },
             { id: 'reply', role: 'agent', text: 'The reply' },
             { id: 'followup', role: 'user', text: 'Follow up' },
         ]);
+    });
+
+    it('keeps enough recent turns to read a conversation in a tall island, newest last', () => {
+        const messages: Message[] = Array.from({ length: 30 }, (_, index) => ({
+            kind: index % 2 === 0 ? 'user-text' as const : 'agent-text' as const, id: `m${index}`, localId: null, createdAt: index, text: `Turn ${index}`,
+        }));
+        const transcript = {
+            messageIdsOldestFirst: messages.map(message => message.id),
+            messagesById: Object.fromEntries(messages.map(message => [message.id, message])),
+        };
+        const read = readRecentActivityMessages(transcript, false);
+        expect(read.length).toBe(20);
+        expect(read.at(-1)?.id).toBe('m29');
+        expect(read[0]?.id).toBe('m10');
     });
 
     it('returns the latest assistant text preview trimmed to a single normalized line', () => {

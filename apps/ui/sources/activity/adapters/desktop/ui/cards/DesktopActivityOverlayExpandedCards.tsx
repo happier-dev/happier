@@ -4,7 +4,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { VirtualizedList, type VirtualizedListProps } from '@/components/ui/lists/virtualized';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
-import { t } from '@/text';
 import { activityInstanceKey, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import {
@@ -121,13 +120,13 @@ function renderCard(params: Readonly<{
 
     switch (params.card.kind) {
         case 'idle_state':
+            // One line that says what is true: no title band over it, and no finished-turn copy naming no Session.
             return wrapCard(
                 params.card,
                 <DesktopActivityOverlayCardFrame
                     testID={instanceTestID}
                     visualMode={params.visualMode}
                     title={params.card.title}
-                    body={t('notifications.activity.readyFallbackBody')}
                 />,
             );
         case 'permission_request':
@@ -229,6 +228,8 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
     scroll?: Omit<VirtualizedListProps<ExpandedRow>, 'data' | 'renderItem' | 'keyExtractor'> & Readonly<{ maxHeight: number }>;
     /** How much of its trailing end the first row keeps clear for the panel's pin standing over it. */
     leadRowClearance?: number;
+    /** The surface already names the asker (the pinned conversation's header): its asks stand without their row. */
+    askerShown?: boolean;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const botFaces = props.bots?.faces ?? NO_FACES;
@@ -386,8 +387,8 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
     for (const group of askGroups) {
         add(`asks:${group.key}`, () => (
             <View testID={`desktop-activity-overlay-ask-group-${group.sessionId}`} style={styles.rows}>
-                {group.row ? sessionRow(group.row, group.cards.length) : null}
-                <View style={styles.asks}>{group.cards.map(render)}</View>
+                {group.row && !props.askerShown ? sessionRow(group.row, group.cards.length) : null}
+                <View style={props.askerShown ? styles.asksOnly : styles.asks}>{group.cards.map(render)}</View>
             </View>
         ), true, false, isFocusedSession(group.sessionId, group.serverId) || containsFocusCard(group.cards));
     }
@@ -456,6 +457,10 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
         marginTop: theme.space.s4,
         marginBottom: theme.space.s6,
+    },
+    // Under a header that already names the asker, the asks keep only their own rhythm.
+    asksOnly: {
+        gap: theme.space.s8,
     },
     separator: {
         height: StyleSheet.hairlineWidth,

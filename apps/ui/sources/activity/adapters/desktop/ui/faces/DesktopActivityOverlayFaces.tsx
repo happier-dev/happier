@@ -25,6 +25,7 @@ import type {
 import type { DesktopActivityOverlayAttentionMark } from '../../presentation/model/desktopActivityOverlayModelTypes';
 import { resolveNotchRestMarkShiftPx, resolveNotchRestMarks } from './notchRestMarks';
 import { createDesktopActivityOverlayFocusRingStyle } from '../DesktopActivityOverlayChrome';
+import { useNotchPlanePaint } from '../notch/NotchShape';
 import { DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE, DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE, DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
 import type { DesktopActivityOverlayPressableInteractionState } from '../DesktopActivityOverlayPressableInteractionState';
 
@@ -207,7 +208,7 @@ function NotchFaceButton(props: Readonly<{
   handlers: NotchConversationHandlers;
   column: boolean;
 }>) {
-  const { theme } = useUnistyles();
+  const notchPlane = useNotchPlanePaint();
   const { face } = props;
   return (
     <NotchConversationMenu
@@ -234,7 +235,7 @@ function NotchFaceButton(props: Readonly<{
               size={NOTCH_FACE_WING_SIZE}
               activity={face.activity}
               monochrome={!face.live}
-              planeColor={theme.colors.overlay.notch}
+              planeColor={notchPlane}
               dotTestID={`desktop-activity-overlay-face-${face.sessionId}-needs-you`}
             />
           }
@@ -250,6 +251,7 @@ function NotchFaceButton(props: Readonly<{
  */
 function NotchSessionMark(props: Readonly<{ mark: DesktopActivityOverlayAttentionMark }>) {
   const { theme } = useUnistyles();
+  const notchPlane = useNotchPlanePaint();
   const { mark } = props;
   const size = mark.botFace ? NOTCH_FACE_WING_SIZE : NOTCH_AGENT_MARK_SIZE;
   return (
@@ -270,7 +272,7 @@ function NotchSessionMark(props: Readonly<{ mark: DesktopActivityOverlayAttentio
           signal={NEEDS_YOU_DOT}
           glyphSizePx={size}
           corner="bottomRight"
-          ringColor={theme.colors.overlay.notch}
+          ringColor={notchPlane}
         />
       </View>
     </View>
@@ -374,7 +376,7 @@ export const DesktopActivityOverlayBotRow = React.memo(function DesktopActivityO
         askContext?: string | null;
     }>,
 ) {
-    const { theme } = useUnistyles();
+    const notchPlane = useNotchPlanePaint();
     const { face } = props;
     const askCount = props.askCount ?? 0;
     const readNextRefresh = React.useCallback(
@@ -408,7 +410,7 @@ export const DesktopActivityOverlayBotRow = React.memo(function DesktopActivityO
                             size={NOTCH_FACE_PANEL_SIZE}
                             activity={face.activity}
                             monochrome={!face.live}
-                            planeColor={theme.colors.overlay.notch}
+                            planeColor={notchPlane}
                         />
                     )}
                     liftKey={face.sessionId}
