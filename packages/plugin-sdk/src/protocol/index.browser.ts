@@ -1,6 +1,7 @@
 export type { ActionOperationGetV1Response } from './projectExecution.js';
 export { ActionOperationGetV1ResponseProtocolSchema } from './projectExecution.js';
 export { CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1 } from './currentUiContext.js';
+export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
 export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deployment.js';
 export type { DeploymentArtifactContentReferenceV1 } from './deployment.js';
@@ -133,5 +134,4 @@ export { readOwnedNoticeArtifactV1 } from './accountNotice.js';
 export { resolveAccountDisplayLabelV1 } from './discussionContent.js';
 export { resolveLaunchProfilePlacementDirectoryIntentV1 } from './launchProfilePreferences.js';
 
-export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
 export { ReviewRoundBindingV1ProtocolSchema } from './protocolFacade.js';
