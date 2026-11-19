@@ -81,6 +81,8 @@ export function useCollectionSpaceHeader<
     keyboardEnabled?: boolean;
     /** `section` keeps the title a heading under a page's own title on a phone. */
     titleScale?: 'page' | 'section';
+    /** The entity's own drop target around each space tab (Add to space by dragging a row onto it). */
+    wrapTabTarget?: (spaceId: string, tab: React.ReactElement) => React.ReactElement;
   }>,
 ) {
   const { view, registry, bindings, testIDPrefix } = input;
@@ -257,6 +259,7 @@ export function useCollectionSpaceHeader<
           onAdd={openSaveAs}
           reorder={stripReorder}
           onEditSpace={editSpace}
+          {...(input.wrapTabTarget ? { wrapTabTarget: input.wrapTabTarget } : {})}
         />
         </CollectionSpaceSwipeZone>
       ) : null}

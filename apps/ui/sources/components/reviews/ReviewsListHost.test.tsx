@@ -25,6 +25,8 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
     (await import('@/dev/testkit/mocks/virtualizedList')).createCapturingFlatListMock().module,
 ));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// Menus and editors on this page render inline under Test Renderer (no window).
+vi.mock('@/components/ui/popover', async original => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(original));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/reviews', router: { push: routerPush } }).module);
 
 const homes = createHomeGovernanceHarness();
@@ -69,6 +71,39 @@ describe('/reviews live host', () => {
             expect(reads).toBe(1);
             await act(async () => { screen.update(page(true)); });
             await waitForHomeGovernance(() => expect(reads).toBe(2));
+        } finally {
+            await screen.unmount();
+            storage.setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }
+    });
+
+    it('keeps search behind its icon and narrows only the loaded rows, saying so', async () => {
+        const serverId = await homes.addHome({ serverUrl: 'https://reviews-search.example', name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const previousScope = storage.getState().profileScope;
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        storage.setState({ profileScope: { serverId, accountId: 'alice' } });
+        const row = (reviewId: string, subjectKind: 'repository' | 'pull_request') => ({ reviewId, projectSourceId: null, workflowId: null,
+            subjectKind, sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+            startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 1, needsDecision: 0 },
+            needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } });
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => ({ body: {
+            items: [row('review-repo', 'repository'), row('review-pr', 'pull_request')], cursor: null } }) });
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive>
+            <WorkspaceRouteBody />
+        </PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-pr')).not.toBeNull());
+            expect(screen.findByTestId('reviews:search')).toBeNull();
+            await screen.pressByTestIdAsync('reviews:search-toggle');
+            screen.changeTextByTestId('reviews:search', t('reviewWalkthrough.collection.subjectPullRequest'));
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-repo')).toBeNull());
+            expect(screen.findHostByTestId('reviews:row:review-pr')).not.toBeNull();
+            expect(screen.findByTestId('reviews:search-scope')).not.toBeNull();
         } finally {
             await screen.unmount();
             storage.setState({ profileScope: previousScope });

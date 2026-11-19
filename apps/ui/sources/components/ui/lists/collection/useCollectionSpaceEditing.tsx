@@ -9,6 +9,7 @@ import {
   type SessionSpaceMembershipV1,
 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import type { CollectionFilterMapV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import type { ResourceSpaceMembershipV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -31,11 +32,11 @@ import {
 
 const FORM_POPOVER_WIDTH_PX = 340;
 
-/** The membership a create and an edit carry, per list kind: only Session spaces have one. */
+/** The membership a create and an edit carry, per list kind: Session and Review spaces have one. */
 type SpaceMembershipFor = {
   [P in CollectionEntityKindV1]: (mode: SessionSpaceMembershipV1['mode'] | undefined) => Readonly<{
     create: CollectionSpaceV1<P>['membership'];
-    edit: (P extends 'sessionWork' ? Pick<SessionSpaceMembershipV1, 'mode'> : never) | undefined;
+    edit: (P extends 'sessionWork' ? Pick<SessionSpaceMembershipV1, 'mode'> : P extends 'review' ? ResourceSpaceMembershipV1 : never) | undefined;
   }>;
 };
 const NO_MEMBERSHIP = { create: undefined, edit: undefined } as const;
@@ -44,6 +45,8 @@ const SPACE_MEMBERSHIP_FOR: SpaceMembershipFor = {
   workflow: () => NO_MEMBERSHIP,
   discussion: () => NO_MEMBERSHIP,
   deploymentEnvironment: () => NO_MEMBERSHIP,
+  // A Review space's manual members are Account-scoped associations (P02), not tags on its definition.
+  review: (mode) => (mode ? { create: { mode }, edit: { mode } } : NO_MEMBERSHIP),
 };
 
 type SpaceForm = Readonly<{
@@ -79,9 +82,10 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
   }>,
 ) {
   const { entityKind, selectedSpace, currentFilter } = input;
-  // The entity discriminant establishes the Session shape; TypeScript cannot narrow a generic K.
-  const sessionMembership = entityKind === 'sessionWork'
-    ? (selectedSpace as CollectionSpaceV1<'sessionWork'> | null)?.membership
+  // Session and Review spaces carry manual membership; TypeScript cannot narrow a generic K.
+  const membershipKind = entityKind === 'sessionWork' || entityKind === 'review';
+  const spaceMembership = membershipKind
+    ? (selectedSpace as CollectionSpaceV1<'sessionWork' | 'review'> | null)?.membership
     : undefined;
   const refs = React.useMemo(
     () => collectionSpaceSettingRefs(entityKind),
@@ -215,10 +219,10 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
                 icon: selectedSpace.icon,
                 includeNeedsYouEverywhere:
                   selectedSpace.includeNeedsYouEverywhere,
-                ...(entityKind === 'sessionWork' ? { membershipMode: sessionMembership?.mode ?? 'filter_or_manual' } : {}),
+                ...(membershipKind ? { membershipMode: spaceMembership?.mode ?? 'filter_or_manual' } : {}),
               }
             : { ...input.suggestion, includeNeedsYouEverywhere: false,
-                ...(entityKind === 'sessionWork' ? { membershipMode: 'filter_or_manual' as const } : {}) }
+                ...(membershipKind ? { membershipMode: 'filter_or_manual' as const } : {}) }
         }
         suggestedIcons={[input.suggestion.icon]}
         summary={input.summary}

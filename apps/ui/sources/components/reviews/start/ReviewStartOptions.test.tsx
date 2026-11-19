@@ -72,16 +72,15 @@ describe('ReviewStartOptions', () => {
     expect(screen.getTextContent()).toContain(
       'Accept DeepSec’s $4.80 estimate',
     );
-    expect(
-      screen.findByTestId('review-start-cost-consent')?.props
-        .accessibilityChecked,
-    ).toBe(false);
+    // The row's host announces the consent as a checkbox state.
+    const checked = () => {
+      const host = screen.findHostByTestId('review-start-cost-consent');
+      return host?.props.accessibilityState?.checked ?? host?.props['aria-checked'];
+    };
+    expect(checked()).toBe(false);
     await screen.pressByTestIdAsync('review-start-cost-consent');
     expect(states.at(-1)).toMatchObject({ accepted: true });
-    expect(
-      screen.findByTestId('review-start-cost-consent')?.props
-        .accessibilityChecked,
-    ).toBe(true);
+    expect(checked()).toBe(true);
     await screen.unmount();
   });
 });

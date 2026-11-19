@@ -99,6 +99,28 @@ export type ReviewWalkthroughTranslations = {
         includeTranscript: string;
         includeTranscriptLine: string;
     };
+    collection: {
+        search: string;
+        filteredWithinLoaded: string;
+        rowOptions: string;
+        addToSpace: (params: Readonly<{ space: string }>) => string;
+        removeFromSpace: string;
+        fieldSubject: string;
+        fieldState: string;
+        fieldSource: string;
+        fieldPending: string;
+        subjectComparison: string;
+        subjectPullRequest: string;
+        subjectRepository: string;
+        stateRunning: string;
+        stateCompleted: string;
+        statePartial: string;
+        stateFailed: string;
+        stateCancelled: string;
+        sourceDirect: string;
+        sourceWorkflow: string;
+        pendingFacet: string;
+    };
     detail: {
         tabFindings: string;
         tabChanges: string;
@@ -272,6 +294,28 @@ export const en: ReviewWalkthroughTranslations = {
         billedTo: ({ engine }) => `Billed to your ${engine} account, not to Happier.`,
         includeTranscript: 'Include the session’s transcript',
         includeTranscriptLine: 'Review engines in this step read the conversation as well as the changes.',
+    },
+    collection: {
+        search: 'Search reviews',
+        filteredWithinLoaded: 'Filtered within the loaded reviews',
+        rowOptions: 'Review options',
+        addToSpace: ({ space }) => `Add to ${space}`,
+        removeFromSpace: 'Remove from this space',
+        fieldSubject: 'What',
+        fieldState: 'State',
+        fieldSource: 'Started',
+        fieldPending: 'Pending',
+        subjectComparison: 'Changes',
+        subjectPullRequest: 'Pull request',
+        subjectRepository: 'Whole repository',
+        stateRunning: 'Running',
+        stateCompleted: 'Finished',
+        statePartial: 'Partial',
+        stateFailed: 'Couldn’t finish',
+        stateCancelled: 'Stopped',
+        sourceDirect: 'Directly',
+        sourceWorkflow: 'From a workflow',
+        pendingFacet: 'Pending',
     },
     detail: {
         tabFindings: 'Findings',
