@@ -46,16 +46,24 @@ impl MainWindowDestination {
     }
 }
 
-pub fn launched_in_menu_bar_mode<I, S>(args: I, update_relaunch: bool) -> bool
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StartupLaunch {
+    User,
+    MenuBar,
+    UpdateFromMenuBar,
+}
+
+pub(crate) fn classify_startup_launch<I, S>(args: I, update_relaunch: bool) -> StartupLaunch
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    !update_relaunch
-        && args
-            .into_iter()
-            .skip(1)
-            .any(|arg| arg.as_ref() == MENU_BAR_ARG)
+    let from_menu_bar = args.into_iter().skip(1).any(|arg| arg.as_ref() == MENU_BAR_ARG);
+    match (from_menu_bar, update_relaunch) {
+        (false, _) => StartupLaunch::User,
+        (true, false) => StartupLaunch::MenuBar,
+        (true, true) => StartupLaunch::UpdateFromMenuBar,
+    }
 }
 
 /// A second launch while Happier runs (single instance) opens its window — except the login item
@@ -65,7 +73,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    !launched_in_menu_bar_mode(args, false)
+    classify_startup_launch(args, false) == StartupLaunch::User
 }
 
 /// R16 (b) — the app starts at login exactly when the background service does, so there is one
@@ -371,15 +379,9 @@ mod tests {
 
     #[test]
     fn the_login_item_argument_selects_menu_bar_mode_and_the_binary_path_never_does() {
-        assert!(launched_in_menu_bar_mode(
-            ["/Applications/Happier.app/x", "--menu-bar"],
-            false
-        ));
-        assert!(!launched_in_menu_bar_mode(
-            ["/Applications/Happier.app/x"],
-            false
-        ));
-        assert!(!launched_in_menu_bar_mode(["--menu-bar"], false));
+        assert_eq!(classify_startup_launch(["/Applications/Happier.app/x", MENU_BAR_ARG], false), StartupLaunch::MenuBar);
+        assert_eq!(classify_startup_launch(["/Applications/Happier.app/x"], false), StartupLaunch::User);
+        assert_eq!(classify_startup_launch([MENU_BAR_ARG], false), StartupLaunch::User);
     }
 
     #[test]
@@ -579,8 +581,8 @@ mod tests {
     }
 
     #[test]
-    fn updater_relaunch_ignores_the_login_argument() {
-        assert!(!launched_in_menu_bar_mode(["Happier", "--menu-bar"], true));
+    fn an_update_relaunch_after_login_opens_the_window_without_user_launch_intent() {
+        assert_eq!(classify_startup_launch(["Happier", MENU_BAR_ARG], true), StartupLaunch::UpdateFromMenuBar);
     }
 
     #[test]

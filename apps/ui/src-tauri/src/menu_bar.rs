@@ -10,7 +10,7 @@
 pub mod policy;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -21,7 +21,7 @@ use crate::menu::ids::ServiceMenuAction;
 use crate::system_tasks::{run_system_task_for_native, NativeTaskOutcome};
 use crate::tray::model::{fill_relay, read_service_status, AutostartMode, ServiceList};
 use policy::{
-    build_native_task_spec, launched_in_menu_bar_mode as launched_with_args, status_timer_needed,
+    build_native_task_spec, classify_startup_launch, status_timer_needed, StartupLaunch,
     StatusReadState, StatusReadTrigger, LINUX_STATUS_TIMER_INTERVAL,
 };
 
@@ -45,7 +45,7 @@ impl MainWindowDestination {
 pub struct MenuBarState {
     active: AtomicBool,
     inner: Mutex<MenuBarInner>,
-    update_relaunch: AtomicBool,
+    startup_launch: OnceLock<StartupLaunch>,
 }
 
 impl Default for MenuBarState {
@@ -53,7 +53,7 @@ impl Default for MenuBarState {
         Self {
             active: AtomicBool::new(false),
             inner: Mutex::new(MenuBarInner::default()),
-            update_relaunch: AtomicBool::new(false),
+            startup_launch: OnceLock::new(),
         }
     }
 }
@@ -71,10 +71,11 @@ struct MenuBarInner {
 }
 
 pub fn launched_in_menu_bar_mode(app: &AppHandle) -> bool {
-    let update_relaunch = app
-        .try_state::<MenuBarState>()
-        .is_some_and(|state| state.update_relaunch.load(Ordering::SeqCst));
-    launched_with_args(std::env::args(), update_relaunch)
+    startup_launch(app) == StartupLaunch::MenuBar
+}
+
+pub(crate) fn startup_launch(app: &AppHandle) -> StartupLaunch {
+    *app.state::<MenuBarState>().startup_launch.get().expect("startup launch classified during setup")
 }
 
 /// Consume updater intent before any login-mode or window-creation decision.
@@ -90,14 +91,15 @@ pub fn prepare_launch(app: &AppHandle) {
             )
             .map_err(|error| error.to_string())
         });
-    match result {
-        Ok(relaunch) => {
-            if let Some(state) = app.try_state::<MenuBarState>() {
-                state.update_relaunch.store(relaunch, Ordering::SeqCst);
-            }
+    let update_relaunch = match result {
+        Ok(relaunch) => relaunch,
+        Err(error) => {
+            log::warn!("could not consume updater relaunch intent: {error}");
+            false
         }
-        Err(error) => log::warn!("could not consume updater relaunch intent: {error}"),
-    }
+    };
+    let launch = classify_startup_launch(std::env::args(), update_relaunch);
+    let _ = app.state::<MenuBarState>().startup_launch.set(launch);
 }
 
 pub fn is_active<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {

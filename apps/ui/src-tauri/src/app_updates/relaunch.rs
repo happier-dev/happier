@@ -62,7 +62,7 @@ pub fn consume_update_relaunch_marker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::menu_bar::policy::launched_in_menu_bar_mode;
+    use crate::menu_bar::policy::{classify_startup_launch, StartupLaunch, MENU_BAR_ARG};
     use serde_json::json;
 
     #[test]
@@ -79,16 +79,16 @@ mod tests {
         })
         .unwrap();
         let replacement = consume_update_relaunch_marker(dir.path(), "0.3.11").unwrap();
-        assert!(!launched_in_menu_bar_mode(
-            ["Happier", "--menu-bar"],
-            replacement
-        ));
+        assert_eq!(
+            classify_startup_launch(["Happier", MENU_BAR_ARG], replacement),
+            StartupLaunch::UpdateFromMenuBar
+        );
         assert!(!dir.path().join(UPDATE_RELAUNCH_FILE).exists());
         let later_login = consume_update_relaunch_marker(dir.path(), "0.3.11").unwrap();
-        assert!(launched_in_menu_bar_mode(
-            ["Happier", "--menu-bar"],
-            later_login
-        ));
+        assert_eq!(
+            classify_startup_launch(["Happier", MENU_BAR_ARG], later_login),
+            StartupLaunch::MenuBar
+        );
     }
 
     #[test]
