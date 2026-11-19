@@ -9,6 +9,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
+import type { ProviderAccountUsageInBandSnapshotOptions } from './persistence';
 
 type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: () => Promise<'plain' | 'e2ee' | 'unknown'>;
@@ -51,11 +52,7 @@ type PersistenceModule = Readonly<{
   }>): Readonly<{
     recordInBandSnapshot(
       snapshot: ProviderAccountUsageSnapshotV1,
-      options?: Readonly<{
-        source?: ConnectedServiceUsageSourceV1;
-        sources?: readonly ConnectedServiceUsageSourceV1[];
-        onPersisted?: () => void;
-      }>,
+      options?: ProviderAccountUsageInBandSnapshotOptions,
     ): Promise<
       | Readonly<{ status: 'enqueued'; enqueue: 'accepted' | 'coalesced' }>
       | Readonly<{ status: 'already_persisted'; reason: string }>
@@ -229,12 +226,14 @@ describe('provider account usage persistence', () => {
   it('reports an identical snapshot as already persisted after the first write drains', async () => {
     const module = await loadPersistenceModule();
     expect(module).not.toBeNull();
+    let now = 1_000;
+    const write = vi.fn(async () => {});
     const scheduler = module!.createProviderAccountUsagePersistenceScheduler({
       api: {
         getAccountEncryptionMode: async () => 'plain',
-        registerProviderAccountUsageSnapshotPlain: async () => {},
+        registerProviderAccountUsageSnapshotPlain: write,
       },
-      now: () => 1_000,
+      now: () => now,
       fingerprintKey: new Uint8Array(32).fill(9),
       minFreshnessMs: 60_000,
     });
@@ -250,6 +249,12 @@ describe('provider account usage persistence', () => {
         status: 'already_persisted',
         reason: 'unchanged',
       });
+      now = 21_000;
+      await expect(scheduler.recordInBandSnapshot({ ...snapshot, fetchedAtMs: now }, {
+        forceFreshness: true,
+      })).resolves.toMatchObject({ status: 'enqueued' });
+      await scheduler.flush(1_000);
+      expect(write).toHaveBeenCalledTimes(2);
     } finally {
       scheduler.dispose();
     }

@@ -2,6 +2,7 @@ export type UsageLimitRecoveryTimingInput = Readonly<{
   occurredAtMs: number | null | undefined;
   resetAtMs: number | null | undefined;
   retryAfterMs: number | null | undefined;
+  windows?: readonly Readonly<{ remainingPct?: number; resetAtMs?: number; status?: string }>[];
 }>;
 
 export type UsageLimitRecoveryTiming = Readonly<{
@@ -14,7 +15,14 @@ function normalizeNonNegativeInteger(value: number | null | undefined): number |
 }
 
 export function deriveUsageLimitRecoveryTiming(input: UsageLimitRecoveryTimingInput): UsageLimitRecoveryTiming {
-  const resetAtMs = normalizeNonNegativeInteger(input.resetAtMs);
+  let resetAtMs = normalizeNonNegativeInteger(input.resetAtMs);
+  for (const window of input.windows ?? []) {
+    const status = window.status?.toLowerCase();
+    if (window.remainingPct !== 0 && status !== 'exhausted' && status !== 'limited' && status !== 'rate_limited') continue;
+    const windowResetAtMs = normalizeNonNegativeInteger(window.resetAtMs);
+    if (windowResetAtMs === null) return { resetAtMs: null, nextCheckAtMs: null };
+    resetAtMs = resetAtMs === null ? windowResetAtMs : Math.max(resetAtMs, windowResetAtMs);
+  }
   if (resetAtMs !== null) {
     return { resetAtMs, nextCheckAtMs: resetAtMs };
   }

@@ -13,10 +13,12 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
         account: { email: 'alice@example.com' },
         primary: {
           used_percent: 87.5,
+          window_duration_mins: 300,
           resets_at: '2026-05-17T16:00:00.000Z',
         },
         secondary: {
           used_percent: 42,
+          window_duration_mins: 10_080,
           resets_at: 1_768_010_000_000,
         },
       },
@@ -32,13 +34,13 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
       meters: [
         {
           meterId: 'primary',
-          label: 'Primary',
+          label: '5 hour',
           utilizationPct: 87.5,
           resetsAt: Date.parse('2026-05-17T16:00:00.000Z'),
         },
         {
           meterId: 'secondary',
-          label: 'Secondary',
+          label: 'Weekly',
           utilizationPct: 42,
           resetsAt: 1_768_010_000_000,
         },

@@ -193,11 +193,16 @@ function buildMeter(
   const meterId = allowance.providerLimitId ? `${allowance.providerLimitId}:${meterKind}` : legacyPresentation.meterId;
   const allowanceLabel = allowance.label ?? formatProviderLimitLabel(allowance.providerLimitId);
   const windowDurationMs = readWindowDurationMs(record);
+  const windowLabel = windowDurationMs === 5 * 60 * 60_000
+    ? '5 hour'
+    : windowDurationMs === 7 * 24 * 60 * 60_000
+      ? 'Weekly'
+      : null;
   return {
     meterId,
     label: allowanceLabel
-      ? `${allowanceLabel} · ${meterKind === 'primary' ? 'Primary' : 'Secondary'}`
-      : legacyPresentation.label,
+      ? `${allowanceLabel} · ${windowLabel ?? (meterKind === 'primary' ? 'Primary' : 'Secondary')}`
+      : windowLabel ?? legacyPresentation.label,
     used,
     limit,
     remainingPct: derivedRemainingPct,

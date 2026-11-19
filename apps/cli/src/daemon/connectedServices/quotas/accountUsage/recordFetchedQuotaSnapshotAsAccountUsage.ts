@@ -60,6 +60,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
     persistDurably?: boolean;
     refreshError?: ProviderAccountUsageDiagnosticV1;
     onPersistenceAccepted?: () => void;
+    forceFreshness?: boolean;
   }>,
 ): Promise<ProviderAccountUsageSnapshotV1 | null> {
     const store = context.accountUsageStore;
@@ -182,6 +183,7 @@ export async function recordFetchedQuotaSnapshotAsAccountUsage(
         if (context.accountUsagePersistence) {
           const result = await context.accountUsagePersistence.recordInBandSnapshot(latest, {
             sources: [...persistenceSourcesByKey.values()],
+            forceFreshness: input.forceFreshness,
           });
           // Only an authorized source write transfers source-repair ownership to persistence.
           if (authorizedProfileObservation?.sources?.length

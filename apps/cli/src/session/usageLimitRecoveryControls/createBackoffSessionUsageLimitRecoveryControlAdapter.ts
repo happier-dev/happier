@@ -97,36 +97,11 @@ function resolveFallbackNextCheckAtMs(params: Readonly<{
   return anchorMs + params.fallbackBackoffMs;
 }
 
-function resolveIntentNextCheckAtMs(params: Readonly<{
-  intent: SessionUsageLimitRecoveryV1;
-  issue: SessionRuntimeIssueV1 | null;
-  fallbackBackoffMs: number;
-  nowMs: number;
-}>): number {
-  if (typeof params.intent.nextCheckAtMs === 'number' && Number.isFinite(params.intent.nextCheckAtMs)) {
-    return params.intent.nextCheckAtMs;
-  }
-
-  const usageLimit = params.issue?.usageLimit;
-  if (usageLimit) {
-    const timing = deriveUsageLimitRecoveryTiming({
-      occurredAtMs: params.issue.occurredAt,
-      resetAtMs: usageLimit.resetAtMs,
-      retryAfterMs: usageLimit.retryAfterMs,
-    });
-    if (timing.nextCheckAtMs !== null) return timing.nextCheckAtMs;
-  }
-
-  return resolveFallbackNextCheckAtMs(params);
-}
-
 function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
   issue: SessionRuntimeIssueV1;
   providerId: string;
   defaultNativeServiceId?: ConnectedServiceId | null;
-  fallbackBackoffMs: number;
   maxAttempts: number;
-  nowMs: number;
   resumePromptMode?: 'standard' | 'off' | 'custom';
   connectedServices?: unknown;
 }>): SessionUsageLimitRecoveryV1 {
@@ -136,9 +111,10 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
       occurredAtMs: params.issue.occurredAt,
       resetAtMs: usageLimit.resetAtMs,
       retryAfterMs: usageLimit.retryAfterMs,
+      windows: usageLimit.allWindows,
     })
     : { resetAtMs: null, nextCheckAtMs: null };
-  const intent: SessionUsageLimitRecoveryV1 = {
+  return {
     v: 1,
     status: 'waiting',
     issueFingerprint: buildUsageLimitIssueFingerprint(params.issue, params.providerId),
@@ -155,16 +131,6 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
       connectedServices: params.connectedServices ?? null,
     }) ?? { kind: 'native' },
   };
-
-  return {
-    ...intent,
-    nextCheckAtMs: intent.nextCheckAtMs ?? resolveFallbackNextCheckAtMs({
-      intent,
-      issue: params.issue,
-      fallbackBackoffMs: params.fallbackBackoffMs,
-      nowMs: params.nowMs,
-    }),
-  };
 }
 
 function buildNextIntent(params: Readonly<{
@@ -176,10 +142,23 @@ function buildNextIntent(params: Readonly<{
   adapterStatus: 'ready' | 'waiting';
   intent: SessionUsageLimitRecoveryV1;
 }> {
-  const nextCheckAtMs = resolveIntentNextCheckAtMs(params);
+  const usageLimit = params.issue?.usageLimit;
+  const evidence = usageLimit ? deriveUsageLimitRecoveryTiming({
+    occurredAtMs: params.issue?.occurredAt,
+    resetAtMs: params.intent.resetAtMs ?? usageLimit.resetAtMs,
+    retryAfterMs: usageLimit.retryAfterMs,
+    windows: usageLimit.allWindows,
+  }) : { resetAtMs: params.intent.resetAtMs, nextCheckAtMs: params.intent.resetAtMs };
+  const providerDueAtMs = evidence.nextCheckAtMs === null ? null : Math.max(
+    evidence.nextCheckAtMs, params.intent.nextCheckAtMs ?? evidence.nextCheckAtMs,
+  );
+  const wakeAtMs = evidence.nextCheckAtMs === null
+    ? resolveFallbackNextCheckAtMs(params)
+    : null;
   const baseIntent: SessionUsageLimitRecoveryV1 = {
     ...params.intent,
-    nextCheckAtMs,
+    resetAtMs: evidence.resetAtMs,
+    nextCheckAtMs: providerDueAtMs ?? (wakeAtMs !== null && wakeAtMs > params.nowMs ? wakeAtMs : null),
   };
 
   if (baseIntent.maxAttempts > 0 && baseIntent.attemptCount >= baseIntent.maxAttempts) {
@@ -193,7 +172,7 @@ function buildNextIntent(params: Readonly<{
     };
   }
 
-  if (params.nowMs >= nextCheckAtMs) {
+  if (providerDueAtMs !== null && params.nowMs >= providerDueAtMs) {
     return {
       adapterStatus: 'ready',
       intent: {
@@ -269,13 +248,11 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Re
             issue: latestIssue,
             providerId: options.providerId,
             defaultNativeServiceId: options.defaultNativeServiceId ?? null,
-            fallbackBackoffMs,
             maxAttempts: readNonNegativeIntegerFromEnv(
               processEnv,
               options.maxAttemptsEnvKey,
               options.defaultMaxAttempts ?? 3,
             ),
-            nowMs: now,
             resumePromptMode: params.resumePromptMode,
             connectedServices: params.metadata.connectedServices ?? null,
           })

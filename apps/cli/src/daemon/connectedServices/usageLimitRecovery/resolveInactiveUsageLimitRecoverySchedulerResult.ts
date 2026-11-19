@@ -68,6 +68,7 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
     return {
       status: 'wait',
       nextCheckAtMs: recovery.nextCheckAtMs,
+      resetAtMs: recovery.resetAtMs,
       lastProbeError: recovery.lastProbeError,
       selectedAuth: recovery.selectedAuth,
       ...(recovery.recoveryCredits ? { recoveryCredits: recovery.recoveryCredits } : {}),
@@ -76,6 +77,7 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
   return {
     status: 'wait',
     nextCheckAtMs: input.nowMs + input.fallbackRetryDelayMs,
+    ...(recovery?.status === 'waiting' ? { resetAtMs: recovery.resetAtMs } : {}),
     lastProbeError: 'usage_limit_recovery_probe_not_ready',
   };
 }
