@@ -75,11 +75,14 @@ export function useCorePageWidgetAreaBinding(input: Readonly<{
             const target = admitted?.surface ?? surface;
             if (!sameStrictJsonValue(widgetAreaLayoutBaseSurface(target), widgetAreaLayoutBaseSurface(surface)))
                 return { ok: false, errorCode: 'widget_area_owner_mismatch', error: 'widget_area_owner_mismatch' };
+            // An admitted edit keeps its captured target through page-context changes;
+            // reads still belong to the exact binding that requested them.
+            const current = admitted && pluginUiWidgetAreaOperationHasOutwardEffectV1(operation) ? isSelectionCurrent : isCurrent;
             const offered = operation.actionId === 'widgets.item.list' && (admitted?.context ?? input.context) === input.context
                 ? readHandoff.take(target, handoffBinding, signal) : null;
             const result = await offered ?? await execute(operation.actionId,
-                buildWidgetAreaActionInputV1(operation, target), signal, admitted?.context);
-            if ((!isCurrent() || signal?.aborted) && !(result.ok && pluginUiWidgetAreaOperationHasOutwardEffectV1(operation))) return failed();
+                buildWidgetAreaActionInputV1(operation, target), signal, admitted?.context, current);
+            if ((!current() || signal?.aborted) && !(result.ok && pluginUiWidgetAreaOperationHasOutwardEffectV1(operation))) return failed();
             const parsed = PluginUiWidgetAreaResultV1Schema.safeParse(result);
             return parsed.success ? parsed.data : { ok: false, errorCode: 'invalid_widget_area_result', error: 'invalid_widget_area_result' };
         } } : null;

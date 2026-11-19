@@ -1138,6 +1138,104 @@ describe('mounted Usage page scope commands', () => {
         expect(frames, 'every committed frame retains the selected Cost while acknowledged inputs are admitted').toEqual(frames.map(() => 'cost'));
     });
 
+    it.each(['period', 'sources'] as const)('finishes Cost edits across a %s change before the first write acknowledges', async change => {
+        const [{ encodeBase64 }, { createAccountEncryptionCurrentnessFixtureForCredentials }] = await Promise.all([
+            import('@/encryption/base64'), import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),
+        ]);
+        const credentials = { token: createServedHomeAccountToken('account-a'),
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
+        const releaseWrite = createDeferred<void>();
+        let layoutArtifactId = '';
+        let holdNextWrite = false;
+        let writeHeld = false;
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-metric-inflight-filter.test', accountId: 'account-a',
+            credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
+            route: async request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                const response = await artifacts.handle(request.path + request.url.search, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+                // The real server boundary has committed the first edit, but its caller
+                // cannot acknowledge it or issue the remaining edits until released.
+                if (holdNextWrite && request.path === `/v1/artifacts/${layoutArtifactId}` && request.method === 'POST' && response?.ok) {
+                    holdNextWrite = false;
+                    writeHeld = true;
+                    await releaseWrite.promise;
+                }
+                return response
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const frames: unknown[] = [];
+        let observe: (() => void) | undefined;
+        const screen = await renderMeasuredPage(<React.Profiler id="metric-inflight-filter" onRender={() => observe?.()}>
+            <InjectedAuthProvider credentials={credentials}>
+                <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+            </InjectedAuthProvider>
+        </React.Profiler>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const bar = () => screen.findByType(UsageFilterBar);
+        const metricWidgets = () => screen.findAllByType(WidgetSurface)
+            .filter(node => readBuiltinWidgetDescriptorV1(node.props.instance.definition)?.inputs?.fields.some(field => field.path === 'metric'));
+        const sourceFilter = () => screen.findAllByType(SelectionListFilterChip)
+            .find(node => node.props.filter.id === 'sources')!.props.filter;
+        await waitForHomeGovernance(() => {
+            expect(screen.findAllByType(WidgetSurface)).toHaveLength(8);
+            expect(bar().props.metricPending).toBe(false);
+        });
+        await flushHookEffects({ cycles: 20 });
+        // Establish a persisted all-Tokens control through this same toolbar and HTTP path.
+        act(() => bar().props.onMetricChange('tokens'));
+        await waitForHomeGovernance(() => {
+            expect(metricWidgets().length).toBeGreaterThan(1);
+            expect(metricWidgets().every(node => node.props.instance.bindings.metric?.value === 'tokens')).toBe(true);
+            expect(bar().props.metricPending).toBe(false);
+            expect(bar().props.metric).toBe('tokens');
+        });
+        layoutArtifactId = buildWidgetSurfaceArtifactIdV1({ serverId: server.id, accountId: 'account-a',
+            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'how-you-work' } });
+        holdNextWrite = true;
+        observe = () => frames.push(bar().props.metric);
+        try {
+            try {
+                act(() => bar().props.onMetricChange('cost'));
+                await waitForHomeGovernance(() => {
+                    expect(writeHeld).toBe(true);
+                    expect(bar().props.metricPending).toBe(true);
+                    expect(bar().props.metric).toBe('cost');
+                });
+                if (change === 'period') {
+                    await act(async () => { await bar().props.onPeriodChange('30days'); });
+                    expect(bar().props.period).toBe('30days');
+                    await act(async () => { await bar().props.onPeriodChange('7days'); });
+                    expect(bar().props.period).toBe('7days');
+                } else {
+                    await act(async () => { await sourceFilter().onChange('native'); });
+                    expect(shownScope(bar().props.scopeFilters, 'sources')).toEqual(['native']);
+                }
+            } finally {
+                await act(async () => { releaseWrite.resolve(); });
+            }
+            await waitForHomeGovernance(() => {
+                expect(metricWidgets().length).toBeGreaterThan(1);
+                expect(metricWidgets().every(node => node.props.instance.bindings.metric?.value === 'cost')).toBe(true);
+                expect(bar().props.metricPending).toBe(false);
+                expect(bar().props.metric).toBe('cost');
+            });
+            await flushHookEffects({ cycles: 20 });
+            expect(frames.length).toBeGreaterThan(0);
+            expect(frames, 'filter changes retain Cost through the pending write and its admitted publication').toEqual(frames.map(() => 'cost'));
+        } finally {
+            observe = undefined;
+        }
+    });
+
     it.each(['period', 'sources', 'dashboard'] as const)('hands off acknowledged Cost during a %s change with layout admission held', async change => {
         const [{ encodeBase64 }, { createAccountEncryptionCurrentnessFixtureForCredentials }] = await Promise.all([
             import('@/encryption/base64'), import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),

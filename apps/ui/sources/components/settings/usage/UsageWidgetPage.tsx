@@ -308,7 +308,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   );
   const widgetMetric =
     metrics.size === 1 ? ([...metrics][0] as 'tokens' | 'cost') : null;
-  const metricLifetime = React.useMemo(() => ({ surface: props.port.surface, controller: new AbortController(), running: false }), [props.port, props.authority]);
+  const metricLifetime = React.useMemo(() => ({ surface: props.port.surface, controller: new AbortController(), running: false }), [props.port.surface, props.authority]);
   const [pendingMetric, setPendingMetric] = React.useState<Readonly<{ lifetime: typeof metricLifetime; metric: 'tokens' | 'cost'; writing: boolean }> | null>(null);
   // A filter change rebinds the write port while the same dashboard remains displayed.
   const pendingForDocument = pendingMetric?.lifetime.surface === metricLifetime.surface ? pendingMetric : null;
