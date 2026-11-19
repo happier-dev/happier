@@ -65,7 +65,7 @@ export function useNewAppAutoSuggestions(
   const [runnerChoice] = useSettingMutable('deploySuggestionRunnerV1');
   const [description, setDescription] = React.useState(params.initial?.description ?? '');
   const [phase, setPhase] = React.useState<Phase>(() => params.initial ? {
-    kind: 'settled', outcome: { kind: 'recommendations', recommendations: [params.initial.chosen.recommendation], catalog: params.initial.chosen.catalog }, runner: null,
+    kind: 'settled', outcome: { kind: 'recommendations', recommendations: [params.initial.chosen.recommendation], catalog: params.initial.chosen.catalog, dropped: [] }, runner: null,
   } : { kind: 'describe' });
   const [chosenCardId, setChosenCardId] = React.useState<string | null>(params.initial ? deploySuggestionCardId(0) : null);
   const abort = React.useRef<AbortController | null>(null);

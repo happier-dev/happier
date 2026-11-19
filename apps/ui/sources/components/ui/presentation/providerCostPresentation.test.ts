@@ -27,7 +27,7 @@ describe('provider cost presentation', () => {
   });
 
   it('presents local, priced and unpriced managed costs through one owner', () => {
-    expect(presentManagedPresetCost({ billing: { location: 'local' }, provider: 'Lima', runsOn: 'Mac' }))
+    expect(presentManagedPresetCost({ billing: { location: 'local', stoppedBilling: 'not-billed' }, provider: 'Lima', runsOn: 'Mac' }))
       .toEqual({ value: 'No bill', detail: 'Runs on Mac' });
     expect(presentManagedPresetCost({ prices: [price], provider: 'Vercel' }))
       .toMatchObject({ value: '$5.00 a month' });

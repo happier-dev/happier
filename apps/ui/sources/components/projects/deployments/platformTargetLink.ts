@@ -248,8 +248,11 @@ export function readPlatformReviewNotice(value: unknown): string | null {
     && typeof prepared.reviewNotice === 'string' ? prepared.reviewNotice : null;
 }
 
-/** A reviewed platform draft's provider part: what a create intent asks the platform to make. */
-export type PlatformTargetProviderCreate = Omit<ReturnType<typeof buildPlatformTargetDraft>, 'v' | 'serverId' | 'environmentId' | 'expectedRevision'>;
+/**
+ * A reviewed platform draft's provider part: what a create intent asks the platform to make. Named as the record plus
+ * its principal, since Omit over the draft's string index would erase the declared principal.
+ */
+export type PlatformTargetProviderCreate = Record<string, unknown> & Pick<ReturnType<typeof buildPlatformTargetDraft>, 'credentialPrincipal'>;
 export function readProviderCreate(draft: ReturnType<typeof buildPlatformTargetDraft>): PlatformTargetProviderCreate {
   const { v: _v, serverId: _serverId, environmentId: _environmentId, expectedRevision: _revision, ...providerCreate } = draft;
   return providerCreate;

@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 } from '@happier-dev/protocol/projects/starters/createV1';
 import type { ScmHostingRepositoryDescribePublishTargetsResponse } from '@happier-dev/protocol/scm';
+import type { ScmHostingProviderKind } from '@happier-dev/protocol/scm/pullRequests';
 
 import { resolveSourceControlPublishRepositoryRemediation } from '@/components/workspaces/scm/update/resolveSourceControlPublishRepositoryRemediation';
 import { readDeploySuggestionCatalog } from '@/execution/llmTasks/suggestDeploySetup';
@@ -24,7 +25,7 @@ export type ForgeOwnerFact =
   | Readonly<{ kind: 'needsAccount'; providerName: string | null }>
   | Readonly<{ kind: 'unavailable'; providerName: string | null }>;
 
-export type NewAppForge = Readonly<{ providerKind: string; title: string }>;
+export type NewAppForge = Readonly<DeploySuggestionCatalogV1['forges'][number]>;
 
 const LOADING: ForgeOwnerFact = Object.freeze({ kind: 'loading' });
 const NO_FORGES: readonly NewAppForge[] = Object.freeze([]);
@@ -80,7 +81,7 @@ export function useNewAppForges(
   }, [catalog, suggestion]);
 
   const [picked, setPicked] = React.useState<string | null>(null);
-  const offered = (kind: string | null | undefined): kind is string =>
+  const offered = (kind: string | null | undefined): kind is ScmHostingProviderKind =>
     Boolean(kind) && forges.some((forge) => forge.providerKind === kind);
   const suggested = suggestion?.recommendation.repositoryProviderKind;
   // Before the snapshot arrives, the default forge stands alone (GitHub is the default, decision 6).
@@ -103,7 +104,7 @@ export function useNewAppForges(
   const keyOf = (providerKind: string) => `${scopeKey}\u0000${providerKind}`;
 
   const describe = React.useCallback(
-    (providerKind: string) => {
+    (providerKind: ScmHostingProviderKind) => {
       const key = `${scopeKey}\u0000${providerKind}`;
       if (!machineId || !homeDir) {
         setOwners((current) => ({
@@ -159,24 +160,15 @@ export function useNewAppForges(
     [homeDir, machineId, scopeKey],
   );
 
-  // Once per offered forge (and the default before the snapshot) while the step is open.
-  const kinds = React.useMemo(
-    () =>
-      (forges.length > 0
-        ? forges.map((forge) => forge.providerKind)
-        : chosen
-          ? [chosen]
-          : []
-      ).join('\u0000'),
-    [chosen, forges],
-  );
+  // Once per offered forge (and the default before the snapshot) while the step is open; a probed forge is skipped.
   React.useEffect(() => {
-    if (!active || !kinds) return;
-    for (const providerKind of kinds.split('\u0000')) {
+    if (!active) return;
+    const kinds = forges.length > 0 ? forges.map((forge) => forge.providerKind) : chosen ? [chosen] : [];
+    for (const providerKind of kinds) {
       if (!probes.current.has(keyOf(providerKind)))
         describe(providerKind);
     }
-  }, [active, describe, kinds, scopeKey]);
+  }, [active, chosen, describe, forges, scopeKey]);
 
   const markNeedsAccount = React.useCallback(() => {
     if (chosen)
