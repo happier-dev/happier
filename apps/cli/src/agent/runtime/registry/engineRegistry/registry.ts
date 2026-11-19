@@ -136,13 +136,12 @@ export async function resolveCliEngineRegistry(
                     (runtimeRegistryHandle.registry.contributes.executionRunProfiles ?? [])
                         .flatMap<ExecutionRunProfileContributionCatalogInput>((profile) => {
                             if (!profile.pluginId) return [profile.definition];
-                            const current = runtimeRegistryHandle.registry
-                                .pluginFinalPolicyCurrentRuntimesById
-                                ?.get(profile.pluginId) ?? null;
-                            return current?.applied === true
+                            const sourceCustody = runtimeRegistryHandle.registry
+                                .readPluginSourceCustody(profile.pluginId);
+                            return sourceCustody
                                 ? [{
                                     pluginId: profile.pluginId,
-                                    sourceCustody: current.sourceCustody,
+                                    sourceCustody,
                                     definition: profile.definition,
                                 }]
                                 : [];
