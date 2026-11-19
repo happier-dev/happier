@@ -522,6 +522,19 @@ describe('additional constructible credential shapes', () => {
     expect(redactBugReportSensitiveText('revoked hap_v1_0000abcd')).toBe('revoked hap_v1_0000abcd');
   });
 
+  it.each(['\n', '\t', '\r'])('redacts a first-party Account API token that starts a JSON-escaped line after %j', (whitespace) => {
+    // Escaped, the line break is the two characters `\` `n`, so the token follows a word character.
+    const bearer = `hap_v1_0f1e2d3c-4b5a-4987-a654-3210fedcba98_${'Zz09_-'.repeat(7)}Q`;
+    const credential = `hapc_v1_${'eyJ2IjoxfQ'.repeat(4)}`;
+    for (const token of [bearer, credential]) {
+      const line = JSON.stringify({ output: `Exit code: 0${whitespace}Output:${whitespace}${token}${whitespace}` });
+      expect(redactBugReportSensitiveText(line)).toBe(line.replace(token, '[REDACTED]'));
+    }
+    // The display prefix stays readable after an escape, and a word ending in `n` is not a boundary.
+    const listed = JSON.stringify(`listed:${whitespace}hap_v1_0f1e2d3c${whitespace}run done`);
+    expect(redactBugReportSensitiveText(listed)).toBe(listed);
+  });
+
   it('leaves real repository identifiers and prose near the new prefixes untouched', () => {
     // Each new rule keys on a distinctive literal prefix followed by a credential
     // -length body. Nothing this repository writes satisfies both.

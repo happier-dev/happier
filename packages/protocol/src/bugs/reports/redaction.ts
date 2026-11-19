@@ -12,8 +12,11 @@ import {
 // Happier's own Account API tokens have a fixed minted shape, so like the vendor
 // prefixes below they need no label: a provider transcript carries a tool result
 // JSON-escaped, where neither the quoted-field nor the `token:` rule can reach it.
-const ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN = new RegExp(`\\b${ACCOUNT_API_TOKEN_BEARER_V1_SOURCE}`, 'g');
-const ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN = new RegExp(`\\b${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}[A-Za-z0-9_-]+`, 'g');
+// There a token that starts a line follows the literal `\n`, `\t` or `\r`, whose
+// letter denies `\b`, so the boundary also admits a preceding escape.
+const ACCOUNT_API_TOKEN_TEXT_BOUNDARY = String.raw`(?:\b|(?<=\\[nrt]))`;
+const ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN = new RegExp(`${ACCOUNT_API_TOKEN_TEXT_BOUNDARY}${ACCOUNT_API_TOKEN_BEARER_V1_SOURCE}`, 'g');
+const ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN = new RegExp(`${ACCOUNT_API_TOKEN_TEXT_BOUNDARY}${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}[A-Za-z0-9_-]+`, 'g');
 
 /**
  * Arbitrary agent, plugin and provider text reaches this redactor, so the value
