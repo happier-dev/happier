@@ -26,7 +26,7 @@ import { describeManagedProvisionerReadiness } from './managedProvisionerReadine
 import { describeManagedProvisionerFailure, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost } from './useManagedProvisionerPresentation';
 import { MachineProvisionerSections, MachineProvisionerSectionsSkeleton } from './MachineProvisionerSections';
 import { ManagedScopeRow } from './ManagedScopeRow';
-import type { ManagedProvisionerCard } from './managedMachineDisplay';
+import { managedProvisionerStatusHint, type ManagedProvisionerCard } from './managedMachineDisplay';
 import { useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
@@ -188,17 +188,22 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             readMachineProvisionerCredentialPurposeSelectorPathsV1(provisioner.descriptor, purpose.purpose).length === 0)?.purpose.purpose : undefined;
         // A failed read keeps the offer with a reason and an explicit retry, never an empty disabled card.
         if (readiness.homeUnreachable) homeUnreachable = true;
+        // The floor says the state in a word (lab m-add); the provider's own words, or why a check failed, are the hint.
         const statusLabel = placement.requiresController ? '' : needsApp ? t('managedMachines.add.status.needsApp')
             : readiness.homeUnreachable ? t('managedMachines.add.status.needsSetup')
-            : readiness.status ? localized(provisioner.contribution.pluginId, readiness.status)
             : readiness.kind === 'needsAccount' ? t('managedMachines.add.status.noAccount')
             : readiness.kind === 'ready' ? t('managedMachines.add.status.ready')
             : readiness.kind === 'needsInstall' ? t('managedMachines.add.status.notInstalled')
             : readiness.kind === 'needsSetup' ? t('managedMachines.add.status.needsSetup')
-            : readiness.failure ? describeManagedProvisionerFailure(readiness.failure) : t('managedMachines.add.status.checking');
+            : readiness.kind === 'unavailable' ? t('managedMachines.add.status.unavailable')
+            : t('managedMachines.add.status.checking');
+        const hint = placement.requiresController || needsApp || readiness.homeUnreachable || readiness.kind === 'ready' ? undefined
+            : readiness.status ? managedProvisionerStatusHint(localized(provisioner.contribution.pluginId, readiness.status), statusLabel)
+            : readiness.failure && readiness.kind === 'unavailable' ? describeManagedProvisionerFailure(readiness.failure) : undefined;
         const title = titleOf(provisioner);
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
+            ...(hint ? { hint } : {}),
             ...(provisioner.descriptor.kindTitle ? { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) } : {}),
             location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: placement.executionTarget,

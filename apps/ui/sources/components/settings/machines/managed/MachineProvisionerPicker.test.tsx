@@ -1157,7 +1157,9 @@ describe('provisioner picker demand', () => {
           expect(cards[0].status.tone).not.toBe('none');
         });
         const cards = screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards);
-        expect(cards[0].status).toEqual({ tone: 'ready', label: 'Image cache enabled' });
+        // A ready card says Ready; the provider's own note adds nothing the floor needs.
+        expect(cards[0].status).toEqual({ tone: 'ready', label: t('managedMachines.add.status.ready') });
+        expect(cards[0].hint).toBeUndefined();
         expect(screen.findByTestId('managed-picker.caveat')).toBeNull();
         await screen.pressByTestIdAsync(screen.findByTestId(`${row}.action`) ? `${row}.action` : row);
         expect(onSelectProvisioner).toHaveBeenCalledWith(expect.objectContaining({ provisioner: buildQualifiedPluginContributionKey(contribution) }));
@@ -1174,11 +1176,12 @@ describe('provisioner picker demand', () => {
           expect.arrayContaining([
             expect.objectContaining({
               description: 'A custom native guest.',
+              ...(credentialFailure ? {} : { hint: 'License required' }),
               status: expect.objectContaining({
                 label:
                   credentialFailure ? t('managedMachines.add.status.noAccount') : location === 'unknown'
-                    ? `License required · ${t('managedMachines.add.status.billingUnknown')}`
-                    : 'License required',
+                    ? `${t('managedMachines.add.status.needsSetup')} · ${t('managedMachines.add.status.billingUnknown')}`
+                    : t('managedMachines.add.status.needsSetup'),
               }),
             }),
           ]),
@@ -1622,17 +1625,17 @@ describe('provisioner picker demand', () => {
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
     // Nested layout nodes repeat the same card objects; one entry per card.
     const cards = () => [...new Map(screen.tree.findAll(node => Array.isArray(node.props.cards))
-      .flatMap(node => node.props.cards as { title: string; status: { label: string } }[]).map(card => [card.title, card])).values()];
+      .flatMap(node => node.props.cards as { title: string; hint?: string; status: { label: string } }[]).map(card => [card.title, card])).values()];
     try {
       await waitForHomeGovernance(() => {
         expect(screen.findByTestId('managed-picker.unavailable')).not.toBeNull();
-        expect(cards().find(card => card.title === 'Alpha')?.status.label).toBe('License required');
+        expect(cards().find(card => card.title === 'Alpha')?.hint).toBe('License required');
       });
       await act(async () => screen.pressByTestId('managed-picker.unavailable-action'));
       await waitForHomeGovernance(() => expect(reads.check.get('alpha')).toBe(2));
       // The re-check is still pending: both cards keep what the last answer said.
       expect(cards().map(card => card.title)).toEqual(['Alpha', 'Beta']);
-      expect(cards().find(card => card.title === 'Alpha')?.status.label).toBe('License required');
+      expect(cards().find(card => card.title === 'Alpha')?.hint).toBe('License required');
     } finally {
       release();
     }
@@ -1644,9 +1647,9 @@ describe('provisioner picker demand', () => {
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
     const cards = () => [...new Map(screen.tree.findAll(node => Array.isArray(node.props.cards))
-      .flatMap(node => node.props.cards as { title: string; status: { label: string } }[]).map(card => [card.title, card])).values()];
+      .flatMap(node => node.props.cards as { title: string; hint?: string; status: { label: string } }[]).map(card => [card.title, card])).values()];
     try {
-      await waitForHomeGovernance(() => expect(cards().find(card => card.title === 'Alpha')?.status.label).toBe('License required'));
+      await waitForHomeGovernance(() => expect(cards().find(card => card.title === 'Alpha')?.hint).toBe('License required'));
       // Beta's read is still pending: it says so itself and nothing else is blamed.
       expect(cards().find(card => card.title === 'Beta')?.status.label).toBe(t('managedMachines.add.status.checking'));
       expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
@@ -1654,6 +1657,19 @@ describe('provisioner picker demand', () => {
       release();
     }
     await screen.unmount();
+  });
+  it('says each card’s state in one word and moves the provider’s own status into its hint (lab m-add)', async () => {
+    const { serverId } = await arrangeCatalog({});
+    const { t } = await import('@/text');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
+    const cards = () => [...new Map(screen.tree.findAll(node => Array.isArray(node.props.cards))
+      .flatMap(node => node.props.cards as { title: string; hint?: string; status: { label: string } }[]).map(card => [card.title, card])).values()];
+    try {
+      // Alpha's check answers "License required" without a missing prerequisite: the floor says the state, the hint the reason.
+      await waitForHomeGovernance(() => expect(cards().find(card => card.title === 'Alpha')?.hint).toBe('License required'));
+      expect(cards().find(card => card.title === 'Alpha')?.status.label).toBe(t('managedMachines.add.status.needsSetup'));
+    } finally { await screen.unmount(); }
   });
   it('keeps retained checks display-only when the replacement catalog fails, and enables Choose after recovery', async () => {
     const { serverId, provisioners } = await arrangeCatalog({});
@@ -1669,8 +1685,8 @@ describe('provisioner picker demand', () => {
     } });
     const screen = await renderPicker(<FixedPicker />);
     const cards = () => screen.tree.findAll(node => Array.isArray(node.props.cards))
-      .flatMap(node => node.props.cards as { title: string; status: { label: string }; action: { disabled?: boolean; onPress(): void } }[]);
-    await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.status.label, 'initial check').toBe('License required'); });
+      .flatMap(node => node.props.cards as { title: string; hint?: string; status: { label: string }; action: { disabled?: boolean; onPress(): void } }[]);
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().find(card => card.title === 'Alpha')?.hint, 'initial check').toBe('License required'); });
     await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
       return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
@@ -1681,7 +1697,7 @@ describe('provisioner picker demand', () => {
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.findByTestId('managed-picker.unavailable'), 'failed catalog').not.toBeNull(); });
     expect(screen.findByTestId('managed-picker.unavailable')).not.toBeNull();
     const retained = cards().find(card => card.title === 'Alpha');
-    expect(retained?.status.label).toBe('License required');
+    expect(retained?.hint).toBe('License required');
     // The failed catalog is said once, by the page line and its Retry: the retained card offers no step of its own.
     expect(retained?.action.disabled).toBe(true);
     expect(onSelect).not.toHaveBeenCalled();

@@ -16,9 +16,10 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import type {
-  ManagedProvisionerCard,
-  ManagedStatusTone,
+import {
+  managedProvisionerCardBody,
+  type ManagedProvisionerCard,
+  type ManagedStatusTone,
 } from './managedMachineDisplay';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedProvisionerRepairFailureNotice } from './useManagedProvisionerPresentation';
 import { ManagedScopeRow } from './ManagedScopeRow';
@@ -272,7 +273,8 @@ function ProvisionerGroup(
         options={props.cards.map((card) => ({
           id: card.id,
           title: card.title,
-          subtitle: card.description,
+          // The provider's own hint ("Get it from cua.ai") reads as the description's next sentence, so the floor keeps one line.
+          subtitle: managedProvisionerCardBody(card),
           // Four local cards across leave no room for a kind (lab m-add); cloud cards name theirs ("Server").
           ...(cloudKindLabel(card) ? { badge: cloudKindLabel(card) } : {}),
           mark: card.mark(MANAGED_PROVISIONER_MARK_SIZE.tile),
@@ -295,10 +297,16 @@ function ProvisionerGroup(
   );
 }
 
-/** What a cloud card creates, in sentence case ("Server"); none when its name already says it ("Maritime Sandbox"). */
+/**
+ * What a cloud card creates, in sentence case ("Server"); none when its name already says it ("Maritime Sandbox").
+ * Words the name already holds drop from the kind ("Docker cloud" · "Sandbox", not "Cloud sandbox"), so name and kind share one line.
+ */
 function cloudKindLabel(card: ManagedProvisionerCard): string | undefined {
   if (card.location !== 'cloud' || !card.kind || card.title.toLocaleLowerCase().includes(card.kind.toLocaleLowerCase())) return undefined;
-  return card.kind.charAt(0).toLocaleUpperCase() + card.kind.slice(1);
+  const named = new Set(card.title.toLocaleLowerCase().split(/\s+/));
+  const kind = card.kind.split(/\s+/).filter((word) => !named.has(word.toLocaleLowerCase())).join(' ');
+  if (!kind) return undefined;
+  return kind.charAt(0).toLocaleUpperCase() + kind.slice(1);
 }
 
 function ProvisionerFooter(
@@ -308,8 +316,8 @@ function ProvisionerFooter(
   const { card } = props;
   return (
     <View style={styles.footer}>
-      {/* Lab m-add: the provider's state on the left, its one step on the right. A long status wraps
-          beside the button; it never truncates and never pushes the button off the card's floor. */}
+      {/* Lab m-add: the provider's state in a word on the left, its one step on the right. The floor is one line
+          in every card, so footers share a baseline; the provider's longer words are the card's hint above. */}
       <View style={styles.footerRow}>
         <View style={styles.statusGroup}>
           {card.status.tone === 'none' ? null : (
@@ -317,7 +325,7 @@ function ProvisionerFooter(
               <StatusDot color={toneColor(theme, card.status.tone)} />
             </View>
           )}
-          {card.status.label ? <Text style={styles.status}>{card.status.label}</Text> : null}
+          {card.status.label ? <Text style={styles.status} numberOfLines={1}>{card.status.label}</Text> : null}
         </View>
         {/* No step to take means no button: the status, or the catalog's one line with its Retry, says why. */}
         {card.action.disabled ? null : (
@@ -385,8 +393,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusGroup: {
     flexDirection: 'row',
-    // A status that wraps ("Not installed · get it from cua.ai") keeps its dot on the first line.
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: theme.space.s6,
     flex: 1,
     minWidth: 0,

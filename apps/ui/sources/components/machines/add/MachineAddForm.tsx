@@ -12,6 +12,7 @@ import { OsCommandBlock } from '@/components/ui/code/blocks/OsCommandBlock';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { homeAdministrationReachPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
 import { ThisComputerServiceNotice } from '@/components/settings/machines/localControl/ThisComputerServiceNotice';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -319,11 +320,20 @@ function MachineAddPane(props: Readonly<{
         );
     }
     if (!path) return null;
-    const commandUnavailable = <AttentionBanner testID={`${testID}.homeUnavailable`} tone="warning"
-        title={flow.commandUnavailableMessage ?? t('managedMachines.creation.homeNotGuestReachable')}
-        details={flow.commandUnavailableDetails} />;
     // A Home archive refusal applies to the terminal command. Pairing has its own carrier.
-    const keepsPairing = pathId === 'anotherComputer' && flow.commandUnavailableDetails?.[0] === 'guest_payload_missing';
+    const pairingCarries = flow.commandUnavailableDetails?.[0] === 'guest_payload_missing';
+    const keepsPairing = pathId === 'anotherComputer' && pairingCarries;
+    // The notice pairs with its remedy (patterns: prerequisites lead there): the Home's address, and pairing
+    // as Another machine wherever pairing still works.
+    const needsAddress = flow.commandUnavailableNeedsHomeAddress;
+    const commandUnavailable = <AttentionBanner testID={`${testID}.homeUnavailable`} tone="warning"
+        title={needsAddress && pairingCarries ? t('addFlows.homeNeedsHttpsTitle')
+            : flow.commandUnavailableMessage ?? t('managedMachines.creation.homeNotGuestReachable')}
+        details={flow.commandUnavailableDetails}
+        action={needsAddress ? { label: t('homeGovernance.reach.setAddress'), testID: `${testID}.homeUnavailable.setAddress`,
+            onPress: () => router.push(homeAdministrationReachPath(flow.serverId) as never) } : null}
+        secondaryAction={needsAddress && pairingCarries && pathId !== 'anotherComputer' ? { label: t('addFlows.useAnotherMachine'),
+            testID: `${testID}.homeUnavailable.anotherMachine`, onPress: () => flow.choosePath('anotherComputer') } : null} />;
     if (flow.remoteHomeUnavailable && !flow.run && !keepsPairing) {
         return <PaneSection onPage={onPage}>
             {commandUnavailable}

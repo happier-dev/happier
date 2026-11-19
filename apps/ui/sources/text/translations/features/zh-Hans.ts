@@ -2905,6 +2905,8 @@ const addFlowsTranslations = { 'zh-Hans': {
         sshRunItYourself: '自己运行',
         sshRunItYourselfLead: ({ home }) => `在能访问该服务器的机器终端中运行此命令。它会安装 Happier 并加入 ${home}。`,
         sshNeedsAddress: '输入服务器地址以连接。',
+        homeNeedsHttpsTitle: '新机器会从这个 Home 安装 Happier，因此它需要一个新机器能访问的 HTTPS 地址。',
+        useAnotherMachine: '改用“其他机器”',
         sshOnServerTitle: '在服务器上',
     } } satisfies Pick<Readonly<Record<string, AddFlowsTranslation>>, "zh-Hans">;
 

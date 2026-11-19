@@ -3002,6 +3002,8 @@ const addFlowsTranslations = { ca: {
         sshRunItYourself: 'Executa-ho tu',
         sshRunItYourselfLead: ({ home }) => `Executa això en un terminal d’una màquina que arribi al servidor. Instal·la Happier i s’uneix a ${home}.`,
         sshNeedsAddress: 'Escriu l’adreça del servidor per connectar.',
+        homeNeedsHttpsTitle: 'Les màquines noves instal·len Happier des d’aquest Home, així que necessita una adreça HTTPS que puguin assolir.',
+        useAnotherMachine: 'Fes servir Una altra màquina',
         sshOnServerTitle: 'Al servidor',
     } } satisfies Pick<Readonly<Record<string, AddFlowsTranslation>>, "ca">;
 

@@ -20,7 +20,8 @@ type AvailableSetupHandoffTarget =
     | Readonly<{ kind: 'account_service' }>
     | Readonly<{ kind: 'descriptor_file_required' }>;
 export type WebDesktopSetupHandoffTarget = AvailableSetupHandoffTarget
-    | Readonly<{ kind: 'unavailable'; code: 'guest_payload_missing'; message: string }>
+    /** `homeAddress`: an HTTPS address other machines can reach is the remedy (the Home's reach setting). */
+    | Readonly<{ kind: 'unavailable'; code: 'guest_payload_missing'; message: string; repair?: 'homeAddress' }>
     | Readonly<{ kind: 'unavailable'; code: 'guest_cli_identity_unavailable'; message: string }>
     | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
 export type MachineAddHomeTarget = Readonly<{
@@ -66,6 +67,7 @@ export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget
     if (target.kind !== 'https' || params.os === 'windows') return {
         kind: 'unavailable', code: 'guest_payload_missing',
         message: 'This Home serves its CLI only over an HTTPS address other machines can reach. Add one to this Home, or install this machine over SSH from a connected controller.',
+        ...(target.kind !== 'https' ? { repair: 'homeAddress' as const } : {}),
     };
     const renderPayloadCommand = prepareManagedGuestCliPayloadInstallAndRunCommand({
         homeUrl: target.homeUrl, guestCli: params.guestCli, os: params.os === 'macos' ? 'darwin' : 'linux',

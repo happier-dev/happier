@@ -2275,15 +2275,15 @@ export const english = {
         description: ({ count }: { count: number }) => count === 1 ? "1 environment runs on this machine." : `${count} environments run on this machine.`,
     },
     machineDataDisclosure: {
-        title: "What leaves this Machine",
+        title: "What leaves this machine",
         e2eeDescription: "This Account is end-to-end encrypted.",
         plainDescription: "This Account isn’t end-to-end encrypted.",
         daemonSends: "The daemon sends",
         daemonSendsDetail: "Machine details, daemon state and Session content",
         devicesRead: "Only your devices, and people you share with, can read",
-        devicesReadDetail: "Machine details, daemon state and Session content. People you share this Machine or a Session with can read what you share.",
+        devicesReadDetail: "Machine details, daemon state and Session content. People you share this machine or a Session with can read what you share.",
         serverReads: "The Happier server can read",
-        serverReadsE2ee: "IDs, kinds, states, times and counts; never names, paths, commands, output or secrets from this Machine",
+        serverReadsE2ee: "IDs, kinds, states, times and counts; never names, paths, commands, output or secrets from this machine",
         serverReadsPlain: "Machine details, daemon state and Session content",
     },
     machineFleetUpdates: {

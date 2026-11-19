@@ -171,6 +171,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
     remoteHomeUnavailable: boolean;
     commandUnavailableMessage: string | null;
     commandUnavailableDetails: readonly string[] | undefined;
+    /** The refusal is fixed by giving this Home an address new machines can reach (its reach setting). */
+    commandUnavailableNeedsHomeAddress: boolean;
     ssh: {
         draft: ReturnType<typeof readMachineAddFlowDraft>['sshDraft'];
         setDraft: (draft: MachineAddSshDraft) => void;
@@ -246,6 +248,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         ? [commandTarget.code] : undefined, [commandTarget]);
     const commandUnavailableMessage = commandTarget.kind === 'unavailable' && 'message' in commandTarget
         ? commandTarget.message : null;
+    const commandUnavailableNeedsHomeAddress = commandTarget.kind === 'unavailable'
+        && (commandTarget.code === 'home_not_guest_reachable' || ('repair' in commandTarget && commandTarget.repair === 'homeAddress'));
     const localTask = useThisComputerSetupTask({ runner, taskId: draft.thisComputerTask?.taskId ?? null,
         onTaskIdChange: (id) => replaceTaskId('thisComputer', draft.thisComputerTask?.taskId ?? null, id),
         ...(profile ? { authRequestApproval: { expectedRelayUrl: profile.serverUrl, serverId } } : {}),
@@ -394,8 +398,8 @@ export function useMachineAddFlow(options: Readonly<{ serverId?: string; initial
         }
     }, [respondSsh, sshPrompt]);
     return {
-        serverId, homeName: resolveHomeDisplayName(profile) ?? t('settingsAccount.thisHomeTitle'), paths, path: draft.path,
-        choosePath, os: draft.os, detectedOs, setOs: (os: MachineAddCommandOs) => update((current) => ({ ...current, os })), commands, remoteHomeUnavailable, commandUnavailableMessage, commandUnavailableDetails,
+        serverId, homeName: resolveHomeDisplayName(profile) ?? t('homeSetup.thisHome'), paths, path: draft.path,
+        choosePath, os: draft.os, detectedOs, setOs: (os: MachineAddCommandOs) => update((current) => ({ ...current, os })), commands, remoteHomeUnavailable, commandUnavailableMessage, commandUnavailableDetails, commandUnavailableNeedsHomeAddress,
         ssh: { draft: draft.sshDraft, setDraft, ready: isSshCredentialsDraftReady(draft.sshDraft) && sshActions.ready,
             hostError: taskError && ['connection-failed', 'network-captive-portal'].includes(taskError.code) ? t('machineAdd.cannotReachHost') : null,
             suggestions, supportedAuthModes: getMachineAddSshSupportedAuthModes(runner),

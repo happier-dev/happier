@@ -152,6 +152,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 noAccount: "Aún sin cuenta",
                 checking: "Comprobando…",
                 needsApp: "Necesita la app",
+                unavailable: "No disponible",
             },
             action: {
                 choose: "Elegir",

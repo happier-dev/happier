@@ -2960,6 +2960,8 @@ const addFlowsTranslations = { ja: {
         sshRunItYourself: '自分で実行',
         sshRunItYourselfLead: ({ home }) => `サーバーに到達できるマシンのターミナルでこれを実行してください。Happier をインストールし、${home} に参加します。`,
         sshNeedsAddress: '接続するにはサーバーのアドレスを入力してください。',
+        homeNeedsHttpsTitle: '新しいマシンはこの Home から Happier をインストールするため、マシンから届く HTTPS アドレスが必要です。',
+        useAnotherMachine: '「別のマシン」を使う',
         sshOnServerTitle: 'サーバー上',
     } } satisfies Pick<Readonly<Record<string, AddFlowsTranslation>>, "ja">;
 

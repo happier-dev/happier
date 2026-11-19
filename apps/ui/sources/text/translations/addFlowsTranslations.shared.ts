@@ -94,6 +94,8 @@ export type AddFlowsTranslation = Readonly<{
     sshRunItYourself: string;
     sshRunItYourselfLead: (params: Readonly<{ home: string; }>) => string;
     sshNeedsAddress: string;
+    homeNeedsHttpsTitle: string;
+    useAnotherMachine: string;
     sshOnServerTitle: string;
 }>;
 
@@ -192,5 +194,7 @@ export const addFlowsTranslationsEnglish = { en: {
         sshRunItYourself: 'Run it yourself',
         sshRunItYourselfLead: ({ home }) => `Run this in a terminal on a machine that can reach the server. It installs Happier and joins ${home}.`,
         sshNeedsAddress: 'Enter the server’s address to connect.',
+        homeNeedsHttpsTitle: 'New machines install Happier from this Home, so it needs an HTTPS address they can reach.',
+        useAnotherMachine: 'Use Another machine',
         sshOnServerTitle: 'On the server',
     } } satisfies Pick<Readonly<Record<string, AddFlowsTranslation>>, "en">;

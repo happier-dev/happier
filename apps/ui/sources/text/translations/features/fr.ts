@@ -3020,6 +3020,8 @@ const addFlowsTranslations = { fr: {
         sshRunItYourself: 'Le lancer toi-même',
         sshRunItYourselfLead: ({ home }) => `Lance ceci dans un terminal sur une machine qui atteint le serveur. Elle installe Happier et rejoint ${home}.`,
         sshNeedsAddress: 'Saisis l’adresse du serveur pour te connecter.',
+        homeNeedsHttpsTitle: 'Les nouvelles machines installent Happier depuis ce Home : il lui faut une adresse HTTPS qu’elles peuvent joindre.',
+        useAnotherMachine: 'Utiliser Une autre machine',
         sshOnServerTitle: 'Sur le serveur',
     } } satisfies Pick<Readonly<Record<string, AddFlowsTranslation>>, "fr">;
 

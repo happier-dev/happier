@@ -16,8 +16,14 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
   isDesktopHost: () => host.desktop,
 }));
 
+// Navigation is the app shell's boundary: the banner's way out is observed as the route it opens.
+const routerPush = vi.hoisted(() => vi.fn());
 installApprovalCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPush } }).module;
+  },
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -25,6 +31,7 @@ await import('./MachineAddForm');
 beforeEach(async () => {
   await harness.reset();
   host.desktop = false;
+  routerPush.mockClear();
 });
 afterEach(async () => {
   const { discardMachineAdd } = await import('./useMachineAddFlow');
@@ -139,10 +146,20 @@ describe('Over SSH', () => {
       expect(byId(screen, `${PANE}.pairing-steps`).length).toBeGreaterThan(0);
       await act(async () => screen.pressByTestId(`${PANE}.terminal`));
     }
+    const { t } = await import('@/text');
     await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.title)
-      .toBe('This Home serves its CLI only over an HTTPS address other machines can reach. Add one to this Home, or install this machine over SSH from a connected controller.'));
-    expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.details).toEqual(['guest_payload_missing']);
+      .toBe(t('addFlows.homeNeedsHttpsTitle')));
+    const banner = byId(screen, `${PANE}.homeUnavailable`)[0]!.props;
+    expect(banner.details).toEqual(['guest_payload_missing']);
     expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
+    // The notice leads to its remedy: the Home's address, and (over SSH) pairing as Another machine.
+    await act(async () => banner.action.onPress());
+    // The adopted descriptor keys this Home by its identity: the reach page opens for that Home.
+    expect(routerPush).toHaveBeenCalledWith(`/settings/home/${serverIdentityId}/reach`);
+    if (initialPath === 'ssh') {
+      await act(async () => banner.secondaryAction.onPress());
+      await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.pairing-steps`).length).toBeGreaterThan(0));
+    } else expect(banner.secondaryAction ?? null).toBeNull();
     await screen.unmount();
   });
   it('in the app, connects and installs directly, names where it connects from and what runs on the server, and keeps the command as a fallback', async () => {

@@ -158,6 +158,7 @@ export const managedMachinesEn = {
                 noAccount: "No account yet",
                 checking: "Checking…",
                 needsApp: "Needs the app",
+                unavailable: "Unavailable",
             },
             action: {
                 choose: "Choose",

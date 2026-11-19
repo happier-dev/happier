@@ -14,7 +14,7 @@ import {
   useMachineProvisionerCatalog,
 } from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { MachineProvisionerSectionsSkeleton } from '@/components/settings/machines/managed/MachineProvisionerSections';
-import type { ManagedProvisionerCard } from '@/components/settings/machines/managed/managedMachineDisplay';
+import { managedProvisionerCardBody, type ManagedProvisionerCard } from '@/components/settings/machines/managed/managedMachineDisplay';
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import {
@@ -332,7 +332,7 @@ function MachineIsolationKindStep(
         key={card.id}
         testID={`machine-isolation-add.kind:${card.id}`}
         title={card.title}
-        subtitle={card.description || undefined}
+        subtitle={managedProvisionerCardBody(card) || undefined}
         icon={card.mark(MANAGED_PROVISIONER_MARK_SIZE.row)}
         detail={card.status.label || undefined}
         selected={picked}
@@ -414,7 +414,7 @@ function MachineIsolationSetupStep(props: Readonly<{ machineName: string; card: 
         <Item
           testID={`machine-isolation-add.setup:${card.id}`}
           title={card.status.label}
-          subtitle={card.description || undefined}
+          subtitle={managedProvisionerCardBody(card) || undefined}
           icon={card.mark(MANAGED_PROVISIONER_MARK_SIZE.row)}
           showChevron={false}
           mode="info"

@@ -38,7 +38,10 @@ export type ManagedProvisionerCard = Readonly<{
   needsSetup?: true;
   /** What it needs is the Home's own address, not a tool: no install here can fix it (its repair sets the address). */
   homeUnreachable?: true;
+  /** The state in a word or two ("Not installed"): a card's floor holds one line. */
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
+  /** The provider's own reason or next step beyond that word ("Get it from cua.ai"), read with the description. */
+  hint?: string;
   repairFailure?: ManagedProvisionerRepairFailure;
   /** The card's existing repair Action is still awaiting confirmation or completion. */
   repairPending?: true;
@@ -58,6 +61,26 @@ export type ManagedProvisionerCard = Readonly<{
     disabled?: boolean;
   }>;
 }>;
+
+/** What a card says under its name: what the provider offers, then its own hint as the next sentence. */
+export function managedProvisionerCardBody(card: Pick<ManagedProvisionerCard, 'description' | 'hint'>): string {
+  if (!card.hint) return card.description;
+  const hint = card.hint.charAt(0).toLocaleUpperCase() + card.hint.slice(1);
+  const sentence = /[.!?…。]$/.test(hint) ? hint : `${hint}.`;
+  return card.description ? `${card.description} ${sentence}` : sentence;
+}
+
+/**
+ * A provider's own status ("Not installed · get it from cua.ai") split at its state: the card's floor already says
+ * the state in a word, so only what follows the separator stays as the hint, and nothing when it only repeats it.
+ */
+export function managedProvisionerStatusHint(status: string | undefined, label: string): string | undefined {
+  const text = status?.trim();
+  if (!text) return undefined;
+  const separator = text.indexOf(' · ');
+  const hint = (separator >= 0 ? text.slice(separator + 3) : text).trim();
+  return hint && hint.toLocaleLowerCase() !== label.toLocaleLowerCase() ? hint : undefined;
+}
 
 export type ManagedSizeOption = Readonly<{
   id: string;
