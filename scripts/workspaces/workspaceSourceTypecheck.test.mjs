@@ -137,6 +137,52 @@ test('workspace consumers check declaration boundaries while producer self impor
     'a producer must not consume its own stale declaration output');
 });
 
+test('source preparation retains extensionless workspace declaration aliases and source aliases stay source-owned', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-extensionless-declarations-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const files = {
+    'apps/cli/package.json': '{"name":"@fixture/cli"}',
+    'apps/ui/package.json': '{"name":"@fixture/ui"}',
+    'apps/server/package.json': '{"name":"@fixture/server"}',
+    'apps/cli/tsconfig.json': JSON.stringify({ compilerOptions: {
+      noEmit: true, module: 'ESNext', moduleResolution: 'Bundler',
+      paths: {
+        '@fixture/shared': ['../../packages/shared/dist/index'],
+        '@fixture/shared/*': ['../../packages/shared/dist/*/index', '../../packages/shared/dist/*'],
+        '@fixture/shared/source': ['../../packages/shared/src/source.ts'],
+      },
+    }, files: ['index.ts'] }),
+    'apps/cli/index.ts': '',
+    'packages/shared/package.json': JSON.stringify({ name: '@fixture/shared', exports: {
+      '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts' },
+      './runtime': { 'happier-source': './src/runtime.ts', types: './dist/runtime/index.d.ts' },
+      './source': { 'happier-source': './src/source.ts', types: './dist/source.d.ts' },
+    } }),
+    'packages/shared/src/index.ts': 'export interface Surface { source: true }',
+    'packages/shared/src/runtime.ts': 'export interface Surface { source: true }',
+    'packages/shared/src/source.ts': 'export const source = true;',
+    'packages/shared/dist/index.d.ts': 'declare const brand: unique symbol; export interface Surface { [brand]: true }',
+    'packages/shared/dist/runtime/index.d.ts': 'export type { Surface } from "../index.js";',
+    'packages/shared/dist/source.d.ts': 'export declare const source: true;',
+  };
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  const configPath = join(root, 'apps/cli/tsconfig.json');
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  const options = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(configPath)).options;
+  const sources = await readWorkspaceTypecheckSources(dirname(configPath));
+  const prepared = { ...options, ...sourceTypecheckCompilerOptions(options, configPath, sources) };
+  for (const specifier of ['@fixture/shared', '@fixture/shared/runtime', '@fixture/shared/source']) {
+    const resolveModule = compilerOptions => ts.resolveModuleName(specifier, join(root, 'apps/cli/index.ts'), compilerOptions, ts.sys).resolvedModule?.resolvedFileName;
+    assert.equal(resolveModule(prepared), resolveModule(options), `${specifier} must retain its authored declaration or source identity`);
+  }
+  await rm(join(root, 'packages/shared/dist'), { recursive: true });
+  assert.deepEqual(sourceTypecheckCompilerOptions(options, configPath, sources).paths, prepared.paths,
+    'declaration publication timing must not change the prepared module identity');
+});
+
 test('declaration preparation resolves producer self imports from source before replacing old output', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-declaration-self-import-'));
   t.after(() => rm(root, { recursive: true, force: true }));

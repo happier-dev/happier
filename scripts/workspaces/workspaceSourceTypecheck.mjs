@@ -25,9 +25,23 @@ export async function readWorkspaceTypecheckSources(directory) {
 
 function workspaceDeclarationPaths(options, configPath, sources) {
   const base = options.baseUrl ?? options.pathsBasePath ?? dirname(configPath);
+  const declarationTargets = new Set(Object.values(sources.declarationPaths ?? {}).flat());
+  const declarationHost = {
+    // The manifest owns declaration routes even before publication creates dist.
+    fileExists: file => declarationTargets.has(file),
+    readFile: () => undefined,
+  };
   return Object.fromEntries(Object.entries(options.paths ?? {})
-    .filter(([name, targets]) => sources.packageNames.has(packageNameOfSpecifier(name))
-      && targets.length > 0 && targets.every(target => /\.d\.[cm]?ts$/u.test(target)))
+    .filter(([name, targets]) => {
+      if (!sources.packageNames.has(packageNameOfSpecifier(name)) || !targets.length) return false;
+      if (targets.every(target => resolvePackageDeclarationTarget(target))) return true;
+      const specifiers = Object.keys(sources.paths).filter(specifier => !specifier.includes('*') && matchesPath(specifier, name));
+      return specifiers.length > 0 && specifiers.every(specifier => {
+        const resolved = ts.resolveModuleName(specifier, configPath,
+          { ...options, paths: { [name]: targets } }, declarationHost).resolvedModule;
+        return resolved && resolvePackageDeclarationTarget(resolved.resolvedFileName);
+      });
+    })
     .map(([name, targets]) => [name, targets.map(target => resolve(base, target))]));
 }
 
@@ -63,7 +77,8 @@ export function sourceTypecheckCompilerOptions(options, configPath, sources, { d
         .filter(([name]) => !sources.packageNames.has(packageNameOfSpecifier(name)))
         .map(([name, targets]) => [name, targets.map(target => resolve(base, target))])),
       ...Object.fromEntries(Object.entries(paths)
-        .filter(([name]) => !Object.keys(declarations).some(pattern => matchesPath(name, pattern)))),
+        .filter(([name]) => (options.paths?.[name] && !declarations[name])
+          || !Object.keys(declarations).some(pattern => matchesPath(name, pattern)))),
       ...declarations,
     },
     // A generated incremental config otherwise infers its cache directory as
