@@ -66,6 +66,8 @@ import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plu
 import { useVoiceConfiguredAgentRecovery } from './useVoiceConfiguredAgentRecovery';
 import { isSessionRetiredForServer } from '@/sync/store/domains/sessions';
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -265,7 +267,19 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
           }
           const session = state.sessions[nextCarrierSessionId];
           const previousSession = previous.sessions[nextCarrierSessionId];
-          if (session?.metadata === previousSession?.metadata
+          const metadata = session ? readSessionOwnerMetadataView(session) : null;
+          const previousMetadata = previousSession ? readSessionOwnerMetadataView(previousSession) : null;
+          const stop = readSessionExplicitStopV1FromMetadata(metadata);
+          const previousStop = readSessionExplicitStopV1FromMetadata(previousMetadata);
+          if (session?.serverId === serverId && carrierLifetime?.isCurrent()
+            && stop && !('status' in stop)
+            && (!previousStop || 'status' in previousStop || stop.requestId !== previousStop.requestId)) {
+            const current = controller.getSnapshot();
+            if (current.adapterId === nextCarrier.adapterId && current.sessionId === nextCarrier.controlSessionId) {
+              fireAndForget(controller.stop(nextCarrier.controlSessionId), { tag: 'VoiceSessionRuntime.stoppedConversation' });
+            }
+          }
+          if (metadata === previousMetadata
             && session?.seq === previousSession?.seq
             && session?.serverId === previousSession?.serverId
             && state.deletedSessionIds[nextCarrierSessionId] === previous.deletedSessionIds[nextCarrierSessionId]) return;
@@ -281,7 +295,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
         && lifetime.scope.serverId === targetSessionAddress.serverId;
       setVoiceSessionSnapshot(snapshot, binding, (exactHome || exactTargetHome) && lifetime ? {
         accountScope: lifetime.scope, targetSessionAddress,
-        conversationScope: exactHome ? readVoiceConversationScopeMetadata(session?.metadata) : null,
+        conversationScope: exactHome ? readVoiceConversationScopeMetadata(session ? readSessionOwnerMetadataView(session) : null) : null,
       } : null);
       const note = continuation.update({ snapshot, binding, deviceId: snapshot.canStop && exactHome ? getDeviceAnalyticsId() : null,
         deviceDisplayName: resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS }),

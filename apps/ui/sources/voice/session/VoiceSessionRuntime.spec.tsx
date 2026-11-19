@@ -2059,6 +2059,37 @@ describe('VoiceSessionRuntime', () => {
     }
   });
 
+  it('ends the admitted Voice call when its carrier receives an explicit Stop, leaving siblings alone', async () => {
+    const mounted = await prepareGeneratedVoiceRuntime({ local: true, codex: true, nativeAgent: true, selectedProviderId: 'local_conversation' });
+    const { voiceSessionManager } = await import('./voiceSession');
+    const { getVoiceSessionPresentedBinding } = await import('./voiceSessionStore');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
+    const { writeSessionExplicitStopV1ToMetadata } = await import('@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1');
+    await act(async () => { await voiceSessionManager.toggle(null); });
+    await vi.waitFor(() => expect(mounted.lifecycle.getSnapshot().agentRuntime?.ready).toBe(true));
+    const binding = getVoiceSessionPresentedBinding();
+    if (!binding) throw new Error('Native conversation binding unavailable');
+    const sibling = createSessionFixture({ id: 'unrelated-stop-sibling', serverId: binding.conversationSessionAddress.serverId,
+      active: true, metadataLayoutVersion: 1, ownerMetadataView: { path: '/project', host: 'test-host' } });
+    await act(async () => { storage.getState().applySessions([sibling]); });
+    expect(mounted.lifecycle.getSnapshot().status).toBe('connected');
+    const carrier = storage.getState().sessions[binding.conversationSessionId]!;
+    const metadata = readSessionOwnerMetadataView(carrier);
+    if (!metadata) throw new Error('Carrier owner view unavailable');
+    // Exact captured live Stop shape; layout-v1 metadata arrives in ownerMetadataView.
+    const ownerMetadataView = writeSessionExplicitStopV1ToMetadata(metadata, {
+      v: 1, cause: 'explicit_stop', requestId: 'e4904e4c-7847-406d-8a82-985810ac8c0a', requestedAtMs: 1795077392426,
+    });
+    await act(async () => { storage.getState().applySessions([{ ...carrier,
+      metadataLayoutVersion: 1, ownerMetadataView, active: false,
+      updatedAt: carrier.updatedAt + 1, seq: carrier.seq + 1,
+    }]); });
+    await vi.waitFor(() => expect(mounted.lifecycle.getSnapshot().status).toBe('disconnected'));
+    expect(mounted.nativeAgentRpc?.readRetainedRun()).toBeNull();
+    expect(storage.getState().sessions[sibling.id]?.active).toBe(true);
+  });
+
   it('retires a failed native conversation after its exact Home deletes the carrier and permits normal Start', async () => {
     const mounted = await prepareGeneratedVoiceRuntime({ local: true, codex: true, nativeAgent: true, selectedProviderId: 'local_conversation' });
     const { voiceSessionManager } = await import('./voiceSession');
