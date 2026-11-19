@@ -219,10 +219,17 @@ export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
       // receiving filesystem authority; neither can borrow daemon log custody.
       const failure = await admission.action(context);
       if (failure) return { ok: false, ...failure };
-      if (actionId === RPC_METHODS.BUGREPORT_GET_LOG_TAIL && context?.machineAdmission?.role === 'use') {
+      const use = context?.machineAdmission?.role === 'use';
+      if (actionId === RPC_METHODS.BUGREPORT_GET_LOG_TAIL && use) {
         return { ok: true, result: projectIdentityFreeDiagnosticLogTail() };
       }
-      const result = await executor.execute(actionId, input, context);
+      // This daemon resolves a selected Session with its custodian's credentials
+      // and markers, never with the Use requester's Session authority, so Use
+      // selects no Session: an id or prefix would return another Account's facts.
+      const sessionFree = use && actionId === RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS
+        && input !== null && typeof input === 'object' && 'sessionId' in input;
+      const result = await executor.execute(actionId, sessionFree
+        ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'sessionId')) : input, context);
       context?.signal?.throwIfAborted();
       // The installed diagnostics executor owns this output; only the verified
       // ingress role selects its cross-Account disclosure projection.

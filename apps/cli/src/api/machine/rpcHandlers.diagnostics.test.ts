@@ -124,6 +124,30 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
     });
   });
 
+  it('gives a Use requester no facts about a Session selected through the custodian', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-use-session-selector-' }, async () => {
+      const { writeSessionMarker } = await import('@/daemon/sessionRegistry');
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, happySessionId: 'custodian-session-full-id',
+        metadata: { machineId: 'custodian-machine', flavor: 'codex' } });
+      const manager = createRpcHandlerManager();
+      registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager: manager as unknown as RpcHandlerManager,
+        filesystemEffectAdmission: createFilesystemEffectAdmission({
+          readAgentIsolation: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+          resolveHomeServerIdentityId: async () => 'home',
+        }) });
+      const use = await manager.handlers.get(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS)!({
+        sessionId: 'custodian-session-full-id', logSelection: { daemon: false, session: true, provider: true },
+      }, { signal: new AbortController().signal, callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', machineId: 'machine',
+          installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true });
+      // Session selection resolves with the custodian's credentials and markers,
+      // which are never the Use requester's Session authority.
+      expect(use).toMatchObject({ sessionDiagnostics: { context: { sessionId: '', metadataStatus: 'unavailable' } } });
+      expect(JSON.stringify(use)).not.toContain('custodian-machine');
+      expect(JSON.stringify(use)).not.toContain('codex');
+    });
+  });
+
   it('applies the selected-log policy through the real admitted diagnostics dispatcher', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-selected-diagnostic-rpc-' }, async () => {
       const { writeSessionMarker } = await import('@/daemon/sessionRegistry');
@@ -154,7 +178,7 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
         actorAccountId: 'member', role: 'use' } });
       expect(JSON.stringify(use)).not.toContain('owner@example.invalid');
       expect(JSON.stringify(use)).not.toContain('SELECTED_RPC_LOG_BODY');
-      expect(use).toMatchObject({ sessionDiagnostics: { context: { sessionId: 'selected-session' }, logs: [
+      expect(use).toMatchObject({ sessionDiagnostics: { context: { sessionId: '' }, logs: [
         { kind: 'daemon', status: 'disabled' }, { kind: 'session', status: 'disabled' }, { kind: 'provider', status: 'disabled' },
       ] } });
       for (const method of [RPC_METHODS.BUGREPORT_GET_LOG_TAIL, RPC_METHODS.DAEMON_SESSION_LOG_TAIL]) {
