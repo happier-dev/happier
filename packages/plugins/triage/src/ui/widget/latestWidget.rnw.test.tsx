@@ -36,6 +36,7 @@ import { renderSurface as renderTasksWidget } from './tasksWidget.js';
 import * as mountedUiActionArtifact from '../../actions/mountedUi.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { REVIEW_ACCOUNT_DATA_INSTANCE_V1 } from '../../reviews/source.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '../../internalTasks/identity.js';
 import { TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from '../../actions/mountedUiProtocol.js';
@@ -59,7 +60,9 @@ const TITLE = 'Replace the duplicated normalizer';
 function createListHarness(withTasks = false, mineFacts: Readonly<Record<string, unknown>> = {}, withPersonal = false,
     failing: Readonly<{ now: boolean }> = { now: false }, morePullRequests = 0,
     /** The first pull request's own facts, as its source reports them. */
-    pullRequest: Readonly<{ snapshot?: Record<string, unknown>; sourceUpdatedAtMs?: number }> = {}) {
+    pullRequest: Readonly<{ snapshot?: Record<string, unknown>; sourceUpdatedAtMs?: number }> = {},
+    /** The source is set up for the person (an Account-data instance, as Reviews is) and lists no row yet. */
+    setupFree = false) {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue({
         instanceTag: `a${'0'.repeat(42)}`,
@@ -85,6 +88,7 @@ function createListHarness(withTasks = false, mineFacts: Readonly<Record<string,
             v: 1,
             purpose: 'triage-source',
             displayName: 'Example forge',
+            ...(setupFree ? { purpose: 'reviews', accountDataInstance: REVIEW_ACCOUNT_DATA_INSTANCE_V1 } : {}),
             kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
                 ...(withTasks ? [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', task: true }] : [])],
         },
@@ -107,7 +111,7 @@ function createListHarness(withTasks = false, mineFacts: Readonly<Record<string,
             snapshot: testkitSnapshot({ title: `Personal task ${index}` }),
             viewer: testkitViewer({ involvement: ['assignee'] }), sourceUpdatedAtMs: 4_000 + index,
         })),
-    } : ({
+    } : setupFree ? { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } } satisfies TriageScanResultV1 : ({
         kind: 'complete',
         observations: [{
             kind: 'present',
@@ -265,6 +269,12 @@ describe('the New for you widget', () => {
         // The one next step is named for what it does, and leads to the page's own source tiles.
         await act(async () => { await widget.press(await widget.getByRole('button', { name: 'Connect a source' })); });
         expect(opened).toEqual([{ ...TRIAGE_ENTRY_DETAIL_DESTINATION_V1 }]);
+    });
+    it('keeps the first step while only a setup-free source is configured and lists no row, as the page does (QB-63)', async () => {
+        const harness = createListHarness(false, {}, false, { now: false }, 0, {}, true);
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => harness.executeAction(input), undefined,
+            { targetedContributions: harness.targetedContributions });
+        await vi.waitFor(() => widget.getByText('No sources connected yet'));
     });
     it('says the host\'s one line, not a second first step, when no Machine can run it and no source is set up (owner 1111)', async () => {
         // A fresh Account: no Machine and no source. The host's line (add a machine) is the first step; the card does

@@ -28,7 +28,7 @@ import { bindTriageMountedUiActions, presentTriageMountedUiActionFailure } from 
 import { useTriageCurrentUiContextPublication } from '../currentContextPublication.js';
 import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1, TRIAGE_TASK_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
 import { TRIAGE_LIST_DEFAULT_LENS_V1, triageEntryRowKey } from '../../projection/listWindow.js';
-import { readTriageSourceDescriptorV1 } from '../detail/sourceSurface.js';
+import { projectTriageSourceDescriptorsV1 } from '../detail/sourceSurface.js';
 import { readTriageRowBylinePlaceV1, readTriageRowDetailToneV1, readTriageRowMarkV1, readTriageSignalCellMarkV1, readTriageTaskDueV1 } from '../list/rows.js';
 import { openTriageLinkedEntry } from '../navigation/openLinkedEntry.js';
 import { projectTriageEntryDisplay } from '../window/entryDisplay.js';
@@ -68,6 +68,8 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
   const surfaceContext = useSurfaceContext();
+  const readSourceDescriptor = React.useMemo(() => projectTriageSourceDescriptorsV1(surfaceContext.targetedContributions),
+    [surfaceContext.targetedContributions]);
   const sharedScope = usePluginUiEphemeralSharedScope();
   const window = useTriageListWindow();
   const activity = usePluginSurfaceActivity();
@@ -91,7 +93,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
 
   // The page's one rule (`ui/shell/windowState.ts`): an old list that read cleanly stays quiet; only a failed or
   // unreachable read says the rows are the last known ones.
-  const shellState = resolveTriageListShellState(snapshot, { tasks: tasksOnly });
+  const shellState = resolveTriageListShellState(snapshot, { tasks: tasksOnly, readSourceDescriptor });
   // While the host's band speaks for its Machine's outage, that is the widget's one notice (the page's rule).
   const hostOutage = readTriageHostOutageV1(surfaceContext);
   const degraded = shellState.kind === 'window' && !hostOutage.speaks
@@ -115,7 +117,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
       const items = planTriageListItemsV1({ rows: projected, pins: [], workflowSubjectOf: () => null,
         agentStatesOf: key => sessionActivity.agentStates.get(key) ?? [],
         ...(tasksOnly ? { tasks: { urgency: { nowMs: Date.now(), locale: surfaceContext.locale, text }, audience: 'mine' as const, hasSessions: () => false,
-          isTask: planTriageTaskViewInventoryV1(source => readTriageSourceDescriptorV1(surfaceContext, source)?.kinds)
+          isTask: planTriageTaskViewInventoryV1(source => readSourceDescriptor(source)?.kinds)
             .includesKind } } : {}) });
       // The section owner ranks needs-you, overdue, today, then started; Done and Canceled stay
       // on the page behind their collapsed bands (lab `tasks-widget`).
@@ -127,7 +129,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         inProgress: items.filter((item) => item.group === 'started').length,
         needsYou: items.filter((item) => item.group === 'needsYou').length };
     },
-    [hostApi, sharedScope, shownRows, snapshot.window, surfaceContext.targetedContributions, surfaceContext.locale, tasksOnly, sessionActivity.agentStates, text],
+    [hostApi, sharedScope, shownRows, snapshot.window, readSourceDescriptor, surfaceContext.locale, tasksOnly, sessionActivity.agentStates, text],
   );
   const rows = view?.rows;
   const openPage = React.useCallback(() => {
@@ -269,7 +271,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         const display = projectTriageEntryDisplay(row, text);
         // The page's row mark and detail tone (one owner): the entry's kind glyph, loud only when it
         // needs the reader.
-        const workflowSubject = readTriageSourceDescriptorV1(surfaceContext, row.entryRef.source)
+        const workflowSubject = readSourceDescriptor(row.entryRef.source)
           ?.kinds.find((kind) => kind.id === row.entryRef.kindId)?.workflowSubject ?? null;
         const mark = readTriageRowMarkV1(display, workflowSubject);
         const detailTone = readTriageRowDetailToneV1(display);
