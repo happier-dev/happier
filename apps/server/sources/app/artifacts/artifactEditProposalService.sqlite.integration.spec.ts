@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { DISCUSSION_CHANGE_HINT_V1 } from '@happier-dev/protocol/discussions';
 import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { db } from '@/storage/db';
@@ -53,7 +54,7 @@ describe('Doc proposal decision preparation (real SQLite)', () => {
             accountId: owner.id, kind: 'discussion', entityId: proposalRef.discussion.discussionId,
         } });
         expect(committedChange.cursor).toBeGreaterThan(beforeChange.cursor);
-        expect(committedChange.hint).toEqual({ v: 1, discussions: true });
+        expect(committedChange.hint).toEqual(DISCUSSION_CHANGE_HINT_V1);
         const again = await inTx(tx => decideArtifactEditProposalInTx(tx, { ...input, decision: 'accept' }));
         const opposite = await inTx(tx => decideArtifactEditProposalInTx(tx, { actorAccountId: owner.id, authentication, proposalRef, decision: 'decline' }));
         expect(again).toMatchObject(accepted.ok ? { ok: true, disposition: accepted.disposition } : { ok: true });
@@ -104,7 +105,7 @@ describe('Doc proposal decision preparation (real SQLite)', () => {
             accountId: owner.id, kind: 'discussion', entityId: proposalRef.discussion.discussionId,
         } });
         expect(committedChange.cursor).toBeGreaterThan(beforeChange.cursor);
-        expect(committedChange.hint).toEqual({ v: 1, discussions: true });
+        expect(committedChange.hint).toEqual(DISCUSSION_CHANGE_HINT_V1);
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, { actorAccountId: owner.id, authentication, proposalRef,
             decision: 'accept', expectedRevision: { headerVersion: 1, bodyVersion: 1 } }))).toEqual(declined);
         expect(await createDiscussion({ actorAccountId: owner.id, authentication, request })).toMatchObject({ ok: true,
