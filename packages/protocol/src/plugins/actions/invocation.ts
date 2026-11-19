@@ -128,8 +128,7 @@ export type PluginActionInputParser = (
 ) => PluginActionInputParserResult;
 export type PluginActionResultParser = PluginActionInputParser;
 
-/** Canonical terminal code when cancellation races an already-started Action. */
-export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown';
+export { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '../../actions/actionExecutionResult.js';
 
 /**
  * Canonical terminal code for a present user who DECLINED the confirmation.

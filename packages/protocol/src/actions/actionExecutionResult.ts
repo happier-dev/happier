@@ -350,9 +350,13 @@ export const ActionExecuteResultSchema = lazyZodSchema(() => z.union([
 /** Failure of confirmation is not proof that an admitted effect did not happen. */
 export const UNEXPECTED_ACTION_FAILURE_CODES_V1 = ['action_not_admitted', 'action_outcome_unknown'] as const;
 
+/** Terminal code when cancellation races an already-started plugin Action. */
+export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown';
+
 /** A lost acknowledgement is not a definite failure, including approval replay. */
 export function isActionOutcomeUnknownErrorCodeV1(code: unknown): boolean {
   return code === 'outcome_unknown' || code === 'outcome_uncertain' || code === UNEXPECTED_ACTION_FAILURE_CODES_V1[1]
+    || code === PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
     || code === 'approval_execution_outcome_unknown'
     || code === RPC_ERROR_CODES.OUTCOME_UNKNOWN
     || code === 'workflow_outcome_unresolved'

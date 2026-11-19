@@ -70,24 +70,31 @@ it('presents a transported PluginError refusal through the host, retaining recov
   expect(document.body.textContent).toContain('refused-request');
 });
 
-it('retains an uncertain PluginError request without claiming a refused effect', async () => {
+it.each([
+  ['target_unavailable', undefined, 'refused'],
+  ['approval_execution_outcome_unknown', undefined, 'uncertain'],
+  ['plugin_action_outcome_unknown', undefined, 'uncertain'],
+  ['source_disconnected', true, 'uncertain'],
+] as const)('presents %s with effectAttempted=%s as %s for a create', async (code, effectAttempted, kind) => {
   const result = TriageTaskWriteResultV1Schema.parse(triageTaskWriteInvocationFailureV1(new PluginError({
-    code: 'source_disconnected', details: { requestId: 'uncertain-request' },
+    code, details: { requestId: 'create-request' },
+    ...(effectAttempted === undefined ? {} : { effectAttempted }),
   })));
   let fixture!: PluginUiTestkit;
   await act(async () => {
-    fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-uncertain', mountNonce: 'uncertain' },
+    fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-create-result', mountNonce: code },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-      surface: defineUiSurface(() => <TaskWriteNotice result={result} />),
+      surface: defineUiSurface(() => <TaskWriteNotice result={result} context={{ sourceName: 'Linear', operation: 'create' }} />),
       surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
     });
   });
   mounted.push(fixture);
-  expect(document.body.textContent).toContain('may have saved');
+  expect(result.kind).toBe(kind);
+  expect(document.body.textContent).toContain(kind === 'uncertain' ? 'may have created' : 'This change is not available');
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
-  expect(document.body.textContent).toContain('uncertain-request');
+  expect(document.body.textContent).toContain(code);
+  expect(document.body.textContent).toContain('create-request');
 });
-
 
 it('keeps the authored message and technical references on a host without failure presentation', async () => {
   let fixture!: PluginUiTestkit;

@@ -23,12 +23,12 @@ type TaskAction = typeof TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 | typeof TRIAGE_
 type TaskExecution = Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; error: unknown }>;
 function hostTaskExecution(execution: PluginUiActionControlExecution): TaskExecution {
   if (execution.ok) return execution;
-  return { ok: false, error: Object.assign(new PluginError({ code: execution.errorCode, message: execution.error,
+  return { ok: false, error: new PluginError({ code: execution.errorCode, message: execution.error,
     retryable: false, details: projectNativeJsonValueForTransport({
       ...(execution.details !== null && typeof execution.details === 'object' ? execution.details : {}),
       ...(execution.requestId === undefined ? {} : { requestId: execution.requestId }) }),
-    ...(execution.failureCause === undefined ? {} : { failureCause: execution.failureCause }) }), {
-    ...(execution.effectAttempted === false ? { actionHandlerInvocation: 'notStarted' } : {}),
+    ...(execution.failureCause === undefined ? {} : { failureCause: execution.failureCause }),
+    ...(execution.effectAttempted === undefined ? {} : { effectAttempted: execution.effectAttempted }),
   }) };
 }
 type TaskAddress = Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string }>;

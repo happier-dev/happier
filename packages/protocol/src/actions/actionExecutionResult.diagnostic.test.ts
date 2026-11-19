@@ -6,6 +6,12 @@ import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpected
 import * as actionResults from './actionExecutionResult.js';
 import { RpcError } from '../rpc/errors.js';
 import { restorePluginErrorFromWire } from '../plugins/errors.js';
+import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '../plugins/actions/invocation.js';
+
+it('distinguishes plugin cancellation after dispatch from a definite target refusal', () => {
+  expect(actionResults.isActionOutcomeUnknownErrorCodeV1(PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE)).toBe(true);
+  expect(actionResults.isActionOutcomeUnknownErrorCodeV1('target_unavailable')).toBe(false);
+});
 
 describe('Action failure error adapter', () => {
   it('retains an explicitly public child failure in an adapter cause and excludes raw causes', () => {

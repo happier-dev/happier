@@ -81,7 +81,8 @@ it.each([
         handlers: { executeAction: () => {
           attempts++;
           if (notStarted) return { kind: 'refused', reason: 'plugin_action_current_intent_unavailable' };
-          throw new PluginError({ code: responseCode, retryable: false });
+          throw new PluginError({ code: responseCode, retryable: false,
+            details: { effectAttempted: true } });
         } },
       }));
     });
