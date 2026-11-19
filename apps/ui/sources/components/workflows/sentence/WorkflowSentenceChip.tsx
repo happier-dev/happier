@@ -46,7 +46,13 @@ export type WorkflowSentenceChipProps = Readonly<{
   disabled?: boolean;
   hasPopup?: 'menu' | 'dialog' | 'listbox';
   accessibilityHint?: string;
-  onPress: () => void;
+  /**
+   * Absent: the chip is the sentence at static props (a workflow card's preview, scene 8 D4): drawn the same, never a
+   * control, so the card stays the one press target and the card's name covers it for assistive tech.
+   */
+  onPress?: () => void;
+  /** `compact`: the card's smaller sentence (lab `.lw-sent`), at the meta size. The editor keeps the reading size. */
+  size?: 'compact';
   anchorRef?: React.Ref<View>;
   testID: string;
 }>;
@@ -87,7 +93,7 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
     (props.icon === undefined ? null : (
       <Icon
         name={props.icon}
-        size={ICON_SIZE.xs}
+        size={props.size === 'compact' ? ICON_SIZE.xxs : ICON_SIZE.xs}
         color={
           quiet && !filled
             ? theme.colors.text.tertiary
@@ -95,6 +101,28 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
         }
       />
     ));
+  const compact = props.size === 'compact';
+  const labelStyle = [
+    styles.label,
+    compact ? styles.compactLabel : null,
+    props.mono ? styles.mono : null,
+    filled && (props.kind === 'step' || props.kind === 'verb')
+      ? compact ? styles.compactSelectedLabel : styles.selectedLabel
+      : null,
+    quiet && !filled ? compact ? styles.compactQuietLabel : styles.quietLabel : null,
+    { color: props.struck ? theme.colors.text.tertiary : ink },
+    props.struck ? styles.struck : null,
+  ];
+  if (props.onPress === undefined) {
+    return (
+      <View testID={props.testID} accessible={false} importantForAccessibility="no-hide-descendants"
+        style={[styles.chip, styles.anchor, compact ? styles.compactChip : null, { borderColor, borderWidth: 1 },
+          filled ? { backgroundColor: theme.colors.surface.selected } : null]}>
+        {glyph}
+        <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
+      </View>
+    );
+  }
   return (
     <View ref={props.anchorRef} collapsable={false}
       // As labelled rows, an add chip on its own row ("or…", "Add a first step") hangs out by its unbordered
@@ -123,6 +151,7 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
         onPress={props.onPress}
         style={(pressed, focused) => [
           styles.chip,
+          compact ? styles.compactChip : null,
           { borderColor, borderWidth: props.open === true ? 1.5 : 1 },
           filled ? { backgroundColor: theme.colors.surface.selected } : null,
           pressed ? { backgroundColor: theme.colors.surface.pressed } : null,
@@ -133,19 +162,7 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
         ]}
       >
         {glyph}
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.label,
-            props.mono ? styles.mono : null,
-            filled && (props.kind === 'step' || props.kind === 'verb')
-              ? styles.selectedLabel
-              : null,
-            quiet && !filled ? styles.quietLabel : null,
-            { color: props.struck ? theme.colors.text.tertiary : ink },
-            props.struck ? styles.struck : null,
-          ]}
-        >
+        <Text numberOfLines={1} style={labelStyle}>
           {props.label}
         </Text>
         {props.kind === 'verb' ? (
@@ -170,10 +187,10 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
 
 /** A word of the sentence: copy, never a control. It wraps together with the chip it introduces. */
 export function WorkflowSentenceWord(
-  props: Readonly<{ children: string; testID?: string }>,
+  props: Readonly<{ children: string; testID?: string; size?: 'compact' }>,
 ) {
   return (
-    <Text testID={props.testID} style={styles.word}>
+    <Text testID={props.testID} style={props.size === 'compact' ? styles.compactWord : styles.word}>
       {props.children}
     </Text>
   );
@@ -250,6 +267,22 @@ const styles = StyleSheet.create((theme) => ({
   quietLabel: {
     ...Typography.variant('reading'),
   },
+  // The card's sentence: a meta-size pill, half the control height's rhythm (lab `.lw-sc`).
+  compactChip: {
+    height: theme.space.s20 + theme.space.s2,
+    borderRadius: (theme.space.s20 + theme.space.s2) / 2,
+    paddingHorizontal: theme.space.s8,
+    gap: theme.space.s4,
+  },
+  compactLabel: {
+    ...Typography.variant('meta'),
+  },
+  compactSelectedLabel: {
+    ...Typography.variant('meta', 'semiBold'),
+  },
+  compactQuietLabel: {
+    ...Typography.variant('meta'),
+  },
   mono: {
     ...Typography.variant('meta'),
     ...Typography.mono(),
@@ -265,6 +298,10 @@ const styles = StyleSheet.create((theme) => ({
   word: {
     ...Typography.variant('reading'),
     color: theme.colors.text.secondary,
+  },
+  compactWord: {
+    ...Typography.variant('meta'),
+    color: theme.colors.text.tertiary,
   },
   row: {
     width: '100%',

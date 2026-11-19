@@ -5,10 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { WorkflowRunStrip } from './workflowRunStrip';
 
 /**
- * A saved workflow's recent runs, drawn as one non-interactive element (07 S2, UX-14): a quiet bar
- * per run, oldest to newest, neutral when healthy. A failed run is a shorter, tinted bar (a notch) and
- * a run that needs you is a tinted dot, so both keep a shape of their own under forced colours. Its
- * accessible name states the outcomes.
+ * A workflow's recent runs, drawn as one non-interactive element (scene 8, owner 11-19): one slim 3 × 10 px bar per
+ * run, oldest to newest, quiet ink when healthy; a failed run takes the danger ink and a run that needs you the
+ * warning ink. Every row, table cell and card draws this one strip. Its accessible name states the outcomes.
  */
 export const WorkflowRunStripView = React.memo(function WorkflowRunStripView(props: Readonly<{
     strip: WorkflowRunStrip;
@@ -32,45 +31,22 @@ export const WorkflowRunStripView = React.memo(function WorkflowRunStripView(pro
 });
 
 const BAR_WIDTH = 3;
-const BAR_HEIGHT = 12;
+const BAR_HEIGHT = 10;
+
+const bar = { width: BAR_WIDTH, height: BAR_HEIGHT, borderRadius: BAR_WIDTH / 2 } as const;
 
 const styles = StyleSheet.create((theme) => ({
     strip: {
         flexDirection: 'row',
-        alignItems: 'flex-end',
-        gap: theme.space.s4,
-        height: BAR_HEIGHT,
-    },
-    slot: {
-        width: BAR_WIDTH,
-        height: BAR_HEIGHT,
         alignItems: 'center',
-        justifyContent: 'flex-end',
-    },
-    // An empty slot is a whisper of ink (the divider weight), so the strip reads as one quiet object of
-    // eight places on any sheet; a surface fill vanished on the light sheet and left stray bars (lab `nav-N1`).
-    none: {
-        width: BAR_WIDTH,
+        gap: theme.space.s2,
         height: BAR_HEIGHT,
-        borderRadius: BAR_WIDTH / 2,
-        backgroundColor: theme.colors.border.subtle,
+        flexShrink: 0,
     },
-    ok: {
-        width: BAR_WIDTH,
-        height: BAR_HEIGHT,
-        borderRadius: BAR_WIDTH / 2,
-        backgroundColor: theme.colors.text.tertiary,
-    },
-    failed: {
-        width: BAR_WIDTH,
-        height: BAR_HEIGHT - 4,
-        borderRadius: BAR_WIDTH / 2,
-        backgroundColor: theme.colors.state.danger.foreground,
-    },
-    needsYou: {
-        width: BAR_WIDTH + 2,
-        height: BAR_WIDTH + 2,
-        borderRadius: (BAR_WIDTH + 2) / 2,
-        backgroundColor: theme.colors.state.warning.foreground,
-    },
+    slot: bar,
+    // An empty place is a whisper of ink (the strong border weight), so the strip reads as one object of eight places.
+    none: { ...bar, backgroundColor: theme.colors.border.strong },
+    ok: { ...bar, backgroundColor: theme.colors.text.tertiary },
+    failed: { ...bar, backgroundColor: theme.colors.state.danger.foreground },
+    needsYou: { ...bar, backgroundColor: theme.colors.state.warning.foreground },
 }));

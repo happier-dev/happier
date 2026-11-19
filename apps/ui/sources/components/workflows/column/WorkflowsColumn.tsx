@@ -21,22 +21,19 @@ import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/nav
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 import { AccountTriggersSection, useAccountWorkflowEditor } from '@/components/workflows/triggers/AccountTriggersSection';
-import { AccountWorkflowRowAnchor, formatAccountWorkflowLine, isAccountWorkflowOff, isAccountWorkflowReviewRequired,
+import { AccountWorkflowRowAnchor, isAccountWorkflowOff, isAccountWorkflowReviewRequired,
     type AccountWorkflowLibraryRow } from '@/components/workflows/library/AccountWorkflowRowAnchor';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
-import type { WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
-import type { WorkflowAutomationRunSummary, WorkflowLibraryRunSummary } from '@/components/workflows/library/useWorkflowLibrarySummaries';
 import { useWorkflowLibraryView, type WorkflowLibraryViewController } from '@/components/workflows/library/useWorkflowLibraryView';
 import { useWorkflowLibrarySpaceHeader } from '@/components/workflows/library/useWorkflowLibrarySpaceHeader';
-import { hasWorkingWorkflowLibraryRun } from '@/components/workflows/library/workflowRunStrip';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
-import { formatTriggerSetSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t, tLoose } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
+import { WorkflowColumnRow } from './WorkflowColumnRow';
+import type { WorkflowLibraryItem } from '../library/workflowLibraryCells';
 import { WorkflowsPhonePage, type WorkflowsColumnView } from './WorkflowsPhonePage';
 import { WorkflowsColumnCreationRefContext, WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
@@ -45,8 +42,6 @@ import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
-import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { readOpenWorkflowDefinition } from './workflowsColumnModel';
@@ -198,15 +193,23 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         if (next === 'events' && !isWorkflowEventsPath(props.pathname)) router.push(WORKFLOWS_EVENTS_ROUTE as never);
     });
     const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
-    // Beside the page the column is navigation (owner 2026-11-12, anatomy "collection page home"): the library home's
-    // toolbar owns the one scope, filter and search over the same draft, so the column carries no second copy.
-    const spaceControls = definitions && props.surface !== 'plane';
+    // The sidebar keeps its own search beside "+" and its spaces strip, as the Sessions sidebar does, also beside the
+    // index page (owner 2026-11-19 15:10Z, over the lab's navigation-only column). Both places narrow through the one
+    // Workflow library draft, so a space or search set in either reads the same in both.
+    const spaceControls = definitions;
+    const { searchQuery, setSearchQuery } = libraryView;
+    const search = React.useMemo(() => spaceControls ? {
+        value: searchQuery, onChangeText: setSearchQuery,
+        placeholder: t('workflows.destination.searchPlaceholder'), testID: 'workflows-column:search',
+    } : null, [searchQuery, setSearchQuery, spaceControls]);
     const { theme } = useUnistyles();
     const viewSwitch = <SegmentedTabBar<WorkflowsColumnView>
         testIDPrefix="workflows-column:view"
         accessibilityLabel={t('workflows.tabsAccessibility.savedRuns')}
         compact
         segmentSizing="content"
+        // Labelled, as the lab's column draws it (scene 8 review 12): the three views read by name, not by glyph alone.
+        iconPlacement="leading"
         tabs={[
             { id: 'definitions', label: t('workflows.title'), icon: <Icon name="tree-structure" size={15} color={theme.colors.text.secondary} /> },
             { id: 'runs', label: t('workflows.tabs.runs'), icon: <Icon name="play-circle" size={15} color={theme.colors.text.secondary} /> },
@@ -220,12 +223,11 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         surface={props.surface}
         title={t('workflows.title')}
         {...(spaceControls ? { titleControl: header.titleControl } : {})}
+        search={search}
         strip={<>
-            <View testID="workflows-column:view-band" style={styles.viewBand}>
-                {/* Mounted only with space controls: an empty lead slot plus the band gap pushed the switch off the title's text edge (SHELL-ACCEPT-1117 live). */}
-                {spaceControls ? <View style={styles.viewBandLead}>{header.strip}</View> : null}
-                {viewSwitch}
-            </View>
+            <View testID="workflows-column:view-band" style={styles.viewBand}>{viewSwitch}</View>
+            {/* The spaces take their own line under the switch (scene 8 column), so neither squeezes the other. */}
+            {spaceControls ? <View style={styles.viewBandStrip}>{header.strip}</View> : null}
             {/* The listening line takes its own line under the switch: beside it, its time would be cut (r3 live). */}
             {eventsShown ? <View style={styles.eventsHead}>
                 <WorkflowsColumnEventsListening state={events} />
@@ -267,10 +269,12 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     const accountEditor = useAccountWorkflowEditor({ read: accountWorkflows });
     // One opener for every row: the library's rows keep their identity, so an update re-renders only changed rows.
     const openHref = useEventCallback((href: string) => { router.push(href as never); });
+    // Shared and plugin workflows are rows of the same projection the page reads, so every row draws the same facts.
+    const { rows } = props.libraryView;
     const split = React.useMemo(() => ({
-        sharedWithYou: props.libraryView.split.sharedWithYou.filter((definition) => isVisible(definition.definitionId)),
-        fromPlugins: props.libraryView.split.fromPlugins.filter((plugin) => isVisible(plugin.workflow)),
-    }), [isVisible, props.libraryView.split]);
+        sharedWithYou: rows.filter((row): row is SharedLibraryRow => row.group === 'sharedWithYou' && isVisible(row.key)),
+        fromPlugins: rows.filter((row): row is PluginLibraryRow => row.group === 'fromPlugins' && isVisible(row.key)),
+    }), [isVisible, rows]);
     const empty = visibleLibraryRows.length === 0;
     const firstLoad = empty && (library.status === 'loading' || accountWorkflows.status === 'loading');
     const libraryFailed = empty && !firstLoad && library.status === 'failed' && !homeUnavailable;
@@ -291,7 +295,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         <ColumnRowWindow id={row.key} index={index}
             pinned={libraryRowSelected(row, selectedDefinitionId, params.trigger)}>
             {'definition' in row ? (
-                <ColumnDefinitionRow definition={row.definition} summary={row.lastRunSummary}
+                <ColumnDefinitionRow row={row}
                     selected={selectedDefinitionId === row.definition.definitionId}
                     href={row.openTarget.href} onOpen={openHref} />
             ) : (
@@ -310,32 +314,28 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         {split.sharedWithYou.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')}
                 count={split.sharedWithYou.length} />
-            {split.sharedWithYou.map((definition, index) => <CollectionRowOrder key={definition.definitionId}
+            {split.sharedWithYou.map((row, index) => <CollectionRowOrder key={row.key}
                 followed={index < split.sharedWithYou.length - 1}
-                precedesSelected={split.sharedWithYou[index + 1]?.definitionId === selectedDefinitionId}>
-            <ColumnRowWindow id={definition.definitionId}
-                index={visibleLibraryRows.length + index} pinned={selectedDefinitionId === definition.definitionId}>
-                <CollectionNavigationRow
-                    href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:shared:${definition.definitionId}`}
-                    title={formatWorkflowDefinitionLibraryTitle(definition)} selected={selectedDefinitionId === definition.definitionId}
-                    {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
-                    onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />
+                precedesSelected={split.sharedWithYou[index + 1]?.key === selectedDefinitionId}>
+            <ColumnRowWindow id={row.key}
+                index={visibleLibraryRows.length + index} pinned={selectedDefinitionId === row.key}>
+                <ColumnDefinitionRow row={row} testIDPrefix="workflows-column:shared"
+                    selected={selectedDefinitionId === row.key} href={row.openTarget.href} onOpen={openHref} />
             </ColumnRowWindow></CollectionRowOrder>)}
         </> : null}
         <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} isVisible={isVisible} />
         {split.fromPlugins.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:fromPlugins" title={t('workflows.plugins.fromPlugins')}
                 count={split.fromPlugins.length} />
-            {split.fromPlugins.map((workflow, index) => <CollectionRowOrder key={workflow.workflow}
+            {split.fromPlugins.map((row, index) => <CollectionRowOrder key={row.key}
                 followed={index < split.fromPlugins.length - 1}
-                precedesSelected={split.fromPlugins[index + 1]?.workflow === selectedDefinitionId}>
-            <ColumnRowWindow id={workflow.workflow}
-                index={visibleLibraryRows.length + split.sharedWithYou.length + index} pinned={selectedDefinitionId === workflow.workflow}>
-                <CollectionNavigationRow
-                    rowRole="item"
-                    href={`/workflows/${encodeURIComponent(workflow.workflow)}`} testID={`workflows-column:plugin:${workflow.workflow}`}
-                    title={workflow.title} selected={selectedDefinitionId === workflow.workflow}
-                    onPress={() => router.push(`/workflows/${encodeURIComponent(workflow.workflow)}` as never)} />
+                precedesSelected={split.fromPlugins[index + 1]?.key === selectedDefinitionId}>
+            <ColumnRowWindow id={row.key}
+                index={visibleLibraryRows.length + split.sharedWithYou.length + index} pinned={selectedDefinitionId === row.key}>
+                <WorkflowColumnRow row={row} title={row.plugin.title} fallbackLine={row.plugin.description ?? null}
+                    href={`/workflows/${encodeURIComponent(row.key)}`} testID={`workflows-column:plugin:${row.key}`}
+                    selected={selectedDefinitionId === row.key}
+                    onPress={() => router.push(`/workflows/${encodeURIComponent(row.key)}` as never)} />
             </ColumnRowWindow></CollectionRowOrder>)}
         </> : null}
     </>;
@@ -351,90 +351,33 @@ function ColumnRowWindow(props: Readonly<{ id: string; index: number; pinned: bo
         estimatedTop={props.index * rowHeight} estimatedHeight={rowHeight}>{props.children}</NearViewportWindow>;
 }
 
-/**
- * What a Library row says at its end (lab `nav-N1` column): the one amber mark while a run waits for you,
- * "Running" while one works, else how long ago it last ran. Runs themselves live in the Runs view (R-22).
- */
-function readDefinitionLife(summary: WorkflowLibraryRunSummary | undefined):
-    Readonly<{ kind: 'needsYou' | 'running' | 'quiet' }> | Readonly<{ kind: 'rested'; age: string }> {
-    if (summary === undefined) return { kind: 'quiet' };
-    if (summary.needsYouRunId !== null) return { kind: 'needsYou' };
-    if (hasWorkingWorkflowLibraryRun(summary)) return { kind: 'running' };
-    const startedAt = summary.lastRun === null ? Number.NaN : Date.parse(summary.lastRun.startedAt);
-    return Number.isFinite(startedAt) ? { kind: 'rested', age: formatRelativeTimeShort(startedAt, Date.now()) } : { kind: 'quiet' };
-}
+type SharedLibraryRow = Extract<WorkflowLibraryItem, { group: 'sharedWithYou' }>;
+type PluginLibraryRow = Extract<WorkflowLibraryItem, { group: 'fromPlugins' }>;
+type DefinitionLibraryRow = Extract<WorkflowLibraryItem, { definition: unknown }>;
 
-/** A saved workflow's Library row: its name, what makes it run by itself, and how its runs stand. */
-const ColumnDefinitionRow = React.memo(function ColumnDefinitionRow(props: Readonly<{ definition: WorkflowLibraryDefinition;
-    summary: WorkflowLibraryRunSummary | undefined; selected: boolean; href: string; onOpen: (href: string) => void }>) {
-    const { definition, href, onOpen } = props;
+/** A saved or shared workflow's sidebar row: its name, what it uses, its state and trigger, its recent runs. */
+const ColumnDefinitionRow = React.memo(function ColumnDefinitionRow(props: Readonly<{ row: DefinitionLibraryRow;
+    selected: boolean; href: string; onOpen: (href: string) => void; testIDPrefix?: string }>) {
+    const { row, href, onOpen } = props;
     const onPress = React.useCallback(() => onOpen(href), [onOpen, href]);
-    const life = readDefinitionLife(props.summary);
-    const title = formatWorkflowDefinitionLibraryTitle(definition);
-    const subtitle = definitionSubtitle(definition);
-    return <CollectionNavigationRow
-        href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:library:${definition.definitionId}`}
-        title={title} selected={props.selected}
-        {...(subtitle === null ? {} : { subtitle })}
-        {...lifeProps(life, title, `workflow-definition-${definition.definitionId}`)}
-        onPress={onPress} />;
+    const { definition } = row;
+    return <WorkflowColumnRow row={row} title={formatWorkflowDefinitionLibraryTitle(definition)}
+        fallbackLine={definition.contentStatus === 'unavailable'
+            ? formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) : null}
+        href={`/workflows/${encodeURIComponent(definition.definitionId)}`}
+        testID={`${props.testIDPrefix ?? 'workflows-column:library'}:${definition.definitionId}`}
+        selected={props.selected} onPress={onPress} />;
 });
 
 /** An Account Workflow's Library entry: its settings anchor around the row, re-rendered only when the row changes. */
 const ColumnAccountWorkflowEntry = React.memo(function ColumnAccountWorkflowEntry(props: Readonly<{ row: AccountWorkflowLibraryRow;
     editor: ReturnType<typeof useAccountWorkflowEditor>; deepLink: boolean }>) {
     const { row } = props;
-    const renderRow = React.useCallback((open: () => void) => <ColumnAccountWorkflowRow row={row} onPress={open} />, [row]);
+    const renderRow = React.useCallback((open: () => void) => <WorkflowColumnRow row={row} title={row.name}
+        testID={`workflows-column:library:${row.key}`} selected={false}
+        dimmed={isAccountWorkflowOff(row) && !isAccountWorkflowReviewRequired(row)} onPress={open} />, [row]);
     return <AccountWorkflowRowAnchor row={row} editor={props.editor} deepLink={props.deepLink}>{renderRow}</AccountWorkflowRowAnchor>;
 });
-
-/**
- * An Account Workflow's Library row (Q7): the same row as a saved workflow's, its trigger as the quiet
- * line. Turned off it rests dimmed; its settings (and Turn on) are one press away.
- */
-function ColumnAccountWorkflowRow(props: Readonly<{ row: AccountWorkflowLibraryRow; onPress: () => void }>) {
-    const { row } = props;
-    const reviewRequired = isAccountWorkflowReviewRequired(row);
-    const life: ReturnType<typeof readDefinitionLife> = reviewRequired ? { kind: 'needsYou' } : readAccountWorkflowLife(row.lastRunSummary);
-    const line = formatAccountWorkflowLine(row);
-    return <CollectionNavigationRow testID={`workflows-column:library:${row.key}`}
-        title={row.name} selected={false}
-        {...(line === null ? {} : { subtitle: line })}
-        dimmed={isAccountWorkflowOff(row) && !reviewRequired}
-        {...lifeProps(life, row.name, `workflow-account-${row.accountTrigger.automationId}`, reviewRequired ? line ?? undefined : undefined)}
-        onPress={props.onPress} />;
-}
-
-function lifeProps(life: ReturnType<typeof readDefinitionLife>, title: string, testIDSuffix: string, word?: string) {
-    if (life.kind === 'rested') return { detail: life.age };
-    if (life.kind === 'quiet') return {};
-    const state = word ?? t(life.kind === 'needsYou' ? 'workflows.destination.sections.needsYou' : 'workflows.destination.sections.running');
-    return {
-        status: <WorkStatusRowMark testIDSuffix={testIDSuffix}
-            status={resolveWorkStatusTone({ kind: 'workflow', facts: {
-                word: state, needsYouCount: life.kind === 'needsYou' ? 1 : 0, hasActiveRun: life.kind === 'running' } })} />,
-        accessibilityLabel: `${title}, ${state}`,
-    };
-}
-
-/** The same three answers from an Account Workflow's one last run. */
-function readAccountWorkflowLife(summary: WorkflowAutomationRunSummary | undefined): ReturnType<typeof readDefinitionLife> {
-    const lastRun = summary?.lastRun ?? null;
-    if (lastRun === null) return { kind: 'quiet' };
-    if (lastRun.attentionRequired || lastRun.invocationAttentionRequired) return { kind: 'needsYou' };
-    if (hasWorkingWorkflowLibraryRun({ recent: [{ ...lastRun, runId: lastRun.id }] })) return { kind: 'running' };
-    const startedAt = Date.parse(lastRun.startedAt);
-    return Number.isFinite(startedAt) ? { kind: 'rested', age: formatRelativeTimeShort(startedAt, Date.now()) } : { kind: 'quiet' };
-}
-
-/**
- * A library row's second line (lab `convo-N7`): what makes it run by itself ("Every night at 02:00 · 1 more"),
- * or why it cannot be read. A manual workflow is its name alone, so the index stays quiet.
- */
-function definitionSubtitle(definition: WorkflowLibraryDefinition): string | null {
-    if (definition.contentStatus === 'unavailable') return formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason);
-    return definition.triggers.length > 0 ? formatTriggerSetSummary(definition.triggers) : null;
-}
 
 /**
  * The column's Built-in group (07 S1, lab `convo-N7`): the same navigation row as Library, mark and name
@@ -480,7 +423,7 @@ const styles = StyleSheet.create((theme) => ({
     // leads (Definitions) or alone at the row's end (Runs). The title row's width never decides where it sits.
     viewBand: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     // The band packs from the title's leading text edge, like every column's (SHELL-ACCEPT-1117): the switch follows the strip.
-    viewBandLead: { flexShrink: 1, minWidth: 0 },
+    viewBandStrip: { paddingTop: theme.space.s4, minWidth: 0 },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
     freshness: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
     // The column's row inset, so the line's edges sit on the rows' edges.

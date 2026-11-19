@@ -261,7 +261,7 @@ describe('WorkflowsColumn', () => {
             if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
                 const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
                 const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
-                return Response.json({ automations: query.scope === 'account_inline' ? [detail] : [], nextCursor: null });
+                return Response.json({ automations: query.scope === 'account_all' ? [detail] : [], nextCursor: null });
             }
             return url.pathname === '/v3/automations' ? Response.json(list)
                 : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
@@ -296,9 +296,10 @@ describe('WorkflowsColumn', () => {
             .toEqual({ accountRowKept: true, savedRowKept: true });
         // Every Library row would carry the same workflow glyph, so none draws a leading mark: the names start
         // on the list's edge, while built-ins keep their own marks (LIST-ICONS-1108).
-        const libraryMarks = screen.findAll(node => /^workflows-column:library:/.test(String(node.props?.testID ?? '')) && node.props.title !== undefined)
-            .flatMap(row => row.findAll(node => typeof node.props.name === 'string').map(node => node.props.name));
-        expect(libraryMarks).toEqual([]);
+        // What a workflow uses ends its row (scene 8); it is never a leading mark.
+        const leadingMarks = screen.findAll(node => /^workflows-column:library:/.test(String(node.props?.testID ?? ''))
+            && node.props.title !== undefined && 'needsYou' in node.props).map(row => row.props.icon).filter(icon => icon !== undefined);
+        expect(leadingMarks).toEqual([]);
         // The Account Workflow's trigger is its quiet line; it carries no switch of its own.
         expect(screen.findAll(node => node.props?.testID === 'workflows-column:library:account-trigger:digest' && 'subtitle' in node.props)[0]
             ?.props.subtitle).toBe('workflows.triggers.summary.everyDayAt(time=09:00)');
@@ -503,7 +504,7 @@ describe('WorkflowsColumn', () => {
         }
         expect(screen.findHostByTestId('workflows-column:library:readable')).not.toBeNull();
     });
-    it('keeps the Library index alive from the shared run summaries: needs you, running, then the last run\'s age', async () => {
+    it('keeps the Library index alive from the shared run summaries: needs you and running speak, every row keeps its strip', async () => {
         answerLists();
         const answer = executeMock.getMockImplementation()!;
         const definition = (definitionId: string, title: string) => ({ kind: 'workflow-definition.v1', definitionId, metadata: { title },
@@ -529,23 +530,23 @@ describe('WorkflowsColumn', () => {
             return answer(actionId, input);
         });
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
-        const row = (id: string) => screen.findAll(node => node.props.testID === `workflows-column:library:${id}` && typeof node.props.href === 'string')[0]!.props;
+        // The shared navigation row's own props (the workflow row passes it the name, state and end).
+        const rowNode = (id: string) => screen.findAll(node => node.props.testID === `workflows-column:library:${id}`
+            && typeof node.props.href === 'string' && 'needsYou' in node.props)[0]!;
+        const row = (id: string) => rowNode(id).props;
+        const strip = (id: string) => rowNode(id)
+            .findAll(node => typeof node.props.accessibilityLabel === 'string' && node.props.accessibilityLabel.startsWith('workflows.destination.strip'));
         await vi.waitFor(async () => {
             await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
-            expect(row('rests').detail).toBeDefined();
+            expect(row('works').accessibilityLabel).toContain('workflows.destination.sections.running');
         });
-        // Needs you and Running are the row's work-status glyph (P4 status words), and Needs you is spoken;
-        // a rested one shows how long ago.
+        // Scene 8 Lines 2: the state word speaks only when it matters (Needs you, Running) and is spoken with the name;
+        // every row that has run history ends with its run strip, a rested or never-run row says nothing more.
         expect(row('waits').accessibilityLabel).toContain('workflows.destination.sections.needsYou');
-        expect(row('waits').status).toBeTruthy();
-        expect(row('works').status).toBeTruthy();
-        expect(row('works').accessibilityLabel).toContain('workflows.destination.sections.running');
-        expect(row('works').detail).toBeUndefined();
-        expect(row('rests').status).toBeUndefined();
-        expect(row('rests').detail).toContain('time.daysAgoShort');
-        expect(row('interrupted').detail).toContain('time.daysAgoShort');
-        expect(row('paused').detail).toContain('time.daysAgoShort');
-        expect(row('never').detail).toBeUndefined();
+        expect(row('waits').needsYou).toBe(true);
+        expect(row('rests').accessibilityLabel).toBe('Fix a failing test');
+        expect(row('never').accessibilityLabel).toBe('Triage new issues');
+        for (const id of ['waits', 'works', 'rests', 'never']) expect(strip(id).length).toBeGreaterThan(0);
     });
     it('mounts only the column rows near its viewport for a large Library, keeping the open row', async () => {
         const answer = executeMock.getMockImplementation()!;
@@ -592,8 +593,10 @@ describe('WorkflowsColumn', () => {
         });
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
         // A host element keeps its props object only while nothing above it renders again.
+        // Each row's own host (its parts carry testIDs of their own under the same prefix).
+        const rowIds = new Set(ids.map(id => `workflows-column:library:${id}`));
         const rowProps = () => new Map(screen.findAll(node => typeof node.type === 'string'
-            && /^workflows-column:library:/.test(String(node.props.testID ?? ''))).map(node => [String(node.props.testID), node.props]));
+            && rowIds.has(String(node.props.testID ?? ''))).map(node => [String(node.props.testID), node.props]));
         await vi.waitFor(() => expect(rowProps().size).toBe(ids.length));
         await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 50)); });
         const before = rowProps();
@@ -841,12 +844,15 @@ describe('WorkflowsColumn', () => {
 
     it('switches Definitions and Runs inside one list whose switch stays put, with the spaces only over definitions (R8-7)', async () => {
         answerLists();
-        // Beside the library home the column is navigation: its switch and rows, no second scope (owner 2026-11-12).
+        // Beside the library home the sidebar keeps its own space title, filter and search, as the Sessions sidebar does
+        // (owner 2026-11-19 15:10Z); both narrow through the one Workflow draft.
         const beside = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
         expect(beside.findHostByTestId('workflows-column:view:runs')).not.toBeNull();
-        expect(beside.findAllHostsByTestId('workflows-column-space-title')).toHaveLength(0);
-        expect(beside.findAllHostsByTestId('workflows-column-space-filter-open')).toHaveLength(0);
+        expect(beside.findHostByTestId('workflows-column-space-title')).not.toBeNull();
+        expect(beside.findHostByTestId('workflows-column-space-filter-open')).not.toBeNull();
+        // In a shell column the search waits behind its magnifier; elsewhere the field stands open.
+        expect(beside.findHostByTestId('workflows-column:search:toggle') ?? beside.findHostByTestId('workflows-column:search')).not.toBeNull();
         await beside.unmount();
         const screen = await renderScreen(<WorkflowsColumn surface="page" />, { wrapper: TestAuth });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -985,7 +991,7 @@ describe('WorkflowsColumn', () => {
                 if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
                     const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
                     const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
-                    return Response.json({ automations: query.scope === 'account_inline' ? details : [], nextCursor: null });
+                    return Response.json({ automations: query.scope === 'account_all' ? details : [], nextCursor: null });
                 }
                 const detail = details.find(candidate => url.pathname === `/v3/automations/${candidate.id}`);
                 return detail ? Response.json(detail) : undefined;

@@ -302,6 +302,8 @@ export function formatTriggerSetSummary(
     triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean; remainingOccurrences?: number | null }>)[],
     /** The set's last Run state, when its owner has read it: a spent one-time schedule says Completed or Missed from it. */
     lastRunState?: string | null,
+    /** The row says Off in its own state place (a workflow table's State cell, a row's state word), so the sentence doesn't. */
+    options?: Readonly<{ offSaidElsewhere?: boolean }>,
 ): string {
     const [first, ...rest] = triggers;
     if (first === undefined) return t('workflows.triggers.summary.manual');
@@ -314,7 +316,7 @@ export function formatTriggerSetSummary(
         : formatTriggerSummary(first);
     const once = readOnceScheduleState(first, lastRunState);
     const state = formatOnceScheduleStateLabel(once)
-        ?? (first.enabled === false ? t('workflows.triggers.row.off') : null);
+        ?? (first.enabled === false && options?.offSaidElsewhere !== true ? t('workflows.triggers.row.off') : null);
     const summary = state === null ? when : [state, when].join(' · ');
     return rest.length === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: rest.length });
 }
