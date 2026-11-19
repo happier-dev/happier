@@ -370,11 +370,19 @@ describe('the mounted Pin/Unpin affordance', () => {
 
         // The pin is removed from the row's one menu, like every other row: no inline control sits beside it.
         await expect(shell.queryByRole('button', { name: 'Unpin A change this device has not read' })).resolves.toBeUndefined();
-        await unpinFromRowMenu(shell, 'A change this device has not read');
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'More actions for A change this device has not read' }));
+        });
+        await expect(shell.queryByRole('menuitem', { name: 'Pin' })).resolves.toBeUndefined();
+        await act(async () => {
+            await shell.press(await shell.getByRole('menuitem', { name: 'Unpin' }));
+        });
 
         // Settled at the writer, not optimistically in this mount.
         expect(await liveMarkCount(harness)).toBe(0);
         await expect(shell.queryByText('A change this device has not read')).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'More actions for A change this device has not read' }))
+            .resolves.toBeUndefined();
         // The row leaving is the confirmation; a settled pin leaves no lingering line in the page header.
         await expect(shell.queryByText('Unpinned')).resolves.toBeUndefined();
     });
