@@ -82,6 +82,28 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean; navigationF
 }
 
 describe('daemon browser controller commands', () => {
+  it.each([
+    ['stop', 'Page.stopLoading'], ['reload', 'Page.reload'], ['goBack', 'Page.navigateToHistoryEntry'],
+  ] as const)('interrupts a pending navigation before present-user %s waits for its acknowledgement', async (kind, method) => {
+    const harness = navigationHarness();
+    try {
+      await harness.open();
+      const navigation = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'loading',
+        url: 'https://example.test/pending-human' }, { authority: 'present_user' });
+      await harness.navigating.promise;
+      const command = harness.routes.dispatchCommand({ ...harness.view, kind, commandId: 'interrupt-loading' },
+        { authority: 'present_user' });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      // Chromium must receive cancellation while Page.navigate is still awaiting headers.
+      expect(harness.pageCommands).toContain('Page.stopLoading');
+      harness.releaseNavigation.resolve();
+      await navigation;
+      expect(await command).toMatchObject({ status: 'dispatched' });
+      expect(harness.pageCommands).toContain(method);
+      expect(harness.automation.getStatus(harness.view)).toMatchObject({ controller: 'human', interruptionSettling: false });
+    } finally { harness.dispose(); }
+  });
+
   it('focuses the view without interrupting active agent input or changing its controller', async () => {
     const harness = navigationHarness();
     try {

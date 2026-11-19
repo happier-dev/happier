@@ -133,7 +133,9 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
           try {
             const execution = await automation.executeControlCommand(command.data,
               context?.authority === 'present_user' ? 'present_user' : 'account_automation',
-              () => dispatchToBroker(command.data, context));
+              signal => dispatchToBroker(command.data, signal ? { ...context,
+                signal: context?.signal ? AbortSignal.any([context.signal, signal]) : signal,
+              } : context));
             if (!execution.ok) return browserCommandDispatchFailure({ commandId: command.data.commandId,
               code: 'permission_denied', message: `Browser input controller refused the command: ${execution.errorCode}.` });
             const result = execution.value;

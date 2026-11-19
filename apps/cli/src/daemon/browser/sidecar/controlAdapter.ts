@@ -561,8 +561,21 @@ export function createBrowserSidecarCdpControlAdapter(
 
         const navigationGeneration = boundView.state.navigationGeneration;
         let issued = false;
+        let stopLoading: Promise<boolean> | undefined;
+        const interruptNavigation = () => {
+            // Page.navigate can await response headers indefinitely. Interrupt the engine
+            // before draining that acknowledgement so human Stop/Reload/Back can proceed.
+            stopLoading = input.transport.dispatchPageCommand({
+                ...(scope.deadlineMs !== undefined ? { deadlineMs: scope.deadlineMs } : {}),
+                targetId: boundView.targetId,
+                ...(boundView.sessionId ? { sessionId: boundView.sessionId } : {}),
+                method: 'Page.stopLoading',
+            }).then(() => true, () => false);
+        };
+        const navigation = method === 'Page.navigate' || method === 'Page.reload' || method === 'Page.navigateToHistoryEntry';
         try {
             scope.signal?.throwIfAborted();
+            if (navigation) scope.signal?.addEventListener('abort', interruptNavigation, { once: true });
             issued = true;
             await input.transport.dispatchPageCommand({
                 // Once issued, abort must not discard the CDP acknowledgement before drain.
@@ -572,6 +585,7 @@ export function createBrowserSidecarCdpControlAdapter(
                 method,
                 ...(params ? { params } : {}),
             });
+            if (stopLoading && !(await stopLoading)) return cdpFailure(command, 'unknown');
             // Page.stopLoading acknowledges that navigations and resource fetches stopped.
             // Publish that engine fact before the response can trail its terminal CDP event.
             if (command.kind === 'stop' && readBoundView(command) === boundView
@@ -582,6 +596,10 @@ export function createBrowserSidecarCdpControlAdapter(
             return dispatchState(command);
         } catch (error) {
             return cdpFailure(command, !issued || isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');
+        } finally {
+            if (navigation) scope.signal?.removeEventListener('abort', interruptNavigation);
+            // Even a failed navigation must retain admission until its cancellation settles.
+            await stopLoading;
         }
     }
 
@@ -595,7 +613,6 @@ export function createBrowserSidecarCdpControlAdapter(
             return failed(command, 'view_not_found', 'Browser sidecar does not own this view.');
         }
 
-        let issued = false;
         try {
             scope.signal?.throwIfAborted();
             const history = await input.transport.dispatchPageCommand({
@@ -608,18 +625,9 @@ export function createBrowserSidecarCdpControlAdapter(
             if (entryId === null) {
                 return failed(command, 'unsupported_command', 'Browser sidecar history entry is unavailable.');
             }
-            scope.signal?.throwIfAborted();
-            issued = true;
-            await input.transport.dispatchPageCommand({
-                ...(scope.deadlineMs !== undefined ? { deadlineMs: scope.deadlineMs } : {}),
-                targetId: boundView.targetId,
-                ...(boundView.sessionId ? { sessionId: boundView.sessionId } : {}),
-                method: 'Page.navigateToHistoryEntry',
-                params: { entryId },
-            });
-            return dispatchState(command);
-        } catch (error) {
-            return cdpFailure(command, !issued || isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');
+            return await dispatchPage(command, 'Page.navigateToHistoryEntry', { entryId }, scope);
+        } catch {
+            return cdpFailure(command, 'known');
         }
     }
 

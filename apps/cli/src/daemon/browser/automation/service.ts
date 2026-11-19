@@ -81,7 +81,7 @@ export type BrowserAutomationDaemonService = Readonly<{
   releaseViewerInput(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): Promise<void>;
   isViewerControlling(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): boolean;
   /** Control commands share the drain; only page-changing commands take input ownership. */
-  executeControlCommand(view: BrowserAutomationViewRef & BrowserCommandV1, authority: 'present_user' | 'account_automation', dispatch: () => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
+  executeControlCommand(view: BrowserAutomationViewRef & BrowserCommandV1, authority: 'present_user' | 'account_automation', dispatch: (signal?: AbortSignal) => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
   handBack(input: BrowserAutomationViewRef & BrowserControllerAuthority): Promise<Readonly<{ ok: boolean }>>;
   getStatus(view: BrowserAutomationViewRef): BrowserAutomationControllerStateV1;
   getTimeline(view: BrowserAutomationViewRef): BrowserAutomationTimelineV1;
@@ -507,11 +507,11 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
           // Control commands address the view/history/URL, never coordinates or a DOM
           // locator from a previous observation. Native page changes must not gate them.
           requiresObservation: false,
-          effect: async () => {
+          effect: async signal => {
             emitController(view);
-            // The broker awaits the actual CDP acknowledgement. Keep admission until it settles;
-            // abort cannot retract a page command already issued to Chromium.
-            return await dispatch();
+            // The engine bridge interrupts pending navigation on cancellation, then drains
+            // its physical acknowledgement before the input owner admits the next command.
+            return await dispatch(signal);
           },
           classifyCompletion: classifyBrowserCommandCompletion,
         });
