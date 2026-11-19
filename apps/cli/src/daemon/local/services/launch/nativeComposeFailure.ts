@@ -1,3 +1,5 @@
+export const NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE = 'deployment.native.image.registry';
+
 /** Closed observations only: private native output stays at this process boundary. */
 const nativeFailurePatterns = [
     ['build_platform_unsupported', /no support for running processes with [^\r\n]+ platform,\s*supported:/iu],
@@ -20,6 +22,9 @@ const nativeFailurePatterns = [
 export type NativeComposeFailureCode = (typeof nativeFailurePatterns)[number][0];
 
 /** Called once per failed process; successful commands need no output diagnosis. */
-export function classifyNativeComposeFailure(output: string): NativeComposeFailureCode | null {
-    return nativeFailurePatterns.find(([, pattern]) => pattern.test(output))?.[0] ?? null;
+export function classifyNativeComposeFailure(output: string, registryReference?: string): NativeComposeFailureCode | null {
+    const classified = nativeFailurePatterns.find(([, pattern]) => pattern.test(output))?.[0];
+    if (classified) return classified;
+    return registryReference && output.split(/\r?\n/u).some(line => line.trim() === `ERROR: ${registryReference}: not found`)
+        ? 'deployment_image_not_found' : null;
 }

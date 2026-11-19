@@ -2,6 +2,8 @@ import { readFile, realpath, writeFile } from 'node:fs/promises';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { DeploymentImageResolutionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentBuildSupportV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
@@ -11,7 +13,7 @@ import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedIm
     type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
 import { nativeComposeReferencesAnyVariable as referencesSecret } from '@/workspaces/projectSetup/nativeComposeInterpolation';
 import { publishNativeComposeImages } from './nativeComposeImagePublication';
-import { classifyNativeComposeFailure } from './nativeComposeFailure';
+import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
 
 export type NativeComposeBuildSelection = Readonly<{
     signal?: AbortSignal;
@@ -381,9 +383,28 @@ export function createNativeComposeImagePreparation(input: Readonly<{
                         const resolved: DeploymentImageV1[] = [];
                         const requiredPlatforms = platforms.filter(platform => needsPlatform(service, platform, options?.servicePlatforms));
                         if (input.phase === 'build' || options?.planOnly) {
-                            resolved.push(...await identity.resolveVariants({ service, reference: definition.image,
-                                ...(!options?.planOnly ? { platforms: requiredPlatforms } : {}) },
-                                { signal, registries: input.imageAcquisition?.registries }));
+                            try {
+                                resolved.push(...await identity.resolveVariants({ service, reference: definition.image,
+                                    ...(!options?.planOnly ? { platforms: requiredPlatforms } : {}) },
+                                    { signal, registries: input.imageAcquisition?.registries }));
+                            } catch (error) {
+                                if (!options?.planOnly) throw error;
+                                const native = readPluginActionError(error);
+                                const cause = readPluginActionFailureAuthorPayload(native?.data).failureCause;
+                                if (native?.code !== 'native_failed' || !cause || 'kind' in cause
+                                    || !cause.phase.startsWith(`${NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE}.`)) throw error;
+                                const { shape } = DeploymentImageResolutionFailureV1Schema;
+                                const reference = redact(definition.image) === definition.image && shape.reference.safeParse(definition.image).success
+                                    ? definition.image : undefined;
+                                const failure = DeploymentImageResolutionFailureV1Schema.safeParse({
+                                    kind: 'deploymentImageResolutionFailure', service,
+                                    ...(reference === undefined ? {} : { reference }),
+                                    reason: cause.errorCode ?? 'native_compose_command_failed',
+                                });
+                                if (!failure.success) throw error;
+                                throw new PluginError({ code: native.code, message: native.message, details: failure.data,
+                                    failureCause: { ...cause, errorCode: failure.data.reason } });
+                            }
                         } else {
                             // Existing runtime/local discovery has no registry
                             // demand authority. Builder planning owns index IO.

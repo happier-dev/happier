@@ -1,5 +1,5 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
-import { classifyNativeComposeFailure } from './nativeComposeFailure';
+import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
@@ -937,11 +937,15 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             if (!dockerAccessDenied && args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
                 throw new NativeComposeBakeFailure(output.exitCode, output.stdout + '\n' + (output.stderr ?? ''), authority ? true : undefined);
             }
-            const cause = dockerAccessDenied ? null : classifyNativeComposeFailure(output.stdout + '\n' + (output.stderr ?? ''));
-            return nativeRefusal(cause ?? 'native_compose_command_failed', args[0] === 'compose'
+            const registryInspect = args[0] === 'buildx' && args[1] === 'imagetools' && args[2] === 'inspect';
+            const cause = dockerAccessDenied ? null
+                : classifyNativeComposeFailure(output.stdout + '\n' + (output.stderr ?? ''), registryInspect ? args.at(-1) : undefined);
+            const step = args[0] === 'compose'
                 ? args.includes('--no-interpolate') || args.includes('--no-consistency')
                     ? 'deployment.native.compose.config' : 'deployment.native.compose'
-                : args[0] === 'version' ? 'deployment.native.docker.version' : 'deployment.native.command',
+                : args[0] === 'version' ? 'deployment.native.docker.version'
+                : registryInspect ? NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE : 'deployment.native.command';
+            return nativeRefusal(cause ?? 'native_compose_command_failed', step,
                 dockerAccessDenied ? 'EACCES' : cause,
                 // A returned process result proves this admitted native effect ran.
                 // Launch errors and read-only native commands remain unknown.

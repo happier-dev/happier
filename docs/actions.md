@@ -9375,7 +9375,11 @@ exact child inherits the parent's reviewed steps and deployment grant;
 an ordinary plugin Action receives no general `action.invoke` permission.
 Missing or changed recorded scope is refused. The child's explicit Ask policy
 is evaluated during receipt-free parent preparation, before reserving a receipt
-or occupying the Environment's deployment slot. When that policy needs a new
+or occupying the Environment's deployment slot. A registry lookup failure during
+an own-server Deploy review returns the image selection and a typed cause in the
+Action failure. The selection includes the Compose service and the image reference
+when it is safe to disclose. Native command output stays private. If review
+preparation fails, there is no approval or Receipt. When policy needs a new
 approval, the ordinary approval request names the root deployment; its exact
 approved replay performs normal admission and then creates the receipt. There
 is no `waitingApproval` receipt state or separately replayable child bridge.

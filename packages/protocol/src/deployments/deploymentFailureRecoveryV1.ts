@@ -5,6 +5,30 @@ import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult
 import type { OpenProjectDraftSelectionV1 } from '../projects/openProjectDraftV1.js';
 import type { ProjectSourceRepositorySelectorV1 } from '../projects/sources/projectSourceV1.js';
 
+export const DeploymentImageResolutionFailureV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('deploymentImageResolutionFailure'),
+    service: z.string().check(z.regex(/^[a-z0-9_.-]+$/iu)),
+    reference: z.optional(z.string().check(z.regex(/^(?!.*:\/\/)[a-z0-9._:/@\[\]-]+$/iu))),
+    reason: z.enum([
+        'deployment_image_not_found',
+        'deployment_image_pull_denied',
+        'deployment_image_rate_limited',
+        'deployment_network_unavailable',
+        'native_compose_command_failed',
+    ]),
+}));
+
+export function describeDeploymentImageResolutionFailureV1(failure: z.infer<typeof DeploymentImageResolutionFailureV1Schema>): string {
+    const image = failure.reference ? `image ${failure.reference} for service ${failure.service}` : `the image for service ${failure.service}`;
+    switch (failure.reason) {
+        case 'deployment_image_not_found': return `The registry could not find ${image}.`;
+        case 'deployment_image_pull_denied': return `The registry denied access to ${image}.`;
+        case 'deployment_image_rate_limited': return `The registry rate limit prevented resolving ${image}.`;
+        case 'deployment_network_unavailable': return `A network error prevented resolving ${image}.`;
+        case 'native_compose_command_failed': return `Docker could not resolve ${image} from its registry.`;
+    }
+}
+
 /** The fallback names the unavailable result, never an invented provider prerequisite. */
 export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
     requiredFact: z.literal('deploymentActionResult'),

@@ -16,6 +16,21 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 import { presentActionFailureOutcome, presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from './approvalFailureOutcome';
 import { presentRecordedApprovalFailure } from './useApprovalDecisionHandler';
 import { formatApprovalStatusLabel, resolveApprovalDisplayStatus } from '@/components/approvals/approvalStatusLabel';
+import { readDeploymentActionError } from '@/components/projects/deployments/deploymentActionOutcome';
+import { HappyError } from '@/utils/errors/errors';
+
+it('shows the registry cause on a failed deployment review without a Receipt', () => {
+    const details = { kind: 'deploymentImageResolutionFailure', service: 'web',
+        reference: 'registry.example.test/web:missing', reason: 'deployment_image_not_found' };
+    const failureCause = { phase: 'deployment.native.image.registry.deployment_image_not_found',
+        errorClass: 'Error', errorCode: 'deployment_image_not_found', httpStatus: null } as const;
+    const outcome = readDeploymentActionError(new HappyError('native_failed', false, { code: 'native_failed', details, failureCause }));
+    expect(outcome).toMatchObject({ kind: 'refused', code: 'native_failed', failure: { details, failureCause } });
+    if (outcome.kind !== 'refused' || !outcome.failure) throw new Error('Expected a failed review');
+    const reason = presentActionFailureOutcome(outcome.failure, 'deployment').reason;
+    expect(reason).toContain('registry.example.test/web:missing');
+    expect(reason).toContain('could not find');
+});
 
 const response = DaemonLocalServiceLauncherStartResponseV1Schema.parse({
     protocolVersion: 1, machineId: 'machine', targetId: 'declared:lumen', status: 'failed',

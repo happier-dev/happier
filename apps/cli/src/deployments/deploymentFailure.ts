@@ -12,7 +12,8 @@ import { MachineNativeEffectAdmissionError } from '@/daemon/local/services/launc
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Schema,
     type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
+    projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
@@ -117,6 +118,12 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     if (known) return known;
     const pluginError = readPluginActionError(error);
     const author = pluginError ? readPluginActionFailureAuthorPayload(pluginError.data) : undefined;
+    const imageResolution = pluginError?.code === errorCode && errorCode === 'native_failed'
+        ? DeploymentImageResolutionFailureV1Schema.safeParse(author?.details) : undefined;
+    if (imageResolution?.success) {
+        return { ok: false, errorCode, error: describeDeploymentImageResolutionFailureV1(imageResolution.data),
+            details: imageResolution.data, ...(author?.failureCause ? { failureCause: author.failureCause } : {}) };
+    }
     const sourceAdmission = pluginError?.code === errorCode
         ? DeploymentSourceAdmissionFailureV1Schema.safeParse(author?.details) : undefined;
     const missingSecrets = pluginError?.code === errorCode && errorCode === 'secret_missing'
