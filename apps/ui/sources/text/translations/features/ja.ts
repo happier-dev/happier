@@ -15983,6 +15983,7 @@ const japanese: TeamsTranslationRoot = {
                     projectSources: "プロジェクトソース",
                     projectDocuments: "ドキュメント",
                     prompts: "プロンプト",
+                    reviews: "レビュー",
                     otherArtifacts: "その他のファイル",
                     accountCollections: "コレクション",
                     savedSecrets: "保存済みシークレット",

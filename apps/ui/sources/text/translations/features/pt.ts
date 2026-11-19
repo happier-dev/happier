@@ -16034,6 +16034,7 @@ const portuguese: TeamsTranslationRoot = {
                     projectSources: "Fontes de projeto",
                     projectDocuments: "Documentos",
                     prompts: "Prompts",
+                    reviews: "Revisões",
                     otherArtifacts: "Outros ficheiros",
                     accountCollections: "Coleções",
                     savedSecrets: "Segredos guardados",

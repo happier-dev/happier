@@ -15863,6 +15863,7 @@ const german: TeamsTranslationRoot = {
                     projectSources: "Projektquellen",
                     projectDocuments: "Dokumente",
                     prompts: "Prompts",
+                    reviews: "Überprüfungen",
                     otherArtifacts: "Andere Dateien",
                     accountCollections: "Sammlungen",
                     savedSecrets: "Gespeicherte Secrets",

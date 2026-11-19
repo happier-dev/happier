@@ -16072,6 +16072,7 @@ const polish: TeamsTranslationRoot = {
                     projectSources: "Źródła projektów",
                     projectDocuments: "Dokumenty",
                     prompts: "Prompty",
+                    reviews: "Przeglądy",
                     otherArtifacts: "Inne pliki",
                     accountCollections: "Kolekcje",
                     savedSecrets: "Zapisane sekrety",

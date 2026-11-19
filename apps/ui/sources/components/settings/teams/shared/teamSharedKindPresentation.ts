@@ -19,10 +19,11 @@ export const TEAM_SHARED_KIND_PRESENTATION: Readonly<Record<TeamShareableResourc
     projectSources: { icon: 'git-branch', title: 'teams.overview.shared.kinds.projectSources', order: 6 },
     projectDocuments: { icon: 'file-text', title: 'teams.overview.shared.kinds.projectDocuments', order: 7 },
     prompts: { icon: 'note', title: 'teams.overview.shared.kinds.prompts', order: 8 },
-    otherArtifacts: { icon: 'files', title: 'teams.overview.shared.kinds.otherArtifacts', order: 9 },
-    accountCollections: { icon: 'squares-four', title: 'teams.overview.shared.kinds.accountCollections', order: 10 },
-    savedSecrets: { icon: 'key', title: 'teams.overview.shared.kinds.savedSecrets', order: 11 },
-    credentials: { icon: 'link', title: 'teams.overview.shared.kinds.credentials', order: 12 },
+    reviews: { icon: 'list-checks', title: 'teams.overview.shared.kinds.reviews', order: 9 },
+    otherArtifacts: { icon: 'files', title: 'teams.overview.shared.kinds.otherArtifacts', order: 10 },
+    accountCollections: { icon: 'squares-four', title: 'teams.overview.shared.kinds.accountCollections', order: 11 },
+    savedSecrets: { icon: 'key', title: 'teams.overview.shared.kinds.savedSecrets', order: 12 },
+    credentials: { icon: 'link', title: 'teams.overview.shared.kinds.credentials', order: 13 },
 };
 
 /** Kinds whose own list this Team page opens; Sessions and Credentials keep their shipped Team pages. */

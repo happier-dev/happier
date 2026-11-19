@@ -16062,6 +16062,7 @@ const catalan: TeamsTranslationRoot = {
                     projectSources: "Fonts de projecte",
                     projectDocuments: "Documents",
                     prompts: "Indicacions",
+                    reviews: "Revisions",
                     otherArtifacts: "Altres fitxers",
                     accountCollections: "Col·leccions",
                     savedSecrets: "Secrets desats",

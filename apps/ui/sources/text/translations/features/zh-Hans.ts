@@ -15923,6 +15923,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                     projectSources: "项目源",
                     projectDocuments: "文档",
                     prompts: "提示词",
+                    reviews: "评审",
                     otherArtifacts: "其他文件",
                     accountCollections: "集合",
                     savedSecrets: "已保存的密钥",

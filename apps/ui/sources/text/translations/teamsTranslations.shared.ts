@@ -39,6 +39,7 @@ export const english = {
                     projectSources: "Project sources",
                     projectDocuments: "Documents",
                     prompts: "Prompts",
+                    reviews: "Reviews",
                     otherArtifacts: "Other files",
                     accountCollections: "Collections",
                     savedSecrets: "Saved secrets",

@@ -478,6 +478,23 @@ describe('TeamSettingsScreen', () => {
         expect(request).not.toHaveProperty('defaultSessionHistoryAccess');
     });
 
+    it('orders shared Reviews before other files and opens their resource list', async () => {
+        const { TeamSharedResourcesView } = await import('./TeamSharedResourcesSection');
+        const open = vi.fn();
+        const screen = await renderScreen(<TeamSharedResourcesView
+            teamName="Design" serverId="home-a"
+            summary={{ status: 'ready', kinds: [
+                { kind: 'otherArtifacts', status: 'available', count: 1 },
+                { kind: 'reviews', status: 'available', count: 2 },
+            ], error: null, reload: vi.fn() }}
+            destinationOf={kind => `/settings/teams/team-1/shared/${kind}`} onOpen={open}
+        />);
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.indexOf('team-overview-shared:reviews')).toBeLessThan(ids.indexOf('team-overview-shared:otherArtifacts'));
+        await screen.pressByTestIdAsync('team-overview-shared:reviews');
+        expect(open).toHaveBeenCalledWith('/settings/teams/team-1/shared/reviews');
+    });
+
     it('changes Review creation policy independently and retains the published choice after refusal for retry', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ managePolicy: true }),

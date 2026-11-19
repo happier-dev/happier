@@ -16073,6 +16073,7 @@ const russian: TeamsTranslationRoot = {
                     projectSources: "Источники проектов",
                     projectDocuments: "Документы",
                     prompts: "Промпты",
+                    reviews: "Ревью",
                     otherArtifacts: "Другие файлы",
                     accountCollections: "Коллекции",
                     savedSecrets: "Сохранённые секреты",
