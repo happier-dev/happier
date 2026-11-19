@@ -3905,6 +3905,7 @@ const browserPresenceTranslations = { ca: {
             endedTitle: ({ agent }) => `${agent} ha tancat aquest navegador`,
             endedTitleAgentless: "S’ha tancat aquest navegador",
             endedBody: 'La pàgina ja no es mostra aquí.',
+            stoppedTitle: 'Aquest navegador s’ha aturat',
             openPageHere: "Obre la pàgina aquí",
             unavailableTitle: ({ agent }) => `No es pot mostrar el navegador de ${agent} aquí`,
             setupTitle: ({ agent }) => `El navegador de ${agent} encara no està configurat`,

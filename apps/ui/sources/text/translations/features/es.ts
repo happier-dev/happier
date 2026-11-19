@@ -3800,6 +3800,7 @@ const browserPresenceTranslations = { es: {
             endedTitle: ({ agent }) => `${agent} cerró este navegador`,
             endedTitleAgentless: "Este navegador se cerró",
             endedBody: 'La página ya no se muestra aquí.',
+            stoppedTitle: 'Este navegador se ha detenido',
             openPageHere: "Abrir la página aquí",
             unavailableTitle: ({ agent }) => `No se puede mostrar aquí el navegador de ${agent}`,
             setupTitle: ({ agent }) => `El navegador de ${agent} aún no está configurado`,

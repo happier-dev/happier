@@ -3803,6 +3803,7 @@ const browserPresenceTranslations = { 'zh-Hans': {
             endedTitle: ({ agent }) => `${agent} 关闭了这个浏览器`,
             endedTitleAgentless: "这个浏览器已关闭",
             endedBody: '此页面不再在这里显示。',
+            stoppedTitle: '此浏览器已停止',
             openPageHere: "在此打开页面",
             unavailableTitle: ({ agent }) => `无法在这里显示 ${agent} 的浏览器`,
             setupTitle: ({ agent }) => `${agent} 的浏览器尚未设置`,

@@ -64,6 +64,7 @@ export type BrowserPresenceTranslations = Readonly<{
         endedTitle: (params: AgentParams) => string;
         endedTitleAgentless: string;
         endedBody: string;
+        stoppedTitle: string;
         openPageHere: string;
         setupTitle: (params: AgentParams) => string;
         unavailableTitle: (params: AgentParams) => string;
@@ -170,6 +171,7 @@ export const browserPresenceTranslationsEnglish = { en: {
             endedTitle: ({ agent }) => `${agent} closed this browser`,
             endedTitleAgentless: "This browser was closed",
             endedBody: 'The page is no longer being shown here.',
+            stoppedTitle: 'This browser stopped',
             openPageHere: "Open page here",
             setupTitle: ({ agent }) => `${agent}’s browser isn’t set up yet`,
             unavailableTitle: ({ agent }) => `Can’t show ${agent}’s browser here`,

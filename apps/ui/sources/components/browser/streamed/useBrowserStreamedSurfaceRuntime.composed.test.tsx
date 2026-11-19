@@ -1243,7 +1243,11 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 });
                 // The engine's terminal cause must reach the person after capture teardown;
                 // retaining it only in Browser state leaves the viewer's recovery unexplained.
-                expect(screen.findByType(SurfaceStateCard).props.diagnosticCode).toBe('cdp_transport_closed');
+                const { t } = await import('@/text');
+                const card = screen.findByType(SurfaceStateCard);
+                expect(card.props.diagnosticCode).toBe('cdp_transport_closed');
+                expect(card.props.title).toBe(t('browserPresence.stream.stoppedTitle'));
+                expect(card.props.reason).toBe(t('browserPresence.stream.endedBody'));
                 expect(boundary.listeners.size).toBe(0);
             }
             expect(details.groupsById[details.focusedGroupId!].activeTabKey).toBe(removed ? parentTab.key : tab.key);
@@ -1252,6 +1256,15 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 // One reconciliation decides closure. Selecting the opener can then discover its
                 // own source; retained/error tabs must not keep retrying the unavailable capture.
                 expect(removed ? discoveryReadsWhenClosed : discoveryReadCount()).toBe(discoveryReadsBeforeClose + 1);
+            }
+            if (unavailable) {
+                const readsBeforeRetry = discoveryReadCount();
+                await act(async () => { screen.findByType(SurfaceStateCard).props.action.onPress(); });
+                await flushHookEffects({ cycles: 6, turns: 6 });
+                expect(discoveryReadCount()).toBe(readsBeforeRetry + 1);
+                expect(details.tabsByKey[tab.key]).toBeDefined();
+                expect(screen.findByType(SurfaceStateCard).props.diagnosticCode).toBe('cdp_transport_closed');
+                expect(screen.findByType(BrowserShell).props.state.viewsById.popup.loadingState).toBe('failed');
             }
         } finally {
             boundary.relaySend = null;

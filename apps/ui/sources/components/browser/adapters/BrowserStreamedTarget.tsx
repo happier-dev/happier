@@ -81,6 +81,8 @@ export type BrowserStreamedSurfaceRuntime = Readonly<{
     unavailableReason?: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }>['reason'];
     /** The lifecycle owner's terminal cause survives retirement of the capture stream. */
     diagnosticCode?: string;
+    /** The lifecycle reducer reports a crashed view or unavailable adapter. */
+    terminal?: boolean;
     /** Try to open the stream again after it failed. */
     onRetry?: () => void;
     /**
@@ -359,7 +361,7 @@ export function BrowserStreamedTarget(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     const playerState = props.runtime?.playerState ?? null;
-    const surfaceState = resolveBrowserStreamedSurfaceState(playerState);
+    const surfaceState = props.runtime?.terminal ? 'unavailable' : resolveBrowserStreamedSurfaceState(playerState);
     const machineName = props.runtime?.machineName ?? null;
     const pictureUp = surfaceState === 'live' || surfaceState === 'stalled';
     const [viewport, setViewport] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
@@ -411,7 +413,7 @@ export function BrowserStreamedTarget(props: Readonly<{
     }, [onPageRectChange, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize]); // eslint-disable-line react-hooks/exhaustive-deps
     React.useEffect(() => () => onPageRectChange?.(null), [onPageRectChange]);
 
-    if (surfaceState === 'connecting' || (props.runtime?.connecting && surfaceState === 'unavailable')) {
+    if (surfaceState === 'connecting' || (props.runtime?.connecting && !props.runtime.terminal && surfaceState === 'unavailable')) {
         return (
             <BrowserStreamedConnecting
                 testID={`${props.testID}-connecting`}
@@ -443,8 +445,8 @@ export function BrowserStreamedTarget(props: Readonly<{
                 <SurfaceStateCard
                     kind="unavailable"
                     iconName="eye-slash"
-                    title={props.agentless ? t('browserPresence.stream.unavailableTitleAgentless') : t('browserPresence.stream.unavailableTitle', { agent: props.agentName })}
-                    reason={props.agentless ? t('browserPresence.stream.unavailableBodyAgentless') : t('browserPresence.stream.unavailableBody', { agent: props.agentName })}
+                    title={props.runtime?.terminal ? t('browserPresence.stream.stoppedTitle') : props.agentless ? t('browserPresence.stream.unavailableTitleAgentless') : t('browserPresence.stream.unavailableTitle', { agent: props.agentName })}
+                    reason={props.runtime?.terminal ? t('browserPresence.stream.endedBody') : props.agentless ? t('browserPresence.stream.unavailableBodyAgentless') : t('browserPresence.stream.unavailableBody', { agent: props.agentName })}
                     diagnosticCode={props.runtime?.diagnosticCode ?? playerState?.diagnostic?.reasonCode}
                     action={onRetry ? { label: t('browserPresence.stream.tryAgain'), onPress: onRetry } : undefined}
                 />

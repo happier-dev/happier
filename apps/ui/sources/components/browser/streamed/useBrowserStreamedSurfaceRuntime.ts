@@ -350,6 +350,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         return {
             machineName,
             connecting,
+            terminal: view.adapterRefreshStatus === 'error',
             ...(unavailableReason ? { unavailableReason } : {}),
             ...(view.loadingState === 'failed' && view.lastError ? { diagnosticCode: view.lastError } : {}),
             playerState,

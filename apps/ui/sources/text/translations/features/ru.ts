@@ -3931,6 +3931,7 @@ const browserPresenceTranslations = { ru: {
             endedTitle: ({ agent }) => `${agent} закрыл этот браузер`,
             endedTitleAgentless: "Этот браузер закрыт",
             endedBody: 'Страница здесь больше не показывается.',
+            stoppedTitle: 'Этот браузер остановлен',
             openPageHere: "Открыть страницу здесь",
             unavailableTitle: ({ agent }) => `Браузер ${agent} нельзя показать здесь`,
             setupTitle: ({ agent }) => `Браузер ${agent} ещё не настроен`,

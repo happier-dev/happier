@@ -3918,6 +3918,7 @@ const browserPresenceTranslations = { de: {
             endedTitle: ({ agent }) => `${agent} hat diesen Browser geschlossen`,
             endedTitleAgentless: "Dieser Browser wurde geschlossen",
             endedBody: 'Die Seite wird hier nicht mehr angezeigt.',
+            stoppedTitle: 'Dieser Browser wurde beendet',
             openPageHere: "Seite hier öffnen",
             unavailableTitle: ({ agent }) => `Der Browser von ${agent} kann hier nicht angezeigt werden`,
             setupTitle: ({ agent }) => `Der Browser von ${agent} ist noch nicht eingerichtet`,

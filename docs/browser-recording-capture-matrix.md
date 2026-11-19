@@ -287,6 +287,10 @@ daemons without terminal projections still deliver live lifecycle events; a
 missed terminal event leaves the tab available for recovery instead of inventing
 a close. This uses the existing version 1 view/event shapes, with no new wire
 field, event kind, persisted state, timer or retention budget.
+A terminal adapter/view failure keeps the recovery card and its cause, but says
+the browser stopped rather than claiming the page is still open. Try again
+rechecks discovery and reconnects available capture; it does not start Chromium.
+If the producer still reports the terminal cause, the tab and failure remain.
 
 Desktop recording capability uses the actual reverse-capture handler registration for the view's
 machine as well as the native capture shape. The surface refreshes that capability when handler

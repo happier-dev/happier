@@ -3863,6 +3863,7 @@ const browserPresenceTranslations = { ja: {
             endedTitle: ({ agent }) => `${agent} がこのブラウザを閉じました`,
             endedTitleAgentless: "このブラウザは閉じられました",
             endedBody: 'このページはここには表示されなくなりました。',
+            stoppedTitle: 'このブラウザーは停止しました',
             openPageHere: "ここでページを開く",
             unavailableTitle: ({ agent }) => `${agent} のブラウザをここに表示できません`,
             setupTitle: ({ agent }) => `${agent} のブラウザーはまだセットアップされていません`,

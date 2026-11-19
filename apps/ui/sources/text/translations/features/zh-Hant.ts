@@ -3804,6 +3804,7 @@ const browserPresenceTranslations = { 'zh-Hant': {
             endedTitle: ({ agent }) => `${agent} 關閉了這個瀏覽器`,
             endedTitleAgentless: "這個瀏覽器已關閉",
             endedBody: '此頁面已不再顯示於此。',
+            stoppedTitle: '此瀏覽器已停止',
             openPageHere: "在此開啟頁面",
             unavailableTitle: ({ agent }) => `無法在這裡顯示 ${agent} 的瀏覽器`,
             setupTitle: ({ agent }) => `${agent} 的瀏覽器尚未設定`,
