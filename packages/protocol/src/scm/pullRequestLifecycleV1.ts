@@ -3,9 +3,10 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmHostingRepositoryIdentityV1Schema } from './hostingRepositoryIdentity.js';
 
-export const ScmHostingPullRequestLifecycleActionV1Schema = lazyZodSchema(() => z.enum([
-    'opened', 'reopened', 'synchronize', 'closed', 'merged',
-]));
+import { SCM_HOSTING_PULL_REQUEST_LIFECYCLE_ACTIONS_V1 } from './pullRequestLifecycleActionsV1.js';
+export { SCM_HOSTING_PULL_REQUEST_ACTIVE_ACTIONS_V1 } from './pullRequestLifecycleActionsV1.js';
+
+export const ScmHostingPullRequestLifecycleActionV1Schema = lazyZodSchema(() => z.enum(SCM_HOSTING_PULL_REQUEST_LIFECYCLE_ACTIONS_V1));
 export const ScmHostingPullRequestAuthorAssociationV1Schema = lazyZodSchema(() => z.enum([
     'internal', 'external', 'unknown',
 ]));
