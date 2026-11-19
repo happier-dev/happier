@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ReviewStartInputSchema, reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewReviewerSelectionV1Schema, ReviewStartInputSchema, reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { buildReviewStartWithWalkthroughInput, resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from './reviewWalkthroughPlan';
 
@@ -13,7 +13,7 @@ describe('resolveReviewWalkthroughPlan', () => {
         for (const reviewer of [
             { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'alice' }, required: true },
             { kind: 'session' as const, session: { serverId: 'home', sessionId: 'reviewer-session' } },
-        ]) {
+        ].map(reviewer => ReviewReviewerSelectionV1Schema.parse(reviewer))) {
             const input = { engines: [], reviewers: [reviewer], walkthrough: false, narratorEngineId: null };
             const plan = resolveReviewWalkthroughPlan(input);
             expect(plan).toMatchObject({ canStart: true, blocked: null });
@@ -81,7 +81,8 @@ describe('resolveReviewWalkthroughPlan', () => {
 describe('buildReviewStartWithWalkthroughInput', () => {
     it('builds a schema-valid detached review without a Session field', () => {
         const reviewers = [{ kind: 'engine' as const, engineId: 'claude', modelId: 'precise', roleId: 'reviewer' },
-            { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'alice' }, required: true }];
+            { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'alice' }, required: true }]
+            .map(reviewer => ReviewReviewerSelectionV1Schema.parse(reviewer));
         const plan = resolveReviewWalkthroughPlan({ engines: [CLAUDE], reviewers, walkthrough: false, narratorEngineId: null });
         const input = buildReviewStartWithWalkthroughInput({ sessionId: null, machineId: 'm1', cwd: '/repo',
             plan, instructions: 'Review.', comparisonId: 'cmp-1', pending: true });
