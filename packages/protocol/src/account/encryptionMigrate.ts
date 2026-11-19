@@ -1653,30 +1653,52 @@ export const AccountEncryptionMigrateSettingsHistoryDirectiveSchema = lazyZodSch
 })));
 export type AccountEncryptionMigrateSettingsHistoryDirective = z.infer<typeof AccountEncryptionMigrateSettingsHistoryDirectiveSchema>;
 
-/**
- * Exact replacement of one Account-owned label during an Account mode
- * transition. The expected reader projection binds the source row without
- * disclosing additional recipient envelopes in the signed request.
- */
-export const AccountEncryptionMigratePrivateLabelItemV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({
+const AccountEncryptionMigrateApiTokenLabelSourceV1Schema = lazyZodSchema(() => z.strictObject({
     entity: z.literal('account_api_token'),
     field: z.literal('label'),
     id: z.string().check(z.minLength(1), z.trim()),
-    expectedLabel: PrivateLabelReadV1Schema,
-    label: PrivateLabelStoredV1Schema,
-  }),
-  z.strictObject({
+    label: PrivateLabelReadV1Schema,
+}));
+const AccountEncryptionMigrateHomeLabelSourceV1Schema = lazyZodSchema(() => z.strictObject({
     entity: z.literal('account_directory_home'),
     field: z.literal('label'),
     id: z.string().check(z.minLength(1), z.trim()),
-    expectedLabel: PrivateLabelReadV1Schema,
-    label: PrivateLabelStoredV1Schema,
-  }),
-  z.strictObject({
+    label: PrivateLabelReadV1Schema,
+}));
+const AccountEncryptionMigratePoolLabelSourceV1Schema = lazyZodSchema(() => z.strictObject({
     entity: z.literal('machine_pool'),
     field: z.union([z.literal('name'), z.literal('description')]),
     id: z.string().check(z.minLength(1), z.trim()),
+    label: PrivateLabelReadV1Schema,
+}));
+
+/** The Home's complete source census for an Account-private-label transition. */
+export const AccountEncryptionMigratePrivateLabelSourceV1Schema = lazyZodSchema(() => z.union([
+  AccountEncryptionMigrateApiTokenLabelSourceV1Schema,
+  AccountEncryptionMigrateHomeLabelSourceV1Schema,
+  AccountEncryptionMigratePoolLabelSourceV1Schema,
+]));
+export type AccountEncryptionMigratePrivateLabelSourceV1 = Readonly<z.infer<
+  typeof AccountEncryptionMigratePrivateLabelSourceV1Schema
+>>;
+export const AccountEncryptionMigratePrivateLabelInventoryV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(AccountEncryptionMigratePrivateLabelSourceV1Schema),
+}));
+export type AccountEncryptionMigratePrivateLabelInventoryV1 = Readonly<z.infer<
+  typeof AccountEncryptionMigratePrivateLabelInventoryV1Schema
+>>;
+
+/** Exact replacement binds the source projection without disclosing other recipient envelopes. */
+export const AccountEncryptionMigratePrivateLabelItemV1Schema = lazyZodSchema(() => z.union([
+  z.extend(AccountEncryptionMigrateApiTokenLabelSourceV1Schema, {
+    expectedLabel: PrivateLabelReadV1Schema,
+    label: PrivateLabelStoredV1Schema,
+  }),
+  z.extend(AccountEncryptionMigrateHomeLabelSourceV1Schema, {
+    expectedLabel: PrivateLabelReadV1Schema,
+    label: PrivateLabelStoredV1Schema,
+  }),
+  z.extend(AccountEncryptionMigratePoolLabelSourceV1Schema, {
     expectedLabel: PrivateLabelReadV1Schema,
     label: PrivateLabelStoredV1Schema,
   }),

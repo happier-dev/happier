@@ -2,10 +2,9 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import {
     openPrivateLabelV1,
     sealPrivateLabelV1,
-    type PrivateLabelReadV1,
     type PrivateLabelStoredV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
-import type { AccountEncryptionMigratePrivateLabelsDirectiveV1 } from '@happier-dev/protocol/account/encryptionMigrate';
+import type { AccountEncryptionMigratePrivateLabelsDirectiveV1, AccountEncryptionMigratePrivateLabelSourceV1 } from '@happier-dev/protocol/account/encryptionMigrate';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -15,25 +14,7 @@ import {
     type AccountEncryptionMigrationScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 
-export type AccountEncryptionMigrationPrivateLabelCandidate =
-    | Readonly<{
-        entity: 'account_api_token';
-        field: 'label';
-        id: string;
-        label: PrivateLabelReadV1;
-    }>
-    | Readonly<{
-        entity: 'account_directory_home';
-        field: 'label';
-        id: string;
-        label: PrivateLabelReadV1;
-    }>
-    | Readonly<{
-        entity: 'machine_pool';
-        field: 'name' | 'description';
-        id: string;
-        label: PrivateLabelReadV1;
-    }>;
+export type AccountEncryptionMigrationPrivateLabelCandidate = AccountEncryptionMigratePrivateLabelSourceV1;
 
 function privateLabelBinding(
     candidate: AccountEncryptionMigrationPrivateLabelCandidate,

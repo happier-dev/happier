@@ -1699,6 +1699,15 @@ The marker is read-only and is rejected by the stored/new-write schema. Reads
 do not rewrite rows. An explicit Account-mode change includes legacy personal
 Pool names and descriptions in its complete label census.
 
+Account-mode conversion reads that complete local Home census through
+`GET /v1/account/encryption/migrate/private-labels/inventory`, using the same
+source-row owner as the atomic label rewrite. A present-user Home credential
+can read its own API-token, Home-directory and personal Pool labels; this does
+not grant Account Directory authority. The persisted Account mode admits every
+projection, and an inconsistent label refuses the inventory rather than being
+omitted. The new inventory is an unreleased 0.3 contract; matching UI, Protocol
+and Home server source load together, without a stored-format change.
+
 Installation grants likewise retain the old authenticated name-addressed subject
 and its original sealed definition on reads. The stored Environment reader keeps
 bindings without an opaque reference intact, and the host can still inject them.

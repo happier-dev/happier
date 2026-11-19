@@ -7,7 +7,9 @@ import {
     type PrivateLabelStoredV1,
 } from "@happier-dev/protocol";
 import { decodeBase64 } from "@happier-dev/protocol/crypto/base64";
-import { type AccountEncryptionMigratePrivateLabelsDirectiveV1 } from "@happier-dev/protocol/account/encryptionMigrate";
+import { type AccountEncryptionMigratePrivateLabelsDirectiveV1,
+    type AccountEncryptionMigratePrivateLabelSourceV1,
+    type AccountEncryptionMigratePrivateLabelInventoryV1 } from "@happier-dev/protocol/account/encryptionMigrate";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -18,6 +20,7 @@ import {
     type ResourceRecipientEnvelopeRow,
 } from "@/app/encryption/savedSecretRecipientEnvelopeCensus";
 import type { Tx } from "@/storage/inTx";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 
 /** The persisted Account mode, rather than a caller's claimed mode, admits a label. */
 export type AccountPrivateLabelModeV1 = "plain" | "e2ee";
@@ -111,25 +114,11 @@ export type AccountPrivateLabelMigrationResultV1 = Readonly<{
     status: "applied" | "migration_incomplete" | "invalid_content";
 }>;
 
-type AccountPrivateLabelMigrationSourceRowV1 =
-    | Readonly<{
-        entity: "account_api_token";
-        field: "label";
-        id: string;
-        serialized: string;
-    }>
-    | Readonly<{
-        entity: "account_directory_home";
-        field: "label";
-        id: string;
-        serialized: string;
-    }>
-    | Readonly<{
-        entity: "machine_pool";
-        field: "name" | "description";
-        id: string;
-        serialized: string;
-    }>;
+type AccountPrivateLabelMigrationSourceRowV1 = {
+    [Entity in AccountEncryptionMigratePrivateLabelSourceV1["entity"]]:
+        Omit<Extract<AccountEncryptionMigratePrivateLabelSourceV1, { entity: Entity }>, "label">
+        & Readonly<{ serialized: string }>;
+}[AccountEncryptionMigratePrivateLabelSourceV1["entity"]];
 
 function accountPrivateLabelMigrationIdentity(
     value: Readonly<{ entity: string; field: string; id: string }>,
@@ -137,32 +126,22 @@ function accountPrivateLabelMigrationIdentity(
     return `${value.entity}:${value.field}:${value.id}`;
 }
 
-/**
- * Rewrites every persisted Account-owned label inside the incumbent Account
- * mode transaction. It uses the source reader projection as an exact census
- * witness and accepts an E2EE target only for the verified target Account key.
- */
-export async function migrateAccountPrivateLabelsForModeInTx(
+/** Inventory and mutation consume the same complete local Home census. */
+async function readAccountPrivateLabelMigrationRowsInTx(
     tx: Tx,
-    input: Readonly<{
-        accountId: string;
-        fromMode: AccountPrivateLabelModeV1;
-        toMode: AccountPrivateLabelModeV1;
-        ownerContentPublicKeyFingerprint: string | null;
-        directive: AccountEncryptionMigratePrivateLabelsDirectiveV1 | undefined;
-    }>,
-): Promise<AccountPrivateLabelMigrationResultV1> {
+    accountId: string,
+): Promise<readonly AccountPrivateLabelMigrationSourceRowV1[]> {
     const [apiTokens, homes, personalPools] = await Promise.all([
         tx.accountApiToken.findMany({
-            where: { accountId: input.accountId },
+            where: { accountId },
             select: { id: true, label: true },
         }),
         tx.accountHomeDirectoryEntry.findMany({
-            where: { accountId: input.accountId },
+            where: { accountId },
             select: { homeServerIdentityId: true, label: true },
         }),
         tx.machinePool.findMany({
-            where: { accountId: input.accountId, teamId: null },
+            where: { accountId, teamId: null },
             select: { id: true, name: true, description: true },
         }),
     ]);
@@ -186,7 +165,7 @@ export async function migrateAccountPrivateLabelsForModeInTx(
         }
         return rows;
     });
-    const sourceRows: AccountPrivateLabelMigrationSourceRowV1[] = [
+    return [
         ...apiTokens.map((row) => ({
             entity: "account_api_token" as const,
             field: "label" as const,
@@ -205,6 +184,42 @@ export async function migrateAccountPrivateLabelsForModeInTx(
             })),
         ...poolRows,
     ];
+}
+
+export async function readAccountPrivateLabelMigrationInventoryInTx(
+    tx: Tx,
+    accountId: string,
+): Promise<Readonly<{ kind: "available"; inventory: AccountEncryptionMigratePrivateLabelInventoryV1 }>
+    | Readonly<{ kind: "encryption_unavailable" }>> {
+    const account = await tx.account.findUnique({ where: { id: accountId }, select: { encryptionMode: true } });
+    const mode = account && resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+    if (!mode || mode.status !== "ready") return { kind: "encryption_unavailable" };
+    const items: AccountEncryptionMigratePrivateLabelSourceV1[] = [];
+    for (const { serialized, ...identity } of await readAccountPrivateLabelMigrationRowsInTx(tx, accountId)) {
+        const projection = projectAccountPrivateLabelForRecipientV1({
+            serialized, mode: mode.mode, recipientAccountId: accountId,
+        });
+        if (projection.kind !== "available") return { kind: "encryption_unavailable" };
+        items.push({ ...identity, label: projection.label });
+    }
+    return { kind: "available", inventory: { items } };
+}
+
+/**
+ * Rewrites the census inside the incumbent Account mode transaction, binding
+ * source projections and accepting E2EE only for the verified target key.
+ */
+export async function migrateAccountPrivateLabelsForModeInTx(
+    tx: Tx,
+    input: Readonly<{
+        accountId: string;
+        fromMode: AccountPrivateLabelModeV1;
+        toMode: AccountPrivateLabelModeV1;
+        ownerContentPublicKeyFingerprint: string | null;
+        directive: AccountEncryptionMigratePrivateLabelsDirectiveV1 | undefined;
+    }>,
+): Promise<AccountPrivateLabelMigrationResultV1> {
+    const sourceRows = await readAccountPrivateLabelMigrationRowsInTx(tx, input.accountId);
     const itemsByIdentity = new Map<string, AccountEncryptionMigratePrivateLabelsDirectiveV1["items"][number]>();
     for (const item of input.directive?.items ?? []) {
         const identity = accountPrivateLabelMigrationIdentity(item);

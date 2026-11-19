@@ -152,6 +152,7 @@ import { matchMcpServerCatalogAccountMigrationPostStateInTx, migrateMcpServerCat
 import { matchProviderConnectionsAccountMigrationPostStateInTx, migrateProviderConnectionsForAccountModeInTx } from '@/app/account/providers/providerConnectionsEncryptionMigration';
 import { migrateSavedSecretResourcesForAccountModeInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { migrateAccountPrivateLabelsForModeInTx } from '@/app/encryption/accountPrivateLabelContent';
+import { registerAccountEncryptionPrivateLabelInventoryRoute } from "./registerAccountEncryptionPrivateLabelInventoryRoute";
 import { ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import {
     migrateAccountManagedMachinePresetsForModeInTx,
@@ -537,6 +538,7 @@ async function authorizeAccountEncryptionTransitionFromHttpRequestInTx(
 }
 
 export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
+    registerAccountEncryptionPrivateLabelInventoryRoute(app);
     app.get('/v1/account/encryption/migrate/todos/inventory', {
         preHandler: [app.authenticate, requirePresentUser],
         schema: { response: { 200: AccountEncryptionMigrateTodosInventoryResponseSchema, 403: PresentUserRequiredResponseSchema } },
