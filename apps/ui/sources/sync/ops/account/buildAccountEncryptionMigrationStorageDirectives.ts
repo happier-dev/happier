@@ -43,6 +43,7 @@ import {
     type AccountEncryptionMigrationScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { buildReviewCommentAccountEncryptionMigrationDirective } from '@/sync/domains/reviews/comments/accountEncryptionMigration';
+import { buildArtifactActionTriggerDefinitionsAccountEncryptionMigration } from './buildArtifactActionTriggerDefinitionsAccountEncryptionMigration';
 import { buildSessionOrganizationAccountEncryptionMigrationDirective } from '@/sync/ops/sessionOrganization/sessionOrganizationDisplayEnvelope';
 import { buildAccountEncryptionMigrationAutomations } from './buildAccountEncryptionMigrationAutomations';
 import { decodeAccountStoredJsonContent, encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
@@ -79,6 +80,7 @@ export type AccountEncryptionMigrationKvRow = Readonly<{
 
 export type AccountEncryptionMigrationArtifactRow = Readonly<{
     id: string;
+    actionTriggerDefinitions?: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['actionTriggerDefinitions'];
     ownership: ArtifactAccountEncryptionMigrationOwnershipV1;
     publicAudience: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['publicAudience'];
     header: string;
@@ -483,6 +485,10 @@ async function buildArtifactDirective(params: Readonly<{
         if (params.toMode === 'plain') {
             items.push({
                 artifactId: row.id,
+                ...(row.actionTriggerDefinitions ? { actionTriggerDefinitions: { expected: row.actionTriggerDefinitions,
+                    target: await buildArtifactActionTriggerDefinitionsAccountEncryptionMigration({
+                        definitions: row.actionTriggerDefinitions, fromMode: params.fromMode, toMode: params.toMode,
+                        sourceEncryption: opened.encryption, targetEncryption: null }) } } : {}),
                 expectedHeaderVersion: row.headerVersion,
                 expectedBodyVersion: row.bodyVersion,
                 expectedDataEncryptionKey: row.dataEncryptionKey,
@@ -524,6 +530,10 @@ async function buildArtifactDirective(params: Readonly<{
         const artifactEncryption = new ArtifactEncryption(dataKey);
         items.push({
             artifactId: row.id,
+            ...(row.actionTriggerDefinitions ? { actionTriggerDefinitions: { expected: row.actionTriggerDefinitions,
+                target: await buildArtifactActionTriggerDefinitionsAccountEncryptionMigration({
+                    definitions: row.actionTriggerDefinitions, fromMode: params.fromMode, toMode: params.toMode,
+                    sourceEncryption: opened.encryption, targetEncryption: artifactEncryption }) } } : {}),
             blobs: await convertBlobs(artifactEncryption),
             expectedHeaderVersion: row.headerVersion,
             expectedBodyVersion: row.bodyVersion,

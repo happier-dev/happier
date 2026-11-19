@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { ActionAutomationIndexRowV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { ActionAutomationIndexRowV1Schema, AutomationActionTriggerDefinitionEnvelopeV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { automationSubjectSharedKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import { automationActionTriggerConfigurationSelect, decodeAutomationActionTriggerConfiguration,
@@ -8,21 +8,30 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { afterTx, type Tx } from '@/storage/inTx';
 import { emitAutomationUpsert } from './automationChangePublisher';
 
-/** The seed and each pushed replacement read routing facts, never private definitions. */
+/** The seed and pushed replacements include shared content only after Workflow read admission. */
 export const automationActionIndexSelect = {
     id: true, accountId: true, workflowDefinitionId: true, scopeSessionId: true,
     templateVersion: true, enabled: true, deletedAt: true, updatedAt: true,
     triggers: { where: { kind: 'action' }, select: {
-        id: true, kind: true, revision: true, enabled: true, deletedAt: true, ...automationActionTriggerConfigurationSelect,
+        id: true, kind: true, revision: true, enabled: true, deletedAt: true, definitionEnvelope: true,
+        ...automationActionTriggerConfigurationSelect,
     } },
 } satisfies Prisma.AutomationSelect;
 type SelectedDefinition = Prisma.AutomationGetPayload<{ select: typeof automationActionIndexSelect }>;
 export type AutomationActionIndexDefinition = Readonly<Omit<SelectedDefinition, 'triggers' | 'deletedAt'> & {
     deletedAt?: Date | null;
-    triggers: readonly (Readonly<Pick<SelectedDefinition['triggers'][number], 'id' | 'kind' | 'revision' | 'enabled' | 'deletedAt'>>
+    triggers: readonly (Readonly<Pick<SelectedDefinition['triggers'][number], 'id' | 'kind' | 'revision' | 'enabled' | 'deletedAt' | 'definitionEnvelope'>>
         & AutomationActionTriggerColumns)[];
 }>;
 export type AutomationActionIndexRow = ReturnType<typeof ActionAutomationIndexRowV1Schema.parse>;
+
+function readSharedDefinitionEnvelope(raw: string | null) {
+    if (raw === null) return undefined;
+    try {
+        const parsed = AutomationActionTriggerDefinitionEnvelopeV1Schema.safeParse(JSON.parse(raw));
+        return parsed.success && parsed.data.t === 'workflow' ? parsed.data.content : undefined;
+    } catch { return undefined; }
+}
 
 /** Stored write-time reach decides shared summaries and host tuples at the same owner. */
 export function canProjectSharedAutomationTriggerSummary(
@@ -65,8 +74,11 @@ export function projectAutomationActionIndexRows(row: AutomationActionIndexDefin
         }
         if (workflowRevision === undefined) return [];
         if (shared && !canProjectSharedAutomationTriggerSummary(row, configuration)) return [];
+        const sharedDefinitionEnvelope = configuration.reachesOthers && row.workflowDefinitionId !== null
+            ? readSharedDefinitionEnvelope(trigger.definitionEnvelope) : undefined;
         const { kind: _kind, ...matching } = configuration;
         return [ActionAutomationIndexRowV1Schema.parse({ ...identity, ...matching,
+            ...(sharedDefinitionEnvelope === undefined ? {} : { sharedDefinitionEnvelope }),
             ...(shared && configuration.subjectKey
                 ? { subjectKey: automationSubjectSharedKeyV1(configuration.subjectKey, workflowId) } : {}) })];
     }).sort((left, right) => left.triggerId.localeCompare(right.triggerId));

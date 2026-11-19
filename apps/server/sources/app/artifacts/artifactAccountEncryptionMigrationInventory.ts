@@ -50,7 +50,8 @@ export async function readArtifactAccountEncryptionMigrationInventoryInTx(params
             body: Buffer.from(opened.body).toString('base64'), bodyVersion: row.bodyVersion,
             dataEncryptionKey: Buffer.from(row.dataEncryptionKey).toString('base64'), revisions,
             provenance: provenance ? privacyKit.encodeBase64(provenance) : null,
-            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(row.provenanceDataEncryptionKey)) : null });
+            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(row.provenanceDataEncryptionKey)) : null,
+            ...(row.actionTriggerDefinitions ? { actionTriggerDefinitions: row.actionTriggerDefinitions } : {}) });
     }
     return { ownerAccountId: params.accountId, encryptionMode: mode.mode, items,
         nextCursor: census.length > params.limit ? items.at(-1)!.id : null };

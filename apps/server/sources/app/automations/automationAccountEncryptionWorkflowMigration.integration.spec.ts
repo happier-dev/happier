@@ -37,6 +37,40 @@ describe("active Account migration of current Workflow content (real SQLite)", (
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('keeps Workflow-key check content with the Artifact owner during Account transitions', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const workflowOwner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const workflowId = randomUUID();
+        await db.artifact.create({ data: { id: workflowId, accountId: workflowOwner.id,
+            header: new Uint8Array([1]), body: new Uint8Array([1]), dataEncryptionKey: new Uint8Array([1]) } });
+        const recipe = serializeAutomationStoredWorkflowDefinitionRecipeV2({ v: 2, templateVersion: 1,
+            workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } } }, triggerEvidence: null });
+        if (recipe.kind !== 'available') throw new Error('Expected a plain Workflow context');
+        const automationId = randomUUID();
+        const triggerId = randomUUID();
+        const shared = JSON.stringify({ t: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, content: { t: 'encrypted', c: 'artifact-key-content' } });
+        await db.automation.create({ data: { id: automationId, accountId: account.id, workflowDefinitionId: workflowId,
+            name: 'Workflow-key check', enabled: false, templateVersion: 1, templateCiphertext: recipe.serialized,
+            triggers: { create: { id: triggerId, kind: 'action', actionIdsJson: '["session.stop"]', phase: 'after',
+                definitionEnvelope: shared } } } });
+        const inventory = await inTx(tx => readAutomationAccountEncryptionMigrationInventoryInTx({ tx, accountId: account.id }));
+        expect(inventory.templates).toMatchObject([{ automationId, triggerDefinitionEnvelopes: [] }]);
+        const inspected = await inTx(tx => inspectAutomationAccountEncryptionTransitionInTx({ tx,
+            accountId: account.id, sourceMode: 'plain' }));
+        expect(inspected.status).toBe('complete');
+        if (inspected.status !== 'complete') throw new Error('Expected the Account transition source');
+        const source = inspected.page.items.find(item => item.kind === 'definition' && item.automationId === automationId);
+        if (!source || source.kind !== 'definition') throw new Error('Expected the Workflow context');
+        const target = serializeAutomationStoredWorkflowDefinitionRecipeV2({ v: 2, templateVersion: 2,
+            workflow: { t: 'encrypted', c: 'account-key-workflow-context' }, triggerEvidence: null });
+        if (target.kind !== 'available') throw new Error('Expected the target Workflow context');
+        expect(await inTx(tx => applyAutomationAccountEncryptionTransitionStageInTx({ tx,
+            accountId: account.id, fromMode: 'plain', toMode: 'e2ee', items: [{ kind: 'definition',
+                automationId, expectedRevision: source.revision, source: source.source,
+                target: { templateCiphertext: target.serialized, triggerDefinitionEnvelopes: [] } }] }))).toEqual({ status: 'applied' });
+        expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } })).definitionEnvelope).toBe(shared);
+    });
+
     async function fixture() {
         const keyPair = tweetnacl.box.keyPair();
         const binding = createSignedAccountContentBinding(keyPair.publicKey);

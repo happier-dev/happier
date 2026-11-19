@@ -1,5 +1,6 @@
 import { AutomationTriggerReferenceV1Schema } from './automationTriggerIdentity.js';
 import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema } from './automationActionIdentityV1.js';
+import { AutomationActionTriggerDefinitionEnvelopeV1Schema } from './automationActionTriggerV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
@@ -264,7 +265,7 @@ export const AutomationTriggerReconcileExistingItemSchema = lazyZodSchema(() => 
    * plain arm, so a retained row can receive a new private display without the
    * server opening it.
    */
-  triggerDefinitionEnvelope: zMini.optional(AutomationStoredContentEnvelopeV1Schema),
+  triggerDefinitionEnvelope: zMini.optional(AutomationActionTriggerDefinitionEnvelopeV1Schema),
 }).check(z.superRefine((value, context) => {
   if (
     value.triggerDefinitionEnvelope !== undefined
@@ -348,7 +349,7 @@ export const AutomationTriggerPatchRequestSchema = lazyZodSchema(() => z.strictO
    * server validates it against the unchanged public row binding and current
    * Account mode; semantic edits carry their envelope in `trigger` instead.
    */
-  triggerDefinitionEnvelope: zMini.optional(AutomationEncryptedTriggerDefinitionEnvelopeV1Schema),
+  triggerDefinitionEnvelope: zMini.optional(AutomationActionTriggerDefinitionEnvelopeV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.enabled === undefined && value.trigger === undefined) {
     context.addIssue({ code: "custom", message: 'A trigger patch must change enablement or definition' });

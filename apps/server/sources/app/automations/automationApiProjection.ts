@@ -31,6 +31,7 @@ import { projectAutomationRunState } from "./automationTypes";
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
 import { decodeAutomationActionTriggerConfiguration } from "./automationActionTriggerConfiguration";
+import { AutomationActionTriggerDefinitionEnvelopeV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { assertWorkflowStoredEnvelopeOuterForMode, WorkflowStoredContentError } from "@/app/workflows/runs/storedContent";
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
@@ -217,6 +218,19 @@ function assertPrivateTriggerDefinitionEnvelopes(
             triggerSourceSelectorId: trigger.sourceSelectorId,
         });
         if (binding === null) throw new AutomationStoredContentReadError("contentInvalid");
+        if (trigger.kind === 'action') {
+            const parsedCarrier = AutomationActionTriggerDefinitionEnvelopeV1Schema.safeParse(
+                parseStoredContentEnvelope(required(trigger.definitionEnvelope, 'definitionEnvelope')));
+            if (!parsedCarrier.success) throw new AutomationStoredContentReadError('contentInvalid');
+            const carrier = parsedCarrier.data;
+            // Artifact admission owns this carrier's mode; Account projections do not re-decide it.
+            if (carrier.t === 'workflow') {
+                if (carrier.content.t === 'plain') assertAutomationTriggerDefinitionEnvelopeOuterForMode({
+                    raw: JSON.stringify(carrier.content), mode: 'plain', binding,
+                });
+                continue;
+            }
+        }
         assertAutomationTriggerDefinitionEnvelopeOuterForMode({
             raw: required(trigger.definitionEnvelope, "definitionEnvelope"),
             mode: accountCurrentness.mode, binding,

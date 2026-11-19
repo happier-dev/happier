@@ -22,6 +22,7 @@ import {
 import { isKeepGoingTriggerTargetV1, readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../../artifacts/artifactListSelectionV1.js';
+import type { ArtifactRevisionV1 } from '../../artifacts/artifactRevisionV1.js';
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
 import { ActionRefusalDiagnosticV1Schema } from '../actionRefusalDiagnostic.js';
 import { resolveWorkflowRunVisibleTeamV1 } from '../../workflows/workflowRunVisibilityV1.js';
@@ -133,6 +134,13 @@ export type WorkflowTriggerAutomationOperations = Readonly<{
   delete: (automationId: string, current?: AutomationDefinitionListResponse['automations'][number], signal?: AbortSignal) => Promise<AutomationDeleteResponse>;
   runNow?: (automationId: string, options?: Readonly<{ idempotencyKey?: string }>, caller?: Caller) => Promise<AutomationV3RunMutationResponse>;
 }>;
+/** Associated trigger content borrows the admitted Workflow Artifact's existing mode and key. */
+type WorkflowArtifactAssociatedContentV1 = Readonly<{ t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>;
+export type WorkflowTriggerWorkflowContentV1 = Readonly<{
+  revision: ArtifactRevisionV1;
+  sealAssociatedContent(value: unknown): Promise<WorkflowArtifactAssociatedContentV1>;
+  openAssociatedContent(content: WorkflowArtifactAssociatedContentV1): Promise<unknown>;
+}>;
 export type WorkflowTriggerActionsDependencies = Readonly<{
   automations: WorkflowTriggerAutomationOperations;
   listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
@@ -154,6 +162,7 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   }>>;
   /** Authorized Artifact grant transport; visibility policy remains shared with Run admission. */
   resolveWorkflowTeamIds?: (artifactId: string) => Promise<readonly string[]>;
+  resolveWorkflowContent?: (workflowId: string) => Promise<WorkflowTriggerWorkflowContentV1>;
   /** Session transport authorizes and opens the Session; callers cannot choose placement. */
   resolveSession?: (sessionId: string, caller?: Caller, options?: Readonly<{ checkNativeGoalOwner: boolean }>) => Promise<Readonly<{
     project: WorkflowProjectTargetV1; nativeGoalOwner: boolean | null;
@@ -178,6 +187,8 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   prepareBirthTrigger?: (automationId: string, triggerId: string, trigger: AutomationTriggerDefinitionInput) => Promise<AutomationTriggerDefinitionInput>;
   openActionTrigger?: (automation: AutomationDefinitionDetail,
     trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'action' }>) => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
+  openSharedActionTrigger?: (reference: ActionAutomationSelectedTriggerV1, caller: Caller)
+    => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
   openPluginEventTrigger?: (automation: AutomationDefinitionDetail,
     trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'pluginEvent' }>) => Promise<AutomationEventTriggerDefinitionStoredPayloadV1>;
   pullRequests?: Readonly<{
@@ -837,6 +848,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   const actions = {
     prepareActionMatching: (accountId: string) => createActionAutomationPrivateMatchingV1({ accountId,
       readDefinition: readRetained,
+      ...(deps.openSharedActionTrigger ? { readSharedDefinition: deps.openSharedActionTrigger } : {}),
       openTrigger: async (row, trigger) => {
         if (!deps.openActionTrigger) refuse('target_unavailable');
         return deps.openActionTrigger(row, trigger);

@@ -21,6 +21,8 @@ import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v
 import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { formatQualifiedPluginActionId } from "@happier-dev/protocol/plugins/actions/qualifiedActionId";
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from "@happier-dev/protocol/databases/databaseTargetIdentityV1";
+import { inTx } from '@/storage/inTx';
+import { migrateArtifactAccountEncryptionInTx } from '@/app/artifacts/artifactWriteService';
 
 describe("Action occurrence admission through the real router", () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -30,6 +32,152 @@ describe("Action occurrence admission through the real router", () => {
             env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: "1", HAPPIER_FEATURE_WORKFLOWS__ENABLED: "1" } });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('normalizes raw plain saved-Workflow Action content for its admitted readers', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const workflowId = randomUUID();
+        await db.artifact.create({ data: { id: workflowId, accountId: owner.id, headerVersion: 1, bodyVersion: 1,
+            header: Buffer.from([1]), body: Buffer.from([1]), dataEncryptionKey: Buffer.from([1]) } });
+        await db.artifactGrant.create({ data: { artifactId: workflowId, principalKind: 'account', accountId: reader.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const automationId = randomUUID();
+        await db.automation.create({ data: { id: automationId, accountId: owner.id, workflowDefinitionId: workflowId,
+            name: 'Raw shared Workflow check', enabled: true, templateVersion: 1,
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: '/tmp/shared-check', prompt: 'Check' })) } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const triggerId = randomUUID();
+            const written = await app.inject({ method: 'POST', url: `/v3/automations/${automationId}/triggers`,
+                headers: { 'x-test-user-id': owner.id }, payload: { triggerId, trigger: { kind: 'action', enabled: true,
+                    phase: 'after', actionIds: ['session.archive'], subject: { kind: 'approvalProfile',
+                        serverId: await getOrCreateServerIdentityId(), profileId: workflowId },
+                    filter: { v: 1, all: [{ op: 'eq', field: '/input/reason', value: 'archive' }] } } } });
+            expect(written.statusCode, written.body).toBe(200);
+            expect(JSON.parse((await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } })).definitionEnvelope!))
+                .toMatchObject({ t: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, content: { t: 'plain' } });
+            const index = await app.inject({ method: 'GET', url: '/v1/automations/actions/index', headers: { 'x-test-user-id': reader.id } });
+            expect(index.json()).toMatchObject({ rows: [{ triggerId, sharedDefinitionEnvelope: { t: 'plain',
+                v: { definition: { filter: { v: 1, all: [{ field: '/input/reason', op: 'eq', value: 'archive' }] } } } } }] });
+        } finally { await app.close(); }
+    });
+
+    it('rejects an Action write prepared before Workflow key rotation and admits a freshly prepared write', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const workflowId = randomUUID();
+        const sourceKey = Buffer.from([3, 4]);
+        await db.artifact.create({ data: { id: workflowId, accountId: owner.id, headerVersion: 1, bodyVersion: 1,
+            header: Buffer.from([2, 1]), body: Buffer.from([2, 2]), dataEncryptionKey: sourceKey } });
+        const automationId = randomUUID();
+        await db.automation.create({ data: { id: automationId, accountId: owner.id, workflowDefinitionId: workflowId,
+            name: 'Rotated Workflow check', enabled: false, templateVersion: 1,
+            templateCiphertext: JSON.stringify({ ...createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: '/tmp/shared-check', prompt: 'Check' }), workflow: { t: 'encrypted', c: 'private-context' } }) } });
+        const stale = { t: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, content: { t: 'encrypted', c: 'sealed-with-displaced-workflow-key' } };
+        expect(await inTx(tx => migrateArtifactAccountEncryptionInTx({ tx, accountId: owner.id,
+            fromMode: 'e2ee', toMode: 'e2ee', directive: { action: 'migrate', items: [{ artifactId: workflowId,
+                expectedHeaderVersion: 1, expectedBodyVersion: 1, expectedDataEncryptionKey: sourceKey.toString('base64'),
+                header: Buffer.from([2, 3]).toString('base64'), body: Buffer.from([2, 4]).toString('base64'),
+                dataEncryptionKey: Buffer.from([5, 6]).toString('base64'), recipientKeyEnvelopes: [], blobs: [], revisions: [] }] } })))
+            .toEqual({ status: 'applied' });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const write = (triggerDefinitionEnvelope: unknown) => app.inject({ method: 'POST',
+                url: `/v3/automations/${automationId}/triggers`, headers: { 'x-test-user-id': owner.id },
+                payload: { triggerId: randomUUID(), trigger: { kind: 'action', enabled: true, phase: 'after',
+                    actionIds: ['session.archive'], triggerDefinitionEnvelope } } });
+            const rejected = await write(stale);
+            expect(rejected.statusCode, rejected.body).toBe(409);
+            expect(await db.automationTrigger.count({ where: { automationId } })).toBe(0);
+            const admitted = await write({ t: 'workflow', revision: { headerVersion: 2, bodyVersion: 2 }, content: { t: 'encrypted', c: 'sealed-with-current-workflow-key' } });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+        } finally { await app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits %s Workflow-key check content and discloses it only to Workflow readers', async mode => {
+        const workflowOwner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
+        const writerMode = mode === 'plain' ? 'e2ee' : 'plain';
+        const owner = await db.account.create({ data: { encryptionMode: writerMode,
+            ...(writerMode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
+        const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const workflowId = randomUUID();
+        await db.artifact.create({ data: { id: workflowId, accountId: workflowOwner.id, headerVersion: 1, bodyVersion: 1,
+            header: new Uint8Array([1]), body: new Uint8Array([1]), dataEncryptionKey: new Uint8Array([1]) } });
+        await db.artifactGrant.create({ data: { artifactId: workflowId, principalKind: 'account',
+            accountId: owner.id, accessLevel: 'edit', createdByAccountId: workflowOwner.id } });
+        await db.artifactGrant.create({ data: { artifactId: workflowId, principalKind: 'account',
+            accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        const automationId = randomUUID();
+        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
+        await db.automation.create({ data: { id: automationId, accountId: owner.id, workflowDefinitionId: workflowId,
+            name: 'Shared filtered check', enabled: true, templateVersion: 1,
+            assignments: { create: { machineId: machine.id } },
+            templateCiphertext: JSON.stringify({ ...createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: '/tmp/shared-check', prompt: 'Check' }), ...(writerMode === 'e2ee'
+                    ? { workflow: { t: 'encrypted', c: 'private-workflow' } } : {}) }) } });
+        const subject = { kind: 'approvalProfile' as const, serverId: await getOrCreateServerIdentityId(), profileId: workflowId };
+        const definition = { kind: 'action' as const, phase: 'after' as const, actionIds: ['session.archive'], subject,
+            filter: { v: 1, all: [{ op: 'eq', field: '/input/reason', value: 'archive' }] } };
+        const envelope = (revision: number) => ({ t: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, content: mode === 'plain'
+            ? sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, automationId, triggerId, triggerRevision: revision, triggerKind: 'action' }, definition })
+            : { t: 'encrypted', c: 'opaque-artifact-key-ciphertext' } });
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            const created = await app.inject({ method: 'POST', url: `/v3/automations/${automationId}/triggers`,
+                headers: { 'x-test-user-id': owner.id }, payload: { triggerId, trigger: { kind: 'action', enabled: true,
+                    phase: 'after', actionIds: definition.actionIds, subjectKind: subject.kind,
+                    subjectKey: automationSubjectKeyV1(subject), triggerDefinitionEnvelope: envelope(0) } } });
+            expect(created.statusCode, created.body).toBe(200);
+            const index = (accountId: string) => app.inject({ method: 'GET', url: '/v1/automations/actions/index',
+                headers: { 'x-test-user-id': accountId } });
+            expect((await index(reader.id)).json()).toMatchObject({ rows: [{ automationId, triggerId,
+                reachesOthers: true, sharedDefinitionEnvelope: envelope(0).content }] });
+            expect((await index(stranger.id)).json()).toMatchObject({ rows: [] });
+            const wrongMode = await app.inject({ method: 'POST', url: `/v3/automations/${automationId}/triggers`,
+                headers: { 'x-test-user-id': owner.id }, payload: { triggerId: randomUUID(), trigger: {
+                    kind: 'action', enabled: true, phase: 'after', actionIds: definition.actionIds,
+                    subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
+                    triggerDefinitionEnvelope: { t: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, content: mode === 'plain'
+                        ? { t: 'encrypted', c: 'wrong-resource-mode' } : { t: 'plain', v: {} } } } } });
+            expect(wrongMode.statusCode, wrongMode.body).toBe(409);
+            expect(wrongMode.json()).toEqual({ error: 'automation_stored_content_unavailable' });
+            if (mode === 'plain') {
+                const wrongBinding = await app.inject({ method: 'POST', url: `/v3/automations/${automationId}/triggers`,
+                    headers: { 'x-test-user-id': owner.id }, payload: { triggerId: randomUUID(), trigger: {
+                        kind: 'action', enabled: true, phase: 'after', actionIds: definition.actionIds,
+                        subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
+                        triggerDefinitionEnvelope: envelope(0) } } });
+                expect(wrongBinding.statusCode, wrongBinding.body).toBe(409);
+            }
+            const disabled = await app.inject({ method: 'PUT', url: `/v3/automations/${automationId}`,
+                headers: { 'x-test-user-id': owner.id }, payload: { expectedTemplateVersion: created.json().templateVersion,
+                    name: 'Shared filtered check', description: null, enabled: true,
+                    assignments: [{ machineId: machine.id }], removedTriggers: [],
+                    triggers: [{ kind: 'existing', triggerId, expectedRevision: 0, enabled: false,
+                        triggerDefinitionEnvelope: envelope(1) }] } });
+            expect(disabled.statusCode, disabled.body).toBe(200);
+            const stored = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+            expect(stored).toMatchObject({ enabled: false, revision: 1 });
+            expect(JSON.parse(stored.definitionEnvelope!)).toEqual(envelope(1));
+            const enabled = await app.inject({ method: 'PATCH', url: `/v3/automations/${automationId}/triggers`,
+                headers: { 'x-test-user-id': owner.id }, payload: { triggerId, expectedRevision: 1,
+                    enabled: true, triggerDefinitionEnvelope: envelope(2) } });
+            expect(enabled.statusCode, enabled.body).toBe(200);
+            const reenabled = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+            expect(reenabled).toMatchObject({ enabled: true, revision: 2 });
+            expect(JSON.parse(reenabled.definitionEnvelope!)).toEqual(envelope(2));
+            await db.artifactGrant.deleteMany({ where: { artifactId: workflowId, accountId: reader.id } });
+            expect((await index(reader.id)).json()).toMatchObject({ rows: [] });
+        } finally { await app.close(); }
+    });
 
     it("validates declared plugin subject identities at public Action trigger writes", async () => {
         const accountId = randomUUID();

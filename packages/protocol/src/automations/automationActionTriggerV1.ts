@@ -9,8 +9,9 @@ import {
   projectAutomationSubjectStructuralV1,
 } from './automationSubjectV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
-import { AutomationStoredContentEnvelopeV1Schema } from './automationStoredContentEnvelopeV1.js';
+import { AutomationStoredContentEnvelopeV1Schema, StoredContentEnvelopeV1Schema } from './automationStoredContentEnvelopeV1.js';
 import { AutomationEventFilterV1Schema } from './automationEventFilterV1.js';
+import { ArtifactRevisionV1Schema } from '../artifacts/artifactRevisionV1.js';
 
 export const AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 = '/v1/automations/actions/index';
 
@@ -52,9 +53,16 @@ export const AutomationActionTriggerStructuralV1Schema = lazyZodSchema(() => z.s
   ...AutomationSubjectStructuralV1Schema.shape,
   reachesOthers: z.optional(z.boolean()),
 }).check(z.superRefine(checkActionStructural)));
+/** Linked checks use the Workflow Artifact's existing content key and readership. */
+export const AutomationActionTriggerDefinitionEnvelopeV1Schema = lazyZodSchema(() => z.union([
+  AutomationStoredContentEnvelopeV1Schema,
+  z.strictObject({ t: z.literal('workflow'), revision: ArtifactRevisionV1Schema, content: AutomationStoredContentEnvelopeV1Schema }),
+]));
+export type AutomationActionTriggerDefinitionEnvelopeV1 = z.infer<typeof AutomationActionTriggerDefinitionEnvelopeV1Schema>;
+
 export const AutomationActionEncryptedTriggerSchema = lazyZodSchema(() => z.strictObject({
   ...AutomationActionTriggerStructuralV1Schema.shape,
-  triggerDefinitionEnvelope: AutomationStoredContentEnvelopeV1Schema,
+  triggerDefinitionEnvelope: AutomationActionTriggerDefinitionEnvelopeV1Schema,
 }).check(z.superRefine(checkActionStructural)));
 export type AutomationActionEncryptedTrigger = z.infer<typeof AutomationActionEncryptedTriggerSchema>;
 
@@ -82,7 +90,7 @@ export const AutomationActionTriggerInputSchema = lazyZodSchema(() => z.union([
   z.extend(AutomationActionConsentTriggerSchema, { enabled: z.boolean() }),
 ]));
 
-/** Structural projection only. Private trigger context and Workflow content never enter this index. */
+/** Shared check content follows the referenced Workflow's existing read admission. */
 export const ActionAutomationTriggerReferenceV1Schema = lazyZodSchema(() => {
   const { kind: _kind, ...matching } = AutomationActionTriggerStructuralV1Schema.shape;
   return z.strictObject({ ...matching,
@@ -90,6 +98,7 @@ export const ActionAutomationTriggerReferenceV1Schema = lazyZodSchema(() => {
     workflowId: z.string(), workflowRevision: AutomationTriggerRevisionSchema, ownerAccountId: z.string(),
     consentFor: z.optional(AutomationActionConsentTriggerSchema.shape.consentFor),
     consentedWorkflowRevision: z.optional(AutomationActionConsentTriggerSchema.shape.consentedWorkflowRevision),
+    sharedDefinitionEnvelope: z.optional(StoredContentEnvelopeV1Schema),
   });
 });
 

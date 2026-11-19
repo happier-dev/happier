@@ -34,6 +34,7 @@ import {
 } from '../../automations/automationTriggerDefinition.js';
 import {
   AutomationTriggerDefinitionBindingV1Schema,
+  AutomationTriggerDefinitionStoredPayloadV1Schema,
   automationTriggerHasPrivateDefinitionV1,
   openAutomationTriggerDefinitionStoredEnvelopeV1,
   createAutomationPluginEventTriggerDefinitionV1,
@@ -80,9 +81,11 @@ import type { ActionExecutorContext } from './types.js';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
 import { isHealthCheckEventSourceV1 } from '../../deployments/healthCheckSourceV1.js';
 import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
-import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
+import { AutomationActionTriggerSchema, AutomationActionTriggerDefinitionEnvelopeV1Schema, projectAutomationActionTriggerStructuralV1, type AutomationActionTrigger } from '../../automations/automationActionTriggerV1.js';
 import { unavailableActionAutomationMatchingV1 } from './actionAutomationAdmission.js';
 import { readActionErrorCodeV1 } from '../actionErrorClassV1.js';
+import type { AutomationStoredContentEnvelopeV1 } from '../../automations/automationStoredContentEnvelopeV1.js';
+import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 
 function unavailable(code = 'content_unavailable', details?: unknown): never {
   throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
@@ -98,7 +101,7 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
   newId: () => string;
-}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
+}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveWorkflow' | 'resolveWorkflowContent' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
 
 type WorkflowCodecParams = Pick<WorkflowTriggerAccountHostParams, 'resolveEncryption' | 'randomBytes' | 'deploymentAction'>;
 
@@ -268,6 +271,15 @@ export const readAccountStoredPluginEventTriggerV1 = (row: AutomationDefinitionD
     return { trigger, binding, definition: openEvent(binding, envelope, current, true) };
   };
 
+function assertStoredActionDefinitionMatches(definition: AutomationActionTrigger,
+  trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'action' }>) {
+  if ('consentFor' in trigger) unavailable();
+  const projected = projectAutomationActionTriggerStructuralV1(definition);
+  if (projected.phase !== trigger.phase || !pluginJsonValuesEqual(projected.actionIds, trigger.actionIds)
+    || projected.subjectKey !== trigger.subjectKey || projected.subjectKind !== trigger.subjectKind
+    || projected.mode !== trigger.mode || projected.onFailure !== trigger.onFailure) unavailable();
+}
+
 export const readAccountStoredActionTriggerV1 = (row: Pick<AutomationDefinitionDetail, 'id' | 'triggers'>, triggerId: string, current: AvailableAutomationAccountEncryptionV1) => {
     const trigger = row.triggers.find(item => item.id === triggerId);
     if (!trigger || trigger.kind !== 'action' || 'consentFor' in trigger) unavailable();
@@ -280,19 +292,48 @@ export const readAccountStoredActionTriggerV1 = (row: Pick<AutomationDefinitionD
         ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
     if (opened.kind !== 'available') unavailable();
     const definition = AutomationActionTriggerSchema.parse(opened.definition);
-    const projected = projectAutomationActionTriggerStructuralV1(definition);
-    if (projected.phase !== trigger.phase || !pluginJsonValuesEqual(projected.actionIds, trigger.actionIds)
-      || projected.subjectKey !== trigger.subjectKey || projected.subjectKind !== trigger.subjectKind
-      || projected.mode !== trigger.mode || projected.onFailure !== trigger.onFailure) unavailable();
+    assertStoredActionDefinitionMatches(definition, trigger);
     return { trigger, binding, definition };
   };
 
 /**
  * Every Account host (CLI/daemon and the UI front door) composes the one trigger owner through
- * this adapter: Automation recipe/context and private trigger envelopes are opened and sealed with
- * the caller Account's current material. Hosts supply only transport, crypto material and ids.
+ * this adapter: private Automation context uses Account material; saved-Workflow Action
+ * definitions borrow that Artifact's associated-content codec. Hosts supply transport and crypto.
  */
 function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountHostParams) {
+  const workflowContent = async (workflowId: string) => {
+    if (!params.resolveWorkflowContent) unavailable();
+    return params.resolveWorkflowContent(workflowId);
+  };
+  const openWorkflowAction = async (workflowId: string, binding: AutomationTriggerDefinitionBindingV1,
+    content: AutomationStoredContentEnvelopeV1) => {
+    const codec = await workflowContent(workflowId);
+    const payload = await codec.openAssociatedContent(content);
+    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding,
+      envelope: { t: 'plain', v: payload } });
+    if (opened.kind !== 'available') unavailable();
+    return AutomationActionTriggerSchema.parse(opened.definition);
+  };
+  const storedAction = async (row: AutomationDefinitionDetail, triggerId: string,
+    current: AvailableAutomationAccountEncryptionV1) => {
+    const trigger = row.triggers.find(item => item.id === triggerId);
+    if (!trigger || trigger.kind !== 'action' || 'consentFor' in trigger) unavailable();
+    const envelope = AutomationActionTriggerDefinitionEnvelopeV1Schema.parse(JSON.parse(trigger.triggerDefinitionEnvelope));
+    if (envelope.t !== 'workflow') return readAccountStoredActionTriggerV1(row, triggerId, current);
+    if (!row.workflowDefinitionId) unavailable();
+    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: row.id,
+      triggerId, triggerRevision: trigger.revision, triggerKind: 'action' });
+    const definition = await openWorkflowAction(row.workflowDefinitionId, binding, envelope.content);
+    assertStoredActionDefinitionMatches(definition, trigger);
+    return { trigger, binding, definition };
+  };
+  const sealWorkflowAction = async (workflowId: string, binding: AutomationTriggerDefinitionBindingV1,
+    definition: AutomationActionTrigger) => {
+    const codec = await workflowContent(workflowId);
+    const content = await codec.sealAssociatedContent(AutomationTriggerDefinitionStoredPayloadV1Schema.parse({ v: 1, binding, definition }));
+    return AutomationActionTriggerDefinitionEnvelopeV1Schema.parse({ t: 'workflow', revision: codec.revision, content });
+  };
   const readStoredLegacy = async (row: AutomationDefinitionDetail) => {
     if (row.templateCiphertext === undefined
       || (row.targetType !== 'newSession' && row.targetType !== 'existingSession')) unavailable('source_unavailable');
@@ -618,9 +659,9 @@ const storedSessionLifecycle = (row: AutomationDefinitionDetail, triggerId: stri
       }),
     };
   };
-  const preparePrivateTrigger = (automationId: string, triggerId: string, triggerRevision: number,
+  const preparePrivateTrigger = async (automationId: string, triggerId: string, triggerRevision: number,
     trigger: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1,
-    previous?: ReturnType<typeof readAccountStoredPluginEventTriggerV1>): AutomationTriggerDefinitionInput => {
+    previous?: ReturnType<typeof readAccountStoredPluginEventTriggerV1>, workflowId?: string | null): Promise<AutomationTriggerDefinitionInput> => {
 if (trigger.kind === 'sessionLifecycle') {
     const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId,
         triggerId, triggerRevision, triggerKind: 'sessionLifecycle' });
@@ -644,25 +685,37 @@ if (trigger.kind === 'sessionLifecycle') {
 }
 
     if (trigger.kind === 'action' && !('consentFor' in trigger)) {
+      const workflowReference = parseWorkflowDefinitionRefV1(workflowId);
+      const artifactId = workflowReference?.kind === 'artifact' ? workflowReference.artifactId : null;
       const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId,
         triggerId, triggerRevision, triggerKind: 'action' });
+      let definition: AutomationActionTrigger;
       if ('triggerDefinitionEnvelope' in trigger) {
-        const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope: trigger.triggerDefinitionEnvelope,
-          ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
-            ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
-        if (opened.kind !== 'available') unavailable();
-        const projected = projectAutomationActionTriggerStructuralV1(AutomationActionTriggerSchema.parse(opened.definition));
+        const envelope = trigger.triggerDefinitionEnvelope;
+        if (envelope.t === 'workflow') {
+          if (!artifactId) unavailable();
+          definition = await openWorkflowAction(artifactId, binding, envelope.content);
+        } else {
+          const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
+            ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+              ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
+          if (opened.kind !== 'available') unavailable();
+          definition = AutomationActionTriggerSchema.parse(opened.definition);
+        }
+        const projected = projectAutomationActionTriggerStructuralV1(definition);
         const { enabled: _enabled, triggerDefinitionEnvelope: _envelope, reachesOthers: _reach, ...header } = trigger;
         if (!pluginJsonValuesEqual(projected, header)) unavailable();
-        return trigger;
+      } else {
+        const { enabled: _enabled, ...authored } = trigger;
+        definition = AutomationActionTriggerSchema.parse(authored);
       }
-      const { enabled: _enabled, ...definition } = trigger;
       return { ...projectAutomationActionTriggerStructuralV1(definition), enabled: trigger.enabled,
-        triggerDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
-          ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
-            ? { mode: 'e2ee' as const, material: current.material.material, randomBytes: params.randomBytes }
-            : { mode: 'plain' as const }), binding, definition,
-        }) };
+        triggerDefinitionEnvelope: artifactId ? await sealWorkflowAction(artifactId, binding, definition)
+          : sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+              ? { mode: 'e2ee' as const, material: current.material.material, randomBytes: params.randomBytes }
+              : { mode: 'plain' as const }), binding, definition,
+          }) };
     }
     if (trigger.kind !== 'prComment' && trigger.kind !== 'ciFailed') return prepareEvent(automationId, triggerId, triggerRevision, trigger, current, previous);
     const binding = pullRequestBinding(automationId, triggerId, triggerRevision, trigger.kind);
@@ -677,8 +730,8 @@ if (trigger.kind === 'sessionLifecycle') {
           randomBytes: params.randomBytes, binding, definition: { kind: trigger.kind, pullRequest: trigger.pullRequest } })) };
   };
   const isPrivateTrigger = automationTriggerHasPrivateDefinitionV1;
-  const privateTriggerMatches = (row: AutomationDefinitionDetail, retained: AutomationDefinitionDetail['triggers'][number],
-    requested: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1): boolean => {
+  const privateTriggerMatches = async (row: AutomationDefinitionDetail, retained: AutomationDefinitionDetail['triggers'][number],
+    requested: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1): Promise<boolean> => {
     if (retained.kind !== requested.kind || retained.enabled !== requested.enabled || 'triggerDefinitionEnvelope' in requested) return false;
     if (requested.kind === 'sessionLifecycle' && retained.kind === 'sessionLifecycle') {
       const { enabled: _enabled, ...definition } = requested;
@@ -686,7 +739,7 @@ if (trigger.kind === 'sessionLifecycle') {
     }
     if (requested.kind === 'action' && !('consentFor' in requested) && retained.kind === 'action' && !('consentFor' in retained)) {
       const { enabled: _enabled, ...definition } = requested;
-      return pluginJsonValuesEqual(readAccountStoredActionTriggerV1(row, retained.id, current).definition, definition);
+      return pluginJsonValuesEqual((await storedAction(row, retained.id, current)).definition, definition);
     }
     if (requested.kind === 'prComment' || requested.kind === 'ciFailed') {
       return pluginJsonValuesEqual(storedPullRequest(row, retained.id, current).definition,
@@ -798,8 +851,9 @@ if (trigger.kind === 'sessionLifecycle') {
         }
         const nextScopes = requesterScopes({ ...input, id: input.automationId,
           triggers: input.triggers.map(item => ({ id: item.triggerId, enabled: item.trigger.enabled })) });
-        const privateTriggers = triggers.map(item => current ? { ...item,
-          trigger: preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current) } : item);
+        const privateTriggers = await Promise.all(triggers.map(async item => current ? { ...item,
+          trigger: await preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current, undefined,
+            input.workflowDefinitionId) } : item));
         return commitRequesterScopes([], nextScopes, async () => materializePrivateDetail(
           await params.automations.create(await sealCreatePrivateDisplay({ ...input, triggers: privateTriggers }), beforeWrite, signal),
         ), beforeWrite, signal);
@@ -839,14 +893,14 @@ if (trigger.kind === 'sessionLifecycle') {
             || observationDisplayRead.display.name !== observationDisplay.name
             || observationDisplayRead.display.description !== observationDisplay.description);
         let observationDisplayStored = false;
-        const triggers = input.triggers.map((item) => {
+        const triggers = await Promise.all(input.triggers.map(async (item) => {
           if (item.kind === 'new') {
             if (!current) return item;
             const trigger = observationDisplay
               ? prepareObservationTrigger(automationId, item.triggerId, 0, item.trigger, observationDisplay, current)
               : item.trigger;
             if (observationDisplay) observationDisplayStored = true;
-            return { ...item, trigger: preparePrivateTrigger(automationId, item.triggerId, 0, trigger, current) };
+            return { ...item, trigger: await preparePrivateTrigger(automationId, item.triggerId, 0, trigger, current, undefined, row.workflowDefinitionId) };
           }
           const retained = row.triggers.find((trigger) => trigger.id === item.triggerId);
           if (!retained || retained.revision !== item.expectedRevision) unavailable('currentness_conflict');
@@ -865,13 +919,13 @@ if (trigger.kind === 'sessionLifecycle') {
           if (requested !== undefined && observationDisplay) observationDisplayStored = true;
           if ((item.trigger === undefined && (item.enabled === undefined || item.enabled === retained.enabled)
             && item.triggerDefinitionEnvelope === undefined)
-            || (requested !== undefined && privateTriggerMatches(row, retained, requested, current))) {
+            || (requested !== undefined && await privateTriggerMatches(row, retained, requested, current))) {
             return { kind: 'existing' as const, triggerId: item.triggerId, expectedRevision: item.expectedRevision };
           }
           if (requested !== undefined) {
             const previous = retained.kind === 'pluginEvent' ? readAccountStoredPluginEventTriggerV1(row, item.triggerId, current) : undefined;
-            const { enabled: _enabled, ...trigger } = preparePrivateTrigger(automationId, item.triggerId, item.expectedRevision + 1,
-              requested, current, previous);
+            const { enabled: _enabled, ...trigger } = await preparePrivateTrigger(automationId, item.triggerId, item.expectedRevision + 1,
+              requested, current, previous, row.workflowDefinitionId);
             return { ...item, trigger: AutomationTriggerDefinitionSchema.parse(trigger) };
           }
           if (item.enabled === undefined || !isPrivateTrigger(retained)) return item;
@@ -892,6 +946,12 @@ if (trigger.kind === 'sessionLifecycle') {
               binding: { ...previous.binding, triggerRevision: item.expectedRevision + 1 }, definition: previous.definition,
             }) };
           }
+          if (retained.kind === 'action' && !('consentFor' in retained)
+            && parseWorkflowDefinitionRefV1(row.workflowDefinitionId)?.kind === 'artifact' && row.workflowDefinitionId) {
+            const previous = await storedAction(row, retained.id, current);
+            return { ...item, triggerDefinitionEnvelope: await sealWorkflowAction(row.workflowDefinitionId,
+              { ...previous.binding, triggerRevision: item.expectedRevision + 1 }, previous.definition) };
+          }
           if (!isAvailableE2eeAutomationAccountEncryptionV1(current)) return item;
           const previous = retained.kind === 'pluginEvent' ? readAccountStoredPluginEventTriggerV1(row, item.triggerId, current)
             : retained.kind === 'action' ? readAccountStoredActionTriggerV1(row, item.triggerId, current) : storedPullRequest(row, item.triggerId, current);
@@ -899,7 +959,7 @@ if (trigger.kind === 'sessionLifecycle') {
             sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'e2ee', material: current.material.material,
               randomBytes: params.randomBytes, binding: { ...previous.binding, triggerRevision: item.expectedRevision + 1 },
               definition: previous.definition })) };
-        });
+        }));
         const nextScopes = requesterScopes({ ...input, id: automationId,
           triggers: input.triggers.map(item => ({ id: item.triggerId,
             enabled: item.kind === 'new' ? item.trigger.enabled : item.enabled ?? row.triggers.find(trigger => trigger.id === item.triggerId)!.enabled })) });
@@ -934,7 +994,13 @@ if (trigger.kind === 'sessionLifecycle') {
     openPluginEventTrigger: async (row, trigger) => readAccountStoredPluginEventTriggerV1(row, trigger.id, await params.resolveEncryption()).definition,
     openSessionLifecycleTrigger: async (row, trigger) => storedSessionLifecycle(row, trigger.id, await params.resolveEncryption()).definition,
     prepareBirthTrigger: async (automationId, triggerId, trigger) => preparePrivateTrigger(automationId, triggerId, 0, trigger, await params.resolveEncryption()),
-    openActionTrigger: async (row, trigger) => readAccountStoredActionTriggerV1(row, trigger.id, await params.resolveEncryption()).definition,
+    openActionTrigger: async (row, trigger) => (await storedAction(row, trigger.id, await params.resolveEncryption())).definition,
+    openSharedActionTrigger: async (reference) => {
+      if (!reference.sharedDefinitionEnvelope) unavailable();
+      const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: reference.automationId,
+        triggerId: reference.triggerId, triggerRevision: reference.triggerRevision, triggerKind: 'action' });
+      return openWorkflowAction(reference.workflowId, binding, reference.sharedDefinitionEnvelope);
+    },
     resolveWorkflow: params.resolveWorkflow,
     ...(params.resolveWorkflowTeamIds ? { resolveWorkflowTeamIds: params.resolveWorkflowTeamIds } : {}),
     openContext: async (row) => {
@@ -1015,8 +1081,15 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
   const readWithAccountWitness = async <Result>(read: (owner: WorkflowTriggerActions) => Promise<Result>) => {
     // Each private source read opens under one fresh Account witness.
     let encryption: Promise<AvailableAutomationAccountEncryptionV1> | undefined;
+    const workflowContents = new Map<string, ReturnType<NonNullable<WorkflowTriggerAccountHostParams['resolveWorkflowContent']>>>();
+    const resolveWorkflowContent = params.resolveWorkflowContent;
     const owner = createAccountWorkflowTriggerActionOwner({ ...params,
       resolveEncryption: () => (encryption ??= params.resolveEncryption()),
+      ...(resolveWorkflowContent ? { resolveWorkflowContent: (workflowId: string) => {
+        let content = workflowContents.get(workflowId);
+        if (!content) { content = resolveWorkflowContent(workflowId); workflowContents.set(workflowId, content); }
+        return content;
+      } } : {}),
     });
     const result = await read(owner);
     if (encryption) {

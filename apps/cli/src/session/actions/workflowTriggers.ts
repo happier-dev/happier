@@ -120,6 +120,17 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     ...(params.nativeAccount ? { nativeAccount: params.nativeAccount } : {}),
     ...(params.deploymentAction ? { deploymentAction: params.deploymentAction } : {}),
     resolveWorkflow: (ref) => onServer(() => params.resolveWorkflow(ref)),
+    resolveWorkflowContent: (workflowId) => onServer(async () => {
+      const opened = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(workflowId,
+        { prepareRecipients: false, includeSharedAudience: false });
+      if (!opened) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+      const binding = { artifactId: opened.artifact.artifactId, expectedRevision: opened.artifact.revision };
+      return {
+        revision: opened.artifact.revision,
+        sealAssociatedContent: async value => opened.sealAssociatedContent({ ...binding, value }),
+        openAssociatedContent: async content => opened.openAssociatedContent({ ...binding, content }),
+      };
+    }),
     resolveWorkflowTeamIds: (artifactId) => onServer(async () => {
       if (params.resolveWorkflowTeamIds) return params.resolveWorkflowTeamIds(artifactId);
       const artifacts = createCredentialedAccountArtifactStore(params.credentials);

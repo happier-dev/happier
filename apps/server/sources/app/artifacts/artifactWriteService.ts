@@ -2,6 +2,9 @@ import { REVIEW_ARTIFACT_KIND_V1, type ReviewMetadataWriteV1 } from '@happier-de
 import { writeReviewRoundState } from '@/app/reviews/reviewRecordService';
 import { resolveReviewCreationPolicyInTx } from '@/app/reviews/reviewCreationPolicy';
 import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { readArtifactActionTriggerDefinitionsInTx, artifactActionTriggerDefinitionsMatch, artifactActionTriggerDefinitionsReplacementValid,
+    writeArtifactActionTriggerDefinitionsInTx, type ArtifactActionTriggerDefinitionMigrationRow } from './artifactActionTriggerDefinitionsAccountEncryptionMigration';
+import type { ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import type { Prisma } from '@prisma/client';
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from '@happier-dev/protocol';
@@ -156,6 +159,8 @@ export type ArtifactAccountEncryptionMigrationPostStateResult =
 
 export type ArtifactAccountEncryptionMigrationRow = Readonly<{
     id: string;
+    actionTriggerDefinitions?: ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1;
+    actionTriggerDefinitionRows?: readonly ArtifactActionTriggerDefinitionMigrationRow[];
     header: Uint8Array;
     headerVersion: number;
     body: Uint8Array;
@@ -188,7 +193,7 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
     accountId: string,
     page?: Readonly<{ afterId?: string; take: number }>,
 ): Promise<readonly ArtifactAccountEncryptionMigrationRow[]> {
-    return await tx.artifact.findMany({
+    const rows = await tx.artifact.findMany({
         where: { accountId, ...(page?.afterId ? { id: { gt: page.afterId } } : {}) },
         ...(page ? { orderBy: { id: 'asc' as const }, take: page.take } : {}),
         select: {
@@ -226,6 +231,9 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
             },
         },
     });
+    const actions = await readArtifactActionTriggerDefinitionsInTx(tx, rows.map(row => row.id));
+    return rows.map(row => ({ ...row,
+        actionTriggerDefinitions: actions.get(row.id)?.definitions, actionTriggerDefinitionRows: actions.get(row.id)?.rows }));
 }
 
 function artifactBytesEqual(
@@ -291,6 +299,7 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
     for (const row of rows) {
         const item = itemsById.get(row.id);
         if (!item) return { status: "mismatch" };
+        if (!artifactActionTriggerDefinitionsMatch(row.actionTriggerDefinitions, item.actionTriggerDefinitions?.target)) return { status: 'mismatch' };
         const retainedIds = new Set([row.currentBlobId, ...row.revisions.map(revision => revision.blobId)].filter((id): id is string => Boolean(id)));
         if (retainedIds.size !== item.blobs.length) return { status: 'mismatch' };
         for (const blob of item.blobs) {
@@ -381,6 +390,13 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
     preparedBlobs?: PreparedArtifactAccountEncryptionConversionBlobs;
     markChanged?: (artifactId: string) => Promise<unknown>;
 }>): Promise<ArtifactAccountEncryptionMigrationResult> {
+    if (params.directive.action === 'migrate') {
+        const parents = await params.tx.artifact.findMany({ where: { accountId: params.accountId },
+            select: { id: true }, orderBy: { id: 'asc' } });
+        // The transition coordinator has admitted the complete ordered Account audience.
+        // Acquire the existing Artifact parent locks before inventorying associated content.
+        for (const parent of parents) await acquireArtifactPublicationLocksInTx(params.tx, parent.id, [params.accountId], { intent: 'content' });
+    }
     const rows =
         await readArtifactAccountEncryptionMigrationRowsInTx(
             params.tx,
@@ -432,6 +448,11 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
     }>>();
     for (const row of rows) {
         const item = itemsById.get(row.id);
+        if (!artifactActionTriggerDefinitionsMatch(row.actionTriggerDefinitions, item?.actionTriggerDefinitions?.expected)
+            || !artifactActionTriggerDefinitionsReplacementValid(row.actionTriggerDefinitions, row.actionTriggerDefinitions,
+                row.actionTriggerDefinitionRows, params.fromMode)
+            || !artifactActionTriggerDefinitionsReplacementValid(row.actionTriggerDefinitions, item?.actionTriggerDefinitions?.target,
+                row.actionTriggerDefinitionRows, params.toMode)) return { status: 'migration_incomplete' };
         if (
             !item
             || item.expectedHeaderVersion !== row.headerVersion
@@ -596,6 +617,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 : [];
         }),
     );
+    const actionRowsByArtifactId = new Map(rows.map(row => [row.id, row.actionTriggerDefinitionRows ?? []]));
     const markChanged =
         params.markChanged
         ?? (async (artifactId: string) => {
@@ -660,6 +682,11 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         if (updated.count !== 1) {
             throw new ArtifactAccountEncryptionMigrationConflictError();
         }
+        if (item.actionTriggerDefinitions && !await writeArtifactActionTriggerDefinitionsInTx(params.tx, item.artifactId,
+            actionRowsByArtifactId.get(item.artifactId) ?? [], item.actionTriggerDefinitions.target,
+            { headerVersion: item.expectedHeaderVersion + 1, bodyVersion: item.expectedBodyVersion + 1 })) {
+            throw new ArtifactAccountEncryptionMigrationConflictError();
+        }
         // Ordinary body writers acquire this same parent CAS before retaining
         // or pruning history. Recheck the whole set after acquiring that fence.
         if (await params.tx.artifactRevision.count({ where: { artifactId: item.artifactId } }) !== replacement.revisions.length) {
@@ -697,9 +724,16 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         }
         // Removed wraps are also a content change: live, unprepared recipients
         // must refresh into the truthful locked state (plain targets refresh too).
-        for (const accountId of await resolveArtifactAudienceInTx(params.tx, item.artifactId)) {
-            if (accountId === params.accountId || notifiedRecipients.has(accountId)) continue;
-            await markAccountChanged(params.tx, { accountId, kind: "artifact", entityId: item.artifactId });
+        const audience = await resolveArtifactAudienceInTx(params.tx, item.artifactId);
+        if (item.actionTriggerDefinitions?.target.length) {
+            const recipients = await markAccountsChanged(params.tx, { accountIds: audience, kind: 'artifact', entityId: item.artifactId });
+            await publishWorkflowActionIndexChangedInTx(params.tx, { workflowId: item.artifactId,
+                recipients, admittedAccountIds: audience, workflowRevision: item.expectedBodyVersion + 1 });
+        } else {
+            for (const accountId of audience) {
+                if (accountId === params.accountId || notifiedRecipients.has(accountId)) continue;
+                await markAccountChanged(params.tx, { accountId, kind: "artifact", entityId: item.artifactId });
+            }
         }
         await markChanged(item.artifactId);
     }

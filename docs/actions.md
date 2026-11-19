@@ -2217,9 +2217,14 @@ at admission, including after-only triggers. The same invocation retains that
 snapshot through approval and settlement even if the source changes or is
 removed. Restoring a cold approval Artifact reopens its exact trigger references
 and revisions; unavailable content produces a visible Skip. It does not retain a
-private snapshot across restarts. Shared-source private matching currently
-produces a visible Skip because a source-owner evaluator is unavailable; the
-actor's keys never open another Account's trigger definition.
+private snapshot across restarts. Saved-Workflow Action checks seal their matching
+definition with that Workflow Artifact's existing associated-content codec. When
+the subject owner admits `reachesOthers`, the authorized Workflow index carries
+that envelope to the same readers as the Workflow. The actor opens it through
+the Workflow's resource key and evaluates the filter locally before Run admission.
+Plain Workflow resources carry plain content; E2EE resources carry ciphertext
+readable through the Workflow's existing recipient grants. Account-private
+Automation context remains outside the shared index.
 
 Development Action discovery summaries expose `automation.before`,
 `automation.after`, `automation.workflowStep`, `automation.subjectKinds`

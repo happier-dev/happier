@@ -66,7 +66,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
             revisions: [{ bodyVersion: 1, expectedBody: row.revisions[0]!.body.toString('base64'), body }],
             blobs: [{ blobId, expectedContentSha256: digest, content: { t: 'plain' as const, uploadId, contentSha256: digest } }] };
         const writes: string[] = [];
-        const tx = { artifact: { findMany: async () => [row], findFirst: async () => null,
+        const tx = { automation: { findMany: async () => [] }, artifact: { findMany: async () => [row], findFirst: async () => null,
             updateMany: async () => { writes.push('head'); return { count: 1 }; } },
             artifactRevision: { count: async () => 1, updateMany: async () => { writes.push('history'); return { count: 1 }; } },
             artifactBlob: { updateMany: async () => { writes.push('blob'); return { count: 1 }; } },
@@ -102,7 +102,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
             return { count: 1 };
         });
         // Prisma is the genuine persistence boundary; the migration and codecs remain real.
-        const tx = { artifact: { findMany: vi.fn(async () => [row]), updateMany, findFirst: vi.fn(async () => null) },
+        const tx = { automation: { findMany: async () => [] }, artifact: { findMany: vi.fn(async () => [row]), updateMany, findFirst: vi.fn(async () => null) },
             artifactRevision: { count: vi.fn(async () => row.revisions.length), updateMany: updateRevision },
             artifactKeyEnvelope: { deleteMany: vi.fn(async () => ({ count: 0 })) } } as unknown as Parameters<typeof migrateArtifactAccountEncryptionInTx>[0]["tx"];
         await expect(migrateArtifactAccountEncryptionInTx({ tx, accountId: "account-1", fromMode: "e2ee", toMode: "plain",
@@ -128,6 +128,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
         const updateMany = vi.fn();
         await expect(migrateArtifactAccountEncryptionInTx({
             tx: {
+                automation: { findMany: async () => [] },
                 artifact: {
                     findMany: vi.fn(async () => [{
                         id: "00000000-0000-4000-8000-000000000001",
@@ -153,6 +154,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
 
         await expect(migrateArtifactAccountEncryptionInTx({
             tx: {
+                automation: { findMany: async () => [] },
                 artifact: {
                     findMany: vi.fn(async () => [{
                         ...artifactAccessRow("plain"),
@@ -219,7 +221,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
         const artifactId = "00000000-0000-4000-8000-000000000002";
         const updateMany = vi.fn(async () => ({ count: 1 }));
 
-        const tx = {
+        const tx = { automation: { findMany: async () => [] },
                 ...publicationStorage(),
                 artifact: {
                     findMany: vi.fn(async (input: { where: { pluginUiArtifact?: unknown } }) => input.where.pluginUiArtifact ? [] : [{
@@ -284,7 +286,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
         const artifactId = "00000000-0000-4000-8000-000000000003";
         const updateMany = vi.fn(async () => ({ count: 1 }));
 
-        const tx = {
+        const tx = { automation: { findMany: async () => [] },
                 ...publicationStorage(),
                 artifact: {
                     findMany: vi.fn(async (input: { where: { packageAssetRelease?: unknown } }) => input.where.packageAssetRelease ? [] : [{
@@ -369,7 +371,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
             revisions: [], blobs: [],
         };
         const findMany = vi.fn(async () => [row]);
-        const tx = {
+        const tx = { automation: { findMany: async () => [] },
             artifact: {
                 findMany,
                 updateMany: vi.fn(),

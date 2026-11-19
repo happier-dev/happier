@@ -52,10 +52,9 @@ import { automationRunExecutionTargetTypeV1, parseAutomationStoredDefinitionExec
 import { AutomationTemplatePayloadV1Schema } from '@happier-dev/protocol/automations/automationTemplatePayloadV1';
 import { AutomationObservationOnlyDefinitionV1Schema, parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2, serializeAutomationStoredWorkflowDefinitionRecipeV2, type AutomationManagedTargetV1, type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { AUTOMATION_ACTION_TRIGGER_FIELDS_CLEARED, automationConsentReferenceSelect, decodeAutomationActionTriggerConfiguration, isAutomationConsentDefinition } from './automationActionTriggerConfiguration';
-import { resolveAutomationActionReachInTx } from './automationActionReachAdmission';
-import { assertAutomationActionSubjectInTx } from './automationActionSubjectAdmission';
+import { normalizeAutomationActionTriggerWriteInTx, readAutomationActionDefinitionEnvelope,
+    resealAutomationActionTriggerWriteInTx } from './automationActionTriggerWrite';
 import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1, openAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { parseAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { parseAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
@@ -1432,6 +1431,15 @@ export type AutomationAccountEncryptionTransitionSourcePage = Readonly<{
     nextCursor?: AutomationAccountEncryptionTransitionSourceCursor;
 }>;
 
+/** Workflow-key content stays with Artifact mode conversion, outside Account-key resealing. */
+function automationTriggerHasAccountDefinition(trigger: Readonly<{
+    kind: string; consentForAutomationId?: string | null; definitionEnvelope: string | null;
+}>): boolean {
+    return automationTriggerHasPrivateDefinition(trigger)
+        && !(trigger.kind === 'action' && trigger.definitionEnvelope !== null
+            && readAutomationActionDefinitionEnvelope(trigger.definitionEnvelope).t === 'workflow');
+}
+
 function transitionInventoryDefinition(
     row: AutomationAccountEncryptionMigrationRow,
 ): Extract<AutomationAccountEncryptionTransitionInventoryItem, { kind: "definition" }> {
@@ -1442,7 +1450,7 @@ function transitionInventoryDefinition(
         source: {
             templateCiphertext: row.templateCiphertext,
             triggerDefinitionEnvelopes: row.triggers
-                .filter(automationTriggerHasPrivateDefinition)
+                .filter(automationTriggerHasAccountDefinition)
                 .map((trigger) => {
                     if (trigger.definitionEnvelope === null) {
                         throw new AutomationValidationError(
@@ -1690,6 +1698,7 @@ function assertAutomationDefinitionStoredContentForAccountMode(params: Readonly<
     mode: "plain" | "e2ee";
 }>): void {
     for (const trigger of params.row.triggers) {
+        if (automationTriggerHasPrivateDefinition(trigger) && !automationTriggerHasAccountDefinition(trigger)) continue;
         if (!automationTriggerHasPrivateDefinition(trigger)) {
             if (trigger.definitionEnvelope !== null) {
                 throw new AutomationValidationError(
@@ -2059,7 +2068,7 @@ function validateAutomationTriggerDefinitionTransitionTargets(params: Readonly<{
     targetMode: "plain" | "e2ee";
 }>): AutomationAccountEncryptionTransitionValidatedDefinition["targetTriggerDefinitionEnvelopes"] {
     const pluginEventTriggers = params.row.triggers.filter(
-        automationTriggerHasPrivateDefinition,
+        automationTriggerHasAccountDefinition,
     );
     if (params.item.target.triggerDefinitionEnvelopes.length !== pluginEventTriggers.length) {
         throw new AutomationValidationError(
@@ -2659,7 +2668,7 @@ function hasCompleteTriggerDefinitionMigrationTarget(
     row: AutomationAccountEncryptionMigrationRow,
     item: AutomationAccountEncryptionMigrationTemplateItem,
 ): boolean {
-    const eventTriggers = row.triggers.filter(automationTriggerHasPrivateDefinition);
+    const eventTriggers = row.triggers.filter(automationTriggerHasAccountDefinition);
     const targets = item.triggerDefinitionEnvelopes;
     if (
         targets.length !== eventTriggers.length
@@ -3633,7 +3642,7 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
         return { status: "migration_incomplete" };
     }
     const requiresSourceMode = rows.some((row) =>
-        row.triggers.some(automationTriggerHasPrivateDefinition))
+        row.triggers.some(automationTriggerHasAccountDefinition))
         || runRows.length > 0;
     const targetTriggerDefinitionsById = new Map<string, ReturnType<
         typeof validateAutomationTriggerDefinitionMigrationCandidate
@@ -4349,7 +4358,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     accountId: string;
     authentication?: DeploymentAuthentication;
     automation: Pick<AutomationListItem,
-        "id" | "targetType" | "templateCiphertext" | "templateVersion" | "scopeSessionId">;
+        "id" | "targetType" | "templateCiphertext" | "templateVersion" | "scopeSessionId" | "workflowDefinitionId">;
     triggerId: string;
     triggerRevision: number;
     input: AutomationTriggerDefinitionInput;
@@ -4372,46 +4381,8 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
                 consentForTriggerId: params.input.consentFor.triggerId,
                 consentedWorkflowRevision: params.input.consentedWorkflowRevision } };
         }
-        const currentness = await fetchAutomationAccountCurrentnessWitnessTx(params.tx, params.accountId);
-        if (!currentness) throw new AutomationStoredContentReadError('contentInvalid');
-        const binding = { v: 1 as const, automationId: params.automation.id,
-            triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
-            triggerRevision: params.triggerRevision, triggerKind: 'action' as const };
-        const { enabled: _enabled, ...submitted } = params.input;
-        const structural = 'triggerDefinitionEnvelope' in submitted
-            ? (({ triggerDefinitionEnvelope: _envelope, ...facts }) => facts)(submitted)
-            : projectAutomationActionTriggerStructuralV1(submitted);
-        const envelope = 'triggerDefinitionEnvelope' in submitted ? submitted.triggerDefinitionEnvelope
-            : currentness.mode === 'plain' ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
-                mode: 'plain', binding, definition: AutomationActionTriggerSchema.parse(submitted),
-            }) : null;
-        if (!envelope || validateAutomationTriggerDefinitionEnvelopeOuterForMode({
-            raw: JSON.stringify(envelope), mode: currentness.mode, binding,
-        }).kind !== 'available') throw new AutomationStoredContentReadError('modeMismatch');
-        let reachesOthers: boolean;
-        if (envelope.t === 'plain') {
-            const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, envelope });
-            if (opened.kind !== 'available') throw new AutomationStoredContentReadError('contentInvalid');
-            const definition = AutomationActionTriggerSchema.parse(opened.definition);
-            await assertAutomationActionSubjectInTx(params.tx, { accountId: params.accountId,
-                actionIds: definition.actionIds, subject: definition.subject });
-            const projection = projectAutomationActionTriggerStructuralV1(definition);
-            const { reachesOthers: _reach, ...matching } = structural;
-            if (!pluginJsonValuesEqual(projection, matching)) throw new AutomationStoredContentReadError('contentInvalid');
-            reachesOthers = await resolveAutomationActionReachInTx(params.tx, { accountId: params.accountId,
-                authentication: params.authentication, definition: { mode: 'plain', subject: definition.subject } });
-        } else {
-            reachesOthers = await resolveAutomationActionReachInTx(params.tx, { accountId: params.accountId,
-                authentication: params.authentication,
-                definition: { mode: 'e2ee', subjectKind: structural.subjectKind, subjectKey: structural.subjectKey,
-                    claimedReachesOthers: structural.reachesOthers } });
-        }
-        return { isEvent: false, data: { ...common, kind: 'action',
-            actionId: structural.actionIds.length === 1 ? structural.actionIds[0] : null,
-            actionIdsJson: JSON.stringify(structural.actionIds), phase: structural.phase,
-            mode: structural.mode ?? null, onFailure: structural.onFailure ?? null,
-            subjectKind: structural.subjectKind ?? null, subjectKey: structural.subjectKey ?? null,
-            reachesOthers, definitionEnvelope: JSON.stringify(envelope) } };
+        return { isEvent: false, data: { ...common,
+            ...await normalizeAutomationActionTriggerWriteInTx({ ...params, input: params.input }) } };
     }
 
     if (params.input.kind === "prComment" || params.input.kind === "ciFailed") {
@@ -5045,6 +5016,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
                 templateCiphertext: definition.templateCiphertext,
                 templateVersion: 1,
                 scopeSessionId: params.input.scopeSessionId ?? null,
+                workflowDefinitionId: params.input.workflowDefinitionId ?? null,
             },
             triggerId,
             triggerRevision: 0,
@@ -5916,17 +5888,13 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 if (trigger.kind === "runLifecycle" && !trigger.enabled && nextEnabled) {
                     await validateAutomationRunLifecycleSourceTx(tx, params.accountId, decodeAutomationRunLifecycleConfiguration(trigger));
                 }
-                if (automationTriggerHasPrivateDefinition(trigger)) {
+                if (trigger.kind === 'action' && automationTriggerHasPrivateDefinition(trigger)) {
+                    Object.assign(data, await resealAutomationActionTriggerWriteInTx({ tx,
+                        accountId: params.accountId, authentication: params.authentication,
+                        automation: existing, trigger, enabled: nextEnabled, nextEnvelope: item.triggerDefinitionEnvelope }));
+                } else if (automationTriggerHasPrivateDefinition(trigger)) {
                     const currentness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);
                     if (!currentness) throw new AutomationStoredContentReadError("contentInvalid");
-                    const actionDefinition = trigger.kind === 'action' && currentness.mode === 'plain'
-                        ? AutomationActionTriggerSchema.parse(readPlainAutomationPrivateTriggerDefinition(existing, trigger)) : null;
-                    if (trigger.kind === 'action') {
-                        data.reachesOthers = await resolveAutomationActionReachInTx(tx, { accountId: params.accountId,
-                            authentication: params.authentication, definition: actionDefinition
-                                ? { mode: 'plain', subject: actionDefinition.subject }
-                                : { mode: 'e2ee', subjectKind: trigger.subjectKind, subjectKey: trigger.subjectKey } });
-                    }
                     const binding = readAutomationTriggerDefinitionBinding({
                         automationId: existing.id,
                         triggerId: trigger.id,
@@ -5955,7 +5923,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                             sealAutomationTriggerDefinitionStoredEnvelopeV1({
                                 mode: "plain",
                                 binding,
-                                definition: actionDefinition ?? readPlainAutomationPrivateTriggerDefinition(existing, trigger),
+                                definition: readPlainAutomationPrivateTriggerDefinition(existing, trigger),
                             }),
                         );
                     }
@@ -6234,21 +6202,17 @@ export async function updateAutomationTrigger(params: Readonly<{
                 updatedAt: now,
                 ...(!resolvedNextEnabled ? { nextRunAt: null } : {}),
             };
-            if (automationTriggerHasPrivateDefinition(existing)) {
+            if (existing.kind === 'action' && automationTriggerHasPrivateDefinition(existing)) {
+                Object.assign(data, await resealAutomationActionTriggerWriteInTx({ tx,
+                    accountId: params.accountId, authentication: params.authentication,
+                    automation, trigger: existing, enabled: resolvedNextEnabled, nextEnvelope: params.triggerDefinitionEnvelope }));
+            } else if (automationTriggerHasPrivateDefinition(existing)) {
                 const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(
                     tx,
                     params.accountId,
                 );
                 if (!accountCurrentness) {
                     throw new AutomationStoredContentReadError("contentInvalid");
-                }
-                const actionDefinition = existing.kind === 'action' && accountCurrentness.mode === 'plain'
-                    ? AutomationActionTriggerSchema.parse(readPlainAutomationPrivateTriggerDefinition(automation, existing)) : null;
-                if (existing.kind === 'action') {
-                    data.reachesOthers = await resolveAutomationActionReachInTx(tx, { accountId: params.accountId,
-                        authentication: params.authentication, definition: actionDefinition
-                            ? { mode: 'plain', subject: actionDefinition.subject }
-                            : { mode: 'e2ee', subjectKind: existing.subjectKind, subjectKey: existing.subjectKey } });
                 }
                 if (accountCurrentness.mode === "e2ee") {
                     if (!params.triggerDefinitionEnvelope) {
@@ -6279,7 +6243,7 @@ export async function updateAutomationTrigger(params: Readonly<{
                             "Plain Automation Event enablement must not supply an encrypted definition envelope",
                         );
                     }
-                    const definition = actionDefinition ?? readPlainAutomationPrivateTriggerDefinition(
+                    const definition = readPlainAutomationPrivateTriggerDefinition(
                         automation,
                         existing,
                     );

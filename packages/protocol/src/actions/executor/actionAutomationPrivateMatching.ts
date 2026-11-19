@@ -7,19 +7,20 @@ import type { ActionAutomationPrepareMatchingV1, ActionAutomationSelectedTrigger
 import type { WorkflowTriggerActionsDependencies } from './workflowTriggerActions.js';
 import type { ActionExecutorContext } from './types.js';
 
-/** Account selection opens through the incumbent stored-trigger owner, once per invocation. */
+/** Selected sources open once per invocation through their Account or shared Workflow owner. */
 export function createActionAutomationPrivateMatchingV1(options: Readonly<{
   accountId: string;
   readDefinition(automationId: string, context: ActionExecutorContext): Promise<AutomationDefinitionDetail | null>;
   openTrigger: NonNullable<WorkflowTriggerActionsDependencies['openActionTrigger']>;
+  readSharedDefinition?: NonNullable<WorkflowTriggerActionsDependencies['openSharedActionTrigger']>;
 }>): ActionAutomationPrepareMatchingV1 {
   return async (selection, context) => {
     type Source = Readonly<{ row: AutomationDefinitionDetail }> | Readonly<{ reason: string }>;
     type Opened = Readonly<{ trigger: AutomationActionTrigger }> | Readonly<{ reason: string }>;
     const key = (row: ActionAutomationSelectedTriggerV1) => JSON.stringify([row.automationId, row.triggerId, row.triggerRevision]);
-    const references = [...new Map([...selection.before, ...selection.after]
-      .filter(row => row.ownerAccountId === options.accountId).map(row => [key(row), row])).values()];
-    const sources = new Map(await Promise.all([...new Set(references.map(row => row.automationId))]
+    const references = [...new Map([...selection.before, ...selection.after].map(row => [key(row), row])).values()];
+    const sources = new Map(await Promise.all([...new Set(references
+      .filter(row => row.ownerAccountId === options.accountId).map(row => row.automationId))]
       .map(async (automationId): Promise<readonly [string, Source]> => {
         try {
           const row = await options.readDefinition(automationId, context);
@@ -29,6 +30,11 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
         }
       })));
     const definitions = new Map(await Promise.all(references.map(async (reference): Promise<readonly [string, Opened]> => {
+      if (reference.ownerAccountId !== options.accountId) {
+        if (!options.readSharedDefinition) return [key(reference), { reason: 'content_unavailable' }];
+        try { return [key(reference), { trigger: await options.readSharedDefinition(reference, context) }]; }
+        catch (error) { return [key(reference), { reason: readActionErrorCodeV1(error) ?? 'action_failed' }]; }
+      }
       const source = sources.get(reference.automationId)!;
       if ('reason' in source) return [key(reference), source];
       const retained = source.row.enabled ? source.row.triggers.find(trigger => trigger.id === reference.triggerId
@@ -41,13 +47,10 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
       const matched: ActionAutomationSelectedTriggerV1[] = [];
       const notices: ActionAutomationNoticeV1[] = [];
       for (const row of selected) {
-        // Actor consent pins structural matching and steps, not the source's private filter.
-        // Its source-owner evaluator is not available; never try actor keys on source ciphertext.
-        const value = row.ownerAccountId === options.accountId ? definitions.get(key(row)) : undefined;
+        const value = definitions.get(key(row));
         const trigger = value && 'trigger' in value ? value.trigger : undefined;
         if (!trigger) {
-          notices.push({ code: 'action_automation_skipped', reason: value && 'reason' in value ? value.reason
-            : row.ownerAccountId === options.accountId ? 'content_unavailable' : 'privateDefinitionUnavailable',
+          notices.push({ code: 'action_automation_skipped', reason: value && 'reason' in value ? value.reason : 'content_unavailable',
           automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId });
           continue;
         }

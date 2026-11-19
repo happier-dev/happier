@@ -82,7 +82,7 @@ export function unavailableActionAutomationMatchingV1(reason: string): ActionAut
 }
 export async function matchActionAutomationTriggersV1(selection: ActionAutomationSelectionV1,
   evidence: AutomationActionOccurrenceEvidenceV1, selected: readonly ActionAutomationSelectedTriggerV1[]) {
-  return (selection.privateMatching ?? unavailableActionAutomationMatchingV1('privateDefinitionUnavailable'))(evidence, selected);
+  return (selection.privateMatching ?? unavailableActionAutomationMatchingV1('content_unavailable'))(evidence, selected);
 }
 export type ActionAutomationSelectArgsV1 = Readonly<{
   actionId: string;

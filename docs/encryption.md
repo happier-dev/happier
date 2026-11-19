@@ -682,6 +682,22 @@ is performed. This is development behavior, not a claim about a published releas
 
 ## Shared Workflow projections (0.3 development)
 
+A saved Workflow's Action-check definition (including its Only-when filter) uses
+the Workflow Artifact's associated-content codec and existing recipient keys.
+The stored trigger carries a `workflow` envelope containing that resource's
+plain or encrypted content, bound to the Automation, trigger and revision.
+For checks admitted as `reachesOthers`, the authorized Workflow index delivers
+this envelope to the Workflow's readers. Each actor opens it with the same
+resource key used to read the Workflow and evaluates it locally. E2EE filter
+plaintext never enters the server or an Account-plain duplicate carrier. Inline
+checks retain the Account-scoped trigger codec. No additional sharing grants or
+filter key distribution are introduced.
+The Artifact's existing mode/key conversion inventories these attached definitions
+and replaces their envelopes in the same transaction as the Workflow key,
+including checks authored by other people.
+Writes carry the Artifact revision used for sealing and use its existing
+publication lock and revision check, so key replacement cannot strand a delayed write.
+
 Artifact reads project `sharedTeamIds` only for direct Team grants admitted by
 the existing effective-membership policy. The Workflow library carries this
 actor-filtered audience to the Team overview; it never exposes another owner's

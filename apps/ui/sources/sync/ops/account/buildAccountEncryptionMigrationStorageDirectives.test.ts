@@ -36,6 +36,12 @@ import {
     projectPrivateLabelForRecipientV1,
     sealPrivateLabelV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import {
+    AutomationTriggerDefinitionBindingV1Schema,
+    AutomationTriggerDefinitionStoredPayloadV1Schema,
+    openAutomationTriggerDefinitionStoredEnvelopeV1,
+} from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
@@ -78,6 +84,79 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             labels: [],
         },
     };
+
+    it('reseals Workflow Action definitions with the replacement Artifact key and preserves their exact bindings', async () => {
+        const artifactId = '00000000-0000-4000-8000-000000000002';
+        const firstAccountEncryption = await Encryption.create(new Uint8Array(32).fill(29));
+        const rotatedAccountEncryption = await Encryption.create(new Uint8Array(32).fill(30));
+        const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: 'automation-a',
+            triggerId: 'trigger-a', triggerRevision: 3, triggerKind: 'action' });
+        const definition = AutomationActionTriggerSchema.parse({ kind: 'action', phase: 'after',
+            actionIds: ['notifications.notify_me'],
+            filter: { v: 1, all: [{ field: '/requestId', op: 'eq', value: 'private-filter-match' }] } });
+        const payload = AutomationTriggerDefinitionStoredPayloadV1Schema.parse({ v: 1, binding, definition });
+        const sourceDefinitions = [{ automationId: binding.automationId, triggerId: binding.triggerId,
+            triggerRevision: binding.triggerRevision, content: { t: 'plain' as const, v: payload } }];
+        const row = { id: artifactId, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const,
+            headerVersion: 1, bodyVersion: 1,
+            header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId: artifactId,
+                revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Shared Action check' } }),
+            body: encodePlainArtifactStoredContent({ body: 'Workflow' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            revisions: [], actionTriggerDefinitions: sourceDefinitions };
+        const common = { ...emptyTransitionInventories, machines: [], todos: [], sessions: [],
+            sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials };
+
+        const encrypted = await buildAccountEncryptionMigrationStorageDirectives({ ...common,
+            fromMode: 'plain', toMode: 'e2ee', sourceEncryption: null, targetEncryption: firstAccountEncryption,
+            artifacts: [row] });
+        if (encrypted.artifacts.action !== 'migrate') throw new Error('Expected Artifact conversion');
+        const encryptedItem = encrypted.artifacts.items[0]!;
+        expect(encryptedItem.actionTriggerDefinitions).toMatchObject({ expected: sourceDefinitions,
+            target: [{ automationId: binding.automationId, triggerId: binding.triggerId,
+                triggerRevision: binding.triggerRevision, content: { t: 'encrypted' } }] });
+        expect(JSON.stringify(encryptedItem.actionTriggerDefinitions?.target)).not.toContain('private-filter-match');
+        const encryptedDefinitions = encryptedItem.actionTriggerDefinitions?.target;
+        if (!encryptedDefinitions) throw new Error('Expected encrypted Workflow Action definitions');
+
+        const rotated = await buildAccountEncryptionMigrationStorageDirectives({ ...common,
+            fromMode: 'e2ee', toMode: 'e2ee', sourceEncryption: firstAccountEncryption,
+            targetEncryption: rotatedAccountEncryption, sessionSourceCredentials: legacyCredentials,
+            artifacts: [{ ...row, headerVersion: 2, bodyVersion: 2, header: encryptedItem.header,
+                body: encryptedItem.body, dataEncryptionKey: encryptedItem.dataEncryptionKey,
+                actionTriggerDefinitions: encryptedDefinitions }],
+            readArtifactRecipients: async () => ({ artifactId, ownerAccountId: 'account-a', access: 'owner',
+                encryptionMode: 'e2ee', dataEncryptionKey: encryptedItem.dataEncryptionKey,
+                callerDataEncryptionKey: encryptedItem.dataEncryptionKey, recipients: [] }),
+        });
+        if (rotated.artifacts.action !== 'migrate') throw new Error('Expected Artifact key rotation');
+        const rotatedItem = rotated.artifacts.items[0]!;
+        const rotatedDefinitions = rotatedItem.actionTriggerDefinitions?.target;
+        if (!rotatedDefinitions) throw new Error('Expected rotated Workflow Action definitions');
+        expect(rotatedDefinitions[0]?.content).toMatchObject({ t: 'encrypted' });
+        expect(rotatedDefinitions[0]?.content).not.toEqual(encryptedDefinitions[0]?.content);
+
+        const plain = await buildAccountEncryptionMigrationStorageDirectives({ ...common,
+            fromMode: 'e2ee', toMode: 'plain', sourceEncryption: rotatedAccountEncryption, targetEncryption: null,
+            sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: null,
+            artifacts: [{ ...row, headerVersion: 3, bodyVersion: 3, header: rotatedItem.header,
+                body: rotatedItem.body, dataEncryptionKey: rotatedItem.dataEncryptionKey,
+                actionTriggerDefinitions: rotatedDefinitions }],
+        });
+        if (plain.artifacts.action !== 'migrate') throw new Error('Expected plain Artifact conversion');
+        const restored = plain.artifacts.items[0]!.actionTriggerDefinitions?.target[0];
+        expect(restored).toEqual(sourceDefinitions[0]);
+        if (restored?.content.t !== 'plain') throw new Error('Expected plain Workflow Action definition');
+        expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding,
+            envelope: restored.content })).toEqual({ kind: 'available', definition });
+
+        const wrongBinding = AutomationTriggerDefinitionStoredPayloadV1Schema.parse({ v: 1,
+            binding: { ...binding, triggerRevision: binding.triggerRevision + 1 }, definition });
+        await expect(buildAccountEncryptionMigrationStorageDirectives({ ...common,
+            fromMode: 'plain', toMode: 'e2ee', sourceEncryption: null, targetEncryption: firstAccountEncryption,
+            artifacts: [{ ...row, actionTriggerDefinitions: [{ ...sourceDefinitions[0]!,
+                content: { t: 'plain' as const, v: wrongBinding } }] }],
+        })).rejects.toThrow('artifact_action_trigger_definition_migration_binding_mismatch');
+    });
 
     it('includes personal preset content in the atomic Account encryption transition', async () => {
         const targetEncryption = await Encryption.create(new Uint8Array(32).fill(31));

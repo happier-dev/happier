@@ -233,19 +233,32 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   expect(workflowReads).toBe(0);
 });
 
-it('does not open a shared source with actor keys or admit it without private matching', async () => {
+it.each([true, false])('admits shared Action checks for the actor through Workflow content (filtered=%s)', async filtered => {
   const subject = { kind: 'machine' as const, serverId: 'home', machineId: 'subject-machine' };
+  const definition = { kind: 'action' as const, phase: 'after' as const, actionIds: ['notifications.notify_me'],
+    ...(filtered ? { filter: { v: 1 as const, all: [{ field: '/outcome', op: 'eq' as const, value: 'failed' }] } } : {}) };
   const source = { automationId: 'source', triggerId: 'shared', triggerRevision: 1, workflowId: 'workflow',
     workflowRevision: 1, ownerAccountId: 'author', actionIds: ['notifications.notify_me'], phase: 'after' as const,
-    reachesOthers: true, subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'workflow') };
+    reachesOthers: true, subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'workflow'),
+    sharedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, automationId: 'source', triggerId: 'shared', triggerRevision: 1, triggerKind: 'action' }, definition }) };
   const actor = { ...source, automationId: 'actor-consent', triggerId: 'consent', ownerAccountId: 'actor',
     consentFor: { automationId: source.automationId, triggerId: source.triggerId }, consentedWorkflowRevision: 1 };
   let reads = 0;
+  let workflowContentReads = 0;
+  const sent: unknown[] = [];
   const unexpectedWrite = async (): Promise<never> => { throw new Error('No write'); };
   const actions = createAccountWorkflowTriggerActions({
     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     randomBytes: length => new Uint8Array(length).fill(1), newId: () => 'unused',
     resolveWorkflow: async () => { throw new Error('No Workflow projection'); },
+    resolveWorkflowContent: async () => {
+      workflowContentReads++;
+      return { revision: { headerVersion: 1, bodyVersion: 1 }, openAssociatedContent: async content => {
+        if (content.t !== 'plain') throw new Error('Expected plain Workflow content');
+        return content.v;
+      }, sealAssociatedContent: async value => ({ t: 'plain', v: value }) };
+    },
     automations: { get: async () => { reads++; throw new Error('No source Account read'); },
       list: async () => ({ automations: [], nextCursor: null }), listDetails: async () => ({ automations: [], nextCursor: null }),
       create: unexpectedWrite, reconcile: unexpectedWrite, delete: unexpectedWrite },
@@ -254,7 +267,8 @@ it('does not open a shared source with actor keys or admit it without private ma
     actions });
   const http = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (_path, request) => {
     if (request.method === 'GET') return { v: 1, rows: [source] };
-    throw new Error('No occurrence is admissible');
+    sent.push(request.body);
+    return { results: [] };
   } });
   const context = { actionRequestId: 'shared-request', defaultSessionMachineId: 'machine' };
   const selection = await http.select({ actionId: source.actionIds[0]!, input: {}, context,
@@ -262,8 +276,14 @@ it('does not open a shared source with actor keys or admit it without private ma
   const current = { ...selection, after: selection.after.map(row => ({ ...row, consent: { status: 'current' as const, row: actor } })) };
   expect(current.after).toHaveLength(1);
   const invocation = createActionAutomationInvocationV1({ actionId: source.actionIds[0]!, selection: current, context, port: http });
-  expect(await invocation.settle({ ok: true })).toMatchObject({ ok: true, automationNotices: [expect.objectContaining({
-    code: 'action_automation_skipped', reason: 'privateDefinitionUnavailable', automationId: 'source',
-  })] });
+  expect(await invocation.settle({ ok: true })).toEqual({ ok: true });
+  expect(sent).toHaveLength(filtered ? 0 : 1);
+  const failed = createActionAutomationInvocationV1({ actionId: source.actionIds[0]!, selection: current,
+    context: { ...context, actionRequestId: 'failed-shared-request' }, port: http });
+  await failed.settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' });
+  expect(sent).toHaveLength(filtered ? 1 : 2);
+  expect(sent.at(-1)).toMatchObject({ triggers: [{ automationId: 'actor-consent', triggerId: 'consent', triggerRevision: 1 }],
+    evidence: { outcome: 'failed' } });
   expect(reads).toBe(0);
+  expect(workflowContentReads).toBe(1);
 });

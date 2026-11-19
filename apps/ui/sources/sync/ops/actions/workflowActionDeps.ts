@@ -394,6 +394,14 @@ export function createUiWorkflowAction(params: Readonly<{
             const result = await account.artifactAccessGrants.list({ artifactId });
             return result.grants.flatMap((grant) => grant.principal.kind === 'team' ? [grant.principal.teamId] : []);
         },
+        resolveWorkflowContent: async (workflowId) => {
+            const opened = await account.readArtifactContent(workflowId, { includeAssociatedContentOpener: true });
+            if (!opened?.openAssociatedContent || !opened.sealAssociatedContent) {
+                throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+            }
+            return { revision: opened.revision, openAssociatedContent: opened.openAssociatedContent,
+                sealAssociatedContent: opened.sealAssociatedContent };
+        },
         resolveSession,
         resolveManagedMachine: async (input, caller) => {
             account.assertCurrent();

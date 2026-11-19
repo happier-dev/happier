@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionListRequestSchema, AutomationV3WorkerClaimedRunSchema } from './automationApiV3.js';
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionListRequestSchema, AutomationV3WorkerClaimedRunSchema, AutomationTriggerReconcileExistingItemSchema } from './automationApiV3.js';
+import { AutomationActionEncryptedTriggerSchema, ActionAutomationIndexV1Schema } from './automationActionTriggerV1.js';
 import { AutomationRunCauseSchema } from './automationRunCause.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListSelectionV1.js';
 import { AutomationScheduleTriggerInputSchema } from './automationTriggerDefinition.js';
 
 describe('workflow trigger wire contract', () => {
+  it('carries shared Workflow-key Action definitions in writes, reseals and the actor index', () => {
+    const content = { t: 'encrypted', c: 'workflow-key-ciphertext' };
+    const triggerDefinitionEnvelope = { t: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 }, content };
+    expect(AutomationActionEncryptedTriggerSchema.safeParse({ kind: 'action', phase: 'after',
+      actionIds: ['session.archive'], triggerDefinitionEnvelope }).success).toBe(true);
+    expect(AutomationTriggerReconcileExistingItemSchema.safeParse({ kind: 'existing', triggerId: 'trigger',
+      expectedRevision: 1, enabled: true, triggerDefinitionEnvelope }).success).toBe(true);
+    expect(ActionAutomationIndexV1Schema.safeParse({ v: 1, rows: [{ automationId: 'automation', triggerId: 'trigger',
+      triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'owner',
+      phase: 'after', actionIds: ['session.archive'], reachesOthers: true, sharedDefinitionEnvelope: content }] }).success).toBe(true);
+  });
   it('preserves an absolute one-time instant and refuses an unrepresentable Date', () => {
     const trigger = { kind: 'schedule', enabled: true, schedule: { kind: 'once', scheduledAt: Date.UTC(2026, 10, 10, 9) } };
     expect(AutomationScheduleTriggerInputSchema.parse(trigger)).toEqual(trigger);
