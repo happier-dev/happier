@@ -7,6 +7,8 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { BrowserEventV1 } from '@happier-dev/protocol';
 
+import { createBrowserDaemonControlBroker } from '../control/broker';
+import { createBrowserDaemonViewDiscovery } from '../control/viewDiscovery';
 import { createBrowserExtensionService } from '../extensions/service';
 import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
@@ -31,6 +33,7 @@ describe('persistent browser profile launch', () => {
         const launches: string[][] = [];
         let openedPages = 0;
         const factory = createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles,
+            readSessionAccountId: sessionId => sessionId === 'session' ? 'session-member' : null,
             resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                     pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
@@ -48,7 +51,7 @@ describe('persistent browser profile launch', () => {
                         const page = ++openedPages;
                         return { targetId: `target_${page}`, sessionId: `cdp_${page}` };
                     },
-                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}),
+                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }),
                 } }),
             }),
         });
@@ -56,13 +59,17 @@ describe('persistent browser profile launch', () => {
             totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, usedBytes: 0,
             pressure: { level: 'calm', source: 'none' } }) });
         if (!runtime.ok) throw new Error(runtime.errorCode);
+        const broker = createBrowserDaemonControlBroker();
+        broker.registerAdapter(runtime.adapter);
+        const discovery = createBrowserDaemonViewDiscovery({ broker });
+        const memberScope = { requester: { actorAccountId: 'session-member', custodianAccountId: 'machine-owner', role: 'use' as const } };
         const extensionService = createBrowserExtensionService({ profileStore: profiles, runtime: runtime.extensions });
         const browserEvents: BrowserEventV1[] = [];
         runtime.contextCapture?.subscribeBrowserEvents?.(event => browserEvents.push(event));
-        const open = (browserSessionId: string, profileId?: string) => runtime.adapter.dispatchCommand({
+        const open = (browserSessionId: string, profileId?: string, scope?: typeof memberScope) => runtime.adapter.dispatchCommand({
             kind: 'openView', commandId: `open:${browserSessionId}`, browserSessionId, viewId: 'view', platform: 'web', focus: true,
             ...(profileId ? { profileId } : {}), target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://example.test' },
-        });
+        }, scope);
         const close = (browserSessionId: string) => runtime.adapter.dispatchCommand({
             kind: 'closeView', commandId: `close:${browserSessionId}`, browserSessionId, viewId: 'view',
         });
@@ -94,10 +101,15 @@ describe('persistent browser profile launch', () => {
             expect(await open('other', profile.profileId)).toMatchObject({ status: 'failed' });
             expect(await open('session', 'absent')).toMatchObject({ status: 'failed' });
             expect(runtime.adapter.listViews?.('session')).toHaveLength(3);
+            expect(discovery.listViews('session', memberScope)).toEqual([]);
             expect(await extensionService.execute('browser.extensions.disable', { ...disable, restartConfirmed: true }))
                 .toMatchObject({ status: 'updated', entry: { extension: { id: extension.id, enabled: false } } });
             expect(browserEvents.filter(event => event.kind === 'viewClosed').map(event => event.viewId).sort())
                 .toEqual(['options', 'popup', 'view']);
+            expect(discovery.listViews('session')).toEqual(expect.arrayContaining(['options', 'popup', 'view'].map(viewId =>
+                expect.objectContaining({ viewId, events: [expect.objectContaining({ kind: 'viewClosed' })] }))));
+            expect(discovery.listViews('session').every(view => !view.captureSource)).toBe(true);
+            expect(discovery.listViews('session', memberScope)).toEqual([]);
             expect(await extensionService.execute('browser.extensions.openActionPopup', {
                 ...extensionView, commandId: 'disabled-popup', viewId: 'disabled-popup' }))
                 .toEqual({ status: 'unavailable', code: 'extension_disabled' });
@@ -105,9 +117,17 @@ describe('persistent browser profile launch', () => {
             expect(await profiles.purgeForSessionDeleted({ sessionId: 'session' })).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
             expect((await profiles.listExtensions(profile.profileId)).ok).toBe(true);
             expect(await open('session', profile.profileId)).toMatchObject({ status: 'dispatched' });
+            expect(discovery.listViews('session').filter(view => view.viewId === 'view')).toEqual([
+                expect.objectContaining({ events: expect.arrayContaining([expect.objectContaining({ kind: 'viewOpened' })]) }),
+            ]);
             expect(launches).toHaveLength(2);
             expect(launches[1]?.some(arg => arg.startsWith('--load-extension='))).toBe(false);
-            await close('session');
+            expect(await close('session')).toMatchObject({ status: 'dispatched' });
+            expect(await open('session', undefined, memberScope)).toMatchObject({ status: 'dispatched' });
+            // A new default profile does not carry the old persistent profile's terminal targets.
+            expect(discovery.listViews('session', memberScope)).toMatchObject([{ viewId: 'view' }]);
+            await runtime.stopSession?.('session');
+            expect(discovery.listViews('session')).toEqual([]);
             expect(await open('missing', 'absent')).toMatchObject({ status: 'failed' });
             expect(await profiles.loadPersistentProfile('absent')).toBeNull();
         } finally { await runtime.dispose?.(); await rm(root, { recursive: true, force: true }); }

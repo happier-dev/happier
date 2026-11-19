@@ -83,8 +83,9 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
 
         const profileStore = params.profileStore ?? createConfiguredBrowserProfileStore();
         type Launched = Extract<BrowserSidecarControlAdapterFactoryResult, { ok: true }>;
-        type SessionLaunch = { promise: Promise<BrowserSidecarControlAdapterFactoryResult>; result?: Launched;
+        type SessionLaunch = { promise?: Promise<BrowserSidecarControlAdapterFactoryResult>; result?: Launched;
             stop: () => Promise<void>; closing: boolean; pendingCommands: number;
+            terminalViews: readonly BrowserDaemonViewV1[];
             profileId: string; extensionDirectories: readonly string[]; presentation: 'headless' | 'window' };
         const sessions = new Map<string, SessionLaunch>();
         // A profile restart replaces a physical page, not the selected workspace view.
@@ -152,7 +153,9 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             if (!shared && (!requester.actorAccountId || params.readSessionAccountId?.(sessionId) !== requester.actorAccountId)) return false;
             if (existingProfile && !existingProfile.profileId) return false;
             const existing = sessions.get(sessionId);
-            const profileId = existingProfile?.profileId ?? existing?.profileId;
+            // Admission reuses only a running/starting engine. Terminal discovery
+            // supplies its retained profile provenance through existingProfile instead.
+            const profileId = existingProfile?.profileId ?? (existing?.promise ? existing.profileId : undefined);
             // Persistent profiles may contain owner logins. Commands and discovery
             // share this decision, including reusing an already-running engine.
             return !requestedProfileId && (!profileId || profileStore.getProfile(profileId)?.storageMode === 'ephemeral');
@@ -166,16 +169,25 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 : browserCommandDispatchFailure({ commandId: command.commandId, adapterKind: 'chromiumSidecar',
                     code: 'profile_policy_denied', message: 'This Browser profile is unavailable to this Session.', completion: 'known', retryable: false });
         }
+        function terminalViewsForSession(sessionId: string): readonly BrowserDaemonViewV1[] {
+            const session = sessions.get(sessionId);
+            if (!session) return [];
+            const adapter = session.result?.adapter;
+            if (!adapter) return session.terminalViews;
+            const terminalViews = adapter.listTerminalViews?.(sessionId) ?? [];
+            const currentIds = new Set([...(adapter.listViews?.(sessionId) ?? []), ...terminalViews].map(view => view.viewId));
+            return [...session.terminalViews.filter(view => !currentIds.has(view.viewId)), ...terminalViews];
+        }
         async function launchSession(sessionId: string, scope?: BrowserSidecarCdpCommandScope, requestedProfileId?: string, presentation: 'headless' | 'window' = 'headless'): Promise<BrowserSidecarControlAdapterFactoryResult> {
             const existing = sessions.get(sessionId);
-            if (existing) {
+            if (existing?.promise) {
                 if (requestedProfileId && existing.profileId !== requestedProfileId) {
                     return unavailable('profile_policy_denied', 'Close this browser before selecting a different profile.');
                 }
                 return existing.promise;
             }
             const profileId = requestedProfileId ?? deriveSessionBrowserProfileId(sessionId);
-            if (requestedProfileId && [...sessions.values()].some(current => current.profileId === profileId)) {
+            if (requestedProfileId && [...sessions.values()].some(current => current.promise && current.profileId === profileId)) {
                 return unavailable('profile_policy_denied', 'This browser profile is already open in another Session.');
             }
             const previousProfile = profileStore.getProfile(profileId);
@@ -188,24 +200,36 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             if (scope?.signal?.aborted || (scope?.deadlineMs !== undefined && scope.deadlineMs <= Date.now())) cancelLaunch();
             else scope?.signal?.addEventListener('abort', cancelLaunch, { once: true });
             let stopping: Promise<void> | undefined;
+            const retire = () => {
+                // Preserve only the binding owner's final facts and profile custody until
+                // this Session ends. Release the native engine, transport and launch promise.
+                session.terminalViews = terminalViewsForSession(sessionId);
+                session.result = undefined;
+                session.promise = undefined;
+                session.extensionDirectories = [];
+                session.stop = async () => {};
+            };
             const stop = (): Promise<void> => {
                 session.closing = true;
                 cancellation.abort();
                 stopping ??= (async () => {
-                    const result = await session.promise.catch(() => undefined);
+                    const result = await session.promise?.catch(() => undefined);
                     try {
                         if (result?.ok) await result.dispose?.();
                     } catch (error) {
                         // An observed child exit releases its memory slot even if
                         // CDP cleanup failed. A purge still reports that failure.
-                        if (result?.ok && result.isProcessAlive?.() === false) sessions.delete(sessionId);
+                        if (result?.ok && result.isProcessAlive?.() === false) retire();
                         throw error;
                     }
-                    sessions.delete(sessionId);
+                    retire();
                 })();
                 return stopping;
             };
-            const beforePurge = async () => { await sessions.get(sessionId)?.stop(); };
+            const beforePurge = async () => {
+                await sessions.get(sessionId)?.stop();
+                sessions.delete(sessionId);
+            };
             const ephemeralProfile = requestedProfileId ? null : profileStore.register({
                 profileId, storageMode: 'ephemeral', owner: { kind: 'session', id: sessionId },
                 createdAt: previousProfile?.createdAt,
@@ -259,7 +283,9 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 }
                 return result;
             }).finally(() => scope?.signal?.removeEventListener('abort', cancelLaunch));
-            session = { promise, stop, closing: false, pendingCommands: 0, profileId, extensionDirectories: [], presentation };
+            session = { promise, stop, closing: false, pendingCommands: 0,
+                terminalViews: existing?.profileId === profileId ? existing.terminalViews : [],
+                profileId, extensionDirectories: [], presentation };
             sessions.set(sessionId, session);
             return promise;
         }
@@ -298,7 +324,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     }
                 }
                 if (disposal) return failed(command, 'Browser runtime is closing.');
-                if (!sessions.has(command.browserSessionId)) {
+                if (!sessions.get(command.browserSessionId)?.promise) {
                     const policy = params.readMachineResourcesPolicy?.();
                     if (policy && policy.status !== 'ready') {
                         return browserCommandDispatchFailure({ commandId: command.commandId, adapterKind: 'chromiumSidecar',
@@ -317,10 +343,11 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     const ram = memory?.reported ? memory.totalBytes : 0;
                     const automatic = Math.min(4, Math.max(1, Number.isFinite(ram) ? Math.floor(ram / (4 * 1024 ** 3)) : 1));
                     const limit = policy?.status === 'ready' ? policy.policy.processes.browserMaxConcurrent ?? automatic : automatic;
-                    if (sessions.size >= limit) {
+                    const activeEngines = [...sessions.values()].filter(session => session.promise).length;
+                    if (activeEngines >= limit) {
                         return browserCommandDispatchFailure({ commandId: command.commandId, adapterKind: 'chromiumSidecar',
                             code: 'waiting_for_memory', completion: 'known', retryable: true,
-                            message: `Waiting for memory: ${sessions.size} of ${limit} browser sidecars are in use. Close a browser or raise the browser limit in resource settings, then retry.` });
+                            message: `Waiting for memory: ${activeEngines} of ${limit} browser sidecars are in use. Close a browser or raise the browser limit in resource settings, then retry.` });
                     }
                     // launchSession reserves synchronously before its first awaited
                     // launch, so concurrent opens cannot pass the same vacant slot.
@@ -343,7 +370,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     return failed(command, 'Browser session launch failed.');
                 }
                 if (!result?.ok) {
-                    if (result && !session) await commandSession?.stop();
+                    if (result && !session?.promise) await commandSession?.stop();
                     return failed(command, result?.disabledReason ?? 'Browser session is unavailable.',
                         result?.errorCode === 'sandbox_unavailable' || result?.errorCode === 'profile_policy_denied'
                             ? result.errorCode : 'adapter_unavailable');
@@ -366,7 +393,10 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
         }
         return {
             ok: true,
-            stopSession: async browserSessionId => { await sessions.get(browserSessionId)?.stop(); },
+            stopSession: async browserSessionId => {
+                await sessions.get(browserSessionId)?.stop();
+                sessions.delete(browserSessionId);
+            },
             readResourceTargets,
             readProcessRoots: () => readResourceTargets().map(target => target.root),
             localWindow: {
@@ -374,7 +404,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     const host = await inspectLocalBrowserWindowHost(params.localWindowHost);
                     if (!host.available) return { ok: false, reason: host.reason };
                     const existing = sessions.get(command.browserSessionId);
-                    if (existing) {
+                    if (existing?.promise) {
                         const control = factoryInput.resolveInputControl?.(command);
                         if (existing.closing || existing.pendingCommands || !existing.result
                             || control?.getAdmissionFailure('human') === 'busy' || control?.isObservationHeld()) {
@@ -425,11 +455,12 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 subscribeViewLifecycle: listener => { viewListeners.add(listener); return () => { viewListeners.delete(listener); }; },
                 getCommandAccessFailure,
                 listTerminalViews: (browserSessionId, scope) => {
-                    if (!canAccessSessionProfile(browserSessionId, scope)) return [];
+                    if (!canAccessSessionProfile(browserSessionId, scope, undefined, {
+                        adapterKind: 'chromiumSidecar', profileId: sessions.get(browserSessionId)?.profileId,
+                    })) return [];
                     const replacement = profileReplacements.get(browserSessionId);
-                    return (sessions.get(browserSessionId)?.result?.adapter.listTerminalViews?.(browserSessionId, scope) ?? [])
-                        .filter(view => !view.events.some(event =>
-                            event.kind === 'viewClosed' && event.viewId === replacement?.view.viewId));
+                    return terminalViewsForSession(browserSessionId).filter(view => !view.events.some(event =>
+                        event.kind === 'viewClosed' && event.viewId === replacement?.view.viewId));
                 },
                 listViews: (browserSessionId, scope) => {
                     if (!canAccessSessionProfile(browserSessionId, scope)) return [];
@@ -523,6 +554,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     // Runtime disposal is not Session end. Keep workspace bytes and
                     // registrations with the shared store for explicit/Session purge.
                     await Promise.all([...sessions.values()].map(session => session.stop()));
+                    sessions.clear();
                     eventListeners.clear();
                     viewListeners.clear();
                     browserEventListeners.clear();
