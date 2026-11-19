@@ -10,7 +10,7 @@ type ClientActionMachineRpc = Readonly<{
     method: string,
     params: unknown,
     options: Readonly<{ timeoutMs: null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void;
-      principalAccountId?: string }>,
+      principalAccountId: string | undefined }>,
   ): Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; errorCode?: string; error?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
@@ -45,7 +45,7 @@ export function createClientActionMachineRpcExecutor(
         RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE, request,
         { timeoutMs: null, ...(options.signal ? { signal: options.signal } : {}),
           answeringClient: { requireSingle: true, ...(options.clientId ? { clientId: options.clientId } : {}) },
-          ...(options.principalAccountId ? { principalAccountId: options.principalAccountId } : {}),
+          principalAccountId: options.principalAccountId,
           onIssued: () => { issued = true; } },
       );
       if (!response.ok) {

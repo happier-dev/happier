@@ -48,12 +48,12 @@ describe('createDesktopReverseBrowserRecordingCaptureUiCall', () => {
     const invoke = createReverseDesktopBrowserRecordingNativeViewCaptureInvoke({
       callUi: createDesktopReverseBrowserRecordingCaptureUiCall({ getMachineClient: () => client }),
     });
-    const result = await invoke(captureRequest());
+    const result = await invoke(captureRequest(), 'owner');
 
     expect(callConnectedClientRpc).toHaveBeenCalledWith(
       RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
       expect.objectContaining({ outputPath: captureRequest().outputPath }),
-      undefined,
+      { principalAccountId: 'owner' },
     );
     expect(result).toMatchObject({ ok: true, frame: { path: captureRequest().outputPath } });
   });

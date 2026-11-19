@@ -8,7 +8,8 @@ export function createBrowserProfileCookieImporter(
   capture: BrowserSidecarContextCaptureSurface | undefined,
   options?: Readonly<{ getNativeClient: () => ReverseCaptureMachineRpcClient | null | undefined }>,
 ) {
-  return async (input: unknown, signal?: AbortSignal): Promise<BrowserProfileLoginsImportResultV1> => {
+  /** `principalAccountId` is the admitted actor; the native App continuation refuses without it. */
+  return async (input: unknown, signal?: AbortSignal, principalAccountId?: string): Promise<BrowserProfileLoginsImportResultV1> => {
     const parsed = BrowserCookieApplyV1Schema.safeParse(input);
     if (!parsed.success) return { status: 'unavailable', code: 'import_failed' };
     if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
@@ -22,7 +23,7 @@ export function createBrowserProfileCookieImporter(
         // Continues the admitted import over the existing encrypted, exact-view channel. This is
         // private material, never a second Action invocation or an agent-visible result.
         const response = await client.callConnectedClientRpc(uiBrowserAutomationDispatchMethod(request), request, {
-          timeoutMs: null, signal, answeringClient: { requireSingle: true }, onIssued: () => { issued = true; },
+          timeoutMs: null, signal, answeringClient: { requireSingle: true }, principalAccountId, onIssued: () => { issued = true; },
         });
         if (response.ok) {
           const result = BrowserProfileLoginsImportResultV1Schema.safeParse(response.result);

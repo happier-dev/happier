@@ -32,9 +32,11 @@ export function registerDaemonBrowserRecordingHandlers(
             const browserRecording = requireBrowserRecordingRoutes(options);
             const admission = createBrowserRawRequestAdmission(options.resolveBrowserControl, context);
             admission.requireTarget({ browserSessionId: request.input.browserSessionId });
+            const runtimeAccountId = context?.machineAdmission?.actorAccountId
+                ?? (context?.authorization?.kind === 'session.browser' ? context.authorization.actorAccountId : undefined);
             return DaemonBrowserRecordingStartResponseV1Schema.parse({
                 protocolVersion: 1,
-                result: await browserRecording.startRecording(request.input),
+                result: await browserRecording.startRecording(request.input, { runtimeAccountId }),
             });
         },
     );

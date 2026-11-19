@@ -3279,11 +3279,12 @@ export class ApiMachineClient {
                 const desired = this.captureMachineSetupDesired();
                 const elevation = this.captureMachineAdminAccess();
                 const port = this.captureMachineMetadataFieldPort();
+                const custodianAccountId = readAccountIdFromToken(this.token) ?? undefined;
                 return { readDesired: desired.read, elevation,
                     settleCaddyFirewall: input => settleMachineCaddyFirewallForHost({ ...input, port,
-                        readDaemonProof: () => observeOwnDaemonReachability({ client: this, signal: input.signal }) }),
+                        readDaemonProof: () => observeOwnDaemonReachability({ client: this, custodianAccountId, signal: input.signal }) }),
                     settlePrivateWorkloadFirewall: input => settleMachinePrivateWorkloadFirewallForHost({ ...input, port,
-                        readDaemonProof: () => observeOwnDaemonReachability({ client: this, signal: input.signal }) }),
+                        readDaemonProof: () => observeOwnDaemonReachability({ client: this, custodianAccountId, signal: input.signal }) }),
                 };
             },
             resolveRequesterIdentity: context => this.resolveDeploymentSourceRequesterIdentity(context),
@@ -4247,13 +4248,15 @@ export class ApiMachineClient {
     async callConnectedClientRpc<TResult = unknown>(
         method: string,
         params: unknown,
-        options?: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void;
+        options: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void;
             answeringClient?: SocketRpcAnsweringClientV1;
-            /** The Action's acting Account; this socket reaches only this daemon Account's Apps. */
-            principalAccountId?: string }>,
+            /** Who the call acts for; this socket reaches only this daemon Account's Apps. */
+            principalAccountId: string | undefined }>,
     ): Promise<Readonly<{ ok: true; result: TResult; answeringClientId?: string; answeringClientIds?: readonly string[]; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }> | Readonly<{ ok: false; error?: string; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>> {
-        // A hosted member's Action (shared Machine) never runs in the owner's Apps.
-        if (options?.principalAccountId && options.principalAccountId !== readAccountIdFromToken(this.token)) {
+        // A hosted member's Action (shared Machine) never runs in the owner's Apps, and an
+        // unattributed call cannot prove it is not one: both are refused before anything is sent.
+        const principal = options?.principalAccountId;
+        if (!principal || principal !== readAccountIdFromToken(this.token)) {
             return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
         }
         const socket = this.socket;

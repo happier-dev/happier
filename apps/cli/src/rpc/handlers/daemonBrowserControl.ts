@@ -65,8 +65,9 @@ export function registerDaemonBrowserControlHandler(
         const request = BrowserPasskeysApplyV1Schema.safeParse(raw);
         if (!request.success) return { status: 'unavailable', code: 'source_format_unsupported' };
         return BrowserProfileLoginsImportResultV1Schema.parse(options.browserControl?.importPasskeys
-            ? await options.browserControl.importPasskeys({ ...request.data, signal: context?.signal })
-            : await importNativePasskeys(request.data, context?.signal));
+            ? await options.browserControl.importPasskeys({ ...request.data, signal: context?.signal,
+                principalAccountId: context?.machineAdmission?.actorAccountId })
+            : await importNativePasskeys(request.data, context?.signal, context?.machineAdmission?.actorAccountId));
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, async () =>
         BrowserLoginSourcesResultV1Schema.parse(await listBrowserCookieSources()));
@@ -79,7 +80,9 @@ export function registerDaemonBrowserControlHandler(
     rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY, async (raw: unknown, context?: RpcHandlerContext) => {
         const request = BrowserCookieApplyV1Schema.safeParse(raw);
         if (!request.success) return { status: 'unavailable', code: 'import_failed' };
-        return BrowserProfileLoginsImportResultV1Schema.parse(await importCookies(request.data, context?.signal));
+        // The admitted actor travels to the owner App continuation, which refuses another Account.
+        return BrowserProfileLoginsImportResultV1Schema.parse(await importCookies(request.data, context?.signal,
+            context?.machineAdmission?.actorAccountId));
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, async (raw: unknown, context?: RpcHandlerContext) => {
         const request = DaemonBrowserViewListRequestV1Schema.parse(raw);

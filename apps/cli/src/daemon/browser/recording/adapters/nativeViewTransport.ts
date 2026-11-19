@@ -47,6 +47,7 @@ export type DesktopBrowserRecordingFrameCaptureResult =
  */
 export type DesktopBrowserRecordingFrameCaptureInvoke = (
   request: DesktopBrowserRecordingFrameCaptureRequest,
+  principalAccountId?: string,
 ) => Promise<DesktopBrowserRecordingFrameCaptureResult>;
 
 export type DesktopBrowserRecordingNativeViewCaptureTransportOptions = Readonly<{
@@ -76,7 +77,7 @@ export function createDesktopBrowserRecordingNativeViewCaptureTransport(
   const deleteFile = options.deleteFile ?? defaultDeleteFile;
 
   return {
-    async captureFrame({ recording }) {
+    async captureFrame({ recording, principalAccountId }) {
       const captureRequestId = randomId();
       const outputPath = `${recording.recordingId}.${captureRequestId}.native-view.png`;
 
@@ -88,7 +89,7 @@ export function createDesktopBrowserRecordingNativeViewCaptureTransport(
         outputPath,
       };
 
-      const result = await options.invokeRecordingFrameCapture(request);
+      const result = await options.invokeRecordingFrameCapture(request, principalAccountId);
 
       if (!result.ok) {
         return { ok: false, reasonCode: result.errorCode };

@@ -12,7 +12,8 @@ export function createBrowserProfilePasskeyImporter(
     getNativeClient?: () => ReverseCaptureMachineRpcClient | null | undefined;
   }>,
 ) {
-  return async (input: unknown, signal?: AbortSignal): Promise<BrowserProfileLoginsImportResultV1> => {
+  /** `principalAccountId` is the admitted actor; the native App continuation refuses without it. */
+  return async (input: unknown, signal?: AbortSignal, principalAccountId?: string): Promise<BrowserProfileLoginsImportResultV1> => {
     const parsed = BrowserPasskeysApplyV1Schema.safeParse(input);
     if (!parsed.success) return { status: 'unavailable', code: 'source_format_unsupported' };
     if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
@@ -28,7 +29,7 @@ export function createBrowserProfilePasskeyImporter(
       // boundary, including when the view changed engines after the destination probe.
       const response = await client.callConnectedClientRpc(uiBrowserAutomationDispatchMethod(request), {
         browserSessionId: request.browserSessionId, viewId: request.viewId, profileId: request.profileId, credentials: [],
-      }, { timeoutMs: null, signal, answeringClient: { requireSingle: true } });
+      }, { timeoutMs: null, signal, answeringClient: { requireSingle: true }, principalAccountId });
       if (signal?.aborted) return { status: 'unavailable', code: 'canceled' };
       if (response.ok) {
         const result = BrowserProfileLoginsImportResultV1Schema.safeParse(response.result);

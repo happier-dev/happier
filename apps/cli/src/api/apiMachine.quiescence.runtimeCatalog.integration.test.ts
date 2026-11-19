@@ -110,6 +110,8 @@ function encryptForMachine(machine: Machine, value: unknown): string {
     return encodeBase64(encrypt(machine.encryptionKey, machine.encryptionVariant, value));
 }
 
+const ownerToken = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
+
 describe('ApiMachineClient daemon quiescence admission', () => {
     it('sends no reverse client RPC for another Account through any daemon route into its own Apps', async () => {
         // MACH-PRINCIPAL-AUDIT-1116 A-R4 / SEC 1116C: the Machine socket reaches the daemon
@@ -119,7 +121,6 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             emitted.push(String((payload as { method?: unknown }).method));
             return { ok: true, result: { v: 1, execution: { ok: true, result: {} } } };
         } });
-        const ownerToken = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
         const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
         const plugin = createClientActionMachineRpcExecutor(() => client);
@@ -146,9 +147,9 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             socket.connected = false;
             return { ok: true, result: receipt };
         } });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
-        expect(await client.callConnectedClientRpc('ui.navigation', {}, { timeoutMs: null }))
+        expect(await client.callConnectedClientRpc('ui.navigation', {}, { timeoutMs: null, principalAccountId: 'owner' }))
             .toEqual({ ok: true, result: receipt });
     });
 
@@ -292,12 +293,13 @@ describe('ApiMachineClient daemon quiescence admission', () => {
                 return { ok: true, result: { hello: 'daemon' } };
             },
         });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
 
         await expect(client.callConnectedClientRpc(
             'ui.demo',
             { hello: 'ui' },
+            { principalAccountId: 'owner' },
         )).resolves.toEqual({
             ok: true,
             result: { hello: 'daemon' },
@@ -314,7 +316,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
         const socket = createApiSessionSocketStub({ connected: true, emitWithAck: () => ({
             ok: false, error: 'Reverse capture refused', errorCode,
         }) });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
         const adapter = createBrowserRecordingNativeViewCaptureAdapter({
             captureCommand: createBrowserRecordingNativeViewCaptureCommand({
@@ -325,7 +327,7 @@ describe('ApiMachineClient daemon quiescence admission', () => {
                 }),
             }),
         });
-        await expect(adapter.start({ recording: {
+        await expect(adapter.start({ principalAccountId: 'owner', recording: {
             v: 1, recordingId: 'recording_reverse_rpc', browserSessionId: 'browser_session_1', viewId: 'view_1',
             profileId: 'profile_1', targetKind: 'streamedBrowser', adapterKind: 'localPreview',
             renderEngineKind: 'desktopWebView', captureKind: 'nativeViewCapture', fidelity: 'nativeCallback',
@@ -341,10 +343,10 @@ describe('ApiMachineClient daemon quiescence admission', () => {
                 answeringClient: { clientId: 'app-b', requireSingle: true }, params: { hello: 'ui' } });
             return { ok: true, result: { status: 'applied' }, answeringClientId: 'app-b' };
         } });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
         expect(await client.callConnectedClientRpc(RPC_METHODS.UI_ACTION_EXECUTE, { hello: 'ui' },
-            { answeringClient: { clientId: 'app-b', requireSingle: true } }))
+            { answeringClient: { clientId: 'app-b', requireSingle: true }, principalAccountId: 'owner' }))
             .toEqual({ ok: true, result: { status: 'applied' }, answeringClientId: 'app-b' });
     });
 
@@ -354,10 +356,10 @@ describe('ApiMachineClient daemon quiescence admission', () => {
         const socket = createApiSessionSocketStub({ connected: true, emitWithAck: () => ({
             ok: false, error: 'Choose a client', errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients,
         }) });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
         expect(await client.callConnectedClientRpc(RPC_METHODS.UI_ACTION_EXECUTE, {},
-            { answeringClient: { requireSingle: true } })).toMatchObject({
+            { answeringClient: { requireSingle: true }, principalAccountId: 'owner' })).toMatchObject({
             ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients,
         });
     });
@@ -370,10 +372,10 @@ describe('ApiMachineClient daemon quiescence admission', () => {
             connected: true,
             emitWithAck: () => { issued(); return new Promise(resolve => { settle = () => resolve({ ok: true, result: {} }); }); },
         });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
         const abort = new AbortController();
-        const running = client.callConnectedClientRpc('ui.demo', {}, { signal: abort.signal });
+        const running = client.callConnectedClientRpc('ui.demo', {}, { signal: abort.signal, principalAccountId: 'owner' });
         await sent;
         abort.abort();
         try {
@@ -393,13 +395,13 @@ describe('ApiMachineClient daemon quiescence admission', () => {
                 return new Promise<unknown>((_resolve, reject) => { rejectAcknowledgement = reject; });
             },
         });
-        const client = new ApiMachineClient('token', createPlainMachine());
+        const client = new ApiMachineClient(ownerToken, createPlainMachine());
         Reflect.set(client, 'socket', socket);
 
         const pending = client.callConnectedClientRpc(
             'ui.demo',
             { hello: 'ui' },
-            { timeoutMs: null },
+            { timeoutMs: null, principalAccountId: 'owner' },
         );
         await issued;
         socket.connected = false;

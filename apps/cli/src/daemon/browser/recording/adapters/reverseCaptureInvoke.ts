@@ -20,6 +20,7 @@ import type {
  */
 export type ReverseDesktopBrowserRecordingCaptureUiCall = (
   request: UiBrowserRecordingCaptureFrameRequestV1,
+  principalAccountId: string | undefined,
 ) => Promise<unknown>;
 
 export type CreateReverseDesktopBrowserRecordingNativeViewCaptureInvokeOptions = Readonly<{
@@ -48,6 +49,7 @@ export function createReverseDesktopBrowserRecordingNativeViewCaptureInvoke(
 ): DesktopBrowserRecordingFrameCaptureInvoke {
   return async (
     request: DesktopBrowserRecordingFrameCaptureRequest,
+    principalAccountId?: string,
   ): Promise<DesktopBrowserRecordingFrameCaptureResult> => {
     const payload = UiBrowserRecordingCaptureFrameRequestV1Schema.parse({
       protocolVersion: 1,
@@ -60,7 +62,7 @@ export function createReverseDesktopBrowserRecordingNativeViewCaptureInvoke(
 
     let raw: unknown;
     try {
-      raw = await options.callUi(payload);
+      raw = await options.callUi(payload, principalAccountId);
     } catch {
       return { ok: false, errorCode: UI_UNAVAILABLE_ERROR_CODE };
     }

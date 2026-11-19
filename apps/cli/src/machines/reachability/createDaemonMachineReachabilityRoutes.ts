@@ -128,7 +128,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       const custody = createProjectNativeInvocationCustody({ signal });
       try {
       const deps = { target, port, context, runtimeRegistry: lease.registry, isCurrent,
-        readDaemonProof: () => observeOwnDaemonReachability({ client, signal }),
+        readDaemonProof: () => observeOwnDaemonReachability({ client, custodianAccountId: target.custodianAccountId, signal }),
         happyHomeDir: configuration.happyHomeDir, agentIsolation: options.agentIsolation,
         nativeEffects: {
           userHomeDirectory: homedir(),

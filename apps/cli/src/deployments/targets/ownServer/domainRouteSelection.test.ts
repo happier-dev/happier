@@ -1004,7 +1004,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                                 observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier',
                                     daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
                                     managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }), spawn },
-                            readDaemonProof: async () => observeOwnDaemonReachability({ client: {
+                            readDaemonProof: async () => observeOwnDaemonReachability({ custodianAccountId: 'owner', client: {
                                 isMachineControlRegistrationReady: () => true,
                                 async callConnectedClientRpc() { return { ok: false,
                                     errorCode: scenario === 'daemon ACK unavailable' ? 'target_unavailable' : 'RPC_METHOD_NOT_AVAILABLE' }; },

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DaemonBrowserRecordingUnavailableReasonV1 } from '@happier-dev/protocol/browser/recording/v1';
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import type { SurfaceInputControl } from '../surfaces/inputControl';
 import type { RecordingOperationContext } from './sessionMediaHost';
 import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
@@ -162,6 +163,7 @@ export type BrowserRecordingRuntimeStartInput = Readonly<{
 
 export type BrowserRecordingCaptureStartInput<R extends RecordingSession = BrowserRecordingSessionV1> = Readonly<{
   recording: R;
+  principalAccountId?: string;
   captureSource?: BrowserRecordingCaptureSourceV1;
 }>;
 
@@ -527,7 +529,9 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       const start = async (): Promise<BrowserRecordingRuntimeStartResult<R>> => {
         let adapterStart: BrowserRecordingCaptureAdapterStartResult;
         try {
-          adapterStart = await adapter.start({ recording, captureSource: startInput.captureSource });
+          adapterStart = await adapter.start({
+            recording, captureSource: startInput.captureSource, principalAccountId: readActionPrincipalAccountId(context),
+          });
         } catch {
           await terminalOutcome(recording, 'capture_failed', now());
           return { status: 'unavailable', reason: createUnavailable('browser_recording_capture_failed', 'Browser recording capture failed to start.') };

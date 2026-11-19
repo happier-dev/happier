@@ -366,7 +366,7 @@ setBrowserRecordingRoutesProvider?: (
                 activateManaged: browserProfilePasskeys?.activate,
                 getNativeClient: params.getApiMachineForSessions,
               })({ browserSessionId: request.browserSessionId, viewId: request.viewId, profileId: request.profileId,
-                credentials: request.credentials }, request.signal),
+                credentials: request.credentials }, request.signal, request.principalAccountId),
               broker: browserControlBroker,
               captureRegistry: params.liveStreamCaptureRegistry,
               automation: () => browserAutomationServiceForCapture,

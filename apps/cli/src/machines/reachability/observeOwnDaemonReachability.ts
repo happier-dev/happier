@@ -16,10 +16,12 @@ export type OwnDaemonReachabilityProof = Readonly<{
  * This is a post-change product observation, not another admission check. */
 export async function observeOwnDaemonReachability(input: Readonly<{
   client: Pick<ApiMachineClient, 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'>;
+  custodianAccountId: string | undefined;
   signal?: AbortSignal;
 }>): Promise<OwnDaemonReachabilityProof> {
   try {
-    const reply = await input.client.callConnectedClientRpc(RPC_METHODS.CAPABILITIES_DESCRIBE, {}, { signal: input.signal, timeoutMs: null });
+    const reply = await input.client.callConnectedClientRpc(RPC_METHODS.CAPABILITIES_DESCRIBE, {}, { signal: input.signal, timeoutMs: null,
+      principalAccountId: input.custodianAccountId });
     const registered = input.client.isMachineControlRegistrationReady();
     const status = !registered || !reply.ok && isMachineRequestReachabilityFailureV1(createRpcCallError({
       error: reply.error ?? 'Daemon observation failed', errorCode: reply.errorCode,

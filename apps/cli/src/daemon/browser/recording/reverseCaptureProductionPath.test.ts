@@ -4,6 +4,12 @@ import {
   type UiBrowserRecordingCaptureFrameResponseV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { ApiMachineClient } from '@/api/apiMachine';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { registerDaemonBrowserRecordingHandlers } from '@/rpc/handlers/daemonBrowserRecording';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createDesktopReverseBrowserRecordingCaptureUiCall } from './reverseChannel/desktopReverseCaptureUiCall';
 
 import { createBrowserRecordingNativeViewCaptureCommand } from './adapters/nativeViewCommand';
 import { createDesktopBrowserRecordingNativeViewCaptureTransport } from './adapters/nativeViewTransport';
@@ -121,6 +127,55 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
       const outputPath = callUi.mock.calls[0]?.[0].outputPath;
       expect(outputPath).toMatch(/^browser_recording_.+\.capture_1\.native-view\.png$/);
       expect(outputPath).not.toMatch(/^[/\\]|^[A-Za-z]:[\\/]/);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it('allows the owning Account and refuses an unrelated or unattributed Account before sending a frame RPC', async () => {
+    const machineId = 'test-machine';
+    const token = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
+    const client = new ApiMachineClient(token, {
+      id: machineId, encryptionMode: 'plain', metadata: null, metadataVersion: 0,
+      daemonState: null, daemonStateVersion: 0,
+    });
+    const capture = vi.fn(uiCallThatRunsCaptureDesktopBrowserRecordingFrame(async ({ outputPath }) => ({
+      ok: true, frame: { mimeType: 'image/png', width: 8, height: 6, sizeBytes: 32, path: outputPath },
+    })));
+    Reflect.set(client, 'socket', createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (_event, payload) => ({
+        ok: true,
+        result: await capture(UiBrowserRecordingCaptureFrameRequestV1Schema.parse(
+          (payload as { params: unknown }).params,
+        )),
+      }),
+    }));
+    const runtime = buildRuntime(createDesktopReverseBrowserRecordingCaptureUiCall({
+      getMachineClient: () => client,
+    }), { captureSourceAvailable: true });
+    const handlers = new Map<string, RpcHandler>();
+    registerDaemonBrowserRecordingHandlers({
+      registerHandler: (method, handler) => { handlers.set(method, handler); },
+    }, { browserRecording: runtime.routes });
+    const signal = new AbortController().signal;
+    const admission = (actorAccountId: string): RpcHandlerContext => ({
+      signal,
+      machineAdmission: { actorAccountId, custodianAccountId: 'owner', machineId,
+        installationId: 'test-installation', role: 'manage', encryptionMode: 'plain' },
+    });
+    const start = (viewId: string, context: RpcHandlerContext) =>
+      handlers.get(RPC_METHODS.DAEMON_BROWSER_RECORDING_START)!({
+        protocolVersion: 1, machineId, input: { ...startInput(), viewId },
+      }, context);
+    try {
+      await expect(start('owner_view', admission('owner'))).resolves.toMatchObject({ result: { status: 'started' } });
+      expect(capture).toHaveBeenCalledTimes(1);
+
+      const unavailable = { result: { status: 'unavailable', reason: { code: 'RPC_CLIENT_NOT_AVAILABLE' } } };
+      await expect.soft(start('member_view', admission('member'))).resolves.toMatchObject(unavailable);
+      await expect.soft(start('unattributed_view', { signal })).resolves.toMatchObject(unavailable);
+      expect(capture).toHaveBeenCalledTimes(1);
     } finally {
       await runtime.stop();
     }

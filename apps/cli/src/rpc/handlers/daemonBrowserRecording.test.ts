@@ -106,7 +106,7 @@ describe('daemon browser recording rpc handlers', () => {
             protocolVersion: 1,
             result: { status: 'started', recording: normalizedRecording },
         });
-        expect(browserRecording.startRecording).toHaveBeenCalledWith(startInput);
+        expect(browserRecording.startRecording).toHaveBeenCalledWith(startInput, { runtimeAccountId: undefined });
 
         await expect(handlers.get(RPC_METHODS.DAEMON_BROWSER_RECORDING_STATUS)?.({
             protocolVersion: 1,

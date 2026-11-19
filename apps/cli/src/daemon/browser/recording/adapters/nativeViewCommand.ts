@@ -1,5 +1,3 @@
-import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
-
 import type { BrowserRecordingNativeViewCaptureCommand } from './nativeView';
 
 /**
@@ -31,9 +29,7 @@ export type BrowserRecordingNativeViewCaptureTransportResult =
  * entrypoint, never opened here.
  */
 export type BrowserRecordingNativeViewCaptureTransport = Readonly<{
-  captureFrame(input: Readonly<{
-    recording: BrowserRecordingSessionV1;
-  }>): Promise<BrowserRecordingNativeViewCaptureTransportResult>;
+  captureFrame(input: Parameters<BrowserRecordingNativeViewCaptureCommand>[0]): Promise<BrowserRecordingNativeViewCaptureTransportResult>;
 }>;
 
 export type BrowserRecordingNativeViewCaptureCommandOptions = Readonly<{
@@ -51,10 +47,10 @@ export type BrowserRecordingNativeViewCaptureCommandOptions = Readonly<{
 export function createBrowserRecordingNativeViewCaptureCommand(
   options: BrowserRecordingNativeViewCaptureCommandOptions,
 ): BrowserRecordingNativeViewCaptureCommand {
-  return async ({ recording }) => {
+  return async (input) => {
     let result: BrowserRecordingNativeViewCaptureTransportResult;
     try {
-      result = await options.transport.captureFrame({ recording });
+      result = await options.transport.captureFrame(input);
     } catch {
       return { ok: false, reasonCode: 'native_view_capture_transport_failed' };
     }

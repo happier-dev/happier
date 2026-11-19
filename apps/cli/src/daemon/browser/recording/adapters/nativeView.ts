@@ -2,6 +2,7 @@ import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 
 import type {
   BrowserRecordingCaptureAdapter,
+  BrowserRecordingCaptureStartInput,
   BrowserRecordingCapturedArtifact,
   BrowserRecordingDaemonUnavailableReason,
 } from '../../../recording/service';
@@ -23,7 +24,7 @@ export type BrowserRecordingNativeViewCaptureResult =
   | Readonly<{ ok: false; reasonCode: string }>;
 
 export type BrowserRecordingNativeViewCaptureCommand = (
-  input: Readonly<{ recording: BrowserRecordingSessionV1 }>,
+  input: Pick<BrowserRecordingCaptureStartInput, 'recording' | 'principalAccountId'>,
 ) => Promise<BrowserRecordingNativeViewCaptureResult>;
 
 export type BrowserRecordingNativeViewCaptureAdapterOptions = Readonly<{
@@ -96,7 +97,7 @@ export function createBrowserRecordingNativeViewCaptureAdapter(
 
       let result: BrowserRecordingNativeViewCaptureResult;
       try {
-        result = await options.captureCommand({ recording: input.recording });
+        result = await options.captureCommand({ recording: input.recording, principalAccountId: input.principalAccountId });
       } catch {
         return {
           status: 'unavailable',

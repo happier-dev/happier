@@ -301,7 +301,9 @@ If the producer still reports the terminal cause, the tab and failure remain.
 
 Desktop recording capability uses the actual reverse-capture handler registration for the view's
 machine as well as the native capture shape. The surface refreshes that capability when handler
-readiness changes, preserving navigation state.
+readiness changes, preserving navigation state. The daemon carries the admitted requesting
+Account from recording start to the reverse RPC send. Desktop frame capture requires that
+Account to match the daemon's Account.
 
 Every producer reuses `sessionMediaWriter`, the recording capabilities in
 `browserCapabilities.ts`, and the retention/redaction model. In 0.3 development,

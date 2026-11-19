@@ -198,7 +198,7 @@ describe('firewall through the same P10 installed root invocation', () => {
             port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
                 compareAndSwap: async () => { throw new Error('Unchanged Domain posture cannot write Machine metadata'); } },
             elevation: f.deps,
-            readDaemonProof: () => observeOwnDaemonReachability({ client: {
+            readDaemonProof: () => observeOwnDaemonReachability({ custodianAccountId: 'owner', client: {
                 isMachineControlRegistrationReady: () => true,
                 callConnectedClientRpc: async () => ({ ok: true, result: {} }),
             } }),
@@ -257,7 +257,7 @@ describe('firewall through the same P10 installed root invocation', () => {
             port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
                 compareAndSwap: async () => { throw new Error('Unchanged workload posture cannot write metadata'); } },
             elevation: f.deps, privateNetworks: [], privateWorkloadBindings,
-            readDaemonProof: () => observeOwnDaemonReachability({ client: {
+            readDaemonProof: () => observeOwnDaemonReachability({ custodianAccountId: 'owner', client: {
                 isMachineControlRegistrationReady: () => true, callConnectedClientRpc: async () => ({ ok: true, result: {} }),
             } }),
         }));

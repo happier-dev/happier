@@ -21,7 +21,7 @@ it('explains the missing Network posture before changing native or saved state',
       readPolicy: async () => ({ version: 1, mode: 'preauthorized' }),
       observe: async () => { throw new Error('Missing posture cannot observe native privileges'); },
       spawn: () => { throw new Error('Missing posture cannot start a native effect'); } },
-    readDaemonProof: () => observeOwnDaemonReachability({ client: {
+    readDaemonProof: () => observeOwnDaemonReachability({ custodianAccountId: 'owner', client: {
       isMachineControlRegistrationReady: () => false,
       callConnectedClientRpc: async () => { throw new Error('No Home call before posture review'); },
     } }),

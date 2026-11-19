@@ -35,7 +35,7 @@ export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;
   callConnectedClientRpc(method: string, params: unknown,
     options: Readonly<{ timeoutMs: number | null; signal?: AbortSignal; answeringClient?: SocketRpcAnsweringClientV1; onIssued(): void;
-      principalAccountId?: string }>):
+      principalAccountId: string | undefined }>):
     Promise<Readonly<{ ok: true; result: unknown; answeringClientId?: string; answeringClientIds?: readonly string[]; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }> | Readonly<{ ok: false; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
@@ -69,7 +69,7 @@ export function createClientActionReverseDispatcher(
           timeoutMs: options?.timeoutMs ?? null,
           ...(options?.signal ? { signal: options.signal } : {}),
           ...(options?.answeringClient ? { answeringClient: options.answeringClient } : {}),
-          ...(options?.principalAccountId ? { principalAccountId: options.principalAccountId } : {}),
+          principalAccountId: options.principalAccountId,
           onIssued: () => options?.onIssued?.(),
         }),
       } : null });
@@ -175,7 +175,7 @@ export function createClientActionReverseDispatcher(
     };
     try {
       const response = await client.callConnectedClientRpc(method, request, {
-        ...(answeringClient ? { answeringClient } : {}), ...(principalAccountId ? { principalAccountId } : {}),
+        ...(answeringClient ? { answeringClient } : {}), principalAccountId,
         timeoutMs: null, ...(context.signal ? { signal: context.signal } : {}), onIssued: () => {
           issued = true;
           context.onTransportIssued?.();

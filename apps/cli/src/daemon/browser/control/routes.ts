@@ -15,7 +15,7 @@ import type { BrowserExtensionService } from '../extensions/service';
 import { projectBrowserDaemonViews } from './viewDiscovery';
 import type { BrowserProfileStore } from '../profiles/store';
 
-type ImportPasskeys = (input: BrowserProfilePasskeyActivation) => Promise<BrowserProfileLoginsImportResultV1>;
+type ImportPasskeys = (input: BrowserProfilePasskeyActivation & Readonly<{ principalAccountId?: string }>) => Promise<BrowserProfileLoginsImportResultV1>;
 
 export type BrowserDaemonControlRoutes = Readonly<{
   admitSourceViewing?(target: Readonly<{ sourceId: string; streamFamily: string }>, context: Parameters<typeof browserCommandScope>[0]):

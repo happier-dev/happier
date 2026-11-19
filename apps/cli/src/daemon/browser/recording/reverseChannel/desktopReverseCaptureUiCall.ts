@@ -1,5 +1,4 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import type { UiBrowserRecordingCaptureFrameRequestV1 } from '@happier-dev/protocol';
 import type { SocketRpcAnsweringClientV1, SocketRpcAnsweringClientCandidateV1 } from '@happier-dev/protocol/socketRpc';
 
 import type { ReverseDesktopBrowserRecordingCaptureUiCall } from '../adapters/reverseCaptureInvoke';
@@ -13,8 +12,8 @@ export type ReverseCaptureMachineRpcClient = Readonly<{
   callConnectedClientRpc: (
     method: string,
     params: unknown,
-    options?: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void;
-      answeringClient?: SocketRpcAnsweringClientV1; principalAccountId?: string }>,
+    options: Readonly<{ timeoutMs?: number | null; signal?: AbortSignal; onIssued?: () => void;
+      answeringClient?: SocketRpcAnsweringClientV1; principalAccountId: string | undefined }>,
   ) => Promise<
     | Readonly<{ ok: true; result: unknown }>
     | Readonly<{ ok: false; error?: string; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>
@@ -40,7 +39,7 @@ export type CreateDesktopReverseBrowserRecordingCaptureUiCallOptions = Readonly<
 export function createDesktopReverseBrowserRecordingCaptureUiCall(
   options: CreateDesktopReverseBrowserRecordingCaptureUiCallOptions,
 ): ReverseDesktopBrowserRecordingCaptureUiCall {
-  return async (payload: UiBrowserRecordingCaptureFrameRequestV1): Promise<unknown> => {
+  return async (payload, principalAccountId) => {
     const client = options.getMachineClient();
     if (!client) {
       throw new Error('reverse_capture_machine_client_unavailable');
@@ -48,7 +47,7 @@ export function createDesktopReverseBrowserRecordingCaptureUiCall(
     const response = await client.callConnectedClientRpc(
       RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
       payload,
-      options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
+      { principalAccountId, ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}) },
     );
     if (!response.ok) {
       if (response.errorCode) {

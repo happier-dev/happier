@@ -51,7 +51,7 @@ export function createBrowserAutomationReverseDispatcher(input: Readonly<{
       const response = await client.callConnectedClientRpc(method, request.data,
         { ...(typeof record.timeoutMs === 'number' ? { timeoutMs: record.timeoutMs } : {}),
           answeringClient: { requireSingle: true, ...(typeof record.clientId === 'string' ? { clientId: record.clientId } : {}) }, signal: args.context.signal,
-          ...(principalAccountId ? { principalAccountId } : {}),
+          principalAccountId,
           onIssued: () => { issued = true; args.context.onTransportIssued?.(); } });
       if (!response.ok && response.errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS) {
         return clientActionAmbiguous(response.answeringClients);

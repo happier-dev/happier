@@ -8,7 +8,7 @@ import { createDaemonSessionMutationCustody, type DaemonSessionMutationCustody }
 
 /** Admitted host custody, kept private for the lifetime of one recording. */
 export type RecordingOperationContext = Pick<RpcActionExecutorContext,
-  'externalActionExecutionAuthorization' | 'requesterSessionBootstrap' | 'defaultSessionId'>;
+  'externalActionExecutionAuthorization' | 'requesterSessionBootstrap' | 'defaultSessionId' | 'runtimeAccountId'>;
 
 /** Browser and Computer media use the Account/Home that admitted capture. */
 export function createRecordingSessionMediaHost(input: Readonly<{
