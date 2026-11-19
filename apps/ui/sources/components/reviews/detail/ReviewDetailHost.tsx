@@ -289,7 +289,8 @@ export function ReviewDetailHost(props: Readonly<{
       notice={newRound.approval.approvalPending && newRound.approval.approvalId && scope ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
-      menu={menu}
+      menu={[...(canSubmit && newRound.available ? [{ id: 'new-round', testID: 'review-detail:new-round',
+        title: t('reviewWalkthrough.detail.newRound'), onSelect: newRound.open }] : []), ...menu]}
       glance={projectReviewGlance(round, review)}
       rounds={rounds}
       selectedRound={selectedRound}

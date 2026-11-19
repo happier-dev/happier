@@ -450,7 +450,7 @@ describe('Artifact composed view reads', () => {
                 input: mode === 'unavailable' ? { fresh: true } : {} });
         } finally { await confirmation?.unmount(); await screen.unmount(); }
     });
-    it('starts a person-only Review New round on its Account without fabricating a Run', async () => {
+    it('starts a completed person-only Review New round from the menu while its verdict remains editable', async () => {
         const reviewId = 'review-people-new-round';
         const runRequests = installSessionActionRpcBoundary(request => {
             throw new Error(`A person-only Review has no executable Run: ${request.method}`);
@@ -469,8 +469,9 @@ describe('Artifact composed view reads', () => {
                 counts: { total: 0, needsDecision: 0 } }, human: { reviewId, roundOrdinal: 1,
                 requests: [{ id: 'required-person', roundOrdinal: 1, principal: { kind: 'account', accountId: 'owner' }, required: true, needsAccess: false },
                     { id: 'optional-person', roundOrdinal: 1, principal: { kind: 'account', accountId: 'other' }, required: false, needsAccess: false }],
-                verdicts: [], needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
-                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } } });
+                verdicts: [{ accountId: 'owner', roundOrdinal: 1, verdict: 'approve', submittedAt: 2, revision: 1 }],
+                needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: true } } });
             if (request.path.startsWith('/v1/artifacts') && !request.path.includes('/document'))
                 return artifacts.handle(request.path, { method: request.method,
                     ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined;
@@ -482,8 +483,11 @@ describe('Artifact composed view reads', () => {
         const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
         try {
             await waitForHomeGovernance(() => expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
-                .toBe('reviewWalkthrough.detail.newRound'));
-            await act(async () => { await screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction.onPress(); });
+                .toBe('reviewWalkthrough.detail.submitReview'));
+            const repeat = screen.tree.root.findByProps({ testID: 'review-detail:more' }).props.actions
+                .find((action: { id: string }) => action.id === 'new-round');
+            expect(repeat).toBeDefined();
+            await act(async () => { await repeat.onSelect(); });
             await waitForHomeGovernance(() => expect(Modal.show).toHaveBeenCalled());
             const dialog = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
             const props = dialog?.props as { previousRound: number; reviewers: readonly { id: string; continuity: string; required: boolean }[];
