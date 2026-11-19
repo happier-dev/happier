@@ -10,6 +10,7 @@ import { useOptionalHappierUiPalette, useOptionalHappierUiPlatform } from '../..
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import { mixHappierColorOverPaper } from '../data/dataModel.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HAPPIER_BUTTON_METRICS } from './buttonMetrics.js';
 
 /** Material facts are resolved at the host boundary; this does not own glass policy. */
 export function useHappierButtonMaterial(theme: HappierUiTheme) {
@@ -47,11 +48,9 @@ export type HappierButtonChromeSize = 'normal' | 'small';
 /** The dense control height (settings lab `.btn.sm`). */
 export const HAPPIER_SMALL_BUTTON_HEIGHT = HAPPIER_PAGE_METRICS.smallControlHeightPx;
 
-/** A label line (20) and the edge (2 × 2) centred in the 32 control: a wrapped label still breathes. */
-const BUTTON_PADDING_VERTICAL = 4;
-/** The button's edge: transparent, it carries the primary fill's gloss line on its top side. */
-const BUTTON_EDGE_WIDTH = 2;
-export const HAPPIER_BUTTON_DISABLED_OPACITY = 0.35;
+const BUTTON_PADDING_VERTICAL = HAPPIER_BUTTON_METRICS.paddingVerticalPx;
+const BUTTON_EDGE_WIDTH = HAPPIER_BUTTON_METRICS.edgeWidthPx;
+export const HAPPIER_BUTTON_DISABLED_OPACITY = HAPPIER_BUTTON_METRICS.disabledOpacity;
 /**
  * How much of the primary shows while it cannot act. A disabled primary is still the view's one action:
  * its own fill and words recede into the page as solid colours, exactly as the host's primary does

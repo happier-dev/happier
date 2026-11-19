@@ -8,19 +8,30 @@ export async function buildHostedHtmlGuestBootstrap({
     packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
     outputFile,
     check = false,
+    presentationKit,
 } = {}) {
     const repoRoot = resolve(packageRoot, '../..');
     const target = resolve(outputFile);
+    const guestEntry = resolve(packageRoot, 'src/ui/hostedHtmlGuestEntry.ts');
+    // The consuming host may add its presentation kit (plugin-ui's hosted HTML controls, which this
+    // package cannot import): one module exporting installHappierHtmlKit, installed with the guest client.
+    const kitPlugin = presentationKit === undefined ? [] : [{ name: 'host-presentation-kit', setup(builder) {
+        builder.onLoad({ filter: /hostedHtmlGuestEntry\.ts$/ }, async args => args.path !== guestEntry ? undefined : ({
+            contents: `${await readFile(args.path, 'utf8')}\nimport { installHappierHtmlKit } from ${JSON.stringify(resolve(presentationKit))};\n`
+                + 'installHappierHtmlKit(window);\n',
+            loader: 'ts', resolveDir: dirname(args.path),
+        }));
+    } }];
     // One derived browser client for Metro/Expo and native document transports.
     // No runtime compiler, asset URL, network permission or second bridge protocol.
     const result = await build({
         absWorkingDir: repoRoot,
-        entryPoints: [resolve(packageRoot, 'src/ui/hostedHtmlGuestEntry.ts')],
+        entryPoints: [guestEntry],
         bundle: true, write: false, minify: true, platform: 'browser', format: 'iife', target: ['es2022'],
         conditions: ['happier-source'],
         define: { 'process.env.NODE_ENV': '"production"' },
         legalComments: 'none',
-        plugins: [{ name: 'workspace-protocol-source', setup(builder) {
+        plugins: [...kitPlugin, { name: 'workspace-protocol-source', setup(builder) {
             builder.onResolve({ filter: /^@happier-dev\/protocol(?:\/|$)/ }, args => {
                 if (args.pluginData?.workspaceProtocol) return;
                 return builder.resolve(args.path, { kind: args.kind, resolveDir: repoRoot, pluginData: { workspaceProtocol: true } })

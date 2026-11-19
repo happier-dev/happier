@@ -13,6 +13,7 @@ import { happierRaisedEdgeStyle, type HappierRaisedEdge } from '../layout/raised
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import { resolveHappierTypeScale } from '../text/typeScale.js';
+import { HAPPIER_FIELD_BOX_GEOMETRY } from './fieldBoxMetrics.js';
 
 const SEARCH_FIELD_HIT_REACH: HappierHitReach = Object.freeze({ left: 0, right: 0 });
 const SEARCH_FIELD_SURFACE_FRAME: HappierPortableStyle = Object.freeze({ maxWidth: '100%', minWidth: 0 });
@@ -79,26 +80,9 @@ export function HappierSearchFieldBox(props: Readonly<{
 const FIELD_TEXT_ROLE = resolveHappierTypeScale('label', Platform.OS);
 
 export const HAPPIER_FIELD_BOX_METRICS = Object.freeze({
-  minHeightPx: HAPPIER_PAGE_METRICS.controlHeightPx,
-  /** A control: the `md` step of the one radius base. */
-  radiusPx: HAPPIER_RADIUS_V1.md,
-  borderWidthPx: 1,
-  paddingLeftPx: 12,
-  paddingRightPx: 8,
+  ...HAPPIER_FIELD_BOX_GEOMETRY,
   fontSizePx: FIELD_TEXT_ROLE.fontSize,
   lineHeightPx: FIELD_TEXT_ROLE.lineHeight,
-  /** Narrowest width beside a label; stacked under the label a field spans the row instead. */
-  inlineMinWidthPx: HAPPIER_PAGE_METRICS.fieldInlineMinWidthPx,
-  /** A select trigger's box: wide enough for a short choice, never wider than a long one needs. */
-  triggerMinWidthPx: 132,
-  triggerMaxWidthPx: 280,
-  /** Between the leading mark, the value and the trailing chevron. */
-  triggerGapPx: 8,
-  /** The chip density: a select that sits among a row's quiet facts (a role's engine) as a soft pill. */
-  chipHeightPx: 28,
-  chipPaddingLeftPx: 10,
-  chipPaddingRightPx: 8,
-  chipGapPx: 6,
 });
 
 /** The chip density's own shape: a pill with no border; the caller supplies a soft fill. */

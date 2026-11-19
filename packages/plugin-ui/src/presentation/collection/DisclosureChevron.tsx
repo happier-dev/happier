@@ -2,18 +2,9 @@ import type { ReactNode } from 'react';
 import { View, type ViewStyle } from 'react-native';
 
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
+import { HAPPIER_DISCLOSURE_CHEVRON_METRICS } from './disclosureChevronMetrics.js';
 
-/**
- * The disclosure caret's geometry (lab `.wf-cv`): a 12pt chevron in a 24pt box whose hit area the caller extends
- * to the touch floor. The drawn mark is the lab caret's own proportion — a 6-unit run over 12 in a 24-unit glyph,
- * so each arm is √72/24 ≈ 0.354 of the glyph box — at the lab's 2.2-of-24 stroke (1.1pt at 12pt).
- */
-export const HAPPIER_DISCLOSURE_CHEVRON_METRICS = Object.freeze({
-  boxPx: 24,
-  glyphPx: 12,
-  armRatio: Math.SQRT2 / 4,
-  strokePx: 1.1,
-});
+export { HAPPIER_DISCLOSURE_CHEVRON_METRICS };
 
 export type HappierChevronDirection = 'right' | 'down' | 'up' | 'left';
 

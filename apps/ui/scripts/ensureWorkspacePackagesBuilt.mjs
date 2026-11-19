@@ -349,6 +349,8 @@ export async function ensureUiWorkspacePackagesBuilt({
   await buildHostedHtmlGuestBootstrap({
     packageRoot: resolve(repoRoot, 'packages/plugin-sdk'),
     outputFile: resolve(uiPackageDir, 'sources/components/plugins/hostedWeb/guestBootstrap.generated.ts'),
+    // Hosted HTML draws plugin-ui's controls from plugin-ui's own metrics (agent visual kit).
+    presentationKit: resolve(repoRoot, 'packages/plugin-ui/src/hostedHtml/hostedHtmlKit.ts'),
   });
   const { buildStreamWebViewBundle } = await import('../tools/stream/buildStreamWebViewBundle.mjs');
   await buildStreamWebViewBundle({ expoAppDir: uiPackageDir });

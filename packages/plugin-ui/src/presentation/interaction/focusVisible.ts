@@ -1,6 +1,7 @@
 import { Platform, type ViewStyle } from 'react-native';
 
 import type { HappierPortableLayerStyle } from '../portableTypes.js';
+import { HAPPIER_FOCUS_RING_V1 } from './focusRingMetrics.js';
 
 type FocusVisibleTarget = Readonly<{ matches?: (selector: string) => boolean }>;
 type InputModality = 'keyboard' | 'pointer';
@@ -83,13 +84,7 @@ export function resolveHappierFocusRingVisible(focused: boolean | undefined): bo
   return focused === true && isHappierFocusVisible();
 }
 
-/**
- * The one focus ring (DESIGN.md, Accessibility): 2px of the focus colour, held 2px off the control so
- * the page shows through as the gap. An outline follows the control's radius on the web and on React
- * Native's native outline props, never takes layout space, and never merges with the control's own
- * border, so it reads on every surface.
- */
-export const HAPPIER_FOCUS_RING_V1 = Object.freeze({ widthPx: 2, gapPx: 2 });
+export { HAPPIER_FOCUS_RING_V1 };
 
 /**
  * Where the ring sits. `outset` is every control. `inset` draws it inside the box with no gap, and is

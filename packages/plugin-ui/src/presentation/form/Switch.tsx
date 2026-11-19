@@ -5,6 +5,7 @@ import { HappierPressable } from '../interaction/Pressable.js';
 import { useHappierHitArea } from '../interaction/hitArea.js';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
+import { HAPPIER_SWITCH_METRICS } from './switchMetrics.js';
 import type { HappierFocusable, HappierStyleProp } from '../portableTypes.js';
 import type { HappierHitReach } from '../../environment/interactiveTarget.js';
 
@@ -24,18 +25,7 @@ import type { HappierHitReach } from '../../environment/interactiveTarget.js';
  * reduced-motion fact; core picks the host through its platform file split,
  * the plugin `Toggle` through the platform it runs on.
  */
-export const HAPPIER_SWITCH_METRICS = Object.freeze({
-  default: Object.freeze({ trackWidth: 40, trackHeight: 24, thumbSize: 20, padding: 2 }),
-  compact: Object.freeze({ trackWidth: 32, trackHeight: 18, thumbSize: 14, padding: 2 }),
-  /**
-   * While pressed, the thumb widens toward the track's centre (the physical
-   * squash of a switch about to move), by this much, and settles back on release.
-   */
-  pressStretchPx: 4,
-  /** The web control's hit area around the drawn track (the shared hit-area owner's frame); it takes no layout. */
-  webTargetPx: 44,
-  disabledOpacity: 0.6,
-});
+export { HAPPIER_SWITCH_METRICS };
 
 export type HappierSwitchSize = 'default' | 'compact';
 

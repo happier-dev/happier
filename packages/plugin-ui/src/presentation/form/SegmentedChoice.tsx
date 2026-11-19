@@ -4,7 +4,7 @@ import { I18nManager, Platform, ScrollView, View } from 'react-native';
 import { useOptionalHappierUiLocalization, useOptionalHappierUiTypography } from '../../environment/context.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
-import { HAPPIER_RADIUS_V1, happierInnerRadius } from '../../environment/radius.js';
+import { HAPPIER_SEGMENTED_GEOMETRY } from './segmentedMetrics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
@@ -15,64 +15,25 @@ import { resolveHappierTypeScale } from '../text/typeScale.js';
 import { useHappierFieldIssueSemantics } from './Fields.js';
 
 /**
- * The segmented control's geometry and label type, shared by Happier core's
- * `SegmentedTabBar` and the plugin segmented `Select`, so a two-to-four-way
- * choice has one shape wherever it is drawn.
- *
- * These are padding-driven visible heights: a segment never carries a
- * `minHeight`, because a minimum sized for a touch target silently becomes the
- * drawn box. `labelSlotPx` is the label's nominal optical slot (Inter's line
- * box at these sizes), used only to reason about a press frame; scaled text
- * grows the segment past it.
- *
- * `segmentMinWidthPx` is not the platform touch target: segments are flush
- * siblings in one track, so a 44/48 floor multiplies across them. A dense
- * pointer layout meets WCAG 2.2 SC 2.5.8 (24 CSS px) instead.
- */
-const SEGMENTED_TRACK_PADDING_PX = 2;
-
-/**
  * Control text is the `body` role (the lab's 13 to 13.5px segment, select and button text, rounded
- * down by the scale's half-size rule); a compact segment takes `micro`. The slots below stay the
- * geometry that keeps the track 32 (compact 24) tall, whatever the role's own line height.
+ * down by the scale's half-size rule); a compact segment takes `micro`. The geometry
+ * (`HAPPIER_SEGMENTED_GEOMETRY`) keeps the track 32 (compact 24) tall, whatever the role's own line height.
  */
 const SEGMENT_LABEL_ROLE = Object.freeze({
   default: resolveHappierTypeScale('body', Platform.OS),
   compact: resolveHappierTypeScale('micro', Platform.OS),
 });
 
+/**
+ * The segmented control's geometry and label type, shared by Happier core's
+ * `SegmentedTabBar` and the plugin segmented `Select`, so a two-to-four-way
+ * choice has one shape wherever it is drawn (the hosted HTML kit reads the geometry).
+ */
 export const HAPPIER_SEGMENTED_METRICS = Object.freeze({
-  /** The track's inset: the gap around the segments and the thumb's inset. */
-  trackPaddingPx: SEGMENTED_TRACK_PADDING_PX,
-  /** A control (`md`); the compact track one step smaller (`sm`). Segments sit concentric inside it. */
-  trackRadiusPx: Object.freeze({ default: HAPPIER_RADIUS_V1.md, compact: HAPPIER_RADIUS_V1.sm }),
-  segmentRadiusPx: Object.freeze({
-    default: happierInnerRadius(HAPPIER_RADIUS_V1.md, SEGMENTED_TRACK_PADDING_PX),
-    compact: happierInnerRadius(HAPPIER_RADIUS_V1.sm, SEGMENTED_TRACK_PADDING_PX),
-  }),
-  segmentPaddingVerticalPx: Object.freeze({ default: 6, compact: 4 }),
-  /** A content-sized segment's side padding (a segment hugging its label). */
-  segmentPaddingHorizontalPx: 12,
-  /** The side padding when the track is too narrow for its labels at their natural width. */
-  segmentPaddingTightPx: 4,
-  /**
-   * The default label is the control text role (selects, buttons and segment labels read as one
-   * family beside the row titles); the track stays 32px tall (2 + 6 + 16 + 6 + 2).
-   */
-  labelSlotPx: Object.freeze({ default: 16, compact: 12 }),
+  ...HAPPIER_SEGMENTED_GEOMETRY,
   labelFontSizePx: Object.freeze({ default: SEGMENT_LABEL_ROLE.default.fontSize, compact: SEGMENT_LABEL_ROLE.compact.fontSize }),
-  /** The chosen label's emphasis: a face, never a numeric weight over the regular face. */
-  labelActiveEmphasis: 'semiBold' as const,
-  segmentMinWidthPx: 24,
-  /** One unavailable segment, or a whole unavailable control. */
-  disabledOpacity: 0.5,
-  /** Separate list-filter pills share the tab interaction owner, without a segmented track. */
-  pills: Object.freeze({ gapPx: 8, radiusPx: 999, paddingVerticalPx: 4, paddingHorizontalPx: 8, labelFontSizePx: SEGMENT_LABEL_ROLE.default.fontSize, labelSlotPx: 18 }),
-  /**
-   * A destination's page tabs (lab `p-overview` header): no track, a glyph beside each label, the
-   * chosen tab on the ink selection fill. Controls' radius step; the label on the pill type step.
-   */
-  plain: Object.freeze({ gapPx: 2, radiusPx: HAPPIER_RADIUS_V1.md, paddingVerticalPx: 6, paddingHorizontalPx: 11, labelFontSizePx: SEGMENT_LABEL_ROLE.default.fontSize, labelSlotPx: 18, iconGapPx: 7 }),
+  pills: Object.freeze({ ...HAPPIER_SEGMENTED_GEOMETRY.pills, labelFontSizePx: SEGMENT_LABEL_ROLE.default.fontSize }),
+  plain: Object.freeze({ ...HAPPIER_SEGMENTED_GEOMETRY.plain, labelFontSizePx: SEGMENT_LABEL_ROLE.default.fontSize }),
 });
 
 export type HappierSegmentedSize = 'default' | 'compact';

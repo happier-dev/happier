@@ -767,7 +767,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         if (props.series.slice(0, index).some((earlier, at) => look(earlier, at) === look(entry, index))) return null;
         const chosen = props.selectedSeriesIds?.includes(entry.id) === true;
         const key = <>
-          <View style={{ width: 8, height: 8, borderRadius: 2, overflow: 'hidden', backgroundColor: color(index) }}>
+          <View style={{ width: HAPPIER_DATA_METRICS.legendSwatchPx, height: HAPPIER_DATA_METRICS.legendSwatchPx, borderRadius: HAPPIER_DATA_METRICS.legendSwatchRadiusPx, overflow: 'hidden', backgroundColor: color(index) }}>
             {entry.fillPattern === 'hatch' ? <HatchSwatch ink={props.theme.colors.surface} /> : null}
           </View>
           {props.leads?.[entry.id] ?? null}
