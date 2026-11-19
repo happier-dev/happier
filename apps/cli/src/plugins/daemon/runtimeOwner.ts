@@ -165,7 +165,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     signal?: AbortSignal,
   ) => Promise<CurrentMachineExecutionOriginContext | null>;
   /** Private approval lifecycle reader for this daemon's Account. Packed author hosts have none. */
-  approvalStore?: Pick<ReturnType<typeof createCliApprovalsArtifactStore>, 'readPluginChangeApprovalRetirement'>;
+  approvalStore?: Pick<ReturnType<typeof createCliApprovalsArtifactStore>, 'findOpenPluginDevelopmentApproval' | 'readPluginChangeApprovalRetirement'>;
   /** Canonical Account-change exact Session-access proof for Resource admission. */
   resolveSessionResourceAccess?: ResolveSessionResourceAccess;
   /** The Machine connection's server-verified Account id; the one identity owner. */
@@ -459,6 +459,10 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   const baseChangeService = createDaemonPluginChangeService({
     resolveDevelopmentSourceAuthority,
     ...(approvalStore && resolveApprovalOrigin ? {
+      findOpenDevelopmentApproval: async (review) => {
+        const origin = await resolveApprovalOrigin();
+        return origin ? await approvalStore.findOpenPluginDevelopmentApproval({ review, ...origin }) : null;
+      },
       readApprovalRetirement: async (pendingReview: Extract<PluginPendingChangeEntry, { kind: 'reviewRequired' }>) => {
         const origin = await resolveApprovalOrigin();
         return origin ? await approvalStore.readPluginChangeApprovalRetirement({ pendingReview, ...origin }) : false;

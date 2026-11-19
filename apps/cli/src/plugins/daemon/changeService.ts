@@ -37,6 +37,21 @@ type PendingPluginChange = {
   applyPromise: Promise<PluginChangeDecisionResult> | null;
 };
 
+type PluginInstallReview = Extract<PluginPendingChangeEntry, { reviewKind: 'installation' }>;
+type PluginInstallIntent = Omit<PluginInstallReview, 'pendingChangeId'>;
+
+function projectInstallationIntent(prepared: PreparedDaemonPluginChange): PluginInstallIntent | null {
+  if (!prepared.review) return null;
+  return {
+    kind: 'reviewRequired',
+    reviewKind: 'installation',
+    reason: prepared.reviewReason ?? 'firstInstall',
+    currentVersion: prepared.currentVersion ?? null,
+    authorityExpansion: [...(prepared.authorityExpansion ?? [])],
+    review: prepared.review,
+  };
+}
+
 function isDevelopmentCandidate(
   prepared: PreparedDaemonPluginChange,
 ): prepared is PreparedPluginDevelopmentCandidate {
@@ -123,6 +138,7 @@ function failedPluginChange(
 export function createDaemonPluginChangeService(params: Readonly<{
   prepare: (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChange>;
   readApprovalRetirement?: (review: Extract<PluginPendingChangeEntry, { kind: 'reviewRequired' }>) => Promise<boolean>;
+  findOpenDevelopmentApproval?: (intent: PluginInstallIntent) => Promise<string | null>;
   createPendingChangeId?: () => string;
   onCleanupFailure?: (pluginId: string, error: unknown) => void;
   resolveDevelopmentSourceAuthority?: (input: Readonly<{
@@ -309,18 +325,8 @@ export function createDaemonPluginChangeService(params: Readonly<{
     if (pending.state === 'applying') {
       return { kind: 'applying', pendingChangeId: pending.id };
     }
-    if (pending.prepared.review) {
-      return {
-        kind: 'reviewRequired',
-        reviewKind: 'installation',
-        pendingChangeId: pending.id,
-        reason: pending.prepared.reviewReason ?? 'firstInstall',
-        currentVersion: pending.prepared.currentVersion ?? null,
-        authorityExpansion: [...(pending.prepared.authorityExpansion ?? [])],
-        review: pending.prepared.review,
-      };
-    }
-    return null;
+    const intent = projectInstallationIntent(pending.prepared);
+    return intent && { ...intent, pendingChangeId: pending.id };
   }
 
   async function tryApply(
@@ -429,6 +435,20 @@ export function createDaemonPluginChangeService(params: Readonly<{
           );
         }
 
+        const key = preparedChangeKey(prepared);
+        const intent = projectInstallationIntent(prepared);
+        let restoredId: string | null = null;
+        if (intent && isDevelopmentCandidate(prepared) && (prepared.requiresReview !== false || options?.retainReview === true)
+          && !pendingIdByPluginId.has(key) && params.findOpenDevelopmentApproval) {
+          try {
+            restoredId = await params.findOpenDevelopmentApproval(intent);
+          } catch (error) {
+            await cleanupPrepared(prepared);
+            if (options?.signal?.aborted) return { kind: 'cancelled' };
+            return failedPluginChange('plugin_change_preparation_failed', error, preparationRequest.kind === 'development'
+              ? preparationRequest.sourceRootPath : undefined, 'plugins.change.prepare');
+          }
+        }
         if (options?.signal?.aborted) {
           await cleanupPrepared(prepared);
           return { kind: 'cancelled' };
@@ -437,7 +457,6 @@ export function createDaemonPluginChangeService(params: Readonly<{
           await cleanupPrepared(prepared);
           return admissionRefusal();
         }
-        const key = preparedChangeKey(prepared);
         const pendingId = pendingIdByPluginId.get(key);
         let incumbent = pendingId ? pendingById.get(pendingId) : undefined;
         if (incumbent) {
@@ -479,12 +498,12 @@ export function createDaemonPluginChangeService(params: Readonly<{
           return await cleanupAfterApply(prepared, result);
         }
 
-        if (!prepared.review) {
+        if (!intent) {
           await cleanupPrepared(prepared);
           return { kind: 'failed', code: 'plugin_change_review_missing' };
         }
 
-        const id = createPendingChangeId();
+        const id = restoredId && !terminalById.has(restoredId) ? restoredId : createPendingChangeId();
         const pending: PendingPluginChange = {
           id,
           prepared,
@@ -493,15 +512,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
           applyPromise: null,
         };
         retainPending(pending);
-        return {
-          kind: 'reviewRequired',
-          reviewKind: 'installation',
-          pendingChangeId: id,
-          reason: prepared.reviewReason ?? 'firstInstall',
-          currentVersion: prepared.currentVersion ?? null,
-          authorityExpansion: [...(prepared.authorityExpansion ?? [])],
-          review: prepared.review,
-        };
+        return { ...intent, pendingChangeId: id };
       } finally {
         finishActiveRequest();
       }

@@ -12764,6 +12764,11 @@ per stale-base refusal. Each further refusal requires another intervening regist
 commit; there is no timer, backoff or retry budget. Status can show that preparation
 is continuing. Failed authoring phase file logs carry the available typed code or
 Error name without error messages, stacks or payloads.
+On restart, the daemon prepares registered development sources against the
+current installation and restores the existing open Account approval when the
+same Machine still needs review of the same installation intent. The original
+approval retains its identity and decision history. A fresh request after a
+decision can create a new approval.
 Other pending decisions remain until an explicit decision,
 handoff or shutdown retires them; settled rejoin results remain for the daemon lifetime. Candidate
 cleanup is awaited through that lifecycle and reports failures without a shorter

@@ -586,6 +586,67 @@ describe('plugin install approval Artifact rejoin', () => {
       }
     });
 
+  it('reuses an open development install approval when the daemon restores the same source', async () => {
+    accountMode = 'e2ee';
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-development-restored-approval-'));
+    const pluginId = 'acme.restored-install-approval';
+    const sourceRoot = join(happyHomeDir, 'plugins');
+    const source = join(sourceRoot, 'ledger.ts');
+    const resolveOrigin = async () => ({ machineId: 'machine-1', serverIdentityId: 'home-identity' });
+    const storedCredentials = credentials();
+    const approvalStore = createStore();
+    const previousPaths = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile };
+    Object.assign(configuration, { happyHomeDir, settingsFile: join(happyHomeDir, 'settings.json') });
+    const publish = createDaemonPluginDevelopmentReviewApprovalPublisher({ credentials: storedCredentials,
+      happyHomeDir, serverId: 'home-1', resolveCurrentMachineExecutionOriginContext: resolveOrigin });
+    let publicationError: unknown;
+    let stop: (() => Promise<void>) | undefined;
+    const start = async () => {
+      const reloadController = createPluginReloadController({ happyHomeDir });
+      const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, reloadController, staleCandidateCleanup: 'disabled',
+        connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+        approvalStore, resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+        publishDevelopmentReview: async input => {
+          try { await publish(input); }
+          catch (error) { publicationError = error; throw error; }
+        } });
+      stop = async () => {
+        stop = undefined;
+        await owner.changeService.shutdown();
+        await reloadController.shutdown();
+      };
+      await owner.initialize();
+      expect(publicationError).toBeUndefined();
+      return owner;
+    };
+    try {
+      await mkdir(sourceRoot);
+      await writeFile(source, `export const manifest = ${JSON.stringify(createPluginManifestV2Fixture({
+        id: pluginId, entrypoints: undefined, engines: undefined,
+      }))}; export function activate() {}`);
+      await start();
+      expect(rows.size).toBe(1);
+      const artifactId = [...rows.keys()][0]!;
+      const approval = await approvalStore.approvalsGet({ artifactId, serverId: 'home-1' });
+      expect(approval).toMatchObject({ status: 'open' });
+      const review = readPluginInstallApprovalPendingReview(approval?.preview);
+      if (!review) throw new Error('Expected the published installation review');
+      await stop?.();
+
+      const restartedDaemon = await start();
+      expect([...rows.keys()]).toEqual([artifactId]);
+      expect(await restartedDaemon.changeService.statusPluginChange({ pendingChangeId: review.pendingChangeId }))
+        .toEqual(review);
+    } finally {
+      try {
+        await stop?.();
+      } finally {
+        Object.assign(configuration, previousPaths);
+        await rm(happyHomeDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('retries a rejected development install with the registered source revision', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-development-retired-review-'));
     const happyHomeDir = join(root, 'home');

@@ -82,6 +82,7 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
   approvalsUpdate: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsUpdate']>;
   findWorkflowDiscussionReplyApproval(subject: WorkflowDiscussionReplyApprovalSubject,
     options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ artifactId: string }> | null>;
+  findOpenPluginDevelopmentApproval: ReturnType<typeof createCliApprovalCreation>['findOpenPluginDevelopmentApproval'];
   readPluginChangeApprovalRetirement: ReturnType<typeof createCliApprovalCreation>['readPluginChangeApprovalRetirement'];
   targetActionApprovalsCreate(args: Readonly<{ request: TargetActionApprovalRequestV1;
     onReady?: (created: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>) => void;
@@ -135,6 +136,9 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
       ...(params.approvalAuthorizationHeaders ? { authorizationHeaders: params.approvalAuthorizationHeaders } : {}) }),
     create: input => accountArtifactStore.create({ ...input,
       ...(params.approvalAuthorizationHeaders ? { authorizationHeaders: params.approvalAuthorizationHeaders } : {}) }),
+    resolvePrivateSourceId: occurrence => accountArtifactStore.resolvePrivateSourceId(occurrence, {
+      authorizationHeaders: params.approvalAuthorizationHeaders,
+    }),
   }, prepareRequesterRecipient,
     getAccountId: () => readAccountIdFromToken(params.credentials.token) });
   const folderBaseUrl = params.operationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();

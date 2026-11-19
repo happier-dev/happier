@@ -29,6 +29,7 @@ it.each([
   const creation = createCliApprovalCreation({ getAccountId: () => 'account', prepareRequesterRecipient: async () => {},
     accountArtifactStore: {
       read: async id => artifacts.get(id) ?? null,
+      resolvePrivateSourceId: async () => { throw new Error('Unexpected development install lookup'); },
       create: async ({ artifactId, header, body }) => {
         if (!artifactId) throw new Error('Expected captured approval identity');
         if (typeof body !== 'string') throw new Error('Expected serialized approval body');

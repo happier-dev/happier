@@ -6,9 +6,11 @@ import { resolveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifact
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createApprovalRequestArtifact, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import type { ApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestStatus';
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { PluginChangePendingReviewResult } from '@happier-dev/protocol/marketplace/internal';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DiscussionReplyInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import type { DiscussionWorkflowPostPublicationV1 } from '@happier-dev/protocol/discussions/api';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -44,6 +46,22 @@ type PluginInstallApprovalSubject = Readonly<{
   origin: Pick<ApprovalRequestV2['executionOriginV1'], 'accountId' | 'machineId' | 'serverIdentityId' | 'serverId'>;
 }>;
 
+type PluginInstallReview = Extract<PluginChangePendingReviewResult, { reviewKind: 'installation' }>;
+type PluginInstallIntent = Omit<PluginInstallReview, 'pendingChangeId'>;
+type PluginInstallMachine = Readonly<{ machineId: string; serverIdentityId: string }>;
+
+function developmentApprovalIdentity(pending: PluginInstallIntent, origin: PluginInstallApprovalSubject['origin']): string | null {
+  const { review, reason, currentVersion, authorityExpansion } = pending;
+  if (review.updateChannel.kind !== 'path' || !review.updateChannel.development || !origin.machineId || !origin.serverIdentityId) return null;
+  const observation = review.daemonRights?.observation;
+  // The sample time can change on restart without changing the disclosed rights.
+  const rights = observation ? { ...review.daemonRights, observation: { ...observation, observedAt: undefined } } : review.daemonRights;
+  return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport([
+    'happier:development-install-approval:v1', origin.serverIdentityId, origin.machineId,
+    reason, currentVersion, authorityExpansion, { ...review, daemonRights: rights },
+  ]));
+}
+
 type PluginInstallApprovalSubjectMismatch = Readonly<{
   field: 'pendingReview' | `origin.${keyof PluginInstallApprovalSubject['origin']}` | 'artifact.access' | 'artifact.family';
   existing: 'present' | 'absent';
@@ -67,7 +85,7 @@ function pluginInstallSubjectMismatchError(mismatches: readonly PluginInstallApp
  * Host-origin installs may have no Machine; a present Machine must match exactly.
  * Diagnostics contain only fixed field names and presence, never subject values.
  */
-function matchPluginInstallApprovalSubject(request: ApprovalRequest, expected: PluginInstallApprovalSubject):
+function matchPluginInstallApprovalSubject(request: ApprovalRequest, expected: PluginInstallApprovalSubject, developmentIdentity: string | null):
   | Readonly<{ matched: true; request: ApprovalRequestV2 }>
   | Readonly<{ matched: false; mismatches: readonly PluginInstallApprovalSubjectMismatch[] }> {
   if (request.v !== 2 || request.actionId !== 'plugins.install') return { matched: false,
@@ -75,7 +93,10 @@ function matchPluginInstallApprovalSubject(request: ApprovalRequest, expected: P
   const origin = request.executionOriginV1;
   const pendingReview = readPluginInstallApprovalPendingReview(request.preview);
   const mismatches: PluginInstallApprovalSubjectMismatch[] = [];
-  if (!sameStrictJsonValue(pendingReview, expected.pendingReview)) {
+  const sameReview = developmentIdentity && pendingReview
+    ? developmentApprovalIdentity(pendingReview, origin) === developmentIdentity
+    : sameStrictJsonValue(pendingReview, expected.pendingReview);
+  if (!sameReview) {
     mismatches.push(pluginInstallSubjectMismatch('pendingReview', pendingReview, expected.pendingReview));
   }
   for (const field of ['accountId', 'machineId', 'serverIdentityId'] as const) {
@@ -154,6 +175,7 @@ function readDiscussionReplyApprovalSubject(request: ApprovalRequest) {
 
 export type CliApprovalCreation = Readonly<{
   approvalsCreate: NonNullable<ActionExecutorDeps['approvalsCreate']>;
+  findOpenPluginDevelopmentApproval(input: PluginInstallMachine & Readonly<{ review: PluginInstallIntent }>): Promise<string | null>;
   readPluginChangeApprovalRetirement(input: Readonly<{
     pendingReview: PluginChangePendingReviewResult; machineId: string; serverIdentityId: string;
   }>): Promise<boolean>;
@@ -163,7 +185,7 @@ export type CliApprovalCreation = Readonly<{
 
 /** CLI domain identities adapt private Artifact custody to the Protocol creation owner. */
 export function createCliApprovalCreation(params: Readonly<{
-  accountArtifactStore: Pick<ReturnType<typeof createAccountArtifactStore>, 'read' | 'create'>;
+  accountArtifactStore: Pick<ReturnType<typeof createAccountArtifactStore>, 'read' | 'create' | 'resolvePrivateSourceId'>;
   prepareRequesterRecipient: (artifactId: string, subject: ApprovalRequesterConfirmationV1 | undefined) => Promise<void>;
   getAccountId: () => string | null;
 }>): CliApprovalCreation {
@@ -173,7 +195,7 @@ export function createCliApprovalCreation(params: Readonly<{
   const readOwnedArtifact = (artifactId: string, options?: Readonly<{ signal?: AbortSignal }>) =>
     accountArtifactStore.read(artifactId, { ...options, ownerOnly: true, prepareRecipients: false });
 
-  async function readPluginInstallApprovalChain<T extends Readonly<{ followSuccessor: boolean }>>(input: Readonly<{
+  async function readPluginInstallApprovalChain<T extends Readonly<{ followSuccessor: boolean; retired?: boolean }>>(input: Readonly<{
     accountId: string; sourceId: string; inspect: (artifact: AccountArtifact | null) => T;
   }>) {
     let sourceId = input.sourceId;
@@ -182,24 +204,50 @@ export function createCliApprovalCreation(params: Readonly<{
       const resolved = await resolveAccountScopedArtifactIdV1({ accountId: input.accountId, sourceId, read: readOwnedArtifact });
       const inspection = input.inspect(resolved.artifact);
       if (!inspection.followSuccessor) return { ...resolved, inspection, hasTerminalPredecessor };
-      hasTerminalPredecessor = true;
+      hasTerminalPredecessor ||= inspection.retired === true;
       sourceId = derivePluginInstallApprovalSuccessorArtifactId(resolved.artifactId);
     }
   }
 
   return {
+    findOpenPluginDevelopmentApproval: async ({ review, machineId, serverIdentityId }) => {
+      const accountId = getAccountId();
+      if (!accountId) return null;
+      const origin = { accountId, machineId, serverIdentityId, serverId: serverIdentityId };
+      const identity = developmentApprovalIdentity(review, origin);
+      if (!identity) return null;
+      const { inspection } = await readPluginInstallApprovalChain({
+        accountId, sourceId: await accountArtifactStore.resolvePrivateSourceId(identity),
+        inspect: artifact => {
+          if (!artifact || artifact.access !== 'owner') return { followSuccessor: false, pendingChangeId: null };
+          const request = readBuiltInApprovalArtifact(artifact.header, artifact.body);
+          const pending = request ? readPluginInstallApprovalPendingReview(request.preview) : null;
+          if (!request || !pending || !matchPluginInstallApprovalSubject(request, { pendingReview: pending, origin }, identity).matched) {
+            return { followSuccessor: false, pendingChangeId: null };
+          }
+          return request.status === 'open'
+            ? { followSuccessor: false, pendingChangeId: pending.pendingChangeId }
+            : { followSuccessor: true, pendingChangeId: null };
+        },
+      });
+      return inspection.pendingChangeId;
+    },
     readPluginChangeApprovalRetirement: async ({ pendingReview, machineId, serverIdentityId }) => {
       const accountId = getAccountId();
       if (!accountId) return false;
+      const origin = { accountId, machineId, serverIdentityId, serverId: serverIdentityId };
+      const identity = pendingReview.reviewKind === 'installation' ? developmentApprovalIdentity(pendingReview, origin) : null;
       const { artifact, hasTerminalPredecessor } = await readPluginInstallApprovalChain({
-        accountId, sourceId: pendingReview.pendingChangeId,
+        accountId, sourceId: identity ? await accountArtifactStore.resolvePrivateSourceId(identity) : pendingReview.pendingChangeId,
         inspect: artifact => {
           const request = artifact?.access === 'owner' ? readBuiltInApprovalArtifact(artifact.header, artifact.body) : null;
-          // Follow recorded terminal facts, not a fresh approval-policy or expiry
-          // decision. A later open/approved successor is fresh owner consent.
-          return { followSuccessor: Boolean(request && matchPluginInstallApprovalSubject(request, { pendingReview,
-            origin: { accountId, machineId, serverIdentityId, serverId: serverIdentityId } }).matched
-            && request.status !== 'open' && request.status !== 'approved' && request.status !== 'executing') };
+          if (!request || !matchPluginInstallApprovalSubject(request, { pendingReview, origin }, identity).matched) {
+            return { followSuccessor: false };
+          }
+          const retained = readPluginInstallApprovalPendingReview(request.preview);
+          const sameCandidate = retained?.pendingChangeId === pendingReview.pendingChangeId;
+          const retired = !isApprovalRequestV2InFlightStatus(request.status);
+          return { followSuccessor: retired || (!sameCandidate && request.status !== 'open'), retired: retired && sameCandidate };
         },
       });
       return !artifact && hasTerminalPredecessor;
@@ -243,9 +291,11 @@ export function createCliApprovalCreation(params: Readonly<{
         await prepareRequesterRecipient(res.artifactId, request.v === 2 ? request.requesterConfirmation : undefined);
         return res;
       }
+      const developmentIdentity = pendingReview && origin ? developmentApprovalIdentity(pendingReview, origin) : null;
       const sourceId = discussionReply
         ? discussionReplyApprovalArtifactId(discussionReply.identity)
-        : pendingReview?.pendingChangeId ?? randomUUID();
+        : developmentIdentity ? await accountArtifactStore.resolvePrivateSourceId(developmentIdentity)
+          : pendingReview?.pendingChangeId ?? randomUUID();
 
       const header = buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: serverId });
 
@@ -295,7 +345,7 @@ export function createCliApprovalCreation(params: Readonly<{
         if (!artifact) return { state: 'absent' };
         const parsed = readBuiltInApprovalArtifact(artifact.header, artifact.body);
         const subject = parsed && request.v === 2 && pendingReview
-          ? matchPluginInstallApprovalSubject(parsed, { pendingReview, origin: request.executionOriginV1 })
+          ? matchPluginInstallApprovalSubject(parsed, { pendingReview, origin: request.executionOriginV1 }, developmentIdentity)
           : { matched: false as const, mismatches: [pluginInstallSubjectMismatch('artifact.family', parsed, request)] };
         if (artifact.access !== 'owner' || !subject.matched) {
           throw pluginInstallSubjectMismatchError([
@@ -304,10 +354,14 @@ export function createCliApprovalCreation(params: Readonly<{
           ]);
         }
         const existing = subject.request;
+        const sameCandidate = readPluginInstallApprovalPendingReview(existing.preview)?.pendingChangeId === pendingReview?.pendingChangeId;
+        if (!sameCandidate && existing.status === 'open') {
+          throw pluginInstallSubjectMismatchError([pluginInstallSubjectMismatch('pendingReview', existing.preview, request.preview)]);
+        }
         // A matched subject implies a v2 request; the check keeps that narrowing explicit inside this closure.
         const sameRequest = request.v === 2 && existing.executionOriginV1.requestId === request.executionOriginV1.requestId;
         if (sameRequest && request.v === 2) assertApprovalRequestCreationBinding(existing, request);
-        return { state: sameRequest || existing.status === 'open' || existing.status === 'approved' || existing.status === 'executing'
+        return { state: sameCandidate && (sameRequest || isApprovalRequestV2InFlightStatus(existing.status))
           ? 'rejoin' : 'terminal', request: existing };
       };
       // Each retained daemon subject owns a deterministic Artifact chain. A

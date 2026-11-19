@@ -262,7 +262,7 @@ function accountNoticeOccurrence(accountId: string, notice: Pick<AccountNoticeAr
   return JSON.stringify(['happier:plugin-notice:v1', accountId, notice.source]);
 }
 
-function privateNoticeArtifactId(params: Readonly<{ occurrence: string; mode: 'plain' | 'e2ee'; credentials: ContentEncryption }>): string {
+function privateArtifactSourceId(params: Readonly<{ occurrence: string; mode: 'plain' | 'e2ee'; credentials: ContentEncryption }>): string {
   let bytes: Buffer;
   if (params.mode === 'plain') {
     bytes = createHash('sha1').update(params.occurrence).digest().subarray(0, 16);
@@ -1065,6 +1065,11 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const store = {
     read,
+    resolvePrivateSourceId: async (occurrence: string, options?: Parameters<typeof readAccountMode>[0]) => {
+      const mode = await readAccountMode(options);
+      if (mode === 'unknown') throw accountModeRefusal('account_encryption_mode_unavailable');
+      return privateArtifactSourceId({ occurrence, mode, credentials: contentCredentials });
+    },
     /** Keyholder delivery after a committed audience change: census + key-envelope commit per Artifact.
      * Rejects when any Artifact could not be prepared; the others still commit. */
     prepareRecipients: async (artifactIds: readonly string[], signal?: AbortSignal) => {
@@ -1368,7 +1373,7 @@ export function createAccountArtifactStore(params: Readonly<{
         if (!accountId || accountId !== input.noticeAccountId) {
           throw Object.assign(new Error('notice_account_scope_mismatch'), { code: 'notice_account_scope_mismatch' });
         }
-        artifactId = privateNoticeArtifactId({ occurrence: accountNoticeOccurrence(accountId, notice),
+        artifactId = privateArtifactSourceId({ occurrence: accountNoticeOccurrence(accountId, notice),
           mode: codec.mode, credentials: contentCredentials });
         if (await fetchStored(artifactId, input.signal)
           || await findRetainedNotice(accountId, accountNoticeOccurrence(accountId, notice), input.signal)) {
@@ -1626,7 +1631,7 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(input.investigation === undefined ? {} : { investigation: input.investigation }),
         ...(input.body === undefined ? {} : { body: input.body }), ...(input.page === undefined ? {} : { page: input.page }) });
       const occurrence = accountNoticeOccurrence(accountId, baseContent);
-      let artifactId = privateNoticeArtifactId({ occurrence,
+      let artifactId = privateArtifactSourceId({ occurrence,
         mode, credentials: contentCredentials });
       for (;;) {
         input.signal?.throwIfAborted();
