@@ -33,7 +33,7 @@ export function createMemberAgentCliLaunchContext(input: Readonly<{
 }
 
 /** Which Agent services were being built when a member launch was unavailable. */
-export type MemberAgentCliLaunchSite = 'agent_invocation_services' | 'retained_runner_agent_services';
+export type MemberAgentCliLaunchSite = 'agent_invocation_services' | 'retained_runner_agent_services' | 'terminal_agent_login';
 
 /** Consume the operation/Session owner's admitted native selection. */
 export function readMemberAgentCliLaunchContext(context: HostAgentIsolationLaunchContext | undefined,

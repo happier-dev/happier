@@ -3,9 +3,7 @@ import * as childProcessBoundary from 'node:child_process';
 import { access, mkdir, readFile, rm } from 'node:fs/promises';
 import * as filesystemBoundary from 'node:fs/promises';
 import * as processBoundary from '@happier-dev/cli-common/process';
-import { createRequire } from 'node:module';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import { expect, vi } from 'vitest';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
@@ -22,34 +20,8 @@ import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handl
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { prepareNativeFilesystemEffect } from '@/rpc/handlers/fileSystem/prepareNativeFilesystemEffect';
 import { createAgentCliSystemToolService } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
-import { resolveCliTsxTsconfigPath } from '@/utils/spawnHappyCLI';
+import { isMemberAgentLaunchSpawn, spawnMemberEffectWorker } from '@/daemon/agentIsolation/memberEffectWorker.testkit';
 import type { createS0DeploymentDaemonIngress } from '@/deployments/deploymentDaemonIngress.testkit';
-
-// The OS boundary maps a guest UID/home onto a disposable host directory. It
-// reads the actual production frame, then executes the real finite entrypoint;
-// it never supplies an install result or changes the admitted operation.
-const worker = String.raw`
-void (async () => {
-    const { readAgentLaunchFrame } = await import(process.env.HAPPIER_TEST_FRAME_ENTRY);
-    const frame = await readAgentLaunchFrame(process.stdin);
-    if (!frame.nativeIdentity || !['agent-install-effect', 'filesystem-effect'].includes(frame.args[0])) throw new Error('Unexpected native effect');
-    const backing = process.env.HAPPIER_TEST_MEMBER_BACKING;
-    const map = value => typeof value === 'string' ? value.split(frame.nativeIdentity.home).join(backing) : value;
-    for (const key of Object.keys(process.env)) if (!key.startsWith('HAPPIER_TEST_') && key !== 'TSX_TSCONFIG_PATH') delete process.env[key];
-    Object.assign(process.env, Object.fromEntries(Object.entries(frame.environment).map(([key, value]) => [key, map(value)])));
-    const fs = await import('node:fs/promises');
-    await fs.mkdir(map(frame.runtimeHome), { recursive: true });
-    if (frame.args[0] === 'agent-install-effect') {
-      const { runMemberAgentInstallEffect } = await import(process.env.HAPPIER_TEST_INSTALL_ENTRY);
-      setImmediate(() => process.stdin.resume());
-      await runMemberAgentInstallEffect(process.stdin, process.stdout, new AbortController().signal);
-    } else {
-      const { runFilesystemEffectInternal } = await import(process.env.HAPPIER_TEST_FILESYSTEM_ENTRY);
-      setImmediate(() => process.stdin.resume());
-      await runFilesystemEffectInternal(process.stdin, process.stdout);
-    }
-})().catch(error => { process.stderr.write(JSON.stringify({ code: error?.code ?? 'member_worker_failed', name: error?.name, message: error?.message, stack: error?.stack }) + '\n'); process.exitCode = 1; process.stdin.destroy(); });
-`;
 
 type IngressInput = Parameters<typeof createS0DeploymentDaemonIngress>[0];
 type RpcConfiguration = NonNullable<IngressInput['configureRpc']>;
@@ -81,14 +53,9 @@ export async function createMemberInstallJourney(input: Readonly<{ home: Guest; 
         ?? actualExec(...request));
     const { spawn: actualSpawn } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
     const spawnBoundary = vi.mocked(childProcessBoundary.spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
-        if (args[0] !== 'sudo' || args[1]?.at(-1) !== 'agent-launch') return actualSpawn(...args);
+        if (!isMemberAgentLaunchSpawn(args[0], args[1])) return actualSpawn(...args);
         expect(args[1]).toContain(identity.username);
-        const child = actualSpawn(process.execPath, ['--conditions=happier-source', '--import', createRequire(import.meta.url).resolve('tsx/esm'), '-e', worker], {
-            ...args[2], cwd: resolve('.'), env: { PATH: process.env.PATH, TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
-                HAPPIER_TEST_MEMBER_BACKING: backing,
-                HAPPIER_TEST_FRAME_ENTRY: pathToFileURL(resolve('src/daemon/agentIsolation/agentLaunchFrame.ts')).href,
-                HAPPIER_TEST_INSTALL_ENTRY: pathToFileURL(resolve('src/capabilities/installJobs/memberInstallEffect.ts')).href,
-                HAPPIER_TEST_FILESYSTEM_ENTRY: pathToFileURL(resolve('src/rpc/handlers/fileSystem/filesystemEffectInternal.ts')).href } });
+        const child = spawnMemberEffectWorker({ actualSpawn, options: args[2], backing });
         child.stderr?.on('data', chunk => workerErrors.push(String(chunk)));
         return child;
     });

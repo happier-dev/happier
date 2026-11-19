@@ -1,4 +1,5 @@
 import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { readMemberAgentCliLaunchContext, type MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/memberAgentCliLaunch';
 import { matchesTerminalRequesterCustody } from '@/terminal/pty/custody';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
@@ -104,7 +105,8 @@ export type MachineTerminalRpcHandlerDeps = Readonly<{
   terminalRegistry?: TerminalProcessRegistry;
   admissionDrain?: DaemonAdmissionDrain;
   operationRuntime?: Pick<HostActionOperationRuntime, 'observeExecution'>;
-  resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent) => TerminalLaunchProcess | Promise<TerminalLaunchProcess>;
+  resolveLaunch?: (launch: import('@happier-dev/protocol').DaemonTerminalLaunchIntent,
+    memberLaunch?: MemberAgentCliLaunchContext) => TerminalLaunchProcess | Promise<TerminalLaunchProcess>;
   projectFiniteRuntime?: (ingress: RpcHandlerContext) => ProjectTerminalRuntime | null | Promise<ProjectTerminalRuntime | null>;
   /** Requester Account reads for Session and accepted Project custody. */
   accountReadRuntime?: (ingress: RpcHandlerContext) => MachineTerminalOwnSessionReadRuntime | null | Promise<MachineTerminalOwnSessionReadRuntime | null>;
@@ -173,10 +175,15 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   // can override (tests / future injection).
   const terminalRegistry = params.deps?.terminalRegistry ?? getSharedTerminalProcessRegistry();
   const resolveLaunch = params.deps?.resolveLaunch
-    ?? ((launch) => resolveDaemonTerminalLaunch(launch, { env, platform: params.deps?.platform }));
-  const resolveRequestedLaunch = async (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined) => {
+    ?? ((launch, memberLaunch) => resolveDaemonTerminalLaunch(launch, { env, platform: params.deps?.platform,
+      ...(memberLaunch ? { memberLaunch } : {}) }));
+  /** A member-placed sign-in resolves its Agent CLI in that member's prepared native operation. */
+  const resolveRequestedLaunch = async (launch: Exclude<import('@happier-dev/protocol').DaemonTerminalLaunchIntent, { kind: 'package_script' | 'service_shell' }> | undefined,
+    member?: Readonly<{ agentIsolation: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext; signal: AbortSignal }>) => {
     try {
-      return { ok: true as const, launchProcess: launch ? await resolveLaunch(launch) : undefined };
+      const memberLaunch = member ? readMemberAgentCliLaunchContext(member.agentIsolation, 'terminal_agent_login') : undefined;
+      return { ok: true as const, launchProcess: launch
+        ? await resolveLaunch(launch, memberLaunch && { ...memberLaunch, signal: member!.signal }) : undefined };
     } catch (error) {
       return err(error instanceof AgentLoginLaunchError ? error.code : 'terminal_spawn_failed');
     }
@@ -769,7 +776,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
-    const launch = await resolveRequestedLaunch(parsed.data.launch);
+    // Member sign-in waits for the member's prepared native operation below.
+    const memberSignIn = parsed.data.launch?.kind === 'agent_login' && placement === 'member';
+    const launch = await resolveRequestedLaunch(memberSignIn ? undefined : parsed.data.launch);
     if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
@@ -789,6 +798,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
+        }
+        if (memberSignIn && !warm) {
+          const resolved = await resolveRequestedLaunch(parsed.data.launch,
+            { agentIsolation: nativeOperation.agentIsolation, signal: context.signal });
+          if (!resolved.ok) { await nativeOperation.dispose(); return resolved; }
+          launch.launchProcess = resolved.launchProcess;
         }
       }
       const preparation = projectCustody && !warm
@@ -959,7 +974,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
     if (!cwd.ok) return cwd;
     if (params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
-    const launch = await resolveRequestedLaunch(parsed.data.launch);
+    const memberSignIn = parsed.data.launch?.kind === 'agent_login' && placement === 'member';
+    const launch = await resolveRequestedLaunch(memberSignIn ? undefined : parsed.data.launch);
     if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
@@ -976,6 +992,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
+        }
+        if (memberSignIn) {
+          const resolved = await resolveRequestedLaunch(parsed.data.launch,
+            { agentIsolation: nativeOperation.agentIsolation, signal: context.signal });
+          if (!resolved.ok) { await nativeOperation.dispose(); return resolved; }
+          launch.launchProcess = resolved.launchProcess;
         }
       }
       const preparation = projectCustody

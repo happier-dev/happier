@@ -1,8 +1,10 @@
 import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
+import { resolveMemberRunnableAgentCliLaunch, type MemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/memberAgentCliLaunch';
 import { resolveTerminalShell } from './shells';
 import { readSystemToolAuthentication, systemToolAuthenticationEnvironment, createSystemToolAuthenticationResolver } from '@/capabilities/cliAuth/systemToolAuthentication';
 
@@ -27,6 +29,8 @@ export async function resolveDaemonTerminalLaunch(
     buildLaunchSpec?: typeof buildHappyCliSubprocessLaunchSpec;
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
+    /** A member-placed sign-in resolves the Agent CLI as that member, never from the daemon environment. */
+    memberLaunch?: MemberAgentCliLaunchContext;
   }> = {},
 ): Promise<TerminalLaunchProcess> {
   const buildLaunchSpec = deps.buildLaunchSpec ?? buildHappyCliSubprocessLaunchSpec;
@@ -73,9 +77,15 @@ export async function resolveDaemonTerminalLaunch(
         const launch = buildLaunchSpec(['agents', 'auth', 'login', launchRequest.agentId]);
         return { file: launch.filePath, args: launch.args, env: launch.env, ...initialInput };
       }
-      const launch = agent?.runtimeSpec
-        ? resolveAgentCliLaunchSpecForRuntime(agent.runtimeSpec, { processEnv: deps.env, platform: deps.platform })
-        : null;
+      const runtimeSpec = agent?.runtimeSpec;
+      const launch = !runtimeSpec ? null : deps.memberLaunch
+        ? await resolveMemberRunnableAgentCliLaunch({ agentId: launchRequest.agentId, runtimeSpec,
+          processEnv: deps.env ?? process.env, memberLaunch: deps.memberLaunch }).catch((error: unknown) => {
+            // Only the member resolver's own "not runnable" answer means the CLI is missing.
+            if (isPluginError(error) && error.code === 'agent_cli_not_runnable') return null;
+            throw error;
+          })
+        : resolveAgentCliLaunchSpecForRuntime(runtimeSpec, { processEnv: deps.env, platform: deps.platform });
       if (!launch) throw new AgentLoginLaunchError('agent_cli_missing');
       return { file: launch.command, args: [...launch.args, ...declaration.args], ...initialInput };
     }

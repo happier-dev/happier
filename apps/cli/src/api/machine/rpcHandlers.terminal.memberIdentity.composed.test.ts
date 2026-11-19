@@ -56,7 +56,7 @@ function closedFailureReason(value: unknown, field: string) {
 }
 
 type NativeHome = { path: string; workspaceRoot: string; backing: string; workspaceBacking: string; uid: number };
-const nativeOs: { home: NativeHome | undefined; sharedHome: string | undefined } = vi.hoisted(() => ({ home: undefined, sharedHome: undefined }));
+const nativeOs: { home: NativeHome | undefined; sharedHome: string | undefined; memberEffectErrors: string[] } = vi.hoisted(() => ({ home: undefined, sharedHome: undefined, memberEffectErrors: [] }));
 // Native ownership and path mapping are OS boundaries. No requester selector,
 // Account runtime, native preparation, finalizer, PTY manager or RPC is mocked.
 vi.mock('node:fs/promises', async original => {
@@ -105,10 +105,17 @@ vi.mock('@happier-dev/cli-common/process', async original => {
 });
 vi.mock('node:child_process', async original => {
   const actual = await original<typeof import('node:child_process')>();
+  const memberEffect = await import('@/daemon/agentIsolation/memberEffectWorker.testkit');
   return { ...actual, spawn: ((...args: Parameters<typeof actual.spawn>) => {
     const options = args[2];
     const cwd = options?.cwd;
     const home = nativeOs.home;
+    // A native member effect runs the real member entrypoint against the member home backing.
+    if (home && memberEffect.isMemberAgentLaunchSpawn(args[0], args[1])) {
+      const child = memberEffect.spawnMemberEffectWorker({ actualSpawn: actual.spawn, options, backing: home.backing });
+      child.stderr?.on('data', chunk => nativeOs.memberEffectErrors.push(String(chunk)));
+      return child;
+    }
     // The member filesystem already uses this real temporary backing. Translate
     // the same OS cwd boundary for real Git children; SCM/plugin logic stays real.
     const mapped = home && typeof cwd === 'string' && (cwd === home.workspaceRoot || cwd.startsWith(`${home.workspaceRoot}/`))
@@ -116,7 +123,7 @@ vi.mock('node:child_process', async original => {
     return actual.spawn(args[0], args[1], options ? { ...options, cwd: mapped } : options);
   }) as typeof actual.spawn };
 });
-afterEach(() => { nativeOs.home = undefined; nativeOs.sharedHome = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { nativeOs.home = undefined; nativeOs.sharedHome = undefined; nativeOs.memberEffectErrors = []; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 class NativePty implements PtyProcess {
   readonly data = new Set<(data: Buffer | string) => void>();
@@ -193,8 +200,18 @@ async function fixture(options: Readonly<{ cold?: true; finite?: true; setup?: t
       typeof params.args === 'string' ? [params.args] : params.args, params.options.cwd, params.options.env));
     return pty;
   } });
-  vi.spyOn(processBoundary, 'probeProcessGroupLiveness').mockImplementation(group => processes.find(pty => pty.pid === group)?.exited ? 'absent' : 'alive');
-  vi.spyOn(terminationBoundary, 'terminateProcessTree').mockImplementation(async ({ pid }) => { processes.find(pty => pty.pid === pid)?.exit(); });
+  const probeOsProcessGroup = processBoundary.probeProcessGroupLiveness;
+  // Only the fake PTY groups are simulated; a real member effect child keeps its OS liveness.
+  vi.spyOn(processBoundary, 'probeProcessGroupLiveness').mockImplementation((...args) => {
+    const pty = processes.find(candidate => candidate.pid === args[0]);
+    return pty ? pty.exited ? 'absent' : 'alive' : probeOsProcessGroup(...args);
+  });
+  const terminateOsProcessTree = terminationBoundary.terminateProcessTree;
+  vi.spyOn(terminationBoundary, 'terminateProcessTree').mockImplementation(async (...args) => {
+    const pty = processes.find(candidate => candidate.pid === args[0].pid);
+    if (!pty) return await terminateOsProcessTree(...args);
+    pty.exit();
+  });
   let preparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
   let finite: ReturnType<typeof createInstalledProjectFiniteRuntime> | undefined;
   const agentIsolation = { managedHappierBinaryPath: '/opt/happier/cli/current/happier',
@@ -394,6 +411,24 @@ child.on('close', code => { process.exitCode = code ?? 1; });
 }
 
 describe.skipIf(process.platform !== 'linux')('installed host-composed member terminal native identity', () => {
+  it('opens member Agent CLI sign-in with the CLI installed in the member home, not the daemon environment', async () => {
+    const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.opencode'] } });
+    onTestFinished(() => plugins.dispose());
+    const f = await fixture({ acceptedWorkspace: false });
+    // The member-scoped install left OpenCode only in the member's own home.
+    const memberBin = join(f.directory, 'native-home', '.opencode', 'bin');
+    await mkdir(memberBin, { recursive: true });
+    await writeFile(join(memberBin, 'opencode'), '#!/usr/bin/env bash\necho 2.3.0\n', { mode: 0o755 });
+    const opened = await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+      { terminalKey: 'agent-login:opencode', launch: { kind: 'agent_login', agentId: 'opencode' } });
+    expect(opened, JSON.stringify({ opened, memberEffectErrors: nativeOs.memberEffectErrors,
+      ptys: f.processes.map(pty => ({ file: pty.params.file, frames: pty.frames.map(frame => frame.executable) })) }))
+      .toMatchObject({ ok: true, terminalId: expect.any(String) });
+    expect(f.processes[0]?.frames[0]).toMatchObject({ executable: join(memberBin, 'opencode'),
+      args: ['auth', 'login'], cwd: f.member.workspaceRoot });
+  });
+
   it.each([['member', 'terminal'], ['member', 'finite'], ['owner', 'terminal']] as const)('prepares admitted %s %s without awaiting display-only status', async (actor, kind) => {
     // Activate daemon-owned SCM before the fixture persists its separate
     // requester Account bearer; plugin startup does not own that credential.
