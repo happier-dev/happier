@@ -4,13 +4,14 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { getBundledAgentDeclaration } from '../../../../apps/ui/sources/agents/catalog/catalog';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol';
 import { ProviderBrokerOpenResponseV1Schema, PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
   PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { TeamCredentialResourceCreateInputV1Schema, TeamCredentialResourceSummaryV1Schema,
-  TeamCredentialResourceAudienceInputV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+  TeamCredentialResourceAudienceInputV1Schema, teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createLightSqliteHarness, createAccountTokenForTests,
   type LightSqliteHarness } from '../../../../apps/server/sources/testkit/lightSqliteHarness';
@@ -99,8 +100,14 @@ it('shares Muse through Meta into recipient Pi, hides it from Muse, and refuses 
     return result;
   }
   const actionPath = (action: Parameters<typeof homeDomainActionPathForMethod>[0]) => homeDomainActionPathForMethod(action, 'POST');
+  const resourceId = crypto.randomUUID();
+  const displayName = sealPrivateLabelV1({
+    mode: 'plain',
+    binding: teamCredentialDisplayNamePrivateLabelBindingV1(resourceId),
+    value: 'Team Muse',
+  });
   const resource = TeamCredentialResourceSummaryV1Schema.parse(await post(actionPath('teams.credentials.create'), ownerToken!,
-    TeamCredentialResourceCreateInputV1Schema.parse({ teamId: team.id, resourceId: crypto.randomUUID(), displayName: 'Team Muse',
+    TeamCredentialResourceCreateInputV1Schema.parse({ teamId: team.id, resourceId, displayName,
       source: { v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: credential.id },
       deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
       brokerPlacement: { kind: 'machine', machineId: broker.id }, requestPolicy: null, allMembersAllowedRoutes: null,
