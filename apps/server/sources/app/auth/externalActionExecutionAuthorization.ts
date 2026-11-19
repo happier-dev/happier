@@ -55,7 +55,7 @@ import { isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-de
 import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
     deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx,
-    readAdmittedDeploymentReadScopeInTx, readAdmittedProjectReadinessScopeInTx } from '@/app/deployments/deploymentReadAuthorization';
+    readAdmittedDeploymentReadScopeInTx, readAdmittedProjectReadinessScopeInTx, readDeploymentTargetAuthorizationInTx } from '@/app/deployments/deploymentReadAuthorization';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { liveDeploymentTargetLinkWhere } from '@/app/deployments/deploymentTargetLinkReadService';
 import { readDeploymentReviewedSetupHttpPurpose } from '@/app/deployments/deploymentReviewedChildAuthorization';
@@ -2815,7 +2815,7 @@ async function isAdmittedDeclaredDeploymentReadInScope(
  * A provider-role admission host (createDeploymentTargetRoleAdmissionHost) reads the Environment a
  * contributed provider read names (a Neon project list), then opens its content Artifact and, for a
  * linked read (Neon branches), the named target link's content Artifact, or (a database target list) the
- * Environment's receipt metadata, with its
+ * active native receipt and its content on the placed installation, with its
  * admitted contributed root; that root carries no deployment read admission. The Environment and
  * Artifact routes keep the requester's own access, as for the requester's bearer read. A foreign
  * custodian (a Team member's Machine) chose the operand itself, so it names only an Environment its own
@@ -2848,8 +2848,25 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
             contentArtifactId: artifactId, deletedAt: null }, select: { id: true } })
             ?? await db.deploymentTargetLink.findFirst({ where: { contentArtifactId: artifactId, ...liveDeploymentTargetLinkWhere,
                 environment: { deletedAt: null } }, select: { environmentId: true } }).then(link => link && { id: link.environmentId });
-        if (!content) return false;
-        environmentId = content.id;
+        if (content) {
+            environmentId = content.id;
+        } else {
+            if (artifactId === null || binding.actionId !== ACTION_INVOKE_ACTION_ID_V1
+                || verified.boundMachineSigned !== true || binding.target.kind !== 'machine') return false;
+            const receipt = await db.deployment.findFirst({ where: {
+                contentArtifactId: artifactId,
+                ...(binding.environmentId === undefined ? {} : { environmentId: binding.environmentId }),
+                targetLink: { activeDeployment: { contentArtifactId: artifactId } },
+            }, select: { id: true, targetLinkId: true, environment: true } });
+            if (!receipt) return false;
+            const scope = await readDeploymentTargetAuthorizationInTx(db, receipt.environment, {
+                actionId: ACTION_INVOKE_ACTION_ID_V1, environmentId: receipt.environment.id,
+                deploymentId: receipt.id, targetLinkId: receipt.targetLinkId,
+                machineId: binding.machineId, installationId: binding.installationId,
+            });
+            if (scope?.ok !== true || !scope.artifactIds.includes(artifactId)) return false;
+            environmentId = receipt.environment.id;
+        }
     }
     return binding.custodianAccountId === binding.accountId || (await loadDeploymentEnvironmentInTx(db,
         binding.custodianAccountId, binding.serverIdentityId, environmentId)).ok;

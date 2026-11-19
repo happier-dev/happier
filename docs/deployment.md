@@ -934,6 +934,10 @@ SQL and parameter values stay in the protected Action input; the public admissio
 exact Environment, Deployment, target, Machine and installation references and
 the Action's canonical read/write access class.
 
+Workbench target discovery on a Machine uses the signed contributed Action to
+read the serving Own Server receipt on its current runtime installation. The
+Environment and Artifact routes apply the requester's existing access.
+
 The existing service Exec owner supplies native container reachability to the
 shared PostgreSQL or MySQL driver. Shared dialect modules own statement admission,
 parameter binding and typed ordered result decoding. Reads use the dedicated

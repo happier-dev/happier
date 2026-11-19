@@ -1114,12 +1114,18 @@ describe('private installed Environment secret launch transport', () => {
             expect(deleted.statusCode, deleted.body).toBe(401);
         }, { authentication: 'real' });
     });
-    it('admits the database target list receipt read of its own Environment under the contributed root (AUTHZ-FLUSH-176)', async () => {
-        // Opening an own-server database lists its targets (createDeploymentDatabasesServiceForHost); the role
-        // admission host reads the active receipt with the admitted action.invoke root, which carries no read admission.
+    it('opens the active own-server receipt for Workbench target listing under the contributed root', async () => {
+        // The Machine-targeted Workbench Action carries the same root through receipt metadata and its content read.
         const f = await admittedTeamDelivery('plain');
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
-        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.receipt.deploymentId : '';
+        const deploymentId = f.receipt.deploymentId;
+        const active = await db.deployment.update({ where: { id: deploymentId }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: active.targetLinkId }, data: { activeDeploymentId: deploymentId,
+            machines: { updateMany: { where: { machineId: f.controller.machineId, installationId: f.controller.installationId },
+                data: { state: 'active' } } } } });
+        const history = await db.deployment.create({ data: { ...active, id: crypto.randomUUID(), requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), ...await f.artifact('deployment-receipt.v1') } });
+        const artifactPath = (id: string) => `/v1/artifacts/${id}`;
         const machine = await db.machine.findUniqueOrThrow({ where: { id: f.controller.machineId }, select: { accountId: true } });
         await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -1153,6 +1159,21 @@ describe('private installed Environment secret launch transport', () => {
                 expect(manager.statusCode, manager.body).toBe(200);
                 expect(manager.json()).toMatchObject({ ok: true });
             }
+            const url = artifactPath(active.contentArtifactId);
+            const token = await auth.createToken(f.owner.id, undefined, { kind: 'account', authority: 'present_user' });
+            const bearer = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${token}` } });
+            expect(bearer.statusCode, bearer.body).toBe(200);
+            const signed = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, url));
+            expect(signed.statusCode, signed.body).toBe(200);
+            expect(signed.json()).toMatchObject({ id: active.contentArtifactId, bodyVersion: active.contentBodyVersion });
+            const unplacedMachine = await ownInstalledMachine(f.owner.id);
+            const unplaced = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, url, unplacedMachine));
+            expect(unplaced.statusCode, unplaced.body).toBe(401);
+            const unrelated = await f.artifact('unrelated.v1');
+            for (const id of [history.contentArtifactId, unrelated.contentArtifactId]) {
+                const refused = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, artifactPath(id)));
+                expect(refused.statusCode, refused.body).toBe(401);
+            }
             // An outsider's valid root on its own Machine passes the verifier; the receipt route keeps its own access.
             const outsiderMachine = await ownInstalledMachine(outsider.id);
             const foreign = await app.inject(await read(outsider.id, outsider.tokenEpoch, receiptPath(deploymentId, row.id), outsiderMachine));
@@ -1160,16 +1181,19 @@ describe('private installed Environment secret launch transport', () => {
             expect(foreign.statusCode, foreign.body).not.toBe(401);
             // A foreign custodian that cannot read this Environment itself cannot name its receipt under the requester's root.
             await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
-            for (const path of [receiptPath(deploymentId, row.id), receiptPath(deploymentId)]) {
+            for (const path of [receiptPath(deploymentId, row.id), receiptPath(deploymentId), url]) {
                 const custodian = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, path));
                 expect(custodian.statusCode, custodian.body).toBe(401);
             }
             await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
-            // The read opens metadata only: the private investigation projection and a missing receipt never cross.
+            // The private investigation projection and a missing receipt remain unavailable.
             for (const path of [`${receiptPath(deploymentId, row.id)}&projection=investigation`, receiptPath(crypto.randomUUID(), row.id)]) {
                 const refused = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, path));
                 expect(refused.statusCode, refused.body).not.toBe(200);
             }
+            await db.deploymentTargetLink.update({ where: { id: active.targetLinkId }, data: { detachedAt: new Date() } });
+            const detached = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, url));
+            expect(detached.statusCode, detached.body).toBe(401);
         }, { authentication: 'real' });
     });
     it('admits a person-started Workflow Run approval-scope Environment read under its workflow.run.start root (MOVE-WORKFLOW item 10)', async () => {
