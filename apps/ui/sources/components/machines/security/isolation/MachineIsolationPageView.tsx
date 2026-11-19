@@ -25,7 +25,7 @@ import { machinePresetCollectionHref } from '@/components/settings/machines/coll
 import { Collection, useHappierCollection, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { usePresetTableAnatomy, type PresetTableItem } from '@/components/settings/machines/presets/presetTable';
+import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from '@/components/settings/machines/presets/presetTable';
 import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
@@ -399,8 +399,8 @@ function MachineIsolationSandboxesTable(
     [router],
   );
   const menu = React.useMemo(
-    () => ({ disabled: props.disabled, onRemove: props.onRemove }),
-    [props.disabled, props.onRemove],
+    () => ({ disabled: props.disabled, onRemove: props.onRemove, onStep: openPreset }),
+    [openPreset, props.disabled, props.onRemove],
   );
   const anatomy = usePresetTableAnatomy({ host: 'sandboxes', facts: FACTS, onNextStep: openPreset });
   const model = useHappierCollection({
@@ -448,15 +448,24 @@ function MachineIsolationSandboxesTable(
 const IsolationRowMenuContext = React.createContext<Readonly<{
   disabled: boolean;
   onRemove: (entry: MachineIsolationEntryRow) => void;
+  onStep: (item: PresetTableItem) => void;
 }> | null>(null);
 
 function useIsolationRowActions(item: PresetTableItem & { entry: MachineIsolationEntryRow }): CollectionRowActions {
   const menu = React.useContext(IsolationRowMenuContext);
-  return React.useMemo(() => menu === null || menu.disabled ? {} : {
-    secondaryActions: [{ id: 'remove', label: t('machineDetailPage.isolation.sandboxes.remove'), destructive: true }],
-    secondaryActionAccessibilityLabel: t('common.more'),
-    onSecondaryAction: () => menu.onRemove(item.entry),
-  }, [item.entry, menu]);
+  const step = readPresetTableMenuStep(item);
+  return React.useMemo(() => {
+    if (menu === null) return {};
+    const items = [
+      ...(step ? [{ id: step.id, label: step.label }] : []),
+      ...(menu.disabled ? [] : [{ id: 'remove', label: t('machineDetailPage.isolation.sandboxes.remove'), destructive: true }]),
+    ];
+    return items.length === 0 ? {} : {
+      secondaryActions: items,
+      secondaryActionAccessibilityLabel: t('common.more'),
+      onSecondaryAction: (id: string) => (id === 'remove' ? menu.onRemove(item.entry) : menu.onStep(item)),
+    };
+  }, [item, menu, step?.id, step?.label]);
 }
 
 function readItemKey(item: PresetTableItem): string {

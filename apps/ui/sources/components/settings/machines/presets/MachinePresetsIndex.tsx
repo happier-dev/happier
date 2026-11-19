@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
-import { Collection, useHappierCollection } from '@happier-dev/plugin-ui';
+import { Collection, useHappierCollection, type CollectionRowActions } from '@happier-dev/plugin-ui';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -32,7 +32,7 @@ import { useMachineCollection } from '../collection/useMachineCollection';
 import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
 import type { MachinePresetQueryState } from '../managed/useMachinePresets';
 import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
-import { usePresetTableAnatomy, type PresetTableItem } from './presetTable';
+import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from './presetTable';
 import { projectManagedPresetAllocationCounts } from '../managed/hostMachineSandboxes';
 import { projectSandboxPresetHostCounts } from '@/sync/domains/machines/machineIsolationPolicy';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -240,11 +240,13 @@ export function MachinePresetsPage(props: Readonly<{
     </>
   );
   return (
+    <PresetRowStepContext.Provider value={onNextStep}>
     <ItemList pageColumn="wide">
       <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
         <PageContentColumn>
           <Collection<PresetTableItem & { sectionKey: string }>
             testID="machine-presets.table"
+                  useRowActions={usePresetRowActions}
             model={model}
             anatomy={anatomy}
             accessibilityLabel={t('machinePresets.short')}
@@ -274,6 +276,7 @@ export function MachinePresetsPage(props: Readonly<{
               >
                 <Collection<PresetTableItem & { sectionKey: string }>
                   testID="machine-presets.archived.table"
+                  useRowActions={usePresetRowActions}
                   model={archivedModel}
                   anatomy={anatomy}
                   accessibilityLabel={t('managedCleanup.archiveTitle')}
@@ -290,6 +293,7 @@ export function MachinePresetsPage(props: Readonly<{
         </PageContentColumn>
       </CoreCollectionScope>
     </ItemList>
+    </PresetRowStepContext.Provider>
   );
 }
 
@@ -424,3 +428,16 @@ const styles = StyleSheet.create(() => ({
     paddingTop: PAGE_LIST_METRICS.sectionGapPx,
   },
 }));
+
+/** Each row's "…" holds its image step (Rebuild, Retry, Build now), reachable at every width (a phone has no columns). */
+const PresetRowStepContext = React.createContext<((item: PresetTableItem) => void) | null>(null);
+
+function usePresetRowActions(item: PresetTableItem): CollectionRowActions {
+  const open = React.useContext(PresetRowStepContext);
+  const step = readPresetTableMenuStep(item);
+  return React.useMemo(() => open === null || step === null ? {} : {
+    secondaryActions: [{ id: step.id, label: step.label }],
+    secondaryActionAccessibilityLabel: t('common.more'),
+    onSecondaryAction: () => open(item),
+  }, [item, open, step?.id, step?.label]);
+}

@@ -50,6 +50,11 @@ describe('Machine isolation page', () => {
         expect(screen.root.findAll(node => node.props.testID === 'preset-table.next.py')).toHaveLength(0);
         const text = screen.root.findAll(node => typeof node.props.children === 'string').map(node => node.props.children as string);
         expect(text).toContain('machineDetailPage.isolation.sandboxes.missingType');
+        // The failed image's Retry is reachable from its row's "…" at every width, before Remove.
+        const nodeMenu = screen.root.findAll(node => Array.isArray(node.props.secondaryActions)
+            && node.props.secondaryActions[0]?.id === 'retry');
+        expect(nodeMenu.length).toBeGreaterThan(0);
+        expect(nodeMenu[0]!.props.secondaryActions.map((action: { id: string }) => action.id)).toEqual(['retry', 'remove']);
         // Remove is each row's own "…", through the Collection's row actions.
         const menus = screen.root.findAll(node => Array.isArray(node.props.secondaryActions)
             && node.props.secondaryActions[0]?.id === 'remove' && typeof node.props.onSecondaryAction === 'function');

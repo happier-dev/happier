@@ -90,7 +90,7 @@ const COLUMN = Object.freeze({
 /**
  * The table's anatomy for either host. Wide: the name with its provider and place under it, then Size, For (or
  * Runs in), In use (or Running), Image, Last used, then the row's one next step and its "…". A phone draws no
- * columns: line 2 is who it is for (or where it runs), then the image's word only when it needs the person (two
+ * columns: line 2 is who it is for (or where it runs), then the image's word, toned only when it needs the person (two
  * lines, lab review 10).
  */
 export function usePresetTableAnatomy(
@@ -98,7 +98,7 @@ export function usePresetTableAnatomy(
     host: PresetTableHost;
     /** Columns whose owner delivers a fact today; the others wait for it rather than standing as a column of blanks. */
     facts: Readonly<{ inUse: boolean; lastUsed: boolean; runsIn?: boolean }>;
-    onNextStep: (item: PresetTableItem, next: 'rebuild' | 'retry') => void;
+    onNextStep: (item: PresetTableItem, next: PresetTableStep) => void;
   }>,
 ): CollectionAnatomy<PresetTableItem> {
   const language = usePreferredLanguage();
@@ -224,7 +224,7 @@ export function usePresetTableAnatomy(
         ) : null,
       title: (item) => item.title,
       // Wide: the provider and where it runs ("Hetzner · Falkenstein"); the columns carry the rest.
-      // Narrow: who it is for, then the image's word only when it needs the person.
+      // Narrow: who it is for, then the image's word; the step itself is in the row's "…".
       byline: (item, layout) =>
         layout?.fieldColumns ? (
           <PresetPlaceLine item={item} />
@@ -369,14 +369,16 @@ function PresetPlaceText(
 }
 
 /**
- * A phone row's one line: who it is for (or where it runs), then the image's word only when it needs the person
+ * A phone row's one line: who it is for (or where it runs), then the image's word
  * ("Acme · Image out of date"). Size and when it was built stay on the preset's page.
  */
 function PresetPhoneLine(
   props: Readonly<{ item: PresetTableItem; host: PresetTableHost }>,
 ) {
+  // A phone draws no columns, so line 2 always carries the image's word after who it is for ("Yours · Image ready",
+  // "Acme · Image out of date"); only a word that needs the person takes its tone. The separator is its own glyph
+  // between gaps, so no trailing space is trimmed away.
   const image = readPresetTableImage(props.item);
-  const speaks = image.tone !== 'quiet' && image.word !== '';
   const lead =
     props.host === 'presets'
       ? null
@@ -384,21 +386,17 @@ function PresetPhoneLine(
   return (
     <View style={styles.phoneLine}>
       {props.host === 'presets' ? (
-        <PresetAudienceText
-          item={props.item}
-          style={styles.quiet}
-          suffix={speaks ? ' · ' : ''}
-        />
+        <PresetAudienceText item={props.item} style={styles.quiet} />
       ) : lead ? (
-        <Text numberOfLines={1} style={styles.quiet}>
-          {lead}
-          {speaks ? ' · ' : ''}
-        </Text>
+        <Text numberOfLines={1} style={styles.quiet}>{lead}</Text>
       ) : (
         // Where it runs isn't known yet: the type's provider line stands in, so the row keeps its second line.
         <PresetPlaceLine item={props.item} />
       )}
-      {speaks ? (
+      {image.word === '' ? null : <Text style={styles.quiet}>·</Text>}
+      {image.word === '' ? null : image.tone === 'quiet' ? (
+        <Text numberOfLines={1} style={styles.cell}>{image.word}</Text>
+      ) : (
         <Status
           presentation="inline"
           tone={toneOf(image)}
@@ -406,20 +404,42 @@ function PresetPhoneLine(
           indicator={false}
           label={image.word}
         />
-      ) : null}
+      )}
     </View>
   );
 }
 
+/**
+ * The row's "…" item for the image (lab review 5): a healthy or out-of-date image's Rebuild, a failed or cancelled
+ * build's Retry, a kept-but-unbuilt image's Build now. Every width reaches it there; a wide row also shows the
+ * attention step as its own button.
+ */
+export function readPresetTableMenuStep(item: PresetTableItem): Readonly<{ id: PresetTableStep; label: string }> | null {
+  const image = readPresetTableImage(item);
+  switch (image.kind) {
+    case 'ready':
+    case 'stale':
+      return { id: 'rebuild', label: t('machinePresets.prepareRebuild') };
+    case 'failed':
+    case 'cancelled':
+      return { id: 'retry', label: t('common.retry') };
+    case 'notBuilt':
+      return { id: 'build', label: t('machinePresets.prepareBuild') };
+    default:
+      return null;
+  }
+}
+
+export type PresetTableStep = 'build' | 'rebuild' | 'retry';
+
 function PresetAudienceText(
-  props: Readonly<{ item: PresetTableItem; style: object; suffix?: string }>,
+  props: Readonly<{ item: PresetTableItem; style: object }>,
 ) {
   const audience = usePresetAudience(props.item);
   if (!audience) return null;
   return (
     <Text numberOfLines={1} style={props.style}>
       {audience}
-      {props.suffix ?? ''}
     </Text>
   );
 }
@@ -494,6 +514,7 @@ const styles = StyleSheet.create((theme) => ({
   phoneLine: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: theme.space.s4,
     minWidth: 0,
   },
 }));
