@@ -150,7 +150,7 @@ export function isManagedCreatorActionIdV1(actionId: string): actionId is typeof
 
 /** Creation and recovery consume the same reviewed enrollment policy children. */
 export const MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1 = [
-  'machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set', 'machines.roles.set',
+  'machines.setup.adminAccess.set', 'machines.agentIsolation.preview', 'machines.agentIsolation.set',
 ] as const;
 
 /** Exact child Actions of the retained creation, never a general guest grant. */

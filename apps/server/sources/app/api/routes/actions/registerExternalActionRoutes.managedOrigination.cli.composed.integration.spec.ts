@@ -3342,12 +3342,13 @@ describe('ordinary Account managed Action origination', () => {
                     envelope: seal('machines.managed.acquire', selected.controller.machineId, acquire) } });
             expect(rootResponse.statusCode, rootResponse.body).toBe(200);
             let root = ExternalActionExecutionAuthorizationV1Schema.parse(rootResponse.json());
-            const otherRootResponse = policyKind === 'roles' && !withdrawal ? await instance.inject({ method: 'POST',
+            const checkRetry = policyKind === 'isolationSet' && !withdrawal;
+            const otherRootResponse = checkRetry ? await instance.inject({ method: 'POST',
                 url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
                 headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
                     envelope: { ...seal('machines.managed.acquire', selected.controller.machineId, acquire), idempotencyKey: 'other-reviewed-root' } } }) : null;
             if (otherRootResponse) expect(otherRootResponse.statusCode, otherRootResponse.body).toBe(403);
-            const otherControllerRootResponse = policyKind === 'roles' && !withdrawal ? await instance.inject({ method: 'POST',
+            const otherControllerRootResponse = checkRetry ? await instance.inject({ method: 'POST',
                 url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
                 headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: guest.id,
                     envelope: seal('machines.managed.acquire', guest.id, { ...acquire,
@@ -3402,12 +3403,17 @@ describe('ordinary Account managed Action origination', () => {
             };
             if (withdrawal) await db.account.update({ where: { id: selected.account.id }, data: { tokenEpoch: { increment: 1 } } });
             const response = await mint();
+            if (policyKind === 'roles') {
+                expect(response.statusCode).toBe(401);
+                expect(deliveries).toHaveLength(0);
+                return;
+            }
             expect(response.statusCode, response.body).toBe(200);
             const child = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
             expect(child.binding).toMatchObject({ actionId, requestId: selected.requestId,
                 machineId: guest.id, managedContinuation: { managedId: row.id, controller: selected.controller } });
             expect(await verifyCurrentExternalActionPrincipal(child.binding)).not.toBeNull();
-            if (withdrawal || policyKind === 'roles') {
+            if (withdrawal || checkRetry) {
                 // This is the daemon's exact retained-policy read, signed by its enrolled installation.
                 const readPath = managedMachineActionEndpointPathV1('machines.managed.get');
                 const readBody = { homeId, managedId: row.id };
@@ -3421,7 +3427,7 @@ describe('ordinary Account managed Action origination', () => {
                     method: 'POST', path: readPath, body: readBody });
                 expect(admittedRead, readRefusal).not.toBeNull();
                 expect((await mint({ ...input, machineId: selected.controller.machineId })).statusCode).not.toBe(200);
-                if (mode === 'plain' && policyKind !== 'roles') expect((await mint({ ...input, ...(policyKind === 'adminAccess' ? { adminAccess: { ...policy, administratorUsername: 'different' } }
+                if (mode === 'plain') expect((await mint({ ...input, ...(policyKind === 'adminAccess' ? { adminAccess: { ...policy, administratorUsername: 'different' } }
                     : { enabled: false }) })).statusCode).not.toBe(200);
                 childCreationRequestId = 'other-creation';
                 expect((await mint()).statusCode).not.toBe(200);
@@ -3440,13 +3446,13 @@ describe('ordinary Account managed Action origination', () => {
                         url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.bootstrap.retry'),
                         headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
                             envelope: seal('machines.managed.bootstrap.retry', selected.controller.machineId,
-                                { homeId, managedId: row.id, expectedIntentRevision: 0 }, `${selected.requestId}-roles-retry`) } });
+                                { homeId, managedId: row.id, expectedIntentRevision: 0 }, `${selected.requestId}-enrollment-policy-retry`) } });
                     expect(retry.statusCode, retry.body).toBe(200);
                     root = ExternalActionExecutionAuthorizationV1Schema.parse(retry.json());
                     const retried = await mint();
                     expect(retried.statusCode, retried.body).toBe(200);
                     expect(ExternalActionExecutionAuthorizationV1Schema.parse(retried.json()).binding).toMatchObject({
-                        requestId: `${selected.requestId}-roles-retry`,
+                        requestId: `${selected.requestId}-enrollment-policy-retry`,
                         managedContinuation: { creationRequestId: selected.requestId, managedId: row.id } });
                     await db.managedMachine.update({ where: { id: row.id }, data: { intentRevision: 1 } });
                     childRevision = 1;

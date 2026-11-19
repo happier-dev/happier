@@ -6,13 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import nacl from 'tweetnacl';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, dispatchManagedSessionStart, dispatchManagedMachineAdminAccess, isReviewedMachineSetupPlanChild,
-    dispatchLocalManagedMachineAgentIsolation, dispatchManagedMachineAgentIsolation, dispatchManagedMachineRoles,
-    createExternalActionMachineRpcExecution } from './externalActionExecutionAuthorization';
-import { machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
-import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+    dispatchLocalManagedMachineAgentIsolation, dispatchManagedMachineAgentIsolation, createExternalActionMachineRpcExecution } from './externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { encodeStoredCredentials, updateSettings, writeStoredCredentialsForServerId, readStoredCredentialsForServerId,
     removeStoredCredentialsForServerId, readStoredCredentials, sameStoredCredentials } from '@/persistence';
@@ -62,14 +60,8 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
-import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { sealManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1,
-    createManagedMachinePresetAcquireOverrideV1, openManagedMachinePresetContentV1,
-    replaceManagedMachinePresetLaunchNameV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { hydrateManagedOpaquePresetMachineV1, prepareManagedMachineSetupApplyInput, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
-import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
-import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { prepareManagedMachineSetupApplyInput, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
+import { type SocketRpcContent } from '@happier-dev/sync-client';
 
 const keyPair = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
 const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
@@ -563,154 +555,6 @@ describe('managed continuation through the ordinary public Action transport', ()
             expect(await receive(child, 'use')).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
             expect(await machine.getMachineSetupDesiredSnapshot()).toEqual(before);
         }
-    });
-
-    it('executes a sealed preset enrollment child using its signed admission without disclosing or re-reading enrollment policy', async () => {
-        const currentness = await createRequesterCurrentnessSocketHarness();
-        onTestFinished(() => currentness.close());
-        const secret = new Uint8Array(32).fill(61);
-        const accountKey = deriveAccountMachineKeyFromRecoverySecret(secret);
-        const publicKey = nacl.box.keyPair.fromSecretKey(accountKey).publicKey;
-        const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`,
-            encryption: { type: 'legacy' as const, secret } };
-        const stored = sealManagedMachinePresetContentV1({ presetId: 'private-preset', mode: 'e2ee',
-            content: { v: 1, name: 'Private preset', launch: { provider: { pluginId: 'native.provisioner', localId: 'guest' },
-                schemaVersion: 1, name: 'Guest', choices: {} } },
-            recipientCensus: [{ account: { kind: 'account', accountId: 'account', firstName: 'Account', lastName: null,
-                username: 'account', avatarUrl: null }, readiness: { status: 'available',
-                contentPublicKey: Buffer.from(publicKey).toString('base64'),
-                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing' }],
-            randomBytes: length => new Uint8Array(length).fill(17) });
-        const override = createManagedMachinePresetAcquireOverrideV1({ presetId: 'private-preset', mode: 'e2ee',
-            projection: projectManagedMachinePresetForRecipientV1({ ...stored, recipientAccountId: 'account' }),
-            accountId: 'account', accountKey, enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier',
-                serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } },
-            randomBytes: length => new Uint8Array(length).fill(18) });
-        if (!override) throw new Error('Sealed enrollment override unavailable');
-        const snapshot = replaceManagedMachinePresetLaunchNameV1({ presetId: 'private-preset', mode: 'e2ee',
-            content: override.content, recipients: stored.recipients, accountId: 'account', accountKey, launchName: 'Guest',
-            nativeResult: { kind: 'bound', resource: { contributionRef: { pluginId: 'native.provisioner', localId: 'guest' },
-                schemaVersion: 1, value: { id: 'private-native-guest' } } },
-            randomBytes: length => new Uint8Array(length).fill(19) });
-        if (!snapshot) throw new Error('Sealed native enrollment snapshot unavailable');
-        const opened = openManagedMachinePresetContentV1({ presetId: 'private-preset', mode: 'e2ee', content: snapshot,
-            recipients: stored.recipients, accountId: 'account', accountKey });
-        if (!opened) throw new Error('Private preset did not open');
-        const opaque = ManagedOpaquePresetMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
-            preset: { id: 'private-preset', revision: 3, contentEncryptionMode: 'e2ee' },
-            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
-            enrolledMachineId: 'guest', desired: 'start', desiredWhen: 'now', intentRevision: 3,
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
-        const hydrated = hydrateManagedOpaquePresetMachineV1({ machine: opaque, opened });
-        if (!hydrated) throw new Error('Private enrollment did not hydrate');
-        const policy = resolveManagedMachineEnrollmentRolesV1(hydrated.enrollmentIdentity);
-        if (!policy) throw new Error('Expected enrollment roles');
-        const request = { serverId: 'srv_home', machineId: 'guest', expectedMetadataVersion: 0,
-            expectedPolicy: machineRolesMetadataFieldV1.defaultValue(), policy };
-        const machineCodec = createMachineContentCodec({ encryptionKey: secret, encryptionVariant: 'legacy' });
-        const rpcContent: SocketRpcContent = { mode: 'e2ee', cipher: {
-            encryptRaw: async value => machineCodec.encodeRpc(value),
-            decryptRaw: async value => machineCodec.decodeRpc(value),
-        } };
-        let mutations = 0;
-        // The Home Socket transport substitutes the native RPC effect; its encryption remains real.
-        currentness.server.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL,
-            async (packet: { method: string; params: unknown }, acknowledge: (value: unknown) => void) => {
-            const decoded = await socketRpcCodec.decodeRequestParams(rpcContent, packet.params, packet.method);
-            mutations++;
-            acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(rpcContent,
-                { status: 'applied', policy, metadataVersion: 1 }, decoded.callId) });
-        }));
-        const executor = createCliActionExecutorHarness({ token: credentials.token, credentials,
-            mode: 'e2ee', ctx: { encryptionVariant: 'legacy', encryptionKey: secret }, sessionId: '',
-            serverId: 'home-profile', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
-            externalActionMachineInstallationId: 'guest-installation', externalActionMachineRequestPrivateKey: keyPair.secretKey }).executor;
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
-            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account' } };
-            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 0 } };
-            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee' } };
-            if (url.endsWith('/v1/machines/guest')) return { status: 200, data: { machine: {
-                id: 'guest', kind: 'persistent', storageMode: 'e2ee', installationId: 'guest-installation',
-                installationPublicKey: Buffer.from(keyPair.publicKey).toString('base64'), dataEncryptionKey: null } } };
-            expect(url).toBe('https://home.example/v1/account/encryption/currentness');
-            return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 0,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
-        });
-        let managedReads = 0;
-        let verify = true;
-        let verifies = 0;
-        let tamper = false;
-        vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
-            const refusal = () => {
-                const response = projectExternalActionHttpError('action_not_admitted', 'creation');
-                return { status: response.statusCode, data: response.payload };
-            };
-            if (url.endsWith('/verify')) return { status: 200, data: { ok: verify } };
-            if (url.endsWith('/controller/context')) return { status: 200, data: { requestId: 'creation',
-                enrollmentInstallation: { machineId: 'guest', installationId: 'guest-installation',
-                    installationPublicKey: Buffer.from(keyPair.publicKey).toString('base64url') } } };
-            if (url.endsWith('/managed/actions/get')) { managedReads++; return { status: 200, data: opaque }; }
-            expect(url).toBe('https://home.example/v1/actions/machines.roles.set');
-            const signature = config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
-            if (typeof signature !== 'string' || !verifyExternalActionMachineRequestV1({ authorizationToken: root.token,
-                effectActionId: root.binding.actionId, target: root.binding.target, installationId: 'installation',
-                requestId: 'creation', method: 'POST', path: '/v1/actions/machines.roles.set', body,
-                publicKey: keyPair.publicKey, signature })) {
-                return refusal();
-            }
-            const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'home-child-root', binding: {
-                ...root.binding, actionId: 'machines.roles.set', machineId: 'guest', installationId: 'guest-installation',
-                target: carrier.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(carrier.envelope),
-                managedContinuation: { ...continuation, controller: opaque.controller,
-                    acquireRequestEnvelopeDigest: root.binding.requestEnvelopeDigest } } });
-            // A new valid ciphertext with a different enrollment policy still cannot
-            // replace the exact child bytes already admitted by Home.
-            const changed = tamper ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
-                binding: { serverIdentityId: 'srv_home', accountId: 'account', actionId: 'machines.roles.set',
-                    requestId: 'creation', target: { kind: 'machine', machineId: 'guest' },
-                    authentication: { kind: 'account', tokenEpoch: 2 } },
-                input: { ...request, policy: machineRolesMetadataFieldV1.defaultValue() },
-                material: { type: 'dataKey', machineKey: accountKey }, randomBytes: nacl.randomBytes }) : null;
-            const envelope = changed ? { ...changed, managedCreationCodec: carrier.envelope.managedCreationCodec } : carrier.envelope;
-            const result = await executeExternalAction({ actionId: 'machines.roles.set', envelope,
-                principal: { accountId: 'account', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 2 } },
-                currentMachineId: 'guest', currentAccountId: 'account', currentServerId: 'home-profile',
-                currentServerHttpBaseUrl: 'https://home.example', currentInstallationId: 'guest-installation', executionAuthorization: authorization,
-                externalActionMachineRequestPrivateKey: keyPair.secretKey, verifyExecutionAuthorization: async () => { verifies++; return verify; },
-                // Production ingress supplies the installed-identity port (rpc/handlers/externalAction.ts).
-                isInstallationCurrent: () => true,
-                resolveTarget: createDaemonExternalActionTargetResolver({ credentials }), executor,
-                prepareRequesterAccountContext: value => prepareRequesterAccountActionContext({ authorization: value.authorization,
-                    purpose: { kind: 'external_action' }, machineId: 'guest', installationId: 'guest-installation',
-                    installationPrivateKey: keyPair.secretKey, serverId: 'home-profile', serverIdentityId: 'srv_home',
-                    serverHttpBaseUrl: 'https://home.example', ownCredentials: credentials, isCurrent: async () => true,
-                    createExecutor: () => executor }) });
-            if (tamper || !verify) expect(result).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope' });
-            return result.kind === 'response' ? { status: 200, data: result.response }
-                : refusal();
-        });
-        const invoke = (privateKey = keyPair.secretKey, enrollmentRequest: Parameters<typeof dispatchManagedMachineRoles>[0]['input'] = request) => dispatchManagedMachineRoles({ input: enrollmentRequest, serverId: 'home-profile', continuation,
-            authorization: root, material: { type: 'dataKey', machineKey: accountKey }, installationId: 'installation',
-            privateKey, serverHttpBaseUrl: 'https://home.example',
-            invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
-        const execution = await invoke();
-        expect(execution.ok, JSON.stringify({ execution, managedReads, mutations })).toBe(true);
-        expect(mutations).toBe(1);
-        expect(managedReads).toBe(0);
-        // Home admits the unchanged creation child target once; the effect reuses it.
-        expect(verifies).toBe(1);
-        tamper = true;
-        expect(await invoke()).toMatchObject({ ok: false, errorCode: 'action_not_admitted' });
-        expect(mutations).toBe(1);
-        tamper = false;
-        expect(await invoke(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41)).secretKey))
-            .toMatchObject({ ok: false, errorCode: 'action_not_admitted' });
-        expect(mutations).toBe(1);
-        verify = false;
-        expect(await invoke()).toMatchObject({ ok: false, errorCode: 'action_not_admitted' });
-        expect(mutations).toBe(1);
-        expect(opaque).not.toHaveProperty('enrollmentIdentity');
     });
 
     it.each(['action_not_admitted', 'action_outcome_unknown', 'target_not_local', 'target_unavailable'] as const)('preserves managed child correlation for %s and refuses a mismatched reply', async code => {

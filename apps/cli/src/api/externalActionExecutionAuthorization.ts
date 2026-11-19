@@ -4,7 +4,6 @@ import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparation
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { MachineRolesSetInputV1Schema, type MachineRolesSetInputV1 } from '@happier-dev/protocol/actions/specs/machineRoles';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
 import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -2301,10 +2300,10 @@ export function managedChildRequiresRequesterMaterial(root: ExternalActionExecut
 
 async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
   input: SessionSpawnNewTargetedAuthoringInputV2 | MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
-    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1
     | import('@happier-dev/protocol/workflows/actionsV1').WorkflowRunStartRequestV1;
   actionId: 'session.spawn_new' | 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.adminAccess.set'
-    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set'
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set'
     | typeof WORKFLOW_RUN_START_ACTION_ID_V1; serverId: string; targetMachineId: string;
   workflowProject?: import('@happier-dev/protocol/workflows/workflowWorkspaceV1').WorkflowProjectTargetV1;
   retainedCreationSetup?: Parameters<typeof projectManagedMachineSetupCreationSourcesV1>[0];
@@ -2340,10 +2339,6 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       actionInput = WorkflowRunStartRequestV1Schema.parse(params.input);
     } else if (params.actionId === 'machines.setup.adminAccess.set') {
       const parsed = MachineAdminAccessSetInputV1Schema.parse(params.input);
-      if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
-      actionInput = parsed;
-    } else if (params.actionId === 'machines.roles.set') {
-      const parsed = MachineRolesSetInputV1Schema.parse(params.input);
       if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
       actionInput = parsed;
     } else if (params.actionId === 'machines.agentIsolation.preview' || params.actionId === 'machines.agentIsolation.set') {
@@ -2468,13 +2463,6 @@ export async function dispatchManagedMachineAdminAccess(params: Omit<ManagedChil
   return dispatchManagedChild({ ...params, actionId: 'machines.setup.adminAccess.set', targetMachineId: params.input.machineId });
 }
 
-/** Seeds the reviewed install-type role set on the exact enrolled guest (OWNER-RULINGS 2026-11-12). */
-export async function dispatchManagedMachineRoles(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
-  input: MachineRolesSetInputV1; serverId: string;
-}>): Promise<ActionExecuteResult> {
-  return dispatchManagedChild({ ...params, actionId: 'machines.roles.set', targetMachineId: params.input.machineId });
-}
-
 type ManagedAgentIsolationChild = Readonly<
   { actionId: 'machines.agentIsolation.preview'; input: MachineAgentIsolationPreviewInputV1 }
   | { actionId: 'machines.agentIsolation.set'; input: MachineAgentIsolationSetInputV1 }>;
@@ -2568,13 +2556,6 @@ export async function dispatchLocalManagedMachineAdminAccess(params: Omit<Parame
   return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.setup.adminAccess.set' });
 }
 
-export async function dispatchLocalManagedMachineRoles(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'> & Readonly<{
-  input: MachineRolesSetInputV1; homeId: string;
-  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
-}>): Promise<ActionExecuteResult> {
-  return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.roles.set' });
-}
-
 export async function dispatchLocalManagedMachineAgentIsolation(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'>
   & ManagedAgentIsolationChild & Readonly<{ homeId: string;
     managedContinuation: NonNullable<ExternalActionExecutionAuthorizationRequestV1['managedContinuation']> }>): Promise<ActionExecuteResult> {
@@ -2583,9 +2564,9 @@ export async function dispatchLocalManagedMachineAgentIsolation(params: Omit<Par
 
 async function dispatchLocalManagedCreationAction(params: Omit<Parameters<typeof dispatchLocalManagedMachineSetup>[0], 'input'> & Readonly<{
   input: MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
-    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1;
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1;
   homeId: string; actionId: 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.adminAccess.set'
-    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set';
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set';
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   admittedSetupChild?: true;
 }>): Promise<ActionExecuteResult> {
