@@ -76,6 +76,8 @@ export function WorkflowSentenceBuilder(
       boundaryRef={null}
       placement="auto-vertical"
       phonePresentation="sheet"
+      // The builder's own title is the one heading on a phone too (lab 1116c pop-v-*-390): no second header band.
+      sheetHeader="none"
       sheetMaterial="solid"
       accessibilityLabel={builderTitle(props.resourceName)}
       edgePadding={{ horizontal: 12, vertical: 12 }}
@@ -339,6 +341,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: theme.space.s8,
+    // The lab's hairline between the sentence and its actions (1116c pop-v).
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border.default,
     paddingHorizontal: theme.space.s16,
     paddingTop: theme.space.s12,
     paddingBottom: theme.space.s16,
