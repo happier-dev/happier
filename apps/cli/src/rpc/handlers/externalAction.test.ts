@@ -15,9 +15,13 @@ import {
   ACTION_API_SERVER_ORIGIN,
   isSocketRpcActionApiServerOriginAuthorizationContext,
 } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { MACHINE_CAPABILITIES_DETECT_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { describe, expect, it, vi } from 'vitest';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 
 import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
@@ -101,6 +105,67 @@ function expectPreparedRelayResponse(raw: unknown, response: unknown): void {
 }
 
 describe('registerExternalActionRpcHandler', () => {
+  it.each(['owner', 'foreign_manage', 'unstamped_transport'] as const)(
+    'admits a relayed C74 Session capability check only from the owning Account (%s)', async caller => {
+      const custodianAccountId = 'account-owner';
+      const accountId = caller === 'foreign_manage' ? 'foreign-account' : custodianAccountId;
+      const machineId = 'guest-machine';
+      const installationId = currentInstallationBoundary.resolveInstallationId();
+      const serverIdentityId = 'srv_c74_home';
+      const actionId = MACHINE_CAPABILITIES_DETECT_ACTION_ID;
+      const target = { kind: 'machine' as const, machineId };
+      const authentication = { kind: 'account' as const, tokenEpoch: 1 };
+      const origin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'controller-session', starterDepth: 0, turnDepth: 0 },
+        callerPermissionMode: 'default' as const, sourceTurnId: 'controller-turn', requestId: 'c74-root' };
+      const binding = { accountId, authentication, serverIdentityId, actionId, requestId: origin.requestId, target };
+      const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(26) };
+      const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        binding, material, input: { serverId: serverIdentityId, machineId }, randomBytes: tweetnacl.randomBytes });
+      const dispatch = {
+        actionId, envelope, placement: { machineId, target },
+        principal: { accountId, authority: 'account_automation' as const, authentication, sessionActionOrigin: origin },
+        executionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-c74', binding: {
+          ...binding, machineId, custodianAccountId, installationId, accountEncryptionMode: 'e2ee',
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          sessionActionOrigin: origin, sessionActionSource: { machineId: 'controller-machine', installationId: 'controller-install' },
+        } }),
+      } satisfies ExternalActionDaemonDispatchRequest;
+
+      // Home is the authenticated transport and signature-verification boundary.
+      // Keep Machine admission, the relay handler, envelope crypto and Action policy real.
+      const machineBoundary = { machineId, resolveCustodianAccountId: async () => custodianAccountId,
+        resolveInstallationId: currentInstallationBoundary.resolveInstallationId,
+        verifyMachineAdmission: async () => { throw new Error('The admitted root must not acquire a new Machine grant'); } };
+      const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain', logger: () => {},
+        authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, machineBoundary, source) });
+      const detector = vi.fn(async () => ({ status: 'completed' as const }));
+      registerExternalActionRpcHandler(rpc, {
+        machineId, currentServerId: serverIdentityId, resolveAccountId: async () => custodianAccountId,
+        ...currentInstallationBoundary, externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
+        resolveEncryption: async () => ({ serverIdentityId, material }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }),
+        executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), machinePageAction: detector }),
+      });
+      const raw = await rpc.handleRequest({ method: `${machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+        requestId: 'c74-relay', params: dispatch, authorization: ACTION_API_SERVER_ORIGIN,
+        callerAuthority: 'account_automation', sessionActionOrigin: origin,
+        machineAdmission: { actorAccountId: accountId, custodianAccountId, machineId, installationId, role: 'manage', encryptionMode: 'e2ee' },
+      }, undefined, caller === 'unstamped_transport' ? undefined : 'authenticated_home_socket');
+
+      if (caller !== 'owner') {
+        expect(raw).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+          failureCause: { phase: 'rpc.admission.session_action_origin' } });
+        expect(detector).not.toHaveBeenCalled();
+        return;
+      }
+      const received = parseExternalActionDaemonDispatchResult(raw);
+      expect(received?.kind, JSON.stringify(raw)).toBe('response');
+      if (received?.kind !== 'response') throw new Error('Expected an admitted C74 response');
+      expect(openExternalActionResponseV2({ envelope: received.prepared.response, binding, request: envelope, material }))
+        .toEqual({ ok: true, result: { status: 'completed' } });
+      expect(detector).toHaveBeenCalledOnce();
+    });
+
   it.each(['placement', 'custodian', 'installation', 'requester_context'] as const)(
     'retains the content-free receiving %s phase on a protected target refusal', async branch => {
       const { handlers, registrar } = registerHandlerForTest();

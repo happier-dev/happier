@@ -762,12 +762,21 @@ export class RpcHandlerManager {
         })();
         const sessionActionOrigin = request.sessionActionOrigin === undefined
             ? null : SessionActionRpcOriginV1Schema.safeParse(request.sessionActionOrigin);
+        // Home admits the original Action. The closed relay still verifies its
+        // signed root and applies the Action's own policy before any effect.
+        const sameAccountSessionActionRelay = sessionActionOrigin?.success
+            && source === 'authenticated_home_socket'
+            && request.method === this.getPrefixedMethod(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)
+            && isSocketRpcActionApiServerOriginAuthorizationContext(request.authorization)
+            && machineAdmission?.success
+            && machineAdmission.data.actorAccountId === machineAdmission.data.custodianAccountId;
         if (sessionActionOrigin && (!sessionActionOrigin.success
             || request.callerAuthority !== 'account_automation'
             || isWorkspaceTargetPhase && !workspaceSyncTargetRouting?.success
                 && (!machineAdmission?.success || machineAdmission.data.machineId !== this.scopePrefix || !this.authorizeRequest)
             || !serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionInputAuthorizationMatchesRequest && !sourceInputAuthorizationMatchesRequest
                 && !writerTargetInputAuthorizationMatchesRequest && !seedInputAuthorizationMatchesRequest
+                && !sameAccountSessionActionRelay
                 && !isSessionActionRpcMethodV1(this.readUnprefixedMethod(request.method)))) {
             return await deny('session_action_origin', { error: 'Invalid Session Action origin', errorCode: RPC_ERROR_CODES.FORBIDDEN });
         }
