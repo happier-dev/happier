@@ -291,6 +291,7 @@ import {
     createStableRetainedPluginResourcesOwner,
     createStablePluginResourcesOwner,
     type ResolveSessionResourceAccess,
+    type ResourceGeneration,
     type ResourceSessionAccessWitness,
     type StablePluginResourcesOwner,
     type StableDynamicPluginResourceProducer,
@@ -1164,7 +1165,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ));
         return targets.length === 1 ? targets[0]! : null;
     };
-    const committedResourceGenerations = new Map(
+    const resourceGenerations = new Map<string, ResourceGeneration>(
         [...(committed?.generations.entries() ?? [])].map(([pluginId, generation]) => {
             const target = resolveCanonicalResourceActivationTarget(pluginId);
             return [
@@ -1195,7 +1196,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         )),
         ...(authoritativeContributes.promptAssets ?? []).map((asset) => asset.pluginId),
     ]);
-    const committedResourceContributes = (committedContributes?.resources ?? authoritativeContributes.resources)
+    const canonicalResourceRegistry = committedContributes ?? authoritativeContributes;
+    const committedResourceContributes = canonicalResourceRegistry.resources
         .filter((resource) => (
             resource.pluginId !== undefined
             && admittedResourcePluginIds.has(resource.pluginId)
@@ -1207,7 +1209,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
             && (
                 !isDynamicPluginResourceContributionV2(resource.definition)
                 || (
-                    (resource.definition.execution?.target ?? 'daemon') === (params?.accountExecution ? 'account' : 'daemon')
+                    (committed || accountActivationSources)
+                    && (resource.definition.execution?.target ?? 'daemon') === (params?.accountExecution ? 'account' : 'daemon')
                     &&
                     // A restored development declaration can precede source
                     // re-admission. Only the canonical admission map grants
@@ -1220,6 +1223,29 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 )
             )
         ));
+    // First-party daemon occurrences select their package in the runtime, outside
+    // the installed plugin store. Admit file declarations under that exact root.
+    if (!params?.accountExecution) {
+        const packagedResourcePluginIds = new Set(committedResourceContributes.flatMap(resource => (
+            resource.pluginId && resource.source.kind === 'bundled' && !isDynamicPluginResourceContributionV2(resource.definition)
+                ? [resource.pluginId] : []
+        )));
+        for (const declaration of canonicalResourceRegistry.pluginDeclarations ?? []) {
+            const { pluginId } = declaration;
+            if (declaration.sourceSpec.kind !== 'bundled' || !packagedResourcePluginIds.has(pluginId)
+                || resourceGenerations.has(pluginId)) continue;
+            const occurrenceId = candidateOccurrenceIdsByPluginId.get(pluginId);
+            const custody = admittedPluginSourceCustodiesByPluginId.get(pluginId);
+            if (!occurrenceId || !custody) continue;
+            const target = resolveCanonicalResourceActivationTarget(pluginId);
+            const authority = resolveBundledActivationSource(target ?? declaration)?.sourceAuthority;
+            if (!authority) continue;
+            const rootPath = authority.kind === 'bundled_first_party' ? authority.resolvedRoot
+                : authority.kind === 'development' ? authority.canonicalRoot : null;
+            if (!rootPath || (target && !pluginSourceCustodyEqual(resolvePluginSourceCustody(authority), custody))) continue;
+            resourceGenerations.set(pluginId, { pluginId, immutableGenerationId: occurrenceId, rootPath, files: null });
+        }
+    }
     const hasCommittedResourceActivationTarget = (pluginId: string): boolean => {
         const targets = canonicalResourceActivationTargets.filter((target) => (
             target.pluginId === pluginId
@@ -1365,9 +1391,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             },
         })];
     });
-    resourcesOwner = (committed || accountActivationSources) && (
-        committedResourceGenerations.size > 0 || dynamicResourceProducers.length > 0
-    )
+    resourcesOwner = resourceGenerations.size > 0 || dynamicResourceProducers.length > 0
         ? await createStablePluginResourcesOwner({
             registry: {
                 resources: committedResourceContributes.flatMap((resource) => {
@@ -1377,8 +1401,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         && isDynamicPluginResourceContributionV2(resource.definition)
                         && (resource.definition.hostAccess?.length ?? 0) > 0
                     ) return [];
-                    const generation = committed?.generations.get(resource.pluginId);
-                    if (!generation && !isDynamicPluginResourceContributionV2(resource.definition)) return [];
+                    const generation = resourceGenerations.get(resource.pluginId);
+                    const dynamic = isDynamicPluginResourceContributionV2(resource.definition);
+                    if (!generation && !dynamic) return [];
+                    if (generation && generation.files === null && !dynamic) {
+                        return [Object.freeze({ ...resource, pluginRootPath: generation.rootPath })];
+                    }
                     if (!hasCommittedResourceActivationTarget(resource.pluginId)) {
                         throw new Error(`Committed resource activation target is unavailable for '${resource.pluginId}'`);
                     }
@@ -1390,7 +1418,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     })];
                 }),
             },
-            generations: committedResourceGenerations,
+            generations: resourceGenerations,
             dynamicOccurrenceIdsByPluginId: candidateOccurrenceIdsByPluginId,
             isDynamicOccurrenceCurrent: (pluginId, occurrenceId) => (
                 activatedRegistry.isPluginOccurrenceCurrent(

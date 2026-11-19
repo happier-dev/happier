@@ -331,6 +331,39 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 describe('executable plugin dynamic resource observation (EU-4b)', () => {
+    it('serves first-party locale bytes over the daemon RPC without an installed-store generation', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-locale-home-'));
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        try {
+            const locales = [
+                { pluginId: 'happier.triage', packageName: 'triage', locale: 'en' },
+                { pluginId: 'happier.triage', packageName: 'triage', locale: 'de' },
+                { pluginId: 'happier.triage', packageName: 'triage', locale: 'ja' },
+                { pluginId: 'happier.scm.forge.github', packageName: 'scm-github', locale: 'en' },
+            ];
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, pluginIds: [...new Set(locales.map(({ pluginId }) => pluginId))] });
+            const handlers = new Map<string, RpcHandler>();
+            registerDaemonContributionRegistryProjectionHandler({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, {
+                resolveRuntimeRegistry: async () => runtime!,
+            });
+            for (const { pluginId, packageName, locale } of locales) {
+                const localId = `i18n-${locale}`;
+                const bytes = await readFile(new URL(`../../../../../packages/plugins/${packageName}/assets/i18n/${locale}.json`, import.meta.url));
+                const response = DaemonPluginUiResourceReadResponseSchema.parse(await handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)!({
+                    machineId: 'machine-resource-test',
+                    expectedCallerOccurrenceId: requirePluginOccurrenceId(runtime, pluginId),
+                    callerPluginId: pluginId, resource: { pluginId, localId },
+                }));
+                if (!response.ok) throw new Error(`${pluginId}/${localId}: ${response.code}`);
+                expect(response).toMatchObject({ resource: { pluginId, localId }, contentType: 'application/json' });
+                expect(Buffer.from(response.bytesBase64, 'base64')).toEqual(bytes);
+            }
+        } finally {
+            await runtime?.dispose();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    }, 60_000);
+
     it.each([false, true])('preserves a cold registered context factory through the daemon Resource consumer (watch first: %s)', async watchFirst => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ dormantAction: true, contextProducer: true });
         let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;

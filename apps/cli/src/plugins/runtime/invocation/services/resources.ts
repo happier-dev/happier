@@ -44,11 +44,12 @@ function computePluginResourceDigest(bytes: Uint8Array): `sha256:${string}` {
     return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
-type ResourceGeneration = Readonly<{
+export type ResourceGeneration = Readonly<{
     pluginId: string;
     immutableGenerationId: string;
     rootPath: string;
-    files: ImmutablePluginGenerationRecord['files'];
+    /** Bundled sources use their admitted manifest as the inventory and read bytes on demand. */
+    files: ImmutablePluginGenerationRecord['files'] | null;
     /** Optional manifest-declared local Resource id for the portable brand mark. */
     brandIconResourceId?: string;
     brandMonochrome?: boolean;
@@ -110,12 +111,13 @@ type SurfaceResourceAccessAdmission = Readonly<{
 
 type AdmittedPackagedResource = Readonly<{
     source: 'packaged';
-    descriptor: PluginResourceDescriptor;
+    id: string;
+    kind: PluginResourceKind;
+    contentType: string;
     rootPath: string;
     relativePath: string;
-    expectedSize: number;
-    expectedDigest: string;
-}>;
+    declaredDigest: string | null;
+}> & { descriptor: PluginResourceDescriptor | null };
 
 /**
  * A dynamic resource has no package file. Its observed digest/size are the
@@ -239,7 +241,7 @@ function resourceDescriptor(
     dynamicContext?: DynamicResourceContextState,
 ): PluginResourceDescriptor {
     return resource.source === 'packaged'
-        ? resource.descriptor
+        ? resource.descriptor ?? fail('plugin_resource_context_unavailable', 'Resource has no observed snapshot')
         : dynamicContext && dynamicContext.observedDigest !== ''
             ? Object.freeze({
             id: resource.id,
@@ -614,7 +616,7 @@ function normalizeGeneration(raw: ResourceGeneration): Readonly<{
     pluginId: string;
     immutableGenerationId: string;
     rootPath: string;
-    filesByPath: ReadonlyMap<string, ImmutablePluginGenerationRecord['files'][number]>;
+    filesByPath: ReadonlyMap<string, ImmutablePluginGenerationRecord['files'][number]> | null;
     brandIconResourceId: string | null;
     brandMonochrome: boolean;
 }> {
@@ -638,11 +640,11 @@ function normalizeGeneration(raw: ResourceGeneration): Readonly<{
         }
         const brandMonochrome = brandMonochromeDescriptor?.value === true;
         const files = ownData(raw, 'files');
-        if (!Array.isArray(files)) {
+        if (files !== null && !Array.isArray(files)) {
             return fail('plugin_resource_generation_invalid', 'Resource occurrenceId is invalid');
         }
         const filesByPath = new Map<string, ImmutablePluginGenerationRecord['files'][number]>();
-        for (const rawFile of files) {
+        for (const rawFile of files ?? []) {
             const relativePath = boundedString(ownData(rawFile, 'relativePath'), null);
             const byteLength = ownData(rawFile, 'byteLength');
             if (!Number.isSafeInteger(byteLength) || (byteLength as number) < 0) {
@@ -657,7 +659,7 @@ function normalizeGeneration(raw: ResourceGeneration): Readonly<{
             pluginId,
             immutableGenerationId,
             rootPath,
-            filesByPath: Object.freeze(filesByPath),
+            filesByPath: files === null ? null : Object.freeze(filesByPath),
             brandIconResourceId,
             brandMonochrome,
         });
@@ -756,7 +758,7 @@ async function resolveAdmittedPath(rootPath: string, relativePath: string): Prom
 async function readPackagedResourceBytes(
     rootPath: string,
     relativePath: string,
-    expectedSize: number,
+    expectedSize: number | undefined,
     maxBytes: number,
     guard: () => void,
 ): Promise<Uint8Array> {
@@ -771,15 +773,15 @@ async function readPackagedResourceBytes(
     try {
         const info = await handle.stat();
         if (!info.isFile()) return fail('plugin_resource_unsupported_kind', 'Resource entry kind is unsupported');
-        if (expectedSize > maxBytes || info.size > maxBytes) {
+        if (info.size > maxBytes || (expectedSize !== undefined && expectedSize > maxBytes)) {
             return fail('plugin_resource_too_large', 'Resource read exceeds its byte limit');
         }
-        if (info.size !== expectedSize) {
+        if (expectedSize !== undefined && info.size !== expectedSize) {
             return fail('plugin_resource_integrity_mismatch', 'Resource bytes do not match the admitted occurrenceId');
         }
         const bytes = new Uint8Array(await handle.readFile());
         guard();
-        if (bytes.byteLength !== expectedSize) {
+        if (bytes.byteLength !== info.size) {
             return fail('plugin_resource_integrity_mismatch', 'Resource bytes do not match the admitted occurrenceId');
         }
         return bytes;
@@ -788,16 +790,34 @@ async function readPackagedResourceBytes(
     }
 }
 
-async function verifyBytes(resource: AdmittedPackagedResource, maxBytes: number, guard: () => void): Promise<Uint8Array> {
+async function observePackagedBytes(
+    resource: AdmittedPackagedResource,
+    maxBytes: number,
+    guard: () => void,
+    expectedSize = resource.descriptor?.size,
+): Promise<Uint8Array> {
     const bytes = await readPackagedResourceBytes(
         resource.rootPath,
         resource.relativePath,
-        resource.expectedSize,
+        expectedSize,
         maxBytes,
         guard,
     );
-    if (computePluginResourceDigest(bytes) !== resource.expectedDigest) {
+    const digest = computePluginResourceDigest(bytes);
+    const descriptor = resource.descriptor;
+    if ((descriptor && (digest !== descriptor.digest || bytes.byteLength !== descriptor.size))
+        || (!descriptor && resource.declaredDigest && digest !== resource.declaredDigest)) {
         return fail('plugin_resource_integrity_mismatch', 'Resource bytes do not match the admitted occurrenceId');
+    }
+    if (!descriptor) {
+        guard();
+        resource.descriptor = Object.freeze({
+            id: resource.id,
+            kind: resource.kind,
+            contentType: resource.contentType,
+            digest,
+            size: bytes.byteLength,
+        });
     }
     return bytes;
 }
@@ -1227,50 +1247,38 @@ async function createStablePluginResourcesOwnerFromNormalized(
             }
             const lexical = resolvePluginResourcePath({ pluginRootPath: generation.rootPath, resourcePath: contribution.path ?? '' });
             if (!lexical) return fail('plugin_resource_path_denied', 'Resource path is denied');
-            const file = generation.filesByPath.get(lexical.relativePath);
-            if (!file) {
-                await resolveAdmittedPath(generation.rootPath, lexical.relativePath);
-                return fail('plugin_resource_file_not_declared', 'Resource path is not part of the admitted generation');
-            }
-            if (qualifiesAsBrand && file.byteLength > MAX_PLUGIN_BRAND_ICON_BYTES) {
-                brandAssetsByPluginId.set(contribution.pluginId, brandAssetFallback('invalid'));
-                qualifiesAsBrand = false;
-            }
-            if (file.byteLength > MAX_PLUGIN_RESOURCE_BYTES) {
-                return fail('plugin_resource_capacity_exceeded', 'Resource exceeds its admitted byte bound');
-            }
-            const admittedBytes = await withStableResourceErrors(() => readPackagedResourceBytes(
-                generation.rootPath,
-                lexical.relativePath,
-                file.byteLength,
-                MAX_PLUGIN_RESOURCE_BYTES,
-                () => undefined,
-            ));
-            const expectedDigest = computePluginResourceDigest(admittedBytes);
-            if (contribution.digest && contribution.digest !== expectedDigest) {
-                return fail('plugin_resource_integrity_mismatch', 'Resource digest does not match the admitted generation');
-            }
-            const dimensions = qualifiesAsBrand
-                ? await decodePortablePluginBrandPng(admittedBytes)
-                : null;
-            if (qualifiesAsBrand && !dimensions) {
-                brandAssetsByPluginId.set(contribution.pluginId, brandAssetFallback('invalid'));
-            }
-            const descriptor = Object.freeze({
+            const admitted: AdmittedPackagedResource = {
+                source: 'packaged',
                 id: contribution.id,
                 kind: contribution.kind,
                 contentType: contribution.contentType,
-                digest: expectedDigest,
-                size: file.byteLength,
-            });
-            const admitted: AdmittedPackagedResource = Object.freeze({
-                source: 'packaged' as const,
-                descriptor,
                 rootPath: generation.rootPath,
                 relativePath: lexical.relativePath,
-                expectedSize: file.byteLength,
-                expectedDigest,
-            });
+                declaredDigest: contribution.digest,
+                descriptor: null,
+            };
+            let dimensions = null;
+            if (generation.filesByPath) {
+                const file = generation.filesByPath.get(lexical.relativePath);
+                if (!file) {
+                    await resolveAdmittedPath(generation.rootPath, lexical.relativePath);
+                    return fail('plugin_resource_file_not_declared', 'Resource path is not part of the admitted generation');
+                }
+                if (qualifiesAsBrand && file.byteLength > MAX_PLUGIN_BRAND_ICON_BYTES) {
+                    brandAssetsByPluginId.set(contribution.pluginId, brandAssetFallback('invalid'));
+                    qualifiesAsBrand = false;
+                }
+                if (file.byteLength > MAX_PLUGIN_RESOURCE_BYTES) {
+                    return fail('plugin_resource_capacity_exceeded', 'Resource exceeds its admitted byte bound');
+                }
+                const bytes = await withStableResourceErrors(() => observePackagedBytes(
+                    admitted, MAX_PLUGIN_RESOURCE_BYTES, () => undefined, file.byteLength,
+                ));
+                if (qualifiesAsBrand) {
+                    dimensions = await decodePortablePluginBrandPng(bytes);
+                    if (!dimensions) brandAssetsByPluginId.set(contribution.pluginId, brandAssetFallback('invalid'));
+                }
+            }
             const byId = admittedByPlugin.get(contribution.pluginId) ?? new Map<string, AdmittedResource>();
             if (byId.has(contribution.id)) {
                 return fail('plugin_resource_declaration_invalid', 'Resource declaration is invalid');
@@ -1286,7 +1294,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     }),
                     width: dimensions.width,
                     height: dimensions.height,
-                    digest: expectedDigest,
+                    digest: resourceDescriptor(admitted).digest,
                     ...(generation.brandMonochrome ? { monochrome: true } : {}),
                 }));
             }
@@ -3040,7 +3048,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     }
                     const bytes = await withStableResourceErrors(async () => {
                         await guardPluginCurrent();
-                        const verified = await verifyBytes(
+                        const verified = await observePackagedBytes(
                             resource,
                             normalizedOptions.maxBytes,
                             () => guard(normalizedOptions.signal),
@@ -3048,10 +3056,11 @@ async function createStablePluginResourcesOwnerFromNormalized(
                         await guardPluginCurrent();
                         return verified;
                     });
+                    const descriptor = resourceDescriptor(resource);
                     return Object.freeze({
-                        kind: resource.descriptor.kind,
-                        contentType: resource.descriptor.contentType,
-                        digest: resource.descriptor.digest,
+                        kind: descriptor.kind,
+                        contentType: descriptor.contentType,
+                        digest: descriptor.digest,
                         bytes,
                     });
                 },
