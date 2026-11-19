@@ -14,6 +14,7 @@
 
 import * as React from 'react';
 import { Typography } from '@/constants/Typography';
+import { SelectionListRowBandContext } from './SelectionListRowBandContext';
 import {
   HappierListRowFollowedContext,
   HappierListRowPrecedesSelectedContext,
@@ -305,6 +306,11 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
       paddingBottom: PAGE_LIST_METRICS.groupHeadingGapPx,
     }}>{expandedVisual}</View>
   ) : expandedVisual;
+  // In a columned grid the row paints this option's expanded content under the whole row and this card stays
+  // its title and description (lab A2). The cell owns the band for assistive tech through `aria-owns`.
+  const registerRowBand = React.useContext(SelectionListRowBandContext);
+  const rowBand = registerRowBand === null ? undefined : expandedContent;
+  const inlineExpandedContent = registerRowBand === null ? expandedContent : undefined;
   const registerScrollItemLayout = React.useContext(
     SelectionListScrollIntoViewContext,
   );
@@ -320,6 +326,13 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     rootTestID: props.rootTestID,
     stepId: props.stepId,
   });
+  const rowBandId = `${optionTestId}:band`;
+  // Before paint, so the band appears in the same frame as the selection that opened it.
+  React.useLayoutEffect(() => {
+    if (registerRowBand === null) return;
+    registerRowBand(rowBand === undefined ? null : { id: rowBandId, content: rowBand });
+  }, [registerRowBand, rowBand, rowBandId]);
+  React.useLayoutEffect(() => (registerRowBand === null ? undefined : () => registerRowBand(null)), [registerRowBand]);
   const optionWrapperTestId = selectionListTestId(
     props.rootTestID,
     props.stepId,
@@ -645,7 +658,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
           {...itemBottomProps}
         />
         {renderCardAccessoryOverlay(false)}
-        {expandedContent}
+        {inlineExpandedContent}
       </View>
     );
   }
@@ -788,7 +801,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     <SelectionListOptionStateContext.Provider value={optionState}>
       {orderedRow}
       {renderCardAccessoryOverlay(true)}
-      {expandedContent}
+      {inlineExpandedContent}
     </SelectionListOptionStateContext.Provider>
   );
   return (
@@ -800,6 +813,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         string,
         never
       >)}
+      {...(rowBand !== undefined && wrapperCellAria !== null
+        ? ({ 'aria-owns': rowBandId } as unknown as Record<string, never>)
+        : {})}
     >
       {innerCellAria === null ? (
         optionOwnedContent

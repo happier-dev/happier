@@ -4,7 +4,7 @@ import { createProviderConnectionViewFixture } from '@/dev/testkit/harness/provi
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { t } from '@/text';
 
-import { buildSessionRouteSourceRows } from './buildSessionRouteSourceRows';
+import { buildSessionRouteSourceRows, presentSessionRouteSourceSubtitle } from './buildSessionRouteSourceRows';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 const CODEX = 'agent:happier.agent.codex/codex';
@@ -86,5 +86,21 @@ describe('buildSessionRouteSourceRows', () => {
             expect.objectContaining({ connectionId: 'pc_hidden', contributionKey: 'acme.plugin/acme', label: 'OpenRouter · Work', icon: null, modelCount: 313, hiddenFromPicker: true, worksWith: null }),
             expect.objectContaining({ connectionId: 'pc_other', contributionKey: 'acme.plugin/acme', label: 'DeepSeek', icon: null, modelCount: null, hiddenFromPicker: false, worksWith: ['Claude Code'], availability: 'unavailable' }),
         ]);
+    });
+    it('says one state per row for every surface that lists route sources: why it cannot serve, else what browsing it offers', () => {
+        const rows = buildSessionRouteSourceRows({ declarationContext: { kind: 'account' }, agentTargetKey: CODEX, isGateway: () => false,
+            views: [
+                createProviderConnectionViewFixture({ connectionId: 'pc_off', providerName: 'Off', displayName: 'Off',
+                    authorized: false, authorizationError: createProviderErrorV1('provider_endpoint_unreachable') }),
+                createProviderConnectionViewFixture({ connectionId: 'pc_hidden', providerName: 'Hidden', displayName: 'Hidden' }),
+                createProviderConnectionViewFixture({ connectionId: 'pc_shown', providerName: 'Shown', displayName: 'Shown' }),
+            ],
+            shownSources: [{ connectionId: 'pc_off', rows: [{}] }, { connectionId: 'pc_shown', rows: [{}, {}] }],
+            hiddenSources: [{ connectionId: 'pc_hidden', modelCount: 3 }],
+        });
+        const subtitle = (id: string) => presentSessionRouteSourceSubtitle(rows.providers.find(row => row.connectionId === id)!);
+        expect(subtitle('pc_off')).toBe(t(presentProviderError('provider_endpoint_unreachable').titleKey));
+        expect(subtitle('pc_hidden')).toBe(`${t('settingsProviders.detail.modelCount', { count: 3 })} · ${t('agentInput.model.hiddenFromMainPicker')}`);
+        expect(subtitle('pc_shown')).toBe(t('settingsProviders.detail.modelCount', { count: 2 }));
     });
 });

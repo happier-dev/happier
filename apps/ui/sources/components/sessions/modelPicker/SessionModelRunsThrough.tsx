@@ -11,6 +11,10 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import {
+  presentSessionRouteSourceSubtitle,
+  type SessionRouteSourceRow,
+} from '@/providers/session/buildSessionRouteSourceRows';
 
 import type { SessionModelPickerSourceGroup } from './selectSessionModelPickerSourceGroups';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
@@ -20,34 +24,33 @@ export type SessionModelPickerSource =
 
 const ROW = 'model-picker-runs-through';
 
-/** What a source says beside its name in the menu: only states that change what picking it does. */
-function sourceStateLabel(
-  source: SessionModelPickerSource,
-): string | undefined {
-  if (source.state === 'signed-out')
-    return t('agentInput.model.sourceSignedOut');
-  if (source.state === 'needs-key') return t('agentInput.model.sourceNeedsKey');
-  if (source.state === 'unavailable') return t('common.unavailable');
-  return source.hidden ? t('agentInput.model.sourceHidden') : undefined;
-}
 
 /**
  * The selected model's "Runs through" row (lab A2; owner decisions 2026-11-18). How many sources serve the
  * model is decided once by `selectSessionModelPickerSourceGroups`; this row only presents its answer. One
  * serving source is a plain value with nothing to press. Two are a two-part switch. Three or more are the
- * bordered field select, whose floating menu also lists hidden, signed-out and needs-key sources. Picking a
- * source is the picker's decision (`onPick`): it commits that source's exact model, browses a hidden one, or
- * opens the recovery a signed-out source needs.
+ * bordered field select, whose floating menu also lists hidden, signed-out and needs-key sources. A Provider
+ * source reads its name and its one state from the Runs-through content model (`buildSessionRouteSourceRows`,
+ * the composer popover's rows), so the two surfaces never word a source differently. Picking a source is the
+ * picker's decision (`onPick`): it commits that source's exact model, browses a hidden one, or opens the
+ * recovery a signed-out source needs. The chosen source's usage line sits under the control (`renderUsage`).
  */
 export function SessionModelRunsThrough(
   props: Readonly<{
     group: SessionModelPickerSourceGroup;
     selectedKey: string;
+    /** The name of a source the content model does not list (the Agent's own sign-in). */
     sourceLabel: (source: SessionModelPickerSource) => string;
+    routeRows?: readonly SessionRouteSourceRow[];
+    renderUsage?: (source: SessionModelPickerSource) => React.ReactNode;
     onPick: (source: SessionModelPickerSource) => void;
   }>,
 ) {
-  const { group, selectedKey, sourceLabel, onPick } = props;
+  const { group, selectedKey, onPick } = props;
+  const rowOf = (source: SessionModelPickerSource) => source.providerConnectionId === null
+    ? undefined
+    : props.routeRows?.find((row) => row.connectionId === source.providerConnectionId);
+  const sourceLabel = (source: SessionModelPickerSource) => rowOf(source)?.label ?? props.sourceLabel(source);
   const current = group.sources.find((source) =>
     source.options.some(
       (option) => sessionModelSelectionKey(option.value) === selectedKey,
@@ -55,12 +58,14 @@ export function SessionModelRunsThrough(
   );
   const label = t('connectedServices.authChip.popoverTitle');
   if (!current) return null;
+  const usage = props.renderUsage?.(current) ?? null;
   if (group.sourceCount <= 1) {
     return (
       <OptionPickerBandRow testID={ROW} label={label}>
         <Text testID={`${ROW}:value`} numberOfLines={1} style={styles.value}>
           {sourceLabel(current)}
         </Text>
+        {usage}
       </OptionPickerBandRow>
     );
   }
@@ -88,6 +93,7 @@ export function SessionModelRunsThrough(
             activeLabelStyle={Typography.default('semiBold')}
           />
         </View>
+        {usage}
       </OptionPickerBandRow>
     );
   }
@@ -99,7 +105,10 @@ export function SessionModelRunsThrough(
   const tabs = ordered.map((source) => ({
     id: source.key,
     label: sourceLabel(source),
-    unavailableReason: sourceStateLabel(source),
+    unavailableReason: (() => {
+      const row = rowOf(source);
+      return row ? presentSessionRouteSourceSubtitle(row) : undefined;
+    })(),
   }));
   return (
     <OptionPickerBandRow testID={ROW} label={label}>
@@ -113,6 +122,7 @@ export function SessionModelRunsThrough(
           testID={`${ROW}:select`}
         />
       </View>
+      {usage}
     </OptionPickerBandRow>
   );
 }

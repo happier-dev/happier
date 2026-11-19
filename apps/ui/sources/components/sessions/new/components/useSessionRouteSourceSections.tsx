@@ -8,7 +8,7 @@ import { readProviderGatewayViewDeclarations } from '@/components/settings/provi
 import { SessionModelSourceBrowseHandoffContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
-import { buildSessionRouteSourceRows, type SessionRouteSourceRow } from '@/providers/session/buildSessionRouteSourceRows';
+import { buildSessionRouteSourceRows, presentSessionRouteSourceSubtitle, type SessionRouteSourceRow } from '@/providers/session/buildSessionRouteSourceRows';
 import { t } from '@/text';
 import type { SessionRoute } from '@/providers/session/resolveSessionRoutePresentation';
 
@@ -31,13 +31,6 @@ function RouteSourceIcon(props: Readonly<{ contributionKey: string | null; icon:
 export function RouteSourceChevron() {
     const { theme } = useUnistyles();
     return normalizeNodeForView(<Icon name="caret-right" size={16} color={theme.colors.text.tertiary} />);
-}
-
-function routeSourceSubtitle(row: SessionRouteSourceRow): string {
-    if (row.worksWith) return t('connectedServices.authChip.worksWith', { agents: row.worksWith.join(', ') });
-    if (row.modelCount === null) return t('agentInput.model.browseSource', { source: row.label });
-    const models = t('settingsProviders.detail.modelCount', { count: row.modelCount });
-    return row.hiddenFromPicker ? `${models} · ${t('agentInput.model.hiddenFromMainPicker')}` : models;
 }
 
 /**
@@ -77,7 +70,7 @@ export function useSessionRouteSourceSections(
                 options: group.map(row => ({
                     id: `route-source:${row.connectionId}`,
                     label: row.label,
-                    subtitle: routeSourceSubtitle(row),
+                    subtitle: presentSessionRouteSourceSubtitle(row),
                     icon: <RouteSourceIcon contributionKey={row.contributionKey}
                         icon={row.icon} dimmed={row.worksWith !== null} />,
                     selected: row.connectionId === selectedConnectionId,

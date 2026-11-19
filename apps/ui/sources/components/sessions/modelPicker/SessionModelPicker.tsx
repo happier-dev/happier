@@ -30,6 +30,7 @@ import { useProviderModelProjection } from '@/providers/hooks/useProviderModelPr
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { useProviderConnectionUsageForSource } from '@/providers/hooks/useProviderConnectionUsageForSource';
 import { providerConnectionSourceLabel } from '@/providers/session/resolveSessionRoutePresentation';
+import { buildSessionRouteSourceRows } from '@/providers/session/buildSessionRouteSourceRows';
 import {
     OptionPickerOverlay,
     type OptionPickerFavoriteOptions,
@@ -755,11 +756,42 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         : null;
     const canUpdateFavorite = Boolean(props.onUpdateFavoriteModelReasoningEffort) && selectedRef !== null
         && !isTeamCredentialProviderModelPickerValue(selectedRef);
+    // The selected model's sources, decided once by the grouping selector (PICKER-DATA-1118).
+    const selectedSourceGroup = React.useMemo(() => selectSessionModelPickerSourceGroups(presentedSections,
+        { agentTargetKey: props.agentTargetKey, hiddenSources: props.hiddenSources ?? [] })
+        .find(candidate => candidate.sources.some(source => source.options.some(option => (
+            option.source !== undefined && sessionModelSelectionKey(option.value) === selectedKey)))),
+    [presentedSections, props.agentTargetKey, props.hiddenSources, selectedKey]);
+    // A failure line names the source it is about, so two unreachable sources never read as one anonymous line.
+    // A failed source has no model group; its name comes from the same connection read the route sources use.
+    const failedConnectionIds = [props.projectionError?.connectionId, ...(props.projectionFailures ?? []).map((failure) => failure.connectionId)]
+        .filter((id) => id !== undefined);
+    const unnamedFailure = failedConnectionIds.some((id) => !props.providerGroups.some((group) => group.connectionId === id));
+    // The same connection read names the band's Provider sources through the Runs-through content model.
+    const bandListsProviderSources = selectedSourceGroup?.sources.some(source => source.providerConnectionId !== null) === true;
+    const sourceConnections = useProviderConnections({
+        enabled: (unnamedFailure || bandListsProviderSources) && props.sourceBrowse !== undefined,
+        machineId: props.sourceBrowse?.machineId ?? null,
+        serverId: props.sourceBrowse?.serverId ?? null,
+    });
+    const sourceConnectionViews = sourceConnections.data?.connections;
+    const routeRows = React.useMemo(() => {
+        if (!sourceConnectionViews || !bandListsProviderSources) return undefined;
+        const rows = buildSessionRouteSourceRows({ declarationContext: sourceConnections.declarationContext,
+            agentTargetKey: props.agentTargetKey, views: sourceConnectionViews, isGateway: () => false,
+            shownSources: props.providerGroups, hiddenSources: props.hiddenSources ?? [] });
+        return [...rows.gateways, ...rows.providers];
+    }, [bandListsProviderSources, props.agentTargetKey, props.hiddenSources, props.providerGroups,
+        sourceConnectionViews, sourceConnections.declarationContext]);
+    const sourceBrowse = props.sourceBrowse;
+    const renderSourceUsage = React.useCallback((source: SessionModelPickerSource) => (
+        source.providerConnectionId !== null && sourceBrowse ? (
+            <SessionModelBandSourceUsage connectionId={source.providerConnectionId} sourceBrowse={sourceBrowse}
+                declarationContext={declarationContext} />
+        ) : null
+    ), [declarationContext, sourceBrowse]);
     const selectedOptionBand = React.useMemo<OptionPickerSelectedBand | undefined>(() => {
-        const groups = selectSessionModelPickerSourceGroups(presentedSections,
-            { agentTargetKey: props.agentTargetKey, hiddenSources: props.hiddenSources ?? [] });
-        const group = groups.find(candidate => candidate.sources.some(source => source.options.some(option => (
-            option.source !== undefined && sessionModelSelectionKey(option.value) === selectedKey))));
+        const group = selectedSourceGroup;
         const sourceLabel = (source: SessionModelPickerSource) => {
             const listed = source.options.find(option => option.source)?.source?.label;
             if (listed) return listed;
@@ -768,6 +800,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         };
         const rows = group ? (
             <SessionModelRunsThrough group={group} selectedKey={selectedKey} sourceLabel={sourceLabel}
+                routeRows={routeRows} renderUsage={renderSourceUsage}
                 onPick={(source) => pickSource(source, sourceLabel(source))} />
         ) : undefined;
         const note = favoriteSlot > 0 && favoriteEffortLabel && sessionEffort && favoriteEffort !== sessionEffort
@@ -777,23 +810,13 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             ) : undefined;
         if (!rows && !note) return undefined;
         return { rows, ...(note ? { controlNotes: { [PROVIDER_REASONING_EFFORT_OPTION_ID]: note } } : {}) };
-    }, [canUpdateFavorite, favoriteEffort, favoriteEffortLabel, favoriteSlot, pickSource, presentedSections,
-        props.agentTargetKey, props.hiddenSources, selectedKey, selectedRef, sessionEffort, updateFavoriteEffort]);
-    // A failure line names the source it is about, so two unreachable sources never read as one anonymous line.
-    // A failed source has no model group; its name comes from the same connection read the route sources use.
-    const failedConnectionIds = [props.projectionError?.connectionId, ...(props.projectionFailures ?? []).map((failure) => failure.connectionId)]
-        .filter((id) => id !== undefined);
-    const unnamedFailure = failedConnectionIds.some((id) => !props.providerGroups.some((group) => group.connectionId === id));
-    const failedSourceConnections = useProviderConnections({
-        enabled: unnamedFailure && props.sourceBrowse !== undefined,
-        machineId: props.sourceBrowse?.machineId ?? null,
-        serverId: props.sourceBrowse?.serverId ?? null,
-    });
+    }, [canUpdateFavorite, favoriteEffort, favoriteEffortLabel, favoriteSlot, pickSource, props.hiddenSources,
+        renderSourceUsage, routeRows, selectedKey, selectedRef, selectedSourceGroup, sessionEffort, updateFavoriteEffort]);
     const failureSubject = (connectionId: string | undefined): string | null => {
         if (!connectionId) return null;
         const group = props.providerGroups.find((candidate) => candidate.connectionId === connectionId);
         if (group) return sessionModelConnectionTitle(group);
-        const view = failedSourceConnections.data?.connections.find((candidate) => candidate.connectionId === connectionId);
+        const view = sourceConnectionViews?.find((candidate) => candidate.connectionId === connectionId);
         return view
             ? providerConnectionSourceLabel({ providerName: view.providerName, connectionName: view.displayName,
                 connectionRole: view.role, connectionDisplayNameMode: view.displayNameMode })
@@ -959,6 +982,23 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             onSelect={(ref) => selectModel(ref)}
         />
     );
+}
+
+/** The chosen Provider source's usage line in the band: the existing per-source read, mounted only while shown. */
+function SessionModelBandSourceUsage(props: Readonly<{
+    connectionId: string;
+    sourceBrowse: NonNullable<SessionModelPickerProps['sourceBrowse']>;
+    declarationContext?: ProviderDeclarationContext;
+}>) {
+    const router = useRouter();
+    const usage = useProviderConnectionUsageForSource({ ...props.sourceBrowse, connectionId: props.connectionId,
+        declarationContext: props.declarationContext, active: true });
+    const approvalHref = usage.pendingApproval?.href ?? null;
+    const openApproval = React.useMemo(() => approvalHref
+        ? () => router.pushRetainingCurrent(approvalHref as never) : null, [approvalHref, router]);
+    const openConnection = React.useCallback(() => router.pushRetainingCurrent(
+        providerConnectionDetailRoute(props.connectionId) as never), [props.connectionId, router]);
+    return <SessionModelSourceUsage usage={usage} onOpenApproval={openApproval} onOpenConnection={openConnection} />;
 }
 
 const styles = StyleSheet.create(() => ({

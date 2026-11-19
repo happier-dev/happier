@@ -77,3 +77,15 @@ export function buildSessionRouteSourceRows(input: Readonly<{
         || left.label.localeCompare(right.label);
     return { gateways: gateways.sort(byLabel), providers: providers.sort(byLabel) };
 }
+
+/**
+ * The one state a route source says beside its name, on every surface that lists route sources (the composer's
+ * Runs through popover and the model picker's Runs through menu): why it cannot serve this Agent, else what
+ * browsing it offers.
+ */
+export function presentSessionRouteSourceSubtitle(row: SessionRouteSourceRow): string {
+    if (row.availability === 'unavailable' && row.unavailableReason) return row.unavailableReason;
+    if (row.modelCount === null) return t('agentInput.model.browseSource', { source: row.label });
+    const models = t('settingsProviders.detail.modelCount', { count: row.modelCount });
+    return row.hiddenFromPicker ? `${models} · ${t('agentInput.model.hiddenFromMainPicker')}` : models;
+}

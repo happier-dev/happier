@@ -789,7 +789,8 @@ describe('OptionPickerOverlay', () => {
       // collapsed this real pane to one column, which is why 0.3 showed a list.
       await measureSelectionList(screen, 479);
 
-      expect(countColumnRows(screen)).toBe(1);
+      // Four models at two columns paint two rows (lab A2).
+      expect(countColumnRows(screen)).toBe(2);
       for (const value of ['default', 'fast', 'balanced', 'deep']) {
         expect(
           screen.findByTestId(`model-picker-overlay-option:${value}`),
@@ -804,7 +805,7 @@ describe('OptionPickerOverlay', () => {
      * geometry and fill are pinned in
      * `selectionList/__tests__/SelectionListOptionRow.cardPresentation.test.tsx`.
      */
-    it('gives every option a card, with the selected one filled, when multiColumn is on', async () => {
+    it('gives every option a card, the selected one marked by its check rather than a tile, when multiColumn is on', async () => {
       mockEnv.windowWidth = 1440;
       const screen = await renderPicker(true);
       await measureSelectionList(screen, 506);
@@ -826,9 +827,9 @@ describe('OptionPickerOverlay', () => {
 
       expect(fillOf('default').borderRadius).toBeGreaterThan(0);
       expect(fillOf('default').overflow).toBe('hidden');
-      // Selected and unselected cards must not resolve to the same ink,
-      // or the selection would be invisible.
-      expect(fillOf('default').backgroundColor).not.toBe(
+      // No tile (lab A2, owner pick 2026-11-18): the selected card paints the same base as the
+      // others; its bold title and corner check (below) carry the choice.
+      expect(fillOf('default').backgroundColor).toBe(
         fillOf('fast').backgroundColor,
       );
 

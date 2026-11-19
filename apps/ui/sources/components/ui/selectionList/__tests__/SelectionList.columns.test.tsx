@@ -127,7 +127,8 @@ describe('SelectionList — columns variant', () => {
         );
         // 2 * 250 + 12 gutter = 512.
         await fireContainerLayout(screen.findByTestId('sl') as unknown as TestNode, 546);
-        expect(countColumnRows(screen as never)).toBe(1);
+        // Four cards at two columns paint two rows (lab A2: rows, so a band can span one).
+        expect(countColumnRows(screen as never)).toBe(2);
         for (const id of ['m-0', 'm-1', 'm-2', 'm-3']) {
             expect(screen.findByTestId(`sl:root:option:${id}`)).not.toBeNull();
         }
@@ -143,7 +144,7 @@ describe('SelectionList — columns variant', () => {
         );
         const root = screen.findByTestId('sl') as unknown as TestNode;
         await fireContainerLayout(root, 546);
-        expect(countColumnRows(screen as never)).toBe(1);
+        expect(countColumnRows(screen as never)).toBe(2);
         await fireContainerLayout(root, 380);
         expect(countColumnRows(screen as never)).toBe(0);
     });
@@ -160,7 +161,7 @@ describe('SelectionList — columns variant', () => {
         // hand every column 10px more than the caller asked the resolver for.
         await fireContainerLayout(screen.findByTestId('sl') as unknown as TestNode, 546);
         const rows = findColumnRows(screen as never);
-        expect(rows).toHaveLength(1);
+        expect(rows).toHaveLength(2);
         for (const row of rows) {
             expect(flattenRowStyle(row.props.style).columnGap).toBe(32);
         }

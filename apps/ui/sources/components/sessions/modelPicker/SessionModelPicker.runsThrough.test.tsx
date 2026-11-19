@@ -227,12 +227,9 @@ describe('SessionModelPicker Runs through', () => {
             `${ROW}:select`,
           ),
       )[0]!;
+      // Every serving source, then the one that needs a key; their states come from the Runs-through
+      // content model (SessionModelRunsThrough.test.tsx), which this harness has no connections for.
       expect(menu.props.items).toHaveLength(4);
-      expect(
-        menu.props.items.map(
-          (item: { subtitle?: string }) => item.subtitle ?? null,
-        ),
-      ).toEqual(expect.arrayContaining(['Hidden', 'Needs a key']));
       const api = menu.props.items.find((item: { title: string }) =>
         item.title.includes('Anthropic API key'),
       );

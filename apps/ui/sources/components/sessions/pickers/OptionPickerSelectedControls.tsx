@@ -17,10 +17,13 @@ import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext }
 
 const NO_CONTROLS: readonly SessionConfigOptionControl[] = [];
 
+/** The band's one label column on a wide pane (lab A2): Thinking, Ultracode and Runs through share one edge. */
+const BAND_LABEL_COLUMN_PX = 104;
+
 /**
- * One row of the selected option's band: its label over its control, then an optional quiet note. The band is as
- * wide as the selected card's own column (the grid stacks columns independently), so a label column beside the
- * control would push a five-level Thinking row into its overflow select; the label stacks instead, at every width.
+ * One row of the selected option's band: its label, its control, then an optional quiet note. In the grid the band
+ * spans the whole row under the selected card (`SelectionListColumnRow`), so the label takes one column beside the
+ * control; a phone list stacks the label over a full-width control.
  */
 export function OptionPickerBandRow(props: Readonly<{
     label: string;
@@ -30,10 +33,12 @@ export function OptionPickerBandRow(props: Readonly<{
     dataSet?: Record<string, string>;
     style?: StyleProp<ViewStyle>;
 }>) {
+    const { multiColumn } = React.useContext(OptionPickerSelectedControlsContext);
     return (
-        <View testID={props.testID} {...(props.dataSet ? { dataSet: props.dataSet } : {})} style={[styles.row, props.style]}>
-            <Text style={styles.label}>{props.label}</Text>
-            <View style={styles.body}>
+        <View testID={props.testID} {...(props.dataSet ? { dataSet: props.dataSet } : {})}
+            style={[styles.row, multiColumn ? styles.rowWide : null, props.style]}>
+            <Text style={[styles.label, multiColumn ? styles.labelColumn : null]}>{props.label}</Text>
+            <View style={[styles.body, multiColumn ? styles.bodyWide : null]}>
                 {props.children}
                 {props.note}
             </View>
@@ -159,8 +164,12 @@ const styles = StyleSheet.create(theme => ({
         paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX,
     },
     row: { paddingVertical: theme.space.s8, gap: theme.space.s6 },
+    rowWide: { flexDirection: 'row', alignItems: 'flex-start' },
     divided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.divider },
     label: { ...Typography.variant('body'), color: theme.colors.text.primary },
+    // Centred on a one-line control (a segmented row, a switch, a field select).
+    labelColumn: { width: BAND_LABEL_COLUMN_PX, flexShrink: 0, paddingTop: theme.space.s6 },
+    bodyWide: { flex: 1, minWidth: 0 },
     body: { gap: theme.space.s4 },
     choiceBody: { flexShrink: 1, gap: theme.space.s2 },
     booleanBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

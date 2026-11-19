@@ -11,8 +11,8 @@
  * Two things are asserted here that neither of those files can reach:
  *
  *  1. **Structure.** The grid role set survives the column wrappers, and the
- *     expanded panel stays a cell of its OWN option's row — inside that option's
- *     column cell, never leaking across the gutter into its neighbour.
+ *     expanded panel spans the painted row under its option (lab A2, owner pick
+ *     2026-11-18), in no card, while its OWN option's cell owns it (`aria-owns`).
  *
  *  2. **Real keys against real geometry.** `useSelectionListKeyboardNav.columns.test.ts`
  *     injects a stub `resolveArrowTarget`, and the SelectionList suites never
@@ -30,11 +30,9 @@
  *     `aria-rowindex` now count VISUAL rows, `aria-colcount` / `aria-colindex`
  *     exist, and each row accounts for exactly the declared number of columns.
  *
- *     That last part is what decides where the expanded panel goes: it is part
- *     of its OPTION's cell, not a third cell in a two-column row. A cell whose
- *     column the grid never declared is exactly the incoherence being fixed,
- *     and the panel visibly expands inside its card rather than across the
- *     pane, so the cell is also the truthful reading.
+ *     The expanded panel is no third cell in a two-column row: it is painted under
+ *     the row, across both columns, and its option's cell owns it, so assistive
+ *     tech still reads it as part of that option.
  *
  * `SelectionList.inlineControlsGridA11y.test.tsx` pins the single-column grid,
  * whose markup is deliberately unchanged by all of this.
@@ -227,9 +225,8 @@ describe('SelectionList — columns and expandedContent together', () => {
     it('numbers rows and columns by what is painted, not by option count', async () => {
         const screen = await renderTwoColumnGrid();
 
-        // Columns stack independently, so each card is a row of its own: the header
-        // and four cards. The header renders text, and a grid may not own text
-        // outside a row.
+        // Each card is a row of its own (the header and four cards). The header renders
+        // text, and a grid may not own text outside a row.
         const body = screen.findByTestId('sl:body');
         expect(body?.props['aria-rowcount']).toBe(5);
         expect(body?.props['aria-colcount']).toBe(2);
@@ -237,15 +234,16 @@ describe('SelectionList — columns and expandedContent together', () => {
         const rows = screen.tree.root.findAll((node) => typeof node.type === 'string'
             && node.props?.role === 'row' && node.props?.['aria-rowindex'] !== undefined
             && node.findAll((child) => child.props?.role === 'gridcell').length > 0);
-        // Row 1 is the section header; the cards follow in reading order, column by column in the DOM.
-        expect(rows.map((row) => row.props['aria-rowindex'])).toEqual([2, 4, 3, 5]);
+        // Row 1 is the section header; the cards follow in reading order, which is now also DOM order:
+        // the grid paints rows (lab A2, owner pick 2026-11-18), so a band can span the row beneath a card.
+        expect(rows.map((row) => row.props['aria-rowindex'])).toEqual([2, 3, 4, 5]);
 
         // One cell per row, whose index names its column — the expanded panel
         // included, since it belongs to m-1's cell.
         const cellsOf = (row: ReactTestInstance) => row.findAll((node) => typeof node.type === 'string'
             && node.props?.role === 'gridcell');
         expect(rows.map((row) => cellsOf(row).map((cell) => cell.props['aria-colindex'])))
-            .toEqual([[1], [1], [2], [2]]);
+            .toEqual([[1], [2], [1], [2]]);
         // A full-width span is for short sections only; these cards have a neighbour.
         expect(rows.every((row) => cellsOf(row)[0].props['aria-colspan'] === undefined)).toBe(true);
 
@@ -254,25 +252,32 @@ describe('SelectionList — columns and expandedContent together', () => {
             .toBeUndefined();
     });
 
-    it('keeps the expanded panel a cell of its own option, inside its own column', async () => {
+    it('spans the expanded panel under its painted row, owned by its own option\'s cell', async () => {
         const screen = await renderTwoColumnGrid();
         const expanded = screen.findByTestId(EXPANDED_TEST_ID);
         expect(expanded).not.toBeNull();
 
-        // Its own cell, and its own option's row — not loose in the row and not
-        // smuggled inside the activatable cell (where it would be announced as
-        // part of the option's own name).
-        const cell = closestWithRole(expanded!, 'gridcell');
-        expect(cell).not.toBeNull();
-        expect(isDescendantOf(expanded!, screen.findByTestId('sl:root:option:m-1')!)).toBe(false);
-        expect(isDescendantOf(expanded!, screen.findByTestId('sl:root:option-wrapper:m-1')!)).toBe(true);
+        // The grid paints rows: m-0 beside m-1, then m-2 beside m-3.
+        expect(optionIdsByColumnRow(screen, ['m-0', 'm-1', 'm-2', 'm-3'])).toEqual([['m-0', 'm-1'], ['m-2', 'm-3']]);
 
-        // Crucially for the grid: it expands INSIDE m-1's column cell rather
-        // than spanning the pane, so the neighbouring card keeps its width.
+        // The panel spans the pane under m-1's row (lab A2): it sits in no card, so neither the
+        // selected card nor its neighbour is widened or overlapped by it.
         const [firstRow, secondRow] = columnRows(screen);
-        expect(isDescendantOf(expanded!, firstRow)).toBe(true);
-        expect(isDescendantOf(expanded!, secondRow)).toBe(false);
-        expect(isDescendantOf(expanded!, screen.findByTestId('sl:root:option-wrapper:m-0')!)).toBe(false);
+        for (const id of ['m-0', 'm-1', 'm-2', 'm-3']) {
+            expect(isDescendantOf(expanded!, screen.findByTestId(`sl:root:option-wrapper:${id}`)!)).toBe(false);
+        }
+        expect(isDescendantOf(expanded!, firstRow!)).toBe(false);
+        expect(isDescendantOf(expanded!, secondRow!)).toBe(false);
+        // …directly after the row that holds its option, before the next row.
+        const band = screen.tree.root.find((node) => typeof node.type === 'string' && node.props?.id === 'sl:root:option:m-1:band');
+        expect(isDescendantOf(expanded!, band)).toBe(true);
+        const siblings = firstRow!.parent!.children as ReactTestInstance[];
+        expect(siblings.indexOf(band)).toBe(siblings.indexOf(firstRow!) + 1);
+        expect(siblings.indexOf(secondRow!)).toBe(siblings.indexOf(band) + 1);
+
+        // Assistive tech still reads it as part of its own option's cell.
+        expect(screen.findByTestId('sl:root:option-wrapper:m-1')?.props['aria-owns']).toBe('sl:root:option:m-1:band');
+        expect(screen.findByTestId('sl:root:option-wrapper:m-0')?.props['aria-owns']).toBeUndefined();
     });
 
     it('paints a card as focused only once the keyboard has moved onto it', async () => {
@@ -360,7 +365,7 @@ describe('SelectionList — real keys against the real grid geometry', () => {
     it('renders the disabled option as a real grid cell', async () => {
         const screen = await renderMixedGrid();
         expect(optionIdsByColumnRow(screen, ['m-0', 'm-1', 'locked', 'm-3', 'm-4', 'm-5'])).toEqual([
-            ['m-0', 'm-1', 'locked', 'm-3', 'm-4', 'm-5'],
+            ['m-0', 'm-1'], ['locked', 'm-3'], ['m-4', 'm-5'],
         ]);
     });
 
