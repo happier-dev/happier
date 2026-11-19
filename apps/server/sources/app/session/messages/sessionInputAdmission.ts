@@ -3,6 +3,8 @@ import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceipt
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { SessionInputMachineTargetV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/sessionPermissionModes';
 import type { Tx } from '@/storage/inTx';
 import { resolveMachineAdmissionInTx, resolveMachineTargetAdmissionsInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -161,18 +163,29 @@ export async function isSessionInputTargetCurrentForPublisherInTx(tx: Tx, value:
         && target.machineId === publisher.machineId && await isCurrentSessionInputMachineTargetInTx(tx, target, { admittedWork: true });
 }
 
+const NON_BYPASSING_PERMISSION_MODES = SESSION_PERMISSION_MODES.filter(mode => parseAgentPermissionIntentV1Alias(mode) !== 'yolo');
+
+export class SessionInputPermissionModesDisjointError extends Error {
+    readonly code = 'permission_mode_not_granted' as const;
+}
+
 /** The sole server receipt builder; callers supply transaction-final admission. */
 export function buildSessionInputAdmissionReceipt(input: (
     | Readonly<{ issuer: "authenticatedAccount"; access: EffectiveSessionAccess; callerInputConstraints?: CallerInputConstraintsV1; admittedTarget?: SessionInputMachineTargetV1 }>
     | Readonly<{ issuer: "authenticatedMachine"; callerInputConstraints?: CallerInputConstraintsV1; admittedTarget?: SessionInputMachineTargetV1 }>
     ) & Readonly<{ nextTurnNote?: SessionInputAdmissionReceiptV1['nextTurnNote'] }>,
 ): SessionInputAdmissionReceiptV1 {
-    const constraints = input.callerInputConstraints
-        && (input.callerInputConstraints.models !== null || input.callerInputConstraints.permissionModes !== null)
-        ? { callerInputConstraints: {
-            models: input.callerInputConstraints.models,
-            permissionModes: input.callerInputConstraints.permissionModes,
-        } } : {};
+    const models = input.callerInputConstraints?.models ?? null;
+    let permissionModes = input.callerInputConstraints?.permissionModes ?? null;
+    if (input.issuer === "authenticatedAccount" && input.access.level !== "owner"
+        && !input.access.capabilities.approveRuntimePermissions) {
+        permissionModes = permissionModes === null
+            ? NON_BYPASSING_PERMISSION_MODES
+            : permissionModes.filter(mode => NON_BYPASSING_PERMISSION_MODES.includes(mode));
+        if (permissionModes.length === 0) throw new SessionInputPermissionModesDisjointError('permission_mode_not_granted');
+    }
+    const constraints = models !== null || permissionModes !== null
+        ? { callerInputConstraints: { models, permissionModes } } : {};
     if (input.issuer === "authenticatedMachine") {
         return SessionInputAdmissionReceiptV1Schema.parse({ v: 1, issuer: input.issuer, ...constraints,
             ...(input.nextTurnNote ? { nextTurnNote: input.nextTurnNote } : {}),

@@ -66,7 +66,7 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { mapPendingActivationAuthorization, mapPendingActivationFailureDetails } from './pendingActivationAuthorization';
 import { createSessionTurnLifecycle } from '../../../../../cli/src/agent/runtime/session/turn/lifecycle';
 import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol';
-import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
+import { applySessionTurnMutation, createSessionMessage } from '@/app/session/sessionWriteService';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { AutonomousExchangeRootV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { setOtherSessionFollowSource, observeRunFollowOccurrenceRoutes, setSessionFollowSource } from '@/app/session/follow/sessionFollowEdgeService';
@@ -86,6 +86,8 @@ import { ConversationObservationV1Schema } from '@happier-dev/channels-protocol/
 import { readSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { UpdateSchema, UserMessageSchema } from '../../../../../cli/src/api/types';
 import { handleSessionNewMessageUpdate } from '../../../../../cli/src/api/session/sessionNewMessageUpdate';
+import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/sessionPermissionModes';
 
 type EnqueuePendingMessageParams = Parameters<typeof enqueuePendingMessageWithAction>[0];
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -468,6 +470,74 @@ describe("pendingMessageService (shared sessions)", () => {
             publisherAuthority: await publisherAuthority,
         });
     };
+
+    it("limits Pending permission modes for editors without permission-approval delegation", async () => {
+        const owner = await createAccount("permission-ceiling-owner");
+        const delegated = await createAccount("permission-ceiling-delegated");
+        const editor = await createAccount("permission-ceiling-editor");
+        const session = await createSession(owner.id);
+        const delegatedGrant = await shareSession({
+            sessionId: session.id, ownerId: owner.id, participantId: delegated.id, accessLevel: "edit",
+        });
+        await db.sessionGrant.update({ where: { id: delegatedGrant.id }, data: { canApprovePermissions: true } });
+        await shareSession({ sessionId: session.id, ownerId: owner.id, participantId: editor.id, accessLevel: "edit" });
+
+        const enqueue = (actorUserId: string, localId: string, callerInputConstraints?: SessionAccessAuthentication["callerInputConstraints"]) =>
+            enqueuePendingMessageWithAction({
+                actorUserId, sessionId: session.id, localId, ciphertext: "opaque-user-input", messageRole: "user",
+                authentication: { ...authentication, callerInputConstraints }, requestedAction: { v: 1, kind: "enqueue" },
+            });
+        const readReceipt = async (localId: string) => {
+            const row = await db.sessionPendingMessage.findUniqueOrThrow({
+                where: { sessionId_localId: { sessionId: session.id, localId } },
+            });
+            return SessionInputAdmissionReceiptV1Schema.parse(row.inputAdmissionReceipt);
+        };
+
+        await expect(enqueue(owner.id, "owner")).resolves.toMatchObject({ ok: true });
+        const ownerReceipt = await readReceipt("owner");
+        expect(ownerReceipt).toMatchObject({ sessionRelationship: "owner" });
+        expect(ownerReceipt).not.toHaveProperty("callerInputConstraints");
+        await expect(enqueue(delegated.id, "delegated")).resolves.toMatchObject({ ok: true });
+        const delegatedReceipt = await readReceipt("delegated");
+        expect(delegatedReceipt).toMatchObject({ sessionRelationship: "sharedEditor" });
+        expect(delegatedReceipt).not.toHaveProperty("callerInputConstraints");
+
+        await expect(enqueue(editor.id, "editor")).resolves.toMatchObject({ ok: true });
+        expect((await readReceipt("editor")).callerInputConstraints).toEqual({
+            models: null,
+            permissionModes: SESSION_PERMISSION_MODES.filter(mode =>
+                !isPermissionModeGrantedV1({ models: null, permissionModes: ["yolo"] }, mode)),
+        });
+
+        const models = [{ agentTargetKey: "agent:happier.agent.codex/codex", modelId: "fixture-model", providerConnectionId: null }] as const;
+        await expect(enqueue(editor.id, "token", { models: [...models], permissionModes: ["yolo", "read-only"] }))
+            .resolves.toMatchObject({ ok: true });
+        expect((await readReceipt("token")).callerInputConstraints).toEqual({ models, permissionModes: ["read-only"] });
+        await expect(enqueue(editor.id, "disjoint-token", { models: null, permissionModes: ["yolo"] }))
+            .resolves.toMatchObject({ ok: false, error: "forbidden", admissionRejectionCode: "permission_mode_not_granted" });
+        await expect(db.sessionPendingMessage.findUnique({ where: {
+            sessionId_localId: { sessionId: session.id, localId: "disjoint-token" },
+        } })).resolves.toBeNull();
+    });
+
+    it("limits direct transcript permission modes for opaque input from a shared editor", async () => {
+        const owner = await createAccount("direct-permission-owner");
+        const editor = await createAccount("direct-permission-editor");
+        const session = await createSession(owner.id);
+        await shareSession({ sessionId: session.id, ownerId: owner.id, participantId: editor.id, accessLevel: "edit" });
+
+        const result = await createSessionMessage({
+            inputAdmission: "authenticatedAccount", authentication, actorUserId: editor.id, sessionId: session.id,
+            localId: "direct-editor", content: { t: "encrypted", c: "opaque-user-input" },
+        });
+        expect(result).toMatchObject({ ok: true, didWrite: true, message: { inputAdmissionReceipt: {
+            actorAccountId: editor.id, sessionRelationship: "sharedEditor", callerInputConstraints: { models: null },
+        } } });
+        if (!result.ok) throw new Error("Expected direct input to be stored");
+        const receipt = SessionInputAdmissionReceiptV1Schema.parse(result.message.inputAdmissionReceipt);
+        expect(isPermissionModeGrantedV1(receipt.callerInputConstraints!, "yolo")).toBe(false);
+    });
 
     it("projects Pending authors from immutable receipts after access loss and Account deletion", async () => {
         const owner = await createAccount("actor-owner");

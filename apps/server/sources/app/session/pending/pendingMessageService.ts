@@ -3,7 +3,7 @@ import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
-import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetForSessionInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx } from "@/app/session/messages/sessionInputAdmission";
+import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetForSessionInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx, SessionInputPermissionModesDisjointError } from "@/app/session/messages/sessionInputAdmission";
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor, type SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
@@ -1701,6 +1701,9 @@ async function enqueuePendingMessageWithAdmission(
                 ...(params.diagnosticCorrelationId ? { correlationId: params.diagnosticCorrelationId } : {}),
             };
         }
+        if (error instanceof SessionInputPermissionModesDisjointError) {
+            return { ok: false, error: "forbidden", admissionRejectionCode: error.code };
+        }
         reportPendingOperationError({
             operation: "enqueue",
             sessionId,
@@ -2764,7 +2767,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
 
 export type UpdatePendingMessageResult =
     | { ok: true; localId: string; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; recipientCursors: RecipientCursor[]; badgeAttentionChanged: boolean; meaningfulActivityAt?: Date }
-    | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "not-found" | "local-id-conflict" | "pending-mutation-conflict" | "delivery-settlement-conflict" | "internal"; code?: EncryptionPolicyRejectionCode };
+    | { ok: false; error: PendingSessionAccessError | "forbidden" | "invalid-params" | "not-found" | "local-id-conflict" | "pending-mutation-conflict" | "delivery-settlement-conflict" | "internal"; code?: EncryptionPolicyRejectionCode | SessionInputPermissionModesDisjointError["code"] };
 
 export type UpdatePendingRequestedActionResult =
     | {
@@ -3268,7 +3271,10 @@ export async function updatePendingMessage(params: {
                 badgeAttentionChanged,
             };
         }));
-    } catch {
+    } catch (error) {
+        if (error instanceof SessionInputPermissionModesDisjointError) {
+            return { ok: false, error: "invalid-params", code: error.code };
+        }
         return { ok: false, error: "internal" };
     }
 }

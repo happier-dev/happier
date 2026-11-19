@@ -6,7 +6,7 @@ import { nextSessionUsageTiming } from './metadata/sessionUsageTiming';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { projectSessionInputRepliesFromTurnInTx } from './messages/sessionMessageReply';
 import * as z from 'zod/mini';
-import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer } from "./messages/sessionInputAdmission";
+import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, SessionInputPermissionModesDisjointError } from "./messages/sessionInputAdmission";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { assertSessionCapabilityInTx, assertSessionOwnerInTx, buildSessionDeliveryAccessSelect, readSessionAccessProjectionContextInTx, readSessionDeliveryAccessInTx, resolveSessionAccessForOperation, type SessionCapabilityAssertion, type EffectiveSessionAccess, type SessionCapability, type SessionDeliveryAccess } from "@/app/session/access/sessionAccess";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
@@ -963,7 +963,7 @@ export type CreateSessionMessageResult =
         message: SessionMessageWriteRow;
         recipientCursors: [];
       }
-    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: SessionTranscriptWriteRejectionCode }
+    | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: SessionTranscriptWriteRejectionCode | SessionInputPermissionModesDisjointError["code"] }
     | { ok: false; error: "local-id-conflict" };
 
 type CreateSessionMessageParamsBase = Readonly<{
@@ -1492,7 +1492,9 @@ async function createSessionMessageAttempt(
                 sidechainId,
                 messageRole: resolvedRole,
                 surfaceItemReference: params.trustedSurfaceItemReference,
-                ...(params.inputAdmission === "authenticatedAccount" && !hasTrustedProvenance && resolvedRole === "user"
+                // A collaborator's declared transcript role cannot establish the role of opaque input.
+                ...(params.inputAdmission === "authenticatedAccount" && !hasTrustedProvenance
+                    && (resolvedRole === "user" || access.access.level !== "owner")
                     ? { inputAdmissionReceipt: buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: access.access,
                         callerInputConstraints: params.authentication.callerInputConstraints ?? params.authentication.apiTokenGrant }) }
                     : {}),
@@ -1630,6 +1632,9 @@ async function createSessionMessageAttempt(
             });
         }, { isolationLevel: "ReadCommitted" });
     } catch (e) {
+        if (e instanceof SessionInputPermissionModesDisjointError) {
+            return { ok: false, error: "invalid-params", code: e.code };
+        }
         if (e instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
             // The conditional update did not mutate or publish. Restart through
             // the same owner once so access, publisher currentness, authority,
@@ -1725,7 +1730,8 @@ async function createSessionMessageAttempt(
                     const resolvedRole = resolveRoleForStorageMode(access.sessionEncryptionMode);
                     const storedReceipt = existing.inputAdmissionReceipt == null ? null
                         : createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(existing.inputAdmissionReceipt);
-                    const admittedReceipt = params.inputAdmission === "authenticatedAccount" && resolvedRole === "user"
+                    const admittedReceipt = params.inputAdmission === "authenticatedAccount"
+                        && (resolvedRole === "user" || access.access.level !== "owner")
                         ? buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: access.access,
                             callerInputConstraints: params.authentication.callerInputConstraints ?? params.authentication.apiTokenGrant })
                         : null;
@@ -1921,6 +1927,9 @@ async function createSessionMessageAttempt(
                     });
                 }, { isolationLevel: "ReadCommitted" });
             } catch (error) {
+                if (error instanceof SessionInputPermissionModesDisjointError) {
+                    return { ok: false, error: "invalid-params", code: error.code };
+                }
                 if (error instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
                     return await createSessionMessageAttempt(params, false);
                 }

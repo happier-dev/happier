@@ -11,7 +11,7 @@ import type {
   PermissionModeQueuedPromptMode,
 } from '@/agent/runtime/permissions/queuedPrompt';
 import { appendNextTurnContextToQueuedPrompt, combinePermissionModeQueuedPrompts, isNextTurnContextQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
-import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema, SessionInputRequestV2Schema, settleSessionInputRequestV1, settleSessionInputRequestV2,
+import { buildTrustedHostSessionInputAdmissionV1, SessionInputAdmissionReceiptV1Schema, SessionInputRequestV1Schema, SessionInputRequestV2Schema, settleSessionInputRequestV1, settleSessionInputRequestV2,
   withSessionInputAuthorityV1, withSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionFollowInputV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
@@ -295,7 +295,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     expect(steerText).not.toHaveBeenCalled();
   });
 
-  it('rejects a restricted mode before metadata mutation and preserves unrestricted input', async () => {
+  it('rejects bypass mode under a shared editor receipt and preserves unrestricted input', async () => {
     const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>((mode) => JSON.stringify(mode), { batcher: combinePermissionModeQueuedPrompts });
     const harness = createSessionHarness();
     let current: PermissionMode | undefined = 'default';
@@ -308,9 +308,14 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       inFlightSteer: { isTurnInFlight: () => false, supportsInFlightSteer: () => false,
         steerText: async () => {}, registerProviderAcceptedEffect: () => {}, rejectPromptBeforeProvider: rejected },
     });
+    const inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({
+      v: 1, issuer: 'authenticatedAccount', actorAccountId: 'editor', sessionRelationship: 'sharedEditor',
+      callerInputConstraints: { models: null, permissionModes: ['default'] },
+    });
     harness.emit({ role: 'user', content: { type: 'text', text: 'restricted' }, localId: 'restricted',
       meta: { permissionMode: 'bypassPermissions' },
-      callerInputConstraints: { models: null, permissionModes: ['default'] },
+      inputAdmissionReceipt,
+      callerInputConstraints: inputAdmissionReceipt.callerInputConstraints,
     });
     expect(current).toBe('default');
     expect(harness.getMetadata().permissionMode).toBe('default');
