@@ -411,12 +411,10 @@ async function executeBrowserControlAction(
     }
     if (view?.browserSessionId === command.data.browserSessionId
         && isDaemonAuthoritativeBrowserView(view) && machineTarget?.kind === 'machine'
-        && !((command.data.kind === 'openView' || command.data.kind === 'setTarget')
-            && command.data.engineOverride === 'embedded')) {
+        && command.data.kind !== 'openView' && command.data.kind !== 'setTarget') {
         return await executeBrowserMachineAction(args, command.data, input.executeOnMachine, 'browser_control_route_unavailable', control);
     }
 
-    const daemonDispatch: { pending?: Promise<BrowserDaemonControlDispatchClientResult> } = {};
     // A managed open needs a Machine route and the Session whose Browser session will own the view.
     const managedSessionId = args.context.defaultSessionId?.trim();
     const managedBrowserSessionId = input.executeOnMachine && machineTarget?.kind === 'machine' && machineTarget.machineId.trim()
@@ -425,9 +423,6 @@ async function executeBrowserControlAction(
         ...control.readDispatchOptions?.(command.data),
         ...(managedBrowserSessionId ? { managedBrowserSessionId } : {}),
         clientControlService: (input.automation ?? input.resolveAutomation?.(command.data))?.controlService ?? undefined,
-        ...(control.sendDaemonCommand ? { sendDaemonCommand: (cmd: BrowserCommandV1) => {
-            daemonDispatch.pending = control.sendDaemonCommand?.(cmd);
-        } } : {}),
     });
     const managedOpen = result.effects.find((effect) => effect.kind === 'managedBrowserOpen');
     if (managedOpen) {
@@ -460,8 +455,13 @@ async function executeBrowserControlAction(
         }
         return browserRuntimeActionDisabledResult(mapControlRejectedReason(rejected.reasonCode));
     }
-    if (result.effects.some((effect) => effect.kind === 'daemonCommand')) {
-        const dispatched = await daemonDispatch.pending;
+    const daemonCommand = result.effects.find((effect) => effect.kind === 'daemonCommand');
+    if (daemonCommand) {
+        if (machineTarget?.kind === 'machine') {
+            return await executeBrowserMachineAction(args, daemonCommand.command, input.executeOnMachine,
+                'browser_control_route_unavailable', control);
+        }
+        const dispatched = await control.sendDaemonCommand?.(daemonCommand.command);
         if (!dispatched) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
         if (dispatched.ok) return dispatched.result;
         if (dispatched.reason === 'unavailable') return browserRuntimeActionDisabledResult('browser_control_route_unavailable');

@@ -271,9 +271,9 @@ it('leaves a non-Service address on its normal route without reading the launche
 it.each(['ui', 'agent', 'mcp'] as const)('resolves mounted navigation before Machine forwarding from %s and keeps explicit targets direct', async surface => {
     let state = applyBrowserControlEvent(createBrowserControlState(), { kind: 'viewOpened', eventId: 'open',
         browserSessionId: 'browser_address', viewId: 'view_address', target: external, platform: 'web',
-        currentUrl: external.url, adapterKind: 'chromiumSidecar', engineKind: 'desktopWebView', occurredAt: 1,
+        currentUrl: external.url, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', occurredAt: 1,
         adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
-            supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['desktopWebView'] }) });
+            supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }) });
     const forwarded: unknown[] = [];
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: createBrowserRuntimeActionExecutor({
         control: { accountLifetime: lifetime, readState: () => state, readAddressFacts: () => ({ localServiceTargets: [service] }),
@@ -283,10 +283,31 @@ it.each(['ui', 'agent', 'mcp'] as const)('resolves mounted navigation before Mac
     }) }));
     const input = { kind: 'navigate' as const, commandId: 'address', browserSessionId: 'browser_address', viewId: 'view_address', url: external.url };
     expect(await executor.execute('browser.navigate', input, { ...actionContext(), surface })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
-    // The daemon owns this view; address intent must reach it as the resolved target,
-    // rather than forwarding localhost navigation to the answering browser.
-    expect(forwarded).toEqual([expect.objectContaining({ target: previewTarget })]);
+    // The existing page is daemon-owned, but private previews use the client adapter.
+    expect(state.viewsById.view_address).toMatchObject({ target: previewTarget, currentUrl: 'https://address.preview.test/' });
+    expect(forwarded).toEqual([]);
     expect(previewInputs).toHaveLength(1);
     await executor.execute('browser.navigate', { ...input, commandId: 'direct', navigationIntent: 'target' }, { ...actionContext(), surface });
     expect(previewInputs).toHaveLength(1);
+});
+
+it.each(['openView', 'setTarget'] as const)('selects a private preview replacement for a daemon view through %s', async kind => {
+    let state = applyBrowserControlEvent(createBrowserControlState(), { kind: 'viewOpened', eventId: 'open',
+        browserSessionId: 'browser_address', viewId: 'view_address', target: external, platform: 'web',
+        currentUrl: external.url, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', occurredAt: 1,
+        adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
+            supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }) });
+    const forwarded: unknown[] = [];
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: createBrowserRuntimeActionExecutor({
+        control: { accountLifetime: lifetime, readState: () => state,
+            applyDispatchResult: result => { state = result.state; } },
+        executeOnMachine: async args => { forwarded.push(args.input); return { v: 1,
+            commandId: 'direct', status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] }; },
+    }) }));
+    const input = { kind, commandId: 'replace', browserSessionId: 'browser_address', viewId: 'view_address',
+        target: previewTarget, currentUrl: 'https://address.preview.test/', ...(kind === 'openView' ? { platform: 'web' } : {}) };
+    expect(await executor.execute(kind === 'openView' ? 'browser.view.open' : 'browser.target.set', input,
+        { ...actionContext(), surface: 'ui' })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+    expect(state.viewsById.view_address).toMatchObject({ target: previewTarget, adapterKind: 'localPreview' });
+    expect(forwarded).toEqual([]);
 });

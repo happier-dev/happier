@@ -267,6 +267,10 @@ function applyLocalSetTargetIntent(
     });
     // A new external address typed into an embedded page reopens this view in the managed Browser.
     if (selectedAdapter.ok && selectedAdapter.outcome === 'managedBrowser' && options.managedBrowserSessionId) {
+        if (isDaemonAuthoritativeBrowserView(view)) {
+            options.sendDaemonCommand?.(command);
+            return { state, effects: [{ kind: 'daemonCommand', command }] };
+        }
         return { state, effects: [{ kind: 'managedBrowserOpen', command: {
             kind: 'openView', commandId: command.commandId, browserSessionId: options.managedBrowserSessionId,
             viewId: command.viewId, target: command.target, platform: view.platform,
@@ -363,13 +367,6 @@ export function dispatchBrowserControlCommand(
     }
 
     if (command.kind === 'setTarget') {
-        if (isDaemonAuthoritativeView(state, command.viewId) && command.engineOverride !== 'embedded') {
-            options.sendDaemonCommand?.(command);
-            return {
-                state,
-                effects: [{ kind: 'daemonCommand', command }],
-            };
-        }
         return applyLocalSetTargetIntent(state, command, options);
     }
 
