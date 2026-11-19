@@ -36,6 +36,11 @@ type SessionListLayoutEvent = Readonly<{
 }>;
 
 const WEB_LIST_SCROLL_EVENT_THROTTLE_MS = 32;
+/**
+ * Rows grow and shrink with what they say (Lines 2 and 3, owner D3 11-19): a row changing height above the viewport
+ * keeps what is on screen in place. Data changes are not anchored, so new work arriving at the top shows as before.
+ */
+const SESSION_LIST_MAINTAIN_VISIBLE_CONTENT_POSITION = Object.freeze({ size: true, data: false });
 const NATIVE_LIST_SCROLL_EVENT_THROTTLE_MS = 16;
 // Row taps must work while the session-search keyboard is open ('handled'), and a
 // deliberate list drag dismisses it. Interactive dismissal is iOS-only behaviour.
@@ -335,7 +340,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             onMomentumScrollEnd={props.onMomentumScrollEnd}
             onEndReached={props.onEndReached}
             onEndReachedThreshold={0.4}
-            maintainVisibleContentPosition={false}
+            maintainVisibleContentPosition={SESSION_LIST_MAINTAIN_VISIBLE_CONTENT_POSITION}
             refreshControl={isWeb ? undefined : props.nativeRefreshControl}
             webScrollHandlers={isWeb
                 ? ({

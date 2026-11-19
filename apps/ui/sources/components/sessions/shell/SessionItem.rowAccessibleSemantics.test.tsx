@@ -288,7 +288,7 @@ describe('SessionItem outer row accessible semantics', () => {
             expect(String(row.props.accessibilityLabel)).toMatch(/background/i);
             expect(String(row.props.accessibilityLabel)).not.toMatch(/ready for review/i);
             expect(row.props.accessibilityState.busy).toBe(true);
-            const suffix = density === 'minimal' ? 'trailing' : 'secondary';
+            const suffix = 'trailing';
             expect(screen.findByTestId(`session-row-attention-indicator-spinner-${id}-${suffix}`)).toBeTruthy();
             expect(screen.findByTestId(`session-row-unread-indicator-${id}-${suffix}`)).toBeNull();
             standardCleanup();

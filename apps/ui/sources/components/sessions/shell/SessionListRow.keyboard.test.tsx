@@ -50,7 +50,7 @@ describe('SessionListRow keyboard carry', () => {
             <InjectedAuthProvider credentials={{ token: 'test-token' }}>
             <SessionListStagedMoveProvider handleRowKey={handleRowKey}>
                 <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
-                    selected={false} variant="default" compact={false}
+                    selected={false} compact={false}
                     sessionKey={entityKey} treeRowId={sourceRowId} groupKey="group" reorderEnabled organizeMode={false}
                     onDragStart={vi.fn()} onDropResult={vi.fn()}
                     resolveDropResult={() => ({ result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } }, geometry: { kind: 'none' } })}

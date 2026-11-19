@@ -15263,6 +15263,8 @@ const fr: typeof en = {
         reportsWorking: ({ count }) => `${count} en cours`,
         reportsNeedYou: ({ count }) => (count === 1 ? '1 sous-session a besoin de toi' : `${count} sous-sessions ont besoin de toi`),
         reportsDoneA11y: ({ finished, total }) => `${finished} sous-sessions terminées sur ${total}`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}, ${done} sur ${total} terminés` : `${done} sur ${total} terminés`),
+        noteAge: ({ age }) => `il y a ${age}`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => (count === 1 ? 'Archiver aussi 1 sous-session' : `Archiver aussi ${count} sous-sessions`),

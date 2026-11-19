@@ -125,7 +125,6 @@ describe('SessionItem tags (web hover layout)', () => {
                 session={createSession()}
                 serverId="server_a"
                 selected={false}
-                variant="default"
                 compact={true}
                 tagsEnabled={true}
                 tags={['v2']}

@@ -576,8 +576,6 @@ export function BotsPopoverContent(
                 serverId={items[index]!.serverId ?? undefined}
                 compact
                 embedded
-                quietWhenOffline
-                secondaryLineMode="path"
                 actionMenuSurface="botsRoster"
                 botActivity={row.botActivity}
                 onOpened={() => { requestBotFaceWear(session.id, wearing.pet); close(); }}
@@ -593,7 +591,6 @@ export function BotsPopoverContent(
               compact
               embedded
               showTalkAction
-              quietWhenOffline
               actionMenuSurface="botsRoster"
               botActivity={row.botActivity}
               reportsDepth={items[index]!.reportsDepth}

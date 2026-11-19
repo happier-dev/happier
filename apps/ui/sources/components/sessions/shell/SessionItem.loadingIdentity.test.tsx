@@ -103,13 +103,6 @@ function createMetadataUnavailableSession(id: string): SessionListRenderableSess
     });
 }
 
-function flattenStyle(style: unknown): Record<string, unknown> {
-    if (Array.isArray(style)) {
-        return Object.assign({}, ...style.map(flattenStyle));
-    }
-    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
-}
-
 describe('SessionItem loading identity', () => {
     beforeEach(() => {
         useSessionListRenderableWithServerScopeSpy.mockClear();
@@ -136,22 +129,13 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={compact}
             />,
         );
 
-        const avatar = screen.findByTestId('session-list-avatar-loading-sess_loading');
-        const title = screen.findByTestId('session-list-title-loading-sess_loading');
-        const subtitle = screen.findByTestId('session-list-subtitle-loading-sess_loading');
-        expect(avatar).toBeTruthy();
-        expect(title).toBeTruthy();
-        expect(subtitle).toBeTruthy();
-        if (compact) {
-            expect(flattenStyle(avatar?.props.style)).toMatchObject({ width: 30, height: 30 });
-            expect(flattenStyle(title?.props.style)).toMatchObject({ width: '60%', height: 13 });
-            expect(flattenStyle(subtitle?.props.style)).toMatchObject({ width: '42%', height: 9 });
-        }
+        // Every Lines setting draws the one-line anatomy: the mark and title hold their places, no line is guessed.
+        expect(screen.findByTestId('session-list-avatar-loading-sess_loading')).toBeTruthy();
+        expect(screen.findByTestId('session-list-title-loading-sess_loading')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('session.untitled');
     });
 
@@ -183,7 +167,6 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
                 rowAttentionAnimationEnabled={rowAttentionAnimationEnabled}
             />,
@@ -209,14 +192,12 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
 
         expect(screen.findByTestId('session-list-avatar-loading-sess_unavailable')).toBeNull();
         expect(screen.findByTestId('session-list-title-loading-sess_unavailable')).toBeNull();
-        expect(screen.findByTestId('session-list-subtitle-loading-sess_unavailable')).toBeNull();
         expect(screen.getTextContent()).toContain('session.untitled');
     });
 
@@ -230,7 +211,6 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );

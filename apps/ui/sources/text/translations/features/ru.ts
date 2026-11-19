@@ -15270,6 +15270,8 @@ const ru: typeof en = {
         reportsWorking: ({ count }) => `В работе: ${count}`,
         reportsNeedYou: ({ count }) => `Подсессий ждут вас: ${count}`,
         reportsDoneA11y: ({ finished, total }) => `Готово ${finished} из ${total} подсессий`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}, готово ${done} из ${total}` : `готово ${done} из ${total}`),
+        noteAge: ({ age }) => `${age} назад`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => `Также архивировать подсессии (${count})`,

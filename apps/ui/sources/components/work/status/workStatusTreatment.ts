@@ -84,6 +84,12 @@ type ToneColors = Readonly<{
 }>;
 
 /** A state glyph's colour in this tone (an icon has no text style): quiet secondary ink while healthy. */
+/**
+ * Work in motion is the turning arc wherever a status mark draws it (lab ideas-1118-shell scene 7): at a status slot's
+ * size the loading styles' 3 × 3 dot grids read as a drag grip. Settings › Appearance keeps choosing loading spinners.
+ */
+export const WORK_STATUS_WORKING_SPINNER_VARIANT = 'classicRing' as const;
+
 export function workStatusGlyphColor(colors: ToneColors, tone: WorkStatusTone): string {
     return resolveHappierWorkStatusGlyphColor(tone, {
         secondaryText: colors.text.secondary,

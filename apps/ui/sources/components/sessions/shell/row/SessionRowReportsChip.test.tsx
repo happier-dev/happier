@@ -18,24 +18,25 @@ import { presentSessionAwarenessStateV1 } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 
 import {
-  hasSessionRowReportsChip,
-  SessionRowReportsChip,
+  hasSessionRowProgressChip,
+  SessionRowProgressChip,
   SessionRowReportsDisclosure,
 } from './SessionRowReportsChip';
 
 const REPORTS: SessionManagedSessionsV1 = { total: 3, needsYou: 1, working: 1, stalled: 0, finished: 1, attentionPrimary: 'permission_required' };
 
-describe('SessionRowReportsChip', () => {
+describe('SessionRowProgressChip', () => {
   afterEach(() => {
     standardCleanup();
   });
 
-  it('keeps a strongest failure and an independent admitted request audible when folded', async () => {
+  it('keeps a strongest failure and an independent admitted request audible beside the count', async () => {
     const reports: SessionManagedSessionsV1 = {
       total: 5, finished: 3, working: 1, needsYou: 1, stalled: 0, attentionPrimary: 'failed',
     };
-    const screen = await renderScreen(<SessionRowReportsChip sessionId="lead-failure" reports={reports} />);
-    const label = screen.findByTestId('session-row-reports-chip:lead-failure')?.props.accessibilityLabel;
+    const screen = await renderScreen(<SessionRowProgressChip sessionId="lead-failure" progress={{ done: 3, total: 5, dim: false, complete: false }} reports={reports} />);
+    const label = screen.findByTestId('session-row-progress-chip:lead-failure')?.props.accessibilityLabel;
+    expect(label).toContain(t('sessionWork.list.progressA11y', { label: '', done: 3, total: 5 }));
     expect(label).toContain(presentSessionAwarenessStateV1('failed').statusText);
     expect(label).toContain(t('sessionWork.list.reportsNeedYou', { count: reports.needsYou }));
   });
@@ -58,50 +59,30 @@ describe('SessionRowReportsChip', () => {
       describeAgentStatus: () => '', describeProgress: () => '' });
     expect(groupWorkByState(work).recent.map(item => item.status.bucket)).toEqual(['offline']);
     expect(readWorkWorkingCount(work.summary)).toBe(0);
-    const screen = await renderScreen(<SessionRowReportsChip sessionId="lead" reports={counts} />);
+    const screen = await renderScreen(<SessionRowProgressChip sessionId="lead" progress={{ done: 0, total: 1, dim: true, complete: false }} reports={counts} />);
     // The lead's progress stays calm ink; the reports' state is spoken with it, never as "working".
-    const label = String(screen.findByTestId('session-row-reports-chip:lead')?.props.accessibilityLabel).toLowerCase();
+    const label = String(screen.findByTestId('session-row-progress-chip:lead')?.props.accessibilityLabel).toLowerCase();
     expect(label).not.toContain('working');
     expect(label).toContain(presentSessionAwarenessStateV1('disconnected').statusText.toLowerCase());
   });
 
-  it('shows a lead\'s progress over its live sub-sessions, with the needs-you glyph and count while one waits', async () => {
-    const screen = await renderScreen(
-      <SessionRowReportsChip
-        sessionId="bot"
-        reports={REPORTS}
-      />,
-    );
+  it('draws the projected count with its author label, and the needs-you count while a managed Session waits', async () => {
+    const screen = await renderScreen(<SessionRowProgressChip sessionId="bot" progress={{ done: 1, total: 3, dim: false, complete: false }} reports={REPORTS} />);
     expect(screen.getTextContent()).toContain('1/3');
-    expect(screen.findByTestId('session-row-reports-chip:bot')?.props.accessibilityLabel)
+    expect(screen.findByTestId('session-row-progress-chip:bot')?.props.accessibilityLabel)
       .toContain(t('sessionWork.list.reportsNeedYou', { count: 1 }));
-    const settled = await renderScreen(
-      <SessionRowReportsChip
-        sessionId="bot"
-        reports={{ total: 3, needsYou: 0, working: 0, stalled: 0, finished: 3, attentionPrimary: null }}
-      />,
-    );
-    // The progress count shows only while in progress (ruling 2026-11-01): a settled lead drops the chip; its
-    // count stays in the caret's label and the sub-sessions under it.
-    expect(settled.findByTestId('session-row-reports-chip:bot')).toBeNull();
-    expect(hasSessionRowReportsChip({ total: 3, needsYou: 0, working: 0, stalled: 0, finished: 3, attentionPrimary: null })).toBe(false);
+    const labelled = await renderScreen(<SessionRowProgressChip sessionId="qa" progress={{ done: 9, total: 24, label: 'QA', dim: true, complete: false }} />);
+    expect(labelled.getTextContent()).toBe('QA 9/24');
+    expect(labelled.findByTestId('session-row-progress-chip:qa')?.props.accessibilityLabel)
+      .toBe(t('sessionWork.list.progressA11y', { label: 'QA', done: 9, total: 24 }));
   });
 
-  it('says progress as a bare count, never "done" (a shelf mirror has no children under it)', async () => {
-    const reports = { total: 5, needsYou: 0, working: 3, stalled: 0, finished: 2, attentionPrimary: null };
-    const screen = await renderScreen(<SessionRowReportsChip sessionId="lead" reports={reports} />);
-    expect(screen.getTextContent()).toBe('2/5');
-  });
-
-  it('counts only the sub-sessions that are not archived, and says nothing when every report is archived', async () => {
-    const counted = await renderScreen(
-      <SessionRowReportsChip sessionId="bot" reports={{ total: 4, needsYou: 0, working: 1, stalled: 0, finished: 2, attentionPrimary: null, archived: 1 }} />,
-    );
-    expect(counted.getTextContent()).toBe('2/3');
-    const archivedOnly = await renderScreen(
-      <SessionRowReportsChip sessionId="bot" reports={{ total: 1, needsYou: 0, working: 0, stalled: 0, finished: 0, attentionPrimary: null, archived: 1 }} />,
-    );
-    expect(archivedOnly.findByTestId('session-row-reports-chip:bot')).toBeNull();
+  it('draws nothing when the owner projected no count and no managed Session needs the person', async () => {
+    const settled = { total: 3, needsYou: 0, working: 0, stalled: 0, finished: 3, attentionPrimary: null };
+    const screen = await renderScreen(<SessionRowProgressChip sessionId="bot" progress={null} reports={settled} />);
+    expect(screen.findByTestId('session-row-progress-chip:bot')).toBeNull();
+    expect(hasSessionRowProgressChip(null, settled)).toBe(false);
+    expect(hasSessionRowProgressChip({ done: 3, total: 3, dim: true, complete: true }, settled)).toBe(true);
   });
 
   it('writes the explicit opposite of the current fold for its own list node', async () => {

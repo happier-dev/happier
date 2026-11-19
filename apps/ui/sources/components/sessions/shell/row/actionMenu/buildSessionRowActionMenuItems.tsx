@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import {
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -125,6 +126,8 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
         SESSION_ACTION_MARK_UNREAD_ID,
         SESSION_ACTION_SET_ATTENTION_STANDING_ID,
         SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+        // Beside the other per-row state items (lab ideas-1118-shell scene 7), only while a note or count is set.
+        SESSION_ACTION_CLEAR_STATUS_ID,
     ]);
     const primaryItems: DropdownMenuItem[] = [];
     const remainingItems: DropdownMenuItem[] = [];

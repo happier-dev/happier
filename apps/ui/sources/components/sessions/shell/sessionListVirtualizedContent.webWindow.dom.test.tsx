@@ -357,8 +357,9 @@ describe('session list web window while row and header heights change', () => {
       projectKey: 'row-choices', active: true, activeAt: now, presence: 'online', thinking: true, thinkingAt: now,
       latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now, updatedAt: now,
       metadata: { host: 'dev', name: 'Live choices', path: '/repo/choices', machineId: 'machine-choices', branch: 'live-branch', flavor: 'claude' } });
+    // Lines 2: the branch is a detail line (Lines 1 is the title and its count, lab ideas-1118-shell scene 7).
     const settings = { sessionListLayoutV1: 'projects', sessionListAttentionPlacementV1: 'inPlace',
-      sessionListDensity: 'narrow', sessionListRowContextV1: true, sessionListIdentityDisplay: 'avatar',
+      sessionListDensity: 'cozy', sessionListRowContextV1: true, sessionListIdentityDisplay: 'avatar',
       sessionListStatusWords: false, hideInactiveSessions: false } as const;
     const http = createHomeHubArtifactHttpBoundary('u1');
     const account = await restoreServerAccountForTest({ serverUrl: 'https://web-row-choices.test', accountId: 'u1', request: async (input, init) => {

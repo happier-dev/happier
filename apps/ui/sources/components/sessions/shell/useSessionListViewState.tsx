@@ -70,7 +70,7 @@ import {
 } from './surface/sessionListSurfaceOwnership';
 import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
-import { useSessionCollectionDensity, useSessionCollectionStatusWords } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
+import { useSessionCollectionDensity, useSessionCollectionRowDetails, useSessionCollectionStatusWords } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import {
     areSessionListIndexItemsEqual,
     buildSessionListIndexEntityId,
@@ -618,6 +618,7 @@ export function useSessionListViewStateFromPaneState(
     const sessionListIdentityDisplay = useSetting('sessionListIdentityDisplay');
     const sessionListRowContextV1 = useSetting('sessionListRowContextV1');
     const sessionListStatusWords = useSessionCollectionStatusWords();
+    const sessionRowDetails = useSessionCollectionRowDetails();
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const hideInactiveSessions = useSetting('hideInactiveSessions');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
@@ -2204,6 +2205,7 @@ export function useSessionListViewStateFromPaneState(
                     identityDisplay: normalizeSessionListIdentityDisplay(sessionListIdentityDisplay),
                     statusWords: sessionListStatusWords === true,
                     faviconsEnabled: workspaceFaviconsEnabled,
+                    details: sessionRowDetails,
                 }}
                 pinnedSessionKeys={orderingPersistenceState.pinnedKeySet}
                 rowViewport={rowViewport}
@@ -2235,6 +2237,7 @@ export function useSessionListViewStateFromPaneState(
         rowViewport,
         sessionListRowContextV1,
         sessionListStatusWords,
+        sessionRowDetails,
         workspaceFaviconsEnabled,
         isFolderActionsEnabledForServerId,
         forkActionContext,
@@ -2273,12 +2276,12 @@ export function useSessionListViewStateFromPaneState(
     const renderWorkflowRunItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'workflow_run' }>) => (
         <SessionListViewportWorkflowRunItem rowViewport={rowViewport} nodeId={buildSessionListIndexNodeId(item)}
             runId={item.runId} serverId={item.serverId}
-            density={densityViewState.compact ? densityViewState.compactMinimal ? 'minimal' : 'compact' : 'default'}
+            density="minimal"
             selected={effectivePathname === `/workflows/runs/${encodeURIComponent(item.runId)}`}
             reportsDepth={item.reportsDepth} statusWords={sessionListStatusWords === true}
             activeColorMode={normalizeSessionListActiveColorMode(sessionListActiveColorMode)}
             kindMark={runsAmongSessions} />
-    ), [densityViewState.compact, densityViewState.compactMinimal, effectivePathname, rowViewport, runsAmongSessions, sessionListActiveColorMode, sessionListStatusWords]);
+    ), [effectivePathname, rowViewport, runsAmongSessions, sessionListActiveColorMode, sessionListStatusWords]);
 
     const virtualizedNodeCacheRef = React.useRef(new Map<string, Readonly<{
         item: SessionListIndexItem;
@@ -2455,6 +2458,7 @@ export function useSessionListViewStateFromPaneState(
         rowContextEnabled: sessionListRowContextV1 !== false,
         rowContextIdentityDisplay: normalizeSessionListIdentityDisplay(sessionListIdentityDisplay),
         rowContextStatusWords: sessionListStatusWords === true,
+        rowDetails: sessionRowDetails,
         sessionTagsEnabled: sessionTagsEnabled === true,
         sessionTagsSignature,
         workspaceLabelsSignature,
@@ -2480,6 +2484,7 @@ export function useSessionListViewStateFromPaneState(
         rowInteractions.nativeContextMenuSessionKey,
         sessionListRowContextV1,
         sessionListStatusWords,
+        sessionRowDetails,
         sessionListActiveColorMode,
         sessionListIdentityDisplay,
         sessionFoldersSignature,
@@ -2569,9 +2574,9 @@ export function useSessionListViewStateFromPaneState(
         nodeIds,
         visibleEntityCount: virtualizedProjection.visibleEntityCount,
         rowHeight: densityViewState.rowHeight,
-        rowDensity: (densityViewState.compact
-            ? (densityViewState.compactMinimal ? 'minimal' : 'compact')
-            : 'default') as 'default' | 'compact' | 'minimal',
+        // Every row in the list draws the one-line anatomy (Lines 1 | 2 | 3 add detail lines to Session rows only,
+        // lab ideas-1118-shell scene 7), so Drafts, Scheduled, Runs and group headers share its edge.
+        rowDensity: 'minimal' as const,
         filteredNoResultsMessage,
         renderVirtualizedItem,
         scrollToOffset: scrollToRetainedOffset,

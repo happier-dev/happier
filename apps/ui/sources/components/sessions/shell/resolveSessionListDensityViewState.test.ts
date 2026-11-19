@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 
-const SESSION_LIST_ROW_HEIGHT_DEFAULT = HAPPIER_COLLECTION_ROW_METRICS.height.detailed;
-const SESSION_LIST_ROW_HEIGHT_COMPACT = HAPPIER_COLLECTION_ROW_METRICS.height.comfortable;
+// Lines 3 and 2 estimate the one-line row plus one detail line (lab ideas-1118-shell scene 7); rows are measured once drawn.
+const LINED_ROW_ESTIMATE = HAPPIER_COLLECTION_ROW_METRICS.height.compact
+    + HAPPIER_COLLECTION_ROW_METRICS.detailLine.minHeight + HAPPIER_COLLECTION_ROW_METRICS.detailLine.gap;
+const SESSION_LIST_ROW_HEIGHT_DEFAULT = LINED_ROW_ESTIMATE;
+const SESSION_LIST_ROW_HEIGHT_COMPACT = LINED_ROW_ESTIMATE;
 const SESSION_LIST_ROW_HEIGHT_MINIMAL = HAPPIER_COLLECTION_ROW_METRICS.height.compact;
 const SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE = HAPPIER_COLLECTION_ROW_METRICS.height.touchCompact;
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';

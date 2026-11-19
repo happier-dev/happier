@@ -96,13 +96,13 @@ describe('SessionItem row actions on a touch screen', () => {
 
     it('keeps a Bot roster row\'s actions beside it without hover (lab b-rail Ap), while an ordinary row still reveals on hover only', async () => {
         const roster = await renderScreen(<ModelBackedSessionItem session={createSession('bot_1')} serverId={serverId}
-            selected={false} variant="default" compact embedded showTalkAction actionMenuSurface="botsRoster" onTogglePinned={vi.fn()} />);
+            selected={false} compact embedded showTalkAction actionMenuSurface="botsRoster" onTogglePinned={vi.fn()} />);
         // The row's trailing actions are drawn with no hover at all.
         expect(roster.findAll(node => node.props?.accessibilityLabel === 'sessionInfo.pinSession').length).toBeGreaterThan(0);
         await roster.unmount();
 
         const ordinary = await renderScreen(<ModelBackedSessionItem session={createSession('sess_1')} serverId={serverId}
-            selected={false} variant="default" compact onTogglePinned={vi.fn()} />);
+            selected={false} compact onTogglePinned={vi.fn()} />);
         expect(ordinary.findAll(node => node.props?.accessibilityLabel === 'sessionInfo.pinSession')).toHaveLength(0);
         await ordinary.unmount();
     });
@@ -111,7 +111,7 @@ describe('SessionItem row actions on a touch screen', () => {
         const { ContextMenu } = await import('@/components/ui/forms/dropdown/ContextMenu');
         const { CopiedPill } = await import('@/components/ui/copy/CopiedPill');
         const screen = await renderScreen(<ModelBackedSessionItem session={createSession('sess_closed')} serverId={serverId}
-            selected={false} variant="default" compact onTogglePinned={vi.fn()} />);
+            selected={false} compact onTogglePinned={vi.fn()} />);
         // Every list row pays for what it mounts: closed menus and hidden feedback cost nothing.
         expect(screen.findAll(node => node.type === ContextMenu)).toHaveLength(0);
         expect(screen.findAll(node => node.type === CopiedPill)).toHaveLength(0);
@@ -124,7 +124,7 @@ describe('SessionItem row actions on a touch screen', () => {
 
     it('opens the ordinary row pin menu on touch-browser long-press and suppresses the release navigation', async () => {
         const screen = await renderScreen(<ModelBackedSessionItem session={createSession('sess_touch_menu')} serverId={serverId}
-            selected={false} variant="default" compact onTogglePinned={vi.fn()} />);
+            selected={false} compact onTogglePinned={vi.fn()} />);
         const row = screen.findHostByTestId('session-list-item-sess_touch_menu');
         if (!row) throw new Error('Expected the ordinary touch-browser row');
         expect(row.props.onLongPress).toEqual(expect.any(Function));

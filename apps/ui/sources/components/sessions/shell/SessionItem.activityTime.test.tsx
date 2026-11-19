@@ -135,6 +135,12 @@ const defaultSessionStatus: StatusFixtureDisplay = {
 
 let mockSessionStatus: MockSessionStatus;
 
+/** Status words are spoken in the row's accessible name; Lines 2 and 3 draw the now line instead (lab ideas-1118-shell scene 7). */
+function spokenText(screen: Awaited<ReturnType<typeof renderScreen>>): string {
+    return screen.findAll((node) => typeof node.props?.accessibilityLabel === 'string')
+        .map((node) => node.props.accessibilityLabel as string).join(' | ');
+}
+
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
         return style.reduce<Record<string, unknown>>((acc, entry) => ({
@@ -235,17 +241,18 @@ describe('SessionItem activity time', () => {
             overrides: { sessionStatus: projectStatus(session, Date.now()) } });
         const screen = await renderScreen(<ArchiveProgressSessionItem session={session} rowViewModel={rowViewModel}
             serverId="server_a" pinned={false} selected={false}
-            variant="default" compact={false} />);
+            compact={false} />);
         const textBefore = screen.getTextContent();
         let operation: ReturnType<typeof storageModule.storage.getState>['sessionArchiveOperations'][string][string] | null = null;
         await act(async () => { operation = storageModule.storage.getState().beginSessionArchive({ sessionId: 'archiving-row', serverId: 'server_a' }); });
-        expect(screen.getTextContent()).toContain('status.archiving');
         expect(screen.findByTestId('session-list-item-archiving-row')?.props.accessibilityLabel).toContain('status.archiving');
         await act(async () => { storageModule.storage.getState().finishSessionArchive(operation!); });
         expect(screen.getTextContent()).toBe(textBefore);
     });
 
     it('renders the meaningful activity timestamp instead of the raw session updatedAt', async () => {
+        // A calm row: its age takes the status slot (a working row shows its mark there instead).
+        mockSessionStatus = createStatusFixture({ ...defaultSessionStatus, state: 'waiting', statusText: 'online', shouldShowStatus: false });
         const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
@@ -254,7 +261,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -264,6 +270,8 @@ describe('SessionItem activity time', () => {
     });
 
     it('sets the activity time in the shared right-aligned tabular meta column', async () => {
+        // A calm row: its age takes the status slot (a working row shows its mark there instead).
+        mockSessionStatus = createStatusFixture({ ...defaultSessionStatus, state: 'waiting', statusText: 'online', shouldShowStatus: false });
         const SessionItem = await importSessionItem();
         const { HAPPIER_META_COLUMN_V1 } = await import('@happier-dev/plugin-ui/presentation');
 
@@ -273,7 +281,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -287,6 +294,8 @@ describe('SessionItem activity time', () => {
     });
 
     it('renders the row view model activity timestamp for date-grouped lists', async () => {
+        // A calm row: its age takes the status slot (a working row shows its mark there instead).
+        mockSessionStatus = createStatusFixture({ ...defaultSessionStatus, state: 'waiting', statusText: 'online', shouldShowStatus: false });
         const updatedAt = 1_700_000_000_000 - 3 * 60 * 60 * 1000;
         const meaningfulActivityAt = 1_700_000_000_000 - 5 * 60 * 60 * 1000;
         const SessionItem = await importSessionItem();
@@ -305,7 +314,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -325,7 +333,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -356,7 +363,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -366,7 +372,7 @@ describe('SessionItem activity time', () => {
         expect(screen.findByType(Avatar)?.props.hasUnreadMessages).toBe(false);
     });
 
-    it('shows ready-for-review status text for non-minimal completed unread turns', async () => {
+    it('shows ready-for-review status in the status slot for completed unread turns', async () => {
         hasUnreadMessagesValue = true;
         mockSessionStatus = createStatusFixture({
             ...defaultSessionStatus,
@@ -395,14 +401,12 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="path"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('workStatus.buckets.finished');
-        expect(screen.findByTestId('session-list-status-subtitle-sess_ready_for_review-finished_unseen')).toBeTruthy();
+        // Lines 2 and 3 carry the now line, never the status word (lab ideas-1118-shell scene 7): the slot says it.
+        expect(screen.findByTestId('session-list-attention-indicator-sess_ready_for_review-trailing-finished_unseen')).toBeTruthy();
     });
 
     it('shows failed status text before stale working text when the primary turn failed', async () => {
@@ -427,15 +431,13 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('status.error');
         expect(screen.getTextContent()).not.toContain('Working on it');
-        expect(screen.findByTestId('session-list-status-subtitle-sess_failed_primary_turn-failed')).toBeTruthy();
+        expect(screen.findByTestId('session-list-attention-indicator-sess_failed_primary_turn-trailing-failed')).toBeTruthy();
+        expect(screen.findByTestId('session-list-attention-indicator-sess_failed_primary_turn-trailing-working')).toBeNull();
     });
 
     it.each([
@@ -502,19 +504,15 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="path"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('status.offline');
-        expect(screen.getTextContent()).toContain(
-            'status.offline · sessionsList.storageExternalFilter · agentInput.agent.codex · MacBook Pro',
-        );
+        // The external Session's own line stands on line 2; its status stays canonical (offline), never the external label.
+        expect(screen.getTextContent()).toContain('sessionsList.storageExternalFilter · agentInput.agent.codex · MacBook Pro');
         expect(screen.getTextContent()).not.toContain(labelKey);
         expect(screen.findByTestId(
-            `session-list-attention-indicator-sess_external_status-secondary-${indicator}`,
+            `session-list-attention-indicator-sess_external_status-trailing-${indicator}`,
         )).toBeNull();
         expect(screen.findByType(Avatar)?.props.monochrome).toBe(true);
     });
@@ -536,14 +534,12 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
         expect(screen.findByTestId(
-            'session-list-attention-indicator-sess_retained_quiet-secondary-working',
+            'session-list-attention-indicator-sess_retained_quiet-trailing-working',
         )).toBeNull();
         expect(screen.getTextContent()).not.toContain('status.workingRetained');
     });
@@ -580,17 +576,15 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
         expect(screen.findByTestId(
-            'session-list-attention-indicator-sess_external_failed-secondary-failed',
+            'session-list-attention-indicator-sess_external_failed-trailing-failed',
         )).toBeTruthy();
         expect(screen.findByTestId(
-            'session-list-attention-indicator-sess_external_failed-secondary-working',
+            'session-list-attention-indicator-sess_external_failed-trailing-working',
         )).toBeNull();
     });
 
@@ -616,7 +610,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -634,7 +627,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -660,7 +652,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -683,7 +674,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -708,7 +698,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -742,7 +731,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_external"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -777,7 +765,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -808,7 +795,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -839,7 +825,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -860,7 +845,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -876,7 +860,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -905,7 +888,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
                 rowAttentionAnimationEnabled={false}
@@ -940,19 +922,14 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
-                secondaryLineMode="status"
             />,
         );
         expect(screen.findByTestId('session-list-status-pill-sess_status_plain')).toBeNull();
-        const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_status_plain-secondary');
+        const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_status_plain-trailing');
         expect(spinner).toBeTruthy();
         expect(screen.findAllByType(StatusDot)).toHaveLength(0);
-        const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'Working on it');
-        const flat = flattenStyle(statusText?.props.style);
-        expect(flat.fontSize).toBe(12);
-        expect(flat.lineHeight).toBe(16);
+        expect(spokenText(screen)).toContain('Working on it');
     });
 
     it('keeps the shared working arc still when row attention animation is disabled', async () => {
@@ -974,9 +951,7 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
-                secondaryLineMode="status"
                 rowAttentionAnimationEnabled={false}
             />,
         );
@@ -988,7 +963,7 @@ describe('SessionItem activity time', () => {
         const spinners = screen.findAllByType(ActivitySpinner);
         expect(spinners).toHaveLength(1);
         expect(spinners[0]?.props).toMatchObject({
-            testID: 'session-row-attention-indicator-spinner-sess_status_plain_dot-secondary',
+            testID: 'session-row-attention-indicator-spinner-sess_status_plain_dot-trailing',
             animationEnabled: false,
         });
     });
@@ -1024,10 +999,8 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact
                 compactMinimal
-                secondaryLineMode="path"
                 rowAttentionAnimationEnabled={false}
             />,
         );
@@ -1035,7 +1008,7 @@ describe('SessionItem activity time', () => {
         const row = screen.findByTestId(`session-list-item-${sessionId}`);
         expect(row?.props.accessibilityRole).toBe('button');
         expect(row?.props.accessibilityLabel).toContain(`Accessible ${state}`);
-        const expectedStatusWord = state === 'permission_required' ? 'workStatus.words.permission'
+        const expectedStatusWord = state === 'permission_required' ? 'status.permissionRequired'
             : state === 'action_required' ? 'workStatus.words.question' : mockSessionStatus.statusText;
         expect(row?.props.accessibilityLabel).toContain(expectedStatusWord);
         expect(row?.props.accessibilityState).toMatchObject({ selected: false, busy });
@@ -1045,7 +1018,7 @@ describe('SessionItem activity time', () => {
             && node.props?.testID === `session-list-item-${sessionId}`
         ))).toHaveLength(1);
         const indicator = screen.findByTestId(`session-row-attention-indicator-${sessionId}-trailing`)
-            ?? screen.findByTestId(`session-row-attention-indicator-${sessionId}-secondary`);
+            ?? screen.findByTestId(`session-row-attention-indicator-${sessionId}-trailing`);
         expect(indicator?.props).toMatchObject({
             accessible: false,
             accessibilityElementsHidden: true,
@@ -1073,7 +1046,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
@@ -1103,7 +1075,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={true}
-                variant="default"
                 compact={false}
             />,
         );
@@ -1123,7 +1094,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -1186,7 +1156,6 @@ describe('SessionItem activity time', () => {
                 serverName="Server A"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -1228,13 +1197,11 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('workStatus.words.permission');
+        expect(spokenText(screen)).toContain('status.permissionRequired');
     });
 
     it('uses overlaid permission state when the row view model session is stale', async () => {
@@ -1274,17 +1241,11 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('workStatus.words.permission');
-        // The overlaid state names the status line; a request nobody routed to this viewer stays calm (no mark).
-        expect(screen.findByTestId(
-            'session-list-status-subtitle-sess_row_model_overlay_permission-permission_required',
-        )).toBeTruthy();
+        expect(spokenText(screen)).toContain('status.permissionRequired');
     });
 
     it.each(['failed', 'stale', 'offline', 'locked'] as const)('projects richer %s facts before rendering attention and motion', async (scenario) => {
@@ -1328,19 +1289,19 @@ describe('SessionItem activity time', () => {
                 overrides: { sessionStatus: getSessionStatus(rowSession, now), secondaryLineMode: 'status' },
             })}
             serverId="server_a" pinned={false} selected={false}
-            variant="default" secondaryLineMode="path" subtitleOverride="~/private-path" compact={false}
+            compact={false}
         />);
         if (scenario !== 'failed') {
-            const expectedStatusWord = scenario === 'stale' ? 'workStatus.words.permission'
+            const expectedStatusWord = scenario === 'stale' ? 'status.permissionRequired'
                 : getSessionStatus(providedSession, now).statusText;
-            expect(screen.getTextContent()).toContain(expectedStatusWord);
+            expect(spokenText(screen)).toContain(expectedStatusWord);
         }
         if (scenario === 'failed') {
-            expect(screen.findByTestId('session-list-attention-indicator-sess_projection-secondary-failed')).toBeTruthy();
-            expect(screen.findByTestId('session-list-attention-indicator-sess_projection-secondary-permission_required')).toBeNull();
+            expect(screen.findByTestId('session-list-attention-indicator-sess_projection-trailing-failed')).toBeTruthy();
+            expect(screen.findByTestId('session-list-attention-indicator-sess_projection-trailing-permission_required')).toBeNull();
         }
         expect(screen.findAllByType(StatusDot).every((dot) => dot.props.animationEnabled === false)).toBe(true);
-        const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_projection-secondary');
+        const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_projection-trailing');
         if (spinner) expect(flattenStyle(spinner.props.style).animationName).toBeUndefined();
     });
 
@@ -1354,7 +1315,7 @@ describe('SessionItem activity time', () => {
             rowViewModel={createSessionItemRowViewModel({ session, overrides: {
                 sessionStatus: getSessionStatus(session, Date.now()), subtitleOverride: '/private/retained/path', secondaryLineMode: 'path',
             } })}
-            serverId="server_a" pinned={false} selected={false} variant="default" compact={false}
+            serverId="server_a" pinned={false} selected={false} compact={false}
         />);
         // A legitimately retained title names the same Session as its detail header;
         // unreadable content still cannot disclose the private path.
@@ -1388,36 +1349,10 @@ describe('SessionItem activity time', () => {
                 sessionStatus: getSessionStatus(session, now), secondaryLineMode: 'path',
             } })}
             serverId="server_a" pinned={false} selected={false}
-            variant="default" secondaryLineMode="path" compact={false}
+            compact={false}
         />);
-        expect(screen.getTextContent()).toContain(expectedStatusKey);
+        expect(spokenText(screen)).toContain(expectedStatusKey);
         expect(screen.getTextContent()).not.toContain('status.readyForReview');
-    });
-
-    it('composes the canonical paused work headline into the status line', async () => {
-        const now = Date.now();
-        const session: Session = {
-            ...createSession('sess_paused_headline'),
-            encryptionMode: 'plain' as const,
-            activeAt: now,
-            metadata: { path: "/project", host: "test-host", sessionWorkStateV1: {
-                v: 1, backendId: 'codex', updatedAt: now,
-                items: [{ id: 'paused', kind: 'task', origin: 'vendor', status: 'paused', title: 'Review migration', updatedAt: now }],
-            } },
-        };
-        const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
-        expect(getSessionStatus(session, now).awareness.currentWork?.title).toBe('Review migration');
-        const SessionItem = await importSessionItem();
-        const screen = await renderScreen(<SessionItem
-            session={session}
-            rowViewModel={createSessionItemRowViewModel({
-                session,
-                overrides: { sessionStatus: getSessionStatus(session, now), secondaryLineMode: 'status' },
-            })}
-            serverId="server_a" pinned={false} selected={false}
-            variant="default" secondaryLineMode="status" compact={false}
-        />);
-        expect(screen.getTextContent()).toContain('Review migration');
     });
 
     it('uses row-model blocked pending count when the provided session omits it', async () => {
@@ -1458,15 +1393,13 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('status.actionRequired');
+        expect(spokenText(screen)).toContain('status.actionRequired');
         expect(screen.findByTestId(
-            'session-list-attention-indicator-sess_row_model_overlay_blocked_pending-secondary-action_required',
+            'session-list-attention-indicator-sess_row_model_overlay_blocked_pending-trailing-action_required',
         )).toBeTruthy();
     });
 
@@ -1507,14 +1440,12 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="status"
                 compact={false}
             />,
         );
 
         expect(screen.findAllByTestId(
-            'session-list-attention-indicator-sess_row_model_overlay_blocked_pending_zero-secondary-action_required',
+            'session-list-attention-indicator-sess_row_model_overlay_blocked_pending_zero-trailing-action_required',
         )).toHaveLength(0);
     });
 
@@ -1585,91 +1516,8 @@ describe('SessionItem activity time', () => {
 
         expect(screen.getTextContent()).not.toContain('status.actionRequired');
         expect(screen.findByTestId(
-            'session-list-attention-indicator-sess_action_overlay-secondary-action_required',
+            'session-list-attention-indicator-sess_action_overlay-trailing-action_required',
         )).toBeNull();
-    });
-
-    it('uses start-side overflow ellipsis for path subtitles on web without reordering the path', async () => {
-        mockSessionStatus = createStatusFixture({
-            ...defaultSessionStatus,
-            state: 'waiting',
-            statusText: 'Online',
-            shouldShowStatus: false,
-            isPulsing: false,
-        });
-        platformOs = 'web';
-        const SessionItem = await importSessionItem();
-        const sessionPath = '~/Documents/Development/happier/dev';
-
-        const screen = await renderScreen(
-            <SessionItem
-                session={createSession('sess_path_web')}
-                subtitleOverride={sessionPath}
-                secondaryLineMode="path"
-                serverId="server_a"
-                pinned={false}
-                selected={false}
-                variant="default"
-                compact={false}
-            />,
-        );
-
-        const outerSubtitle = screen.root.findAll((node) => {
-            const style = flattenStyle(node.props?.style);
-            return String(node.type) === 'Text'
-                && node.props.numberOfLines === 1
-                && style.writingDirection === 'rtl';
-        })[0];
-        const innerSubtitle = screen.root.findAll((node) =>
-            String(node.type) === 'Text'
-            && node.props.children === sessionPath,
-        )[0];
-
-        expect(screen.getTextContent()).toContain(sessionPath);
-        expect(outerSubtitle).toBeTruthy();
-        expect(innerSubtitle).toBeTruthy();
-        expect(flattenStyle(outerSubtitle?.props.style)).toMatchObject({
-            writingDirection: 'rtl',
-            textAlign: 'left',
-        });
-        expect(flattenStyle(innerSubtitle?.props.style)).toMatchObject({
-            writingDirection: 'ltr',
-            unicodeBidi: 'isolate',
-        });
-    });
-
-    it('uses native head ellipsis for path subtitles outside web', async () => {
-        mockSessionStatus = createStatusFixture({
-            ...defaultSessionStatus,
-            state: 'waiting',
-            statusText: 'Online',
-            shouldShowStatus: false,
-            isPulsing: false,
-        });
-        platformOs = 'ios';
-        const SessionItem = await importSessionItem();
-        const sessionPath = '~/Documents/Development/happier/dev';
-
-        const screen = await renderScreen(
-            <SessionItem
-                session={createSession('sess_path_native')}
-                subtitleOverride={sessionPath}
-                secondaryLineMode="path"
-                serverId="server_a"
-                pinned={false}
-                selected={false}
-                variant="default"
-                compact={false}
-            />,
-        );
-
-        const subtitle = screen.root.findAll((node) =>
-            String(node.type) === 'Text'
-            && node.props.children === sessionPath
-            && node.props.numberOfLines === 1,
-        )[0];
-
-        expect(subtitle?.props.ellipsizeMode).toBe('head');
     });
 
     it('shows the working indicator instead of only path and time in date-grouped rows', async () => {
@@ -1687,17 +1535,15 @@ describe('SessionItem activity time', () => {
                     thinkingAt: Date.now(),
                 }}
                 subtitleOverride={sessionPath}
-                secondaryLineMode="path"
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
 
-        expect(screen.findByTestId('session-row-attention-indicator-spinner-sess_date_working-secondary')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('Working on it');
+        expect(screen.findByTestId('session-row-attention-indicator-spinner-sess_date_working-trailing')).toBeTruthy();
+        expect(spokenText(screen)).toContain('Working on it');
         expect(screen.getTextContent()).not.toContain(sessionPath);
     });
 
@@ -1721,8 +1567,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                variant="default"
-                secondaryLineMode="path"
                 compact
                 compactMinimal
             />,

@@ -226,7 +226,6 @@ describe('SessionItem context menu press suppression', () => {
                 session={session}
                 serverId={account.serverId}
                 selected={false}
-                variant="default"
                 compact={false}
                 nativeContextMenuOpen={false}
                 onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
@@ -243,7 +242,6 @@ describe('SessionItem context menu press suppression', () => {
                     session={session}
                     serverId={account.serverId}
                     selected={false}
-                    variant="default"
                     compact={false}
                     nativeContextMenuOpen={true}
                     onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
@@ -279,7 +277,7 @@ describe('SessionItem context menu press suppression', () => {
             const [open, setOpen] = React.useState(true);
             reopenMenu = () => setOpen(true);
             return <SessionItem session={session} serverId={account.serverId} selected={false}
-                variant="default" compact={false} nativeContextMenuOpen={open}
+            compact={false} nativeContextMenuOpen={open}
                 onNativeContextMenuOpenChange={setOpen} />;
         }
         const screen = await renderScreen(<CopyRow />);
@@ -370,7 +368,6 @@ describe('SessionItem context menu press suppression', () => {
                 session={rowSession}
                 serverId={account.serverId}
                 selected={false}
-                variant="default"
                 compact={false}
                 nativeContextMenuOpen={true}
                 onNativeContextMenuOpenChange={vi.fn()}
@@ -424,7 +421,6 @@ describe('SessionItem context menu press suppression', () => {
             <SessionItem
                 session={session}
                 selected={false}
-                variant="default"
                 compact={false}
                 nativeContextMenuOpen={false}
                 onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
@@ -436,7 +432,6 @@ describe('SessionItem context menu press suppression', () => {
                 <SessionItem
                     session={session}
                     selected={false}
-                    variant="default"
                     compact={false}
                     nativeContextMenuOpen={true}
                     onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
@@ -491,7 +486,6 @@ describe('SessionItem context menu press suppression', () => {
                 session={session}
                 serverId={account.home.id}
                 selected={false}
-                variant="default"
                 compact={false}
                 dragEnabled
                 nativeContextMenuOpen={true}
@@ -523,7 +517,6 @@ describe('SessionItem context menu press suppression', () => {
                 session={session}
                 serverId={account.serverId}
                 selected={false}
-                variant="default"
                 compact={false}
                 dragEnabled
                 isBeingDragged={true}
@@ -540,7 +533,6 @@ describe('SessionItem context menu press suppression', () => {
                     session={session}
                     serverId={account.serverId}
                     selected={false}
-                    variant="default"
                     compact={false}
                     dragEnabled
                     isBeingDragged={false}
@@ -589,7 +581,6 @@ describe('SessionItem context menu press suppression', () => {
             <SessionItem
                 session={session}
                 selected={false}
-                variant="default"
                 compact={false}
                 dragEnabled={false}
                 nativeContextMenuOpen={false}
@@ -643,7 +634,6 @@ describe('SessionItem context menu press suppression', () => {
             <SessionItem
                 session={session}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -680,7 +670,6 @@ describe('SessionItem context menu press suppression', () => {
             <SessionItem
                 session={session}
                 selected={false}
-                variant="default"
                 compact={false}
                 nativeContextMenuOpen={true}
                 onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
@@ -718,7 +707,6 @@ describe('SessionItem context menu press suppression', () => {
                     serverId={account.serverId}
                     selectionKey={selectionKey}
                     selected={false}
-                    variant="default"
                     compact={false}
                 />
             </SessionListSelectionProvider>,
@@ -753,7 +741,6 @@ describe('SessionItem context menu press suppression', () => {
                     serverId={account.serverId}
                     selectionKey={selectionKey}
                     selected={false}
-                    variant="default"
                     compact={false}
                 />
             </SessionListSelectionProvider>,
@@ -836,7 +823,6 @@ describe('SessionItem context menu press suppression', () => {
                 session={session}
                 serverId={account.serverId}
                 selected={false}
-                variant="default"
                 compact={false}
                 forkActionContext={{
                     settings: {},

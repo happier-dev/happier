@@ -36,7 +36,7 @@ import { getTagsForSession, sessionTagKey } from './sessionTagUtils';
 import { resolveSessionListRowContext, type SessionListRowContextFacts, type SessionListRowParentContextFacts } from '@/sync/domains/session/listing/sessionListRowContext';
 import { projectGroupIdentityKey, readSessionListProjectDisplay, type ProjectGroupDisplay } from '@/sync/domains/workspaces/projectGroupDisplay';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import type { SessionListIdentityDisplay } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { SessionCollectionRowDetails, SessionListIdentityDisplay } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 import {
     readExternalAgentObservationPresentationInput,
@@ -158,6 +158,9 @@ export type SessionListRowContextPresentation = Readonly<{
     /** Project and checkout for assistive technology, even when visual context is off. */
     accessibleLabel: string;
     statusWords: boolean;
+    /** Row details (View › Row details): whether the now line and the count draw (lab ideas-1118-shell scene 7). */
+    currentWork: boolean;
+    progress: boolean;
 }>;
 
 /** Inputs the shared Project display index and the person's View choices supply for every row. */
@@ -170,6 +173,8 @@ export type SessionListRowContextInput = Readonly<{
     statusWords?: boolean;
     /** The device's favicon preference; off leaves every row Project mark on its fallback. */
     faviconsEnabled?: boolean;
+    /** The person's Row details, read once by the list (`useSessionCollectionRowDetails`); absent keeps every detail on. */
+    details?: SessionCollectionRowDetails;
 }>;
 
 /** Only the facts this occurrence consumes may cross its mounted row boundary. */
@@ -185,6 +190,10 @@ export type SessionListSelectedRowContextInput = Readonly<{
     rowContextProjectFaviconMachineId: string | null;
     rowContextProjectFaviconWorkspacePath: string | null;
     rowContextStatusWords: boolean;
+    rowDetailCurrentWork: boolean;
+    rowDetailProgress: boolean;
+    rowDetailProject: boolean;
+    rowDetailBranch: boolean;
 }>;
 
 export function selectSessionListRowContextInput(
@@ -207,6 +216,10 @@ export function selectSessionListRowContextInput(
         rowContextProjectFaviconMachineId: projectBaseline?.machineId ?? null,
         rowContextProjectFaviconWorkspacePath: projectBaseline?.rootPath ?? null,
         rowContextStatusWords: context.statusWords === true,
+        rowDetailCurrentWork: context.details?.currentWork !== false,
+        rowDetailProgress: context.details?.progress !== false,
+        rowDetailProject: context.details ? context.details.project : context.enabled,
+        rowDetailBranch: context.details ? context.details.branch : context.enabled,
     };
 }
 
@@ -286,7 +299,8 @@ function buildRowContextPresentation(input: Readonly<{
     const baseline = input.context.rowContextBaseline;
     const resolved = resolveSessionListRowContext({ facts: input.facts, groupProject,
         groupFallbackKey: input.context.rowContextGroupFallbackKey, baseline, parent: input.parent,
-        identityDisplay: input.context.rowContextIdentityDisplay, enabled: input.context.rowContextEnabled });
+        identityDisplay: input.context.rowContextIdentityDisplay,
+        enabled: input.context.rowDetailProject || input.context.rowDetailBranch });
     const projectTitle = input.context.rowContextProjectTitle;
     const branch = input.facts.branch;
     const inOwnGroup = (groupProject !== null && input.facts.project !== null
@@ -309,7 +323,7 @@ function buildRowContextPresentation(input: Readonly<{
         leadingMark: resolved.identity.leadingMark,
         leadingMarkShowsProject: resolved.identity.leadingMarkShowsProject,
         projectPlacement: resolved.identity.projectPlacement,
-        project: resolved.identity.showProjectName && projectTitle
+        project: input.context.rowDetailProject && resolved.identity.showProjectName && projectTitle
             ? { label: projectTitle, yieldsToFavicon: resolved.identity.projectPlacement === 'trailing' }
             : null,
         projectFaviconSource: input.context.rowContextProjectFaviconServerId
@@ -318,9 +332,11 @@ function buildRowContextPresentation(input: Readonly<{
                 machineId: input.context.rowContextProjectFaviconMachineId,
                 workspacePath: input.context.rowContextProjectFaviconWorkspacePath }
             : null,
-        checkout: resolved.showCheckout ? checkout : null,
+        checkout: input.context.rowDetailBranch && resolved.showCheckout ? checkout : null,
         accessibleLabel,
         statusWords: input.context.rowContextStatusWords,
+        currentWork: input.context.rowDetailCurrentWork,
+        progress: input.context.rowDetailProgress,
     };
 }
 

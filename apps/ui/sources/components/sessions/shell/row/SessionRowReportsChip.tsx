@@ -11,18 +11,15 @@ import { Typography } from '@/constants/Typography';
 import { CapacityRing } from '@/components/ui/progress/CapacityRing';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionManagedSessionsPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
-import { readSessionLiveManagedSessionCountV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 import { presentSessionAwarenessStateV1 } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 
 /**
- * The lead row's sub-session chip (ORC §3.8, D-S4; lab `session-H`): what its direct reports are doing,
- * read from the server's awareness `reports` count — never from the rows the list happens to hold.
- *
- * The canonical aggregate status remains visible independently of the count of reports that need
- * the person, including unseen failures and news whose exact count is not projected.
+ * A Session row's progress chip and a lead row's reports disclosure. The count is read from the awareness owner's
+ * projection (and a lead's attention from the server's managed-Session counts), never from the rows the list holds.
  */
 
 /**
@@ -72,70 +69,92 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-/** The chip speaks only while reports are in progress or one of them needs the person or failed (ruling 2026-11-01). */
-export function hasSessionRowReportsChip(reports: Session['managedSessions'] | undefined): boolean {
-    if (!reports) return false;
-    const live = readSessionLiveManagedSessionCountV1(reports);
-    return Math.min(Math.max(0, reports.finished), live) < live
-        || resolveWorkStatusTone({ kind: 'session_reports', facts: { reports, word: '' } }).tone !== 'neutral';
-}
-
 const PROGRESS_RING_PX = 12;
 const PROGRESS_STROKE_PX = 2;
 
+/** A Session's progress as the awareness owner projected it: explicit count > task list > managed Sessions. */
+export type SessionRowProgress = NonNullable<SessionAwarenessProjectionV1['progress']>;
+
+/** The managed Sessions' canonical aggregate status: spoken with the count, drawn (dot) only when it needs the person. */
+function readReportsStatus(reports: Session['managedSessions'] | undefined) {
+    if (!reports) return null;
+    const presentation = readSessionManagedSessionsPresentationV1(reports);
+    return resolveWorkStatusTone({ kind: 'session_reports', facts: {
+        reports,
+        word: presentation.state ? presentSessionAwarenessStateV1(presentation.state).statusText : '',
+    } });
+}
+
+/** Whether managed Sessions need the person or failed: the lead's amber or rose dot and the count waiting on them. */
+function readReportsAttention(reports: Session['managedSessions'] | undefined) {
+    const status = readReportsStatus(reports);
+    return status && status.tone !== 'neutral' ? status : null;
+}
+
+/** The chip's words, label first ("QA, 9 of 24 done"); the row's accessible name carries them too. */
+export function describeSessionRowProgress(progress: SessionRowProgress): string {
+    return t('sessionWork.list.progressA11y', { label: progress.label ?? '', done: progress.done, total: progress.total });
+}
+
+/** Whether a row draws the chip: a projected count, or managed Sessions that need the person or failed. */
+export function hasSessionRowProgressChip(
+    progress: SessionRowProgress | null | undefined,
+    reports: Session['managedSessions'] | undefined,
+): boolean {
+    return Boolean(progress) || readReportsAttention(reports) !== null;
+}
+
 /**
- * A lead row's progress over its sub-sessions (lab `clgroups` coordinator): a small ring and "3/5" while they are
- * in progress, nothing once they have settled (calm ruling 2026-11-01; the count stays in the caret's label and the
- * sub-sessions themselves). Healthy progress stays ink; a sub-session that needs the person or failed adds the
- * amber or rose dot, and the count waiting on them.
+ * A row's one count (lab ideas-1118-shell scene 7; the lead's reports chip, lab `clgroups`, for any Session): a small
+ * ring and "3/7", with the author's short label when it set one ("QA 9/24"). It reads the awareness owner's progress,
+ * so an explicit count, the task list and managed Sessions never show as two counts, and a completed count stays only
+ * while the Session is unread (D1). Not working dims it. A lead whose managed Sessions need the person or failed adds
+ * the amber or rose dot, and the count waiting on them.
  */
-export const SessionRowReportsChip = React.memo((props: Readonly<{
+export const SessionRowProgressChip = React.memo((props: Readonly<{
     sessionId: string;
     occurrenceId?: string;
-    reports: NonNullable<Session['managedSessions']>;
+    progress: SessionRowProgress | null | undefined;
+    runningWorkCount?: SessionAwarenessProjectionV1['runningWorkCount'];
+    reports?: Session['managedSessions'];
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const presentation = readSessionManagedSessionsPresentationV1(props.reports);
-    const status = resolveWorkStatusTone({ kind: 'session_reports', facts: {
-        reports: props.reports,
-        word: presentation.state ? presentSessionAwarenessStateV1(presentation.state).statusText : '',
-    } });
-    const needsYou = props.reports.needsYou;
-    const attention = status.tone !== 'neutral';
-    // Archived reports stay in the lead's record but are not sub-sessions a person can open from here.
-    const liveReports = readSessionLiveManagedSessionCountV1(props.reports);
-    const finished = Math.min(Math.max(0, props.reports.finished), liveReports);
-    const inProgress = finished < liveReports;
-    if (!inProgress && !attention) return null;
+    const { progress } = props;
+    const reportsStatus = readReportsStatus(props.reports);
+    const attention = reportsStatus && reportsStatus.tone !== 'neutral' ? reportsStatus : null;
+    if (!progress && !attention) return null;
+    const needsYou = attention ? props.reports?.needsYou ?? 0 : 0;
     const accessibilityLabel = [
-        status.word,
+        progress ? describeSessionRowProgress(progress) : '',
+        props.runningWorkCount ? t('sessionWork.strip.stillWorking', { count: props.runningWorkCount }) : '',
+        reportsStatus?.word ?? '',
         needsYou > 0 ? t('sessionWork.list.reportsNeedYou', { count: needsYou }) : '',
-        liveReports > 0 ? t('sessionWork.list.reportsDoneA11y', { finished, total: liveReports }) : '',
     ].filter(Boolean).join('. ');
     return (
         <View
-            testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`}
+            testID={`session-row-progress-chip:${props.occurrenceId ?? props.sessionId}`}
             accessible
             accessibilityLabel={accessibilityLabel}
             style={styles.chip}
         >
-            {inProgress ? (
+            {progress ? (
                 <>
                     <CapacityRing
                         size={PROGRESS_RING_PX}
                         strokeWidth={PROGRESS_STROKE_PX}
-                        ratio={finished / liveReports}
-                        color={theme.colors.text.secondary}
+                        ratio={progress.total > 0 ? Math.min(1, progress.done / progress.total) : 0}
+                        color={progress.dim ? theme.colors.text.tertiary : theme.colors.text.secondary}
                         trackColor={theme.colors.border.default}
                     />
+                    {progress.label ? <Text numberOfLines={1} style={styles.total}>{progress.label}</Text> : null}
                     <Text numberOfLines={1} style={styles.total}>
-                        {`${finished}/${liveReports}`}
+                        {`${progress.done}/${progress.total}`}
                     </Text>
                 </>
             ) : null}
-            {attention ? <StatusDot color={workStatusGlyphColor(theme.colors, status.tone)} size={7} /> : null}
-            {attention && needsYou > 0 ? <Text style={styles.needsYou}>{needsYou}</Text> : null}
+            {attention ? <StatusDot color={workStatusGlyphColor(theme.colors, attention.tone)} size={7} /> : null}
+            {needsYou > 0 ? <Text style={styles.needsYou}>{needsYou}</Text> : null}
         </View>
     );
 });

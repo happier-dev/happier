@@ -39,12 +39,12 @@ export function resolveSessionListIdentityItems(): readonly SessionListViewOptio
     ];
 }
 
-/** Row density, from the roomiest to the most compact. */
+/** Lines 1 | 2 | 3 (lab ideas-1118-shell scene 7), the stored density narrow | cozy | detailed. */
 export function resolveSessionListDensityItems(): readonly SessionListViewOptionDescriptor[] {
     return [
-        { id: 'density:detailed', title: t('settingsAppearance.sessionListDensity.detailed') },
-        { id: 'density:cozy', title: t('settingsAppearance.sessionListDensity.cozy') },
         { id: 'density:narrow', title: t('settingsAppearance.sessionListDensity.narrow') },
+        { id: 'density:cozy', title: t('settingsAppearance.sessionListDensity.cozy') },
+        { id: 'density:detailed', title: t('settingsAppearance.sessionListDensity.detailed') },
     ];
 }
 

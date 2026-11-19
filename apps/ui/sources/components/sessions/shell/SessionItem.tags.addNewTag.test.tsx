@@ -111,7 +111,6 @@ describe('SessionItem tags (new tag)', () => {
                 serverName="Server A"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
                 tagsEnabled={true}
                 tags={[]}

@@ -15126,6 +15126,8 @@ const zhHans: typeof en = {
         reportsWorking: ({ count }) => `${count} 个进行中`,
         reportsNeedYou: ({ count }) => `${count} 个子会话需要你`,
         reportsDoneA11y: ({ finished, total }) => `${total} 个子会话中已完成 ${finished} 个`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}，${total} 项中已完成 ${done} 项` : `${total} 项中已完成 ${done} 项`),
+        noteAge: ({ age }) => `${age}前`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => `同时归档 ${count} 个子会话`,

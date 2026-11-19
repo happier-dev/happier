@@ -952,7 +952,7 @@ describe('Bots roster', () => {
       <BotsPopoverContent close={() => {}} maxHeight={520} />
     </InjectedAuthProvider>);
     await flushHookEffects({ cycles: 3 });
-    expect(screen.findByTestId('session-row-reports-chip:lead-bot')).not.toBeNull();
+    expect(screen.findByTestId('session-row-progress-chip:lead-bot')).not.toBeNull();
     expect(screen.getTextContent()).toContain('9');
     expect(screen.findByTestId('session-list-item-child-session')).toBeNull();
     expect(screen.findByTestId('session-list-item-child-bot')).toBeNull();
@@ -990,9 +990,9 @@ describe('Bots roster', () => {
     </InjectedAuthProvider>);
     await flushHookEffects({ cycles: 3 });
     expect(screen.findByTestId('session-row-reports-disclosure:archived-only-bot')).toBeNull();
-    expect(screen.findByTestId('session-row-reports-chip:archived-only-bot')).toBeNull();
+    expect(screen.findByTestId('session-row-progress-chip:archived-only-bot')).toBeNull();
     expect(screen.findByTestId('session-row-reports-disclosure:mixed-bot')).not.toBeNull();
-    expect(screen.findByTestId('session-row-reports-chip:mixed-bot')).not.toBeNull();
+    expect(screen.findByTestId('session-row-progress-chip:mixed-bot')).not.toBeNull();
     expect(screen.getTextContent()).toContain('2');
     expect(screen.getTextContent()).not.toContain('3');
   });

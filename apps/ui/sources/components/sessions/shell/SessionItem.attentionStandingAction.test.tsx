@@ -112,7 +112,6 @@ async function renderRow(params: Readonly<{
                 serverId={SERVER_ID}
                 currentUserId="u1"
                 selected={false}
-                variant="default"
                 compact={false}
             />
         </InjectedAuthProvider>,

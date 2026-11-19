@@ -120,7 +120,6 @@ describe('SessionItem desktop carry (E1)', () => {
                 serverName="Server A"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
                 dragEnabled
             />,

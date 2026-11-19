@@ -15243,6 +15243,8 @@ const ca: typeof en = {
         reportsWorking: ({ count }) => `${count} treballant`,
         reportsNeedYou: ({ count }) => (count === 1 ? '1 subsessió et necessita' : `${count} subsessions et necessiten`),
         reportsDoneA11y: ({ finished, total }) => `${finished} de ${total} subsessions fetes`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}, ${done} de ${total} fets` : `${done} de ${total} fets`),
+        noteAge: ({ age }) => `fa ${age}`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => (count === 1 ? 'Arxiva també 1 subsessió' : `Arxiva també ${count} subsessions`),

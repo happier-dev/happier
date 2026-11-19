@@ -149,7 +149,7 @@ describe('SessionItem pin hover affordance (web)', () => {
         const screen = await renderScreen(
             <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={[selectionKey]} store={store}>
                 <ModelBackedSessionItem session={createSession('sess_1')} serverId="server_a" selectionKey={selectionKey}
-                    pinned={false} onTogglePinned={vi.fn()} selected={false} variant="default" compact={false} />
+                    pinned={false} onTogglePinned={vi.fn()} selected={false} compact={false} />
             </SessionListSelectionProvider>,
         );
         const row = findSessionRow(screen, 'sess_1');

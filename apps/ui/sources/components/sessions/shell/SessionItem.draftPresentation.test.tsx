@@ -124,8 +124,7 @@ describe('SessionItem existing-session draft presentation', () => {
             <SessionItem session={session} rowViewModel={rowViewModel} onDeleteDraft={onDeleteDraft} draftPreview={draftPreview} />,
         );
 
-        expect(screen.findByTestId('session-list-draft-indicator:session-draft-row')?.props.accessibilityLabel)
-            .toBe('Draft, Fix the flaky release test');
+        expect(screen.findByTestId('session-list-item-session-draft-row')?.props.accessibilityLabel).toContain('Draft');
         expect(screen.findByTestId('session-list-draft-preview:session-draft-row')?.props.children)
             .toBe('Draft · Fix the flaky release test');
 

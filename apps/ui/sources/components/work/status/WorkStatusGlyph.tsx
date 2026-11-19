@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
-import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { WORK_STATUS_WORKING_SPINNER_VARIANT, workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 
 /**
  * The row's status slot (lab `clstatus`): a 14 px glyph column, reserved so glyphs, words and times share one
@@ -79,6 +79,7 @@ export const WorkStatusGlyph = React.memo(function WorkStatusGlyph(props: Readon
                         size={WORKING_SPINNER_SIZE}
                         color={color}
                         animationEnabled={props.animationEnabled !== false}
+                        variant={WORK_STATUS_WORKING_SPINNER_VARIANT}
                     />
                 ) : (
                     <StatusDot

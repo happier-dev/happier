@@ -143,6 +143,8 @@ export const en = {
         reportsWorking: ({ count }: { count: number }) => `${count} working`,
         reportsNeedYou: ({ count }: { count: number }) => (count === 1 ? '1 sub-session needs you' : `${count} sub-sessions need you`),
         reportsDoneA11y: ({ finished, total }: { finished: number; total: number }) => `${finished} of ${total} sub-sessions done`,
+        progressA11y: ({ label, done, total }: { label: string; done: number; total: number }) => (label ? `${label}, ${done} of ${total} done` : `${done} of ${total} done`),
+        noteAge: ({ age }: { age: string }) => `${age} ago`,
     },
     archive: {
         alsoArchiveReports: ({ count }: { count: number }) => (count === 1 ? 'Also archive 1 sub-session' : `Also archive ${count} sub-sessions`),

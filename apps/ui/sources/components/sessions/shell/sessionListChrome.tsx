@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { SESSION_COLLECTION_ROW_DETAILS, useSessionCollectionRowDetailWriter, useSessionCollectionRowDetails } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -154,6 +155,13 @@ function useMeasuredDropTargetRegistration(params: Readonly<{
 const SESSION_LIST_ORGANIZE_MENU_ITEM_ID = 'organize';
 const SESSION_LIST_NEW_SECTION_MENU_ITEM_ID = 'newSection';
 const SESSION_LIST_FILTER_MENU_ITEM_ID = 'filter';
+const SESSION_LIST_ROW_DETAIL_MENU_PREFIX = 'detail:';
+/**
+ * The details a Session row can draw today. Machine, Pull request and Changes stay in the declaration but out of the
+ * menu until the row has those facts, so no switch changes nothing.
+ */
+const SESSION_LIST_VIEW_ROW_DETAILS = SESSION_COLLECTION_ROW_DETAILS.filter((detail) =>
+    detail.id === 'currentWork' || detail.id === 'progress' || detail.id === 'project' || detail.id === 'branch');
 const SESSION_LIST_SETTINGS_MENU_ITEM_ID = 'settings';
 /** The View menu holds whole placement sentences (lab `clfilter:view`) at the menu's own type size. */
 const VIEW_MENU_OVERLAY_STYLE = { minWidth: 300 } as const;
@@ -169,7 +177,8 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
     const router = useRouter();
     const [sessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
     const [sessionListDensity] = useSettingMutable('sessionListDensity');
-    const [sessionListRowContextV1] = useSettingMutable('sessionListRowContextV1');
+    const rowDetails = useSessionCollectionRowDetails();
+    const writeRowDetail = useSessionCollectionRowDetailWriter();
     const [sessionListStatusWords] = useSettingMutable('sessionListStatusWords');
     const { theme } = useUnistyles();
     const [sessionListAttentionPlacementV1] = useSettingMutable('sessionListAttentionPlacementV1');
@@ -202,12 +211,24 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
     const rowsCategory = t('settingsSession.sessionList.rowsTitle');
     const menuItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
         const selectedIdentity = identityItems.find((item) => item.id === `identity:${sessionListIdentityDisplay}`) ?? identityItems[0]!;
-        const selectedDensity = densityItems.find((item) => item.id === `density:${sessionListDensity}`) ?? densityItems[densityItems.length - 1]!;
+        const selectedDensity = densityItems.find((item) => item.id === `density:${sessionListDensity}`) ?? densityItems[0]!;
         return [
             ...withSelection(presentation.layoutItems, `layout:${presentation.selectedLayout}`,
                 t('settingsSession.sessionList.viewTitle')),
             ...withSelection(presentation.attentionItems, `attention:${presentation.selectedAttentionPlacement}`,
                 t('settingsSession.sessionList.attentionPlacementTitle')),
+            // Lines 1 · 2 · 3 above Row details: the shared segmented row (lab ideas-1118-shell scene 7, Decision A).
+            {
+                id: 'menu:lines',
+                testID: 'session-list-view-lines',
+                title: t('settingsSession.sessionList.densityMenuTitle'),
+                // Heads the Row details section: one "Lines" label, not a section title repeating its only row.
+                category: rowsCategory,
+                segments: {
+                    options: densityItems.map((item, index) => ({ id: item.id, label: String(index + 1) })),
+                    selectedId: selectedDensity.id,
+                },
+            },
             {
                 id: 'menu:identity',
                 testID: 'session-list-view-identity',
@@ -216,27 +237,22 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 rightElement: <View style={styles.viewMenuValue}><Text style={styles.viewMenuValueText}>{selectedIdentity.title}</Text><Icon name="caret-right" size={14} color={actionIconColor} /></View>,
                 submenu: { items: withSelection(identityItems, selectedIdentity.id, ''), placement: 'right' },
             },
-            {
-                id: `rowContext:${sessionListRowContextV1 === false ? 'true' : 'false'}`,
-                testID: 'session-list-view-row-context',
-                title: t('settingsSession.sessionList.rowContextTitle'),
+            // One switch per detail the row can draw (lab ideas-1118-shell scene 7), from the declaration Settings uses.
+            ...SESSION_LIST_VIEW_ROW_DETAILS.map((detail) => ({
+                id: `${SESSION_LIST_ROW_DETAIL_MENU_PREFIX}${detail.id}`,
+                testID: `session-list-view-detail-${detail.id}`,
+                title: t(detail.labelKey),
                 category: rowsCategory,
-                checked: sessionListRowContextV1 !== false,
-            },
+                checked: rowDetails[detail.id],
+                multiSelect: true,
+            })),
             {
                 id: `statusWords:${sessionListStatusWords === true ? 'false' : 'true'}`,
                 testID: 'session-list-view-status-words',
                 title: t('settingsSession.sessionList.statusWordsTitle'),
                 category: rowsCategory,
                 checked: sessionListStatusWords === true,
-            },
-            {
-                id: 'menu:density',
-                testID: 'session-list-view-density',
-                title: t('settingsSession.sessionList.densityMenuTitle'),
-                category: rowsCategory,
-                rightElement: <View style={styles.viewMenuValue}><Text style={styles.viewMenuValueText}>{selectedDensity.title}</Text><Icon name="caret-right" size={14} color={actionIconColor} /></View>,
-                submenu: { items: withSelection(densityItems, selectedDensity.id, ''), placement: 'right' },
+                multiSelect: true,
             },
             // A new section is named in place, where it lands (lab `clsections:custom`).
             ...(openNewSection ? [{
@@ -267,7 +283,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
             },
         ];
     }, [actionIconColor, densityItems, identityItems, openNewSection, organize.available, presentation, props.onOpenFilter, rowsCategory,
-        sessionListDensity, sessionListIdentityDisplay, sessionListRowContextV1, sessionListStatusWords, styles.viewMenuValue, styles.viewMenuValueText, withSelection]);
+        rowDetails, sessionListDensity, sessionListIdentityDisplay, sessionListStatusWords, styles.viewMenuValue, styles.viewMenuValueText, withSelection]);
 
     const handleMenuSelect = React.useCallback(async (itemId: string) => {
         if (itemId === SESSION_LIST_ORGANIZE_MENU_ITEM_ID) {
@@ -291,12 +307,19 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
             return;
         }
         if (itemId.startsWith('menu:')) return;
+        if (itemId.startsWith(SESSION_LIST_ROW_DETAIL_MENU_PREFIX)) {
+            const detail = SESSION_LIST_VIEW_ROW_DETAILS.find((entry) => `${SESSION_LIST_ROW_DETAIL_MENU_PREFIX}${entry.id}` === itemId);
+            if (detail) writeRowDetail(detail.id, !rowDetails[detail.id]);
+            return;
+        }
         if (!await applyViewOption(itemId)) return;
+        // A Lines segment keeps the menu open, so the change shows behind it.
+        if (itemId.startsWith('density:')) return;
         // An explicit layout choice retires the host's opening intent, so the
         // choice applies here and now instead of only after leaving the route.
         if (itemId.startsWith('layout:')) yieldLayoutIntent();
         setMenuOpen(false);
-    }, [applyViewOption, openNewSection, organize, props, router, yieldLayoutIntent]);
+    }, [applyViewOption, openNewSection, organize, props, router, rowDetails, writeRowDetail, yieldLayoutIntent]);
     const headerControl = useHeaderControlMetrics(SESSION_LIST_HEADER_CONTROL);
 
     return (

@@ -12,8 +12,9 @@ import { shouldUseTouchCompactRow } from '@/components/ui/lists/collection/Colle
 
 /**
  * The Session list's density adapter over the shared work-row metrics (`HAPPIER_COLLECTION_ROW_METRICS`, the one
- * geometry owner). The Account preference (`narrow | cozy | detailed`) maps once to a row density here; rows,
- * previews and the shell's width floor read the shared values through it.
+ * geometry owner). The Account preference (`narrow | cozy | detailed`) is the row's Lines (1 | 2 | 3, lab
+ * ideas-1118-shell scene 7): rows draw the one-line anatomy and Lines 2 and 3 add detail lines; previews and the
+ * shell's width floor read the shared values through it.
  */
 export type SessionListRowPlatform = 'ios' | 'android' | 'web' | 'windows' | 'macos';
 export type SessionListRowDensity = 'default' | 'compact' | 'minimal';
@@ -106,16 +107,35 @@ function scaleRowHeight(height: number, uiFontScale: number | undefined): number
     return scale > 1.1 ? Math.ceil(height * scale) : height;
 }
 
+/**
+ * Lines 2 and 3 draw the one-line row plus the detail lines it has to say (lab ideas-1118-shell scene 7); a row is
+ * measured once drawn, so the estimate is the common case: one detail line.
+ */
+function linedRowEstimate(touch: boolean): number {
+    const line = HAPPIER_COLLECTION_ROW_METRICS.detailLine;
+    return resolveHappierCollectionRowHeight('compact', touch) + line.minHeight + line.gap;
+}
+
 const SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT: SessionListDensityViewState = Object.freeze({
     compact: false,
     compactMinimal: false,
-    rowHeight: resolveHappierCollectionRowHeight('detailed'),
+    rowHeight: linedRowEstimate(false),
 });
 
 const SESSION_LIST_DENSITY_VIEW_STATE_COMPACT: SessionListDensityViewState = Object.freeze({
     compact: true,
     compactMinimal: false,
-    rowHeight: resolveHappierCollectionRowHeight('comfortable'),
+    rowHeight: linedRowEstimate(false),
+});
+
+const SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT_TOUCH: SessionListDensityViewState = Object.freeze({
+    ...SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT,
+    rowHeight: linedRowEstimate(true),
+});
+
+const SESSION_LIST_DENSITY_VIEW_STATE_COMPACT_TOUCH: SessionListDensityViewState = Object.freeze({
+    ...SESSION_LIST_DENSITY_VIEW_STATE_COMPACT,
+    rowHeight: linedRowEstimate(true),
 });
 
 const SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL: SessionListDensityViewState = Object.freeze({
@@ -152,9 +172,10 @@ export function resolveSessionListDensityViewState(
         return scale(SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL);
     }
 
+    const touch = shouldUseReadablePhoneMinimalSessionRow(options);
     if (sessionListDensity === 'cozy') {
-        return scale(SESSION_LIST_DENSITY_VIEW_STATE_COMPACT);
+        return scale(touch ? SESSION_LIST_DENSITY_VIEW_STATE_COMPACT_TOUCH : SESSION_LIST_DENSITY_VIEW_STATE_COMPACT);
     }
 
-    return scale(SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT);
+    return scale(touch ? SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT_TOUCH : SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT);
 }

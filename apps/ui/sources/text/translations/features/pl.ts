@@ -15270,6 +15270,8 @@ const pl: typeof en = {
         reportsWorking: ({ count }) => `${count} pracuje`,
         reportsNeedYou: ({ count }) => `Podsesje czekające na Ciebie: ${count}`,
         reportsDoneA11y: ({ finished, total }) => `Gotowe: ${finished} z ${total} podsesji`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}, ${done} z ${total} gotowe` : `${done} z ${total} gotowe`),
+        noteAge: ({ age }) => `${age} temu`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => `Zarchiwizuj też podsesje (${count})`,

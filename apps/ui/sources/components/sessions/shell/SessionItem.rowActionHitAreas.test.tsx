@@ -71,7 +71,7 @@ describe('SessionItem Bot roster row action hit areas', () => {
         // A native phone: a finger's 44 px target is what the hit areas would reach for.
         const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
             <ModelBackedSessionItem session={createBotSession('bot_1')} serverId="server_a"
-                selected={false} variant="default" compact embedded showTalkAction actionMenuSurface="botsRoster"
+                selected={false} compact embedded showTalkAction actionMenuSurface="botsRoster"
                 tagsEnabled onSetTags={vi.fn()} onTogglePinned={vi.fn()} />
         </HappierUiPlatformProvider>);
         const reads = await Promise.all(ACTION_IDS.map((id) =>

@@ -15142,6 +15142,8 @@ const es: typeof en = {
         reportsWorking: ({ count }) => `${count} trabajando`,
         reportsNeedYou: ({ count }) => (count === 1 ? '1 subsesión te necesita' : `${count} subsesiones te necesitan`),
         reportsDoneA11y: ({ finished, total }) => `${finished} de ${total} subsesiones hechas`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}, ${done} de ${total} hechos` : `${done} de ${total} hechos`),
+        noteAge: ({ age }) => `hace ${age}`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => (count === 1 ? 'Archivar también 1 subsesión' : `Archivar también ${count} subsesiones`),

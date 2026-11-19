@@ -217,7 +217,7 @@ describe('SessionListRow real web gesture', () => {
                 interactions.handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 900) });
             }, [interactions.handleTreeViewportMeasure]);
             return <>{sourceKind === 'session' ? <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
-                serverId={scope.serverId} selected={false} variant="default" compact={false}
+                serverId={scope.serverId} selected={false} compact={false}
                 sessionKey={sessionKey} treeRowId={rowId} groupKey="group" reorderEnabled organizeMode={false}
                 onDragStart={interactions.handleDragStart} onDropResult={interactions.handleTreeDropResult}
                 onDragCancel={interactions.handleDragCancel} resolveDropResult={interactions.resolveDropResult}
@@ -365,7 +365,7 @@ describe('SessionListRow real web gesture', () => {
             <InjectedAuthProvider credentials={{ token: 'test-token' }}>
                 <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
                     onOpened={onOpened}
-                    selected={false} variant="default" compact={false}
+                    selected={false} compact={false}
                     sessionKey="sess_pointer" treeRowId="sess_pointer" groupKey="group" reorderEnabled organizeMode={false}
                     onDragStart={onDragStart} onDropResult={onDropResult} onDragCancel={onDragCancel} resolveDropResult={resolveDropResult}
                     onTogglePinnedSessionKey={null} onSetTagsSessionKey={null} onNativeContextMenuOpenChangeSessionKey={null}

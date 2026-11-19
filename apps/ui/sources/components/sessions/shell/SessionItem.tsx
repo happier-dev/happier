@@ -16,8 +16,6 @@ import {
     View,
     type BlurEvent,
     type GestureResponderEvent,
-    type StyleProp,
-    type ViewStyle,
     type LayoutChangeEvent,
 } from 'react-native';
 import {
@@ -37,10 +35,6 @@ import {
 } from '@/components/ui/text/Text';
 import { SessionRowActivityTime } from './row/SessionRowActivityTime';
 import {
-    WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
-    WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
-} from '@/components/ui/text/webStartEllipsisTextStyles';
-import {
     getAgentCore,
     } from '@/agents/catalog/catalog';
 import { Typography } from '@/constants/Typography';
@@ -51,7 +45,6 @@ import { createCollectionSessionRequestRef } from '@/components/ui/lists/collect
 import { CollectionRequestPeek } from '@/components/ui/lists/collection/CollectionRequestPeek';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
-import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useWorkspaceOpenActions } from '@/components/appShell/workspace/useWorkspaceOpenActions';
@@ -60,12 +53,11 @@ import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntity
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { t } from '@/text';
 import { hasSessionListUnreadAttention } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
-import {
-    type SessionListSecondaryLineMode,
-} from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { getSessionSubtitle, getSessionStatus, type SessionStatus } from '@/utils/sessions/sessionUtils';
+import { getSessionStatus, presentSessionAwarenessNowLineV1, type SessionStatus } from '@/utils/sessions/sessionUtils';
+import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
+import type { HappierCollectionRowContentProps } from '@happier-dev/plugin-ui/presentation';
 import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
@@ -83,7 +75,8 @@ import {
 } from './row/sessionRowTitleColorRole';
 import { WorkStatusRowMark, WorkStatusRowWord } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMarkModel';
-import { SessionRowReportsChip, SessionRowReportsDisclosure, hasSessionRowReportsChip } from './row/SessionRowReportsChip';
+import { SessionRowProgressChip, SessionRowReportsDisclosure, describeSessionRowProgress, hasSessionRowProgressChip } from './row/SessionRowReportsChip';
+import { SessionRowLineText } from './row/SessionRowLineText';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { CollectionRowBadge, CollectionRowBadges, CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 import { WorkflowRunItemBody, type WorkflowRunItemProps } from './row/WorkflowRunItemBody';
@@ -94,7 +87,6 @@ import {
     resolveCollectionRowDensity,
     resolveSessionListRowIdentityMetrics,
     SESSION_LIST_ROW_IDENTITY_METRICS,
-    resolveSessionListRowStatusTextMetrics,
 } from './resolveSessionListDensityViewState';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
 import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
@@ -207,8 +199,6 @@ type SessionItemActiveColorMode = 'activityAndAttention' | 'attentionOnly' | 'al
 export type SessionItemBaseProps = Readonly<{
     embedded?: boolean;
     session: Session | SessionListRenderableSession;
-    subtitleOverride?: string | null;
-    subtitleEllipsizeMode?: 'head' | 'tail';
     serverId?: string;
     serverName?: string;
     currentUserId?: string | null;
@@ -227,8 +217,6 @@ export type SessionItemBaseProps = Readonly<{
     /** The row is the Needs you shelf's mirror: its heading already says so, so the opt-in highlight stays off. */
     inAttentionShelf?: boolean;
     selected?: boolean;
-    variant?: 'default' | 'no-path';
-    secondaryLineMode?: SessionListSecondaryLineMode;
     compact?: boolean;
     compactMinimal?: boolean;
     /** Level under a lead in the `manager` tree (ORC §3.8); 0 or absent draws the row at its own level. */
@@ -263,11 +251,6 @@ export type SessionItemBaseProps = Readonly<{
      * action), in place of the list's tag and pin affordances.
      */
     showTalkAction?: boolean;
-    /**
-     * The Bots roster's rows: an offline Bot's age is already its time meta, so the row adds no
-     * "Last seen" line of its own (lab `b-rail A`). A Bot's outcome (an error, ready for review) still speaks; an offline row never claims to be working.
-     */
-    quietWhenOffline?: boolean;
     /** The Bots roster's compact More menu (lab `b-rail M`) instead of the list's. */
     actionMenuSurface?: 'rowMenu' | 'botsRoster';
     /** A Bot row's `botActivity` from the roster's own reading; its face shows it in the mouth. */
@@ -286,11 +269,10 @@ export type SessionItemProps = SessionItemBaseProps & Readonly<{
     hideInactiveSessions?: boolean;
 }>;
 
-type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & Readonly<{
+type SessionItemContentProps = SessionItemBaseProps & Readonly<{
     sessionStatus: SessionStatus;
     externalSessionIdentity: ExternalSessionIdentityPresentation | null;
     sessionNameResolved: string;
-    sessionSubtitle: string;
     isSessionIdentityLoading: boolean;
     /** Last meaningful activity, rendered by the age leaf on the shared clock. */
     activityAt: number | null;
@@ -411,18 +393,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: 0,
         overflow: 'hidden',
     },
-    avatarLoading: {
-        width: SESSION_LIST_ROW_IDENTITY_METRICS.default.slotSize,
-        height: SESSION_LIST_ROW_IDENTITY_METRICS.default.slotSize,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface.skeleton,
-    },
-    avatarLoadingCompact: {
-        width: SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize,
-        height: SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface.skeleton,
-    },
     avatarLoadingMinimal: {
         width: SESSION_LIST_ROW_IDENTITY_METRICS.minimal.slotSize,
         height: SESSION_LIST_ROW_IDENTITY_METRICS.minimal.slotSize,
@@ -435,45 +405,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         backgroundColor: theme.colors.surface.skeleton,
     },
-    pendingCountContainer: {
-        position: 'absolute',
-        top: -4,
-        right: -3,
-        minWidth: 15,
-        height: 15,
-        borderRadius: 999,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.colors.input.background,
-        borderWidth: 1,
-        borderColor: theme.colors.background?.canvas ?? 'transparent',
-    },
-    pendingCountContainerCompact: {
-        top: -3,
-        right: -3,
-        minWidth: 14,
-        height: 14,
-    },
-    pendingCountText: {
-        fontSize: 8,
-        color: theme.colors.text.secondary,
-        ...Typography.default('semiBold'),
-    },
-    draftIconContainer: {
-        position: 'absolute',
-        bottom: -2,
-        right: -2,
-        width: 18,
-        height: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    draftIconContainerCompact: {
-        width: 16,
-        height: 16,
-        bottom: -1,
-        right: -1,
-    },
     reminderIndicator: {
         width: 20,
         height: 20,
@@ -484,37 +415,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 18,
         height: 18,
     },
-    sessionTitleLoading: {
-        width: '68%',
-        height: 14,
-        borderRadius: 7,
-        backgroundColor: theme.colors.surface.elevated,
-    },
-    sessionTitleLoadingCompact: {
-        width: '60%',
-        height: 13,
-        borderRadius: 7,
-        backgroundColor: theme.colors.surface.elevated,
-    },
     sessionTitleLoadingMinimal: {
         width: '56%',
         height: 12,
         borderRadius: 6,
         backgroundColor: theme.colors.surface.elevated,
-    },
-    sessionSubtitleLoading: {
-        width: '46%',
-        height: 10,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface.skeleton,
-        marginTop: 3,
-    },
-    sessionSubtitleLoadingCompact: {
-        width: '42%',
-        height: 9,
-        borderRadius: 999,
-        backgroundColor: theme.colors.surface.skeleton,
-        marginTop: theme.space.s2,
     },
     serverBadgeContainer: {
         borderRadius: 999,
@@ -565,9 +470,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s4,
         marginTop: 3,
     },
-    tagsRowCompact: {
-        marginTop: 1,
-    },
     tagsRowMinimal: {
         marginTop: 0,
     },
@@ -586,11 +488,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         // Ink, not a plane colour: the chip reads on the navigation canvas and on a selected row alike.
         backgroundColor: theme.colors.surface.selected,
         maxWidth: 120,
-    },
-    tagChipCompact: {
-        paddingHorizontal: theme.space.s6,
-        paddingVertical: 1,
-        maxWidth: 110,
     },
     tagChipMinimal: {
         paddingHorizontal: theme.space.s6,
@@ -618,47 +515,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginLeft: theme.space.s8,
         overflow: 'hidden',
     },
-    sessionPathSubtitleWeb: {
-        ...WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
-    },
-    sessionPathSubtitleTextWeb: {
-        ...WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
-    },
-    secondaryLineRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        minHeight: 16,
-        gap: theme.space.s4,
-    },
-    secondaryLineRowMinimal: {
-        minHeight: 12,
-        gap: 3,
-        marginTop: -1,
-    },
-    // As wide as the attention indicator's own slot, so the 16 px working spinner keeps the line's
-    // gap to the status text instead of overhanging it.
-    secondaryStatusDotContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 16,
-        height: 12,
-    },
-    secondaryStatusDotContainerMinimal: {
-        width: 10,
-        height: 12,
-    },
-    statusText: {
-        ...resolveSessionListRowStatusTextMetrics('default'),
-        ...Typography.default(),
-    },
-    statusTextCompact: {
-        ...resolveSessionListRowStatusTextMetrics('compact'),
-    },
     statusTextQuiet: {
         color: theme.colors.text.secondary,
-    },
-    statusTextMinimal: {
-        ...resolveSessionListRowStatusTextMetrics('minimal'),
     },
     // The row's meta: the shared right-aligned tabular column, so times scan down the list.
     activityTime: {
@@ -678,13 +536,18 @@ const stylesheet = StyleSheet.create((theme) => ({
     trailingStatusWord: {
         flexShrink: 0,
     },
+    // A detail line's text (the draft being written): the lines' meta role, yielding to the line's count.
+    detailLineText: {
+        ...Typography.variant('meta'),
+        flexShrink: 1,
+        minWidth: 0,
+    },
 }));
 
 const SessionItemContent = React.memo(
     ({
         embedded,
         session,
-        subtitleEllipsizeMode,
         serverId,
         serverName,
         currentUserId,
@@ -700,8 +563,6 @@ const SessionItemContent = React.memo(
         occurrenceId,
         inAttentionShelf,
         selected,
-        variant,
-        secondaryLineMode,
         compact,
         compactMinimal,
         reportsDepth,
@@ -723,7 +584,6 @@ const SessionItemContent = React.memo(
         onNativeContextMenuOpenChange,
         agentSwitchingEnabled = false,
         showTalkAction = false,
-        quietWhenOffline = false,
         actionMenuSurface = 'rowMenu',
         botActivity,
         onOpened,
@@ -731,7 +591,6 @@ const SessionItemContent = React.memo(
         sessionStatus,
         externalSessionIdentity,
         sessionNameResolved: savedSessionName,
-        sessionSubtitle,
         isSessionIdentityLoading,
         activityAt,
         guardState,
@@ -777,20 +636,9 @@ const SessionItemContent = React.memo(
         const styles = {
             ...stylesheet,
             sessionItemContainer: stylesheet.sessionItemContainer,
-            avatarLoading: [stylesheet.avatarLoading, mutedPaint],
-            avatarLoadingCompact: [stylesheet.avatarLoadingCompact, mutedPaint],
             avatarLoadingMinimal: [stylesheet.avatarLoadingMinimal, mutedPaint],
             avatarLoadingMinimalNativePhone: [stylesheet.avatarLoadingMinimalNativePhone, mutedPaint],
-            sessionTitleLoading: [stylesheet.sessionTitleLoading, mutedPaint],
-            sessionTitleLoadingCompact: [stylesheet.sessionTitleLoadingCompact, mutedPaint],
             sessionTitleLoadingMinimal: [stylesheet.sessionTitleLoadingMinimal, mutedPaint],
-            sessionSubtitleLoading: [stylesheet.sessionSubtitleLoading, insetPaint],
-            sessionSubtitleLoadingCompact: [stylesheet.sessionSubtitleLoadingCompact, insetPaint],
-            // The count sits over the avatar's image, so it keeps a solid fill inside glass to stay legible.
-            pendingCountContainer: [stylesheet.pendingCountContainer, {
-                backgroundColor: materialColor(theme.colors.input.background, undefined, 'solidControl'),
-                borderColor: materialColor(theme.colors.background?.canvas ?? 'transparent', theme.colors.border.default),
-            }],
         };
         const uiFontScale = useLocalSetting('uiFontScale');
         const resolvedSession = session;
@@ -856,7 +704,9 @@ const SessionItemContent = React.memo(
             sessionStatus.isConnected,
         ]);
         const isActiveSession = sessionActionTarget.isActive;
-        const isMinimal = Boolean(compact && compactMinimal);
+        // Lines 1 | 2 | 3, the stored density narrow | cozy | detailed (lab ideas-1118-shell scene 7): every row draws the
+        // one-line title anatomy, and Lines 2 and 3 add detail lines from the leading edge, as tall as what they say.
+        const rowLines: 1 | 2 | 3 = compact ? compactMinimal ? 1 : 2 : 3;
         const canStopSession = sessionActionTarget.canStop;
         const canArchiveSession = sessionActionTarget.canArchive;
         const [isRowHovered, setIsRowHovered] = React.useState(false);
@@ -869,7 +719,7 @@ const SessionItemContent = React.memo(
         const [rowWidth, setRowWidth] = React.useState<number | null>(null);
         const isWeb = Platform.OS === 'web';
         const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
-        const touchCompactRow = useTouchCompactRow(isMinimal);
+        const touchCompactRow = useTouchCompactRow(true);
         // A carried row is a quiet ghost of its place (lab E1 `.dd-src`): its actions can't be used mid-carry.
         // A touch screen has no hover to reveal a Bot roster row's Talk and More, so they stay beside it (lab b-rail Ap).
         // While choosing sessions a row is a choice: no actions over its title (lab list-sel).
@@ -1381,18 +1231,12 @@ const SessionItemContent = React.memo(
             hasUnreadMessages,
             personalAttentionReason: resolvedSession.viewer?.attention.primary,
         }));
-        const pendingCount = resolvedSession.pendingCount ?? 0;
         const pendingBlockedCount = resolvedSession.pendingBlockedCount ?? 0;
-        const pendingBadge = formatPendingCountBadge(pendingCount);
-        const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const sourceTagChips = React.useMemo(() => {
             if (!tagsEnabled || activeTags.length === 0) return [];
             return activeTags.map((tag, index) => ({ key: `${tag}:${index}`, label: tag }));
         }, [activeTags, tagsEnabled]);
-        const fallbackSecondaryLineMode: SessionListSecondaryLineMode = variant === 'no-path' ? 'status' : 'path';
-        const requestedSecondaryLineMode = secondaryLineMode ?? fallbackSecondaryLineMode;
-        const rowDensity = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
-        const collectionRowDensity = resolveCollectionRowDensity(rowDensity);
+        const collectionRowDensity = resolveCollectionRowDensity('minimal');
         const workFacts = sessionWorkStatusFactsFromStatus(resolvedSession, sessionStatus);
         const workStatus = workflowOccurrence?.lifecycle
             ? resolveWorkflowInvocationWorkStatus(workflowOccurrence.lifecycle, workflowOccurrence)
@@ -1400,31 +1244,26 @@ const SessionItemContent = React.memo(
                 kind: 'session',
                 facts: workFacts,
             });
-        const rowContextSubtitle = externalSessionIdentity?.rowMetadataLabel || sessionSubtitle;
-        const currentWorkTitle = workflowOccurrence ? undefined : sessionStatus.awareness.currentWork?.title;
-        const hasWorkHeadline = Boolean(currentWorkTitle)
-            && isSessionAwarenessContentReadableV1(sessionStatus.awareness.encryption);
+        // The row's now line and count, as the awareness owner projected them (note > active task > goal; explicit count >
+        // task list > managed Sessions; a completed count only while unread, D1; a note's own age only when it
+        // predates the latest turn end, D4). A workflow step's row speaks its run instead.
+        // Row details (View › Row details) choose whether these draw; rows outside the Sessions list keep both.
+        const nowLine = workflowOccurrence || rowContext?.currentWork === false
+            ? undefined : presentSessionAwarenessNowLineV1(sessionStatus.awareness);
+        const nowLineIsNote = sessionStatus.awareness.nowLineKind === 'note';
+        const noteSetAt = nowLine && nowLineIsNote ? sessionStatus.awareness.statusReasonSetAt ?? null : null;
+        const rowProgress = workflowOccurrence || rowContext?.progress === false ? null : sessionStatus.awareness.progress ?? null;
+        const runningWorkCount = workflowOccurrence ? undefined : sessionStatus.awareness.runningWorkCount;
         const rowPresentation = resolveSessionRowPresentation({
             status: workStatus,
             requestRef: serverId && workFacts.currentRequestRef
                 ? createCollectionSessionRequestRef({ serverId, sessionId: resolvedSession.id }, workFacts.currentRequestRef)
                 : null,
-            density: rowDensity,
-            requestedSecondaryLineMode,
-            hasPathSubtitle: Boolean(rowContextSubtitle),
-            hasWorkHeadline,
-            quietWhenOffline,
         });
         const rowAttentionState = workStatus.state;
         const attentionIndicatorAnimationEnabled = rowAttentionAnimationEnabled && sessionStatus.isPulsing === true;
         const standingExplanation = attentionStanding === true && workStatus.state === 'waiting'
             ? t('status.keptInAttention') : '';
-        const effectiveSecondaryLineMode = standingExplanation && !isMinimal ? 'status' : rowPresentation.secondaryLine;
-        const statusSummaryText = [standingExplanation || rowPresentation.statusText, externalSessionIdentity?.rowMetadataLabel]
-            .filter(Boolean).join(' · ');
-        const statusLineText = hasWorkHeadline
-            ? `${statusSummaryText} · ${currentWorkTitle}`
-            : statusSummaryText;
         const workStatusWord = workStatusWordStyle(workStatus.tone);
         // Viewer news is independent of actual background work; speaking it never reclassifies work.
         const backgroundUnreadLabel = rowHasBackgroundWork && rowHasUnreadAttention
@@ -1436,9 +1275,12 @@ const SessionItemContent = React.memo(
         const normalizedReportsDepth = Math.min(Math.max(Math.trunc(reportsDepth ?? 0), 0), 3);
         const reportsCollapsed = reportsDisclosure === 'collapsed';
         const liveReportCount = readSessionLiveManagedSessionCountV1(resolvedSession.managedSessions);
-        const reportsChip = resolvedSession.managedSessions && hasSessionRowReportsChip(resolvedSession.managedSessions)
-            ? <SessionRowReportsChip sessionId={resolvedSession.id} occurrenceId={occurrenceId} reports={resolvedSession.managedSessions} />
-            : null;
+        // One count for any Session (the lead's reports chip drawing): after the title on one-line rows, at the end of
+        // line 2 from Lines 2 up, so it never moves between lines.
+        const progressChip = hasSessionRowProgressChip(rowProgress, resolvedSession.managedSessions) ? (
+            <SessionRowProgressChip sessionId={resolvedSession.id} occurrenceId={occurrenceId}
+                progress={rowProgress} runningWorkCount={runningWorkCount} reports={resolvedSession.managedSessions} />
+        ) : null;
         const reportsDisclosureControl = reportsDisclosure && onSetReportsCollapsed ? (
             <SessionRowReportsDisclosure
                 sessionId={resolvedSession.id}
@@ -1459,20 +1301,15 @@ const SessionItemContent = React.memo(
                 ? t('sessionWork.list.subSessions', { count: liveReportCount })
                 : null,
         ].filter(Boolean).join('. ');
-        const rowAccessibilityLabel = [sessionNameResolved, rowContext?.accessibleLabel, reportsAccessibilityLabel, rowAttentionAccessibilityLabel]
+        const noteAgeLabel = noteSetAt !== null
+            ? t('sessionWork.list.noteAge', { age: formatShortRelativeTimeAt(noteSetAt, Date.now()) }) : null;
+        const rowAccessibilityLabel = [sessionNameResolved, rowContext?.accessibleLabel, reportsAccessibilityLabel, rowAttentionAccessibilityLabel,
+            draft?.hasPreview ? t('sessionDrafts.badge') : null,
+            nowLine ? [nowLine, noteAgeLabel].filter(Boolean).join(', ') : null,
+            !progressChip && runningWorkCount ? t('sessionWork.strip.stillWorking', { count: runningWorkCount }) : null,
+            rowProgress ? describeSessionRowProgress(rowProgress) : null]
             .filter((value): value is string => Boolean(value?.trim()))
             .join('. ');
-        const effectiveSubtitleEllipsizeMode = subtitleEllipsizeMode ?? 'head';
-        const shouldShowStatusSecondaryLine = effectiveSecondaryLineMode === 'status' && statusLineText.trim().length > 0;
-        const shouldShowPathSecondaryLine = effectiveSecondaryLineMode === 'path' && Boolean(rowContextSubtitle);
-        const shouldUsePathSubtitleStartEllipsis = shouldShowPathSecondaryLine && effectiveSubtitleEllipsizeMode === 'head';
-        const shouldUseWebPathSubtitleStartEllipsis = shouldUsePathSubtitleStartEllipsis && isWeb;
-        const shouldShowIdentitySubtitleSkeleton = !isMinimal && isSessionIdentityLoading && requestedSecondaryLineMode === 'path';
-        const showStandardSecondaryLine = !isMinimal && (
-            shouldShowIdentitySubtitleSkeleton
-            || shouldShowStatusSecondaryLine
-            || shouldShowPathSecondaryLine
-        );
         const shouldEmphasizeTitle = rowPresentation.titleTone === 'emphasized';
         const rowStatusMark = resolveWorkStatusRowMark(workStatus);
         // The opt-in needs-you highlight (owner ruling 2026-11-01): only a row that needs the person, outside the
@@ -1483,9 +1320,9 @@ const SessionItemContent = React.memo(
         [needsYouHighlighted, rowAttentionAnimationEnabled, rowHasUnreadAttention]);
         // Status words (the Account's `session.list.statusWords`, opt-in): a state with a word of its own says it,
         // in its tone, before its mark; a calm row then shows its word instead of its age.
-        const showTrailingStatusWord = isMinimal && rowContext?.statusWords === true && Boolean(workStatus.word)
+        const showTrailingStatusWord = rowContext?.statusWords === true && Boolean(workStatus.word)
             && Boolean(workStatus.glyph);
-        const showTrailingAttentionIndicator = isMinimal && (rowStatusMark !== 'none' || showTrailingStatusWord);
+        const showTrailingAttentionIndicator = rowStatusMark !== 'none' || showTrailingStatusWord;
         // One status slot (calm ruling 2026-11-01): the row's mark, or its age when the row is calm.
         const trailingAttentionReplacesTime = showTrailingAttentionIndicator;
         const trailingStatusWord = showTrailingStatusWord ? (
@@ -1540,29 +1377,24 @@ const SessionItemContent = React.memo(
         const shouldRenderSessionListAvatar = resolvedSessionListIdentityDisplay === 'avatar';
         const tagDisplayPlan = React.useMemo(() => (
             planSessionTagDisplay({
-                density: isMinimal ? 'minimal' : compact ? 'compact' : 'default',
+                density: 'minimal',
                 tags: sourceTagChips,
                 rowWidth,
                 hasTrailingMeta,
                 hasRowActions: touchRosterActions,
                 hasLeadingIdentity: shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox,
             })
-        ), [compact, hasTrailingMeta, isMinimal, rowWidth, shouldRenderSelectionCheckbox, shouldRenderSessionListIdentity, touchRosterActions, sourceTagChips]);
+        ), [hasTrailingMeta, rowWidth, shouldRenderSelectionCheckbox, shouldRenderSessionListIdentity, touchRosterActions, sourceTagChips]);
         const tagChips = tagDisplayPlan.chips;
         const showTagChips = tagChips.length > 0;
         const showInlineTagChips = showTagChips && tagDisplayPlan.placement === 'inline';
         const showBelowTagChips = showTagChips && tagDisplayPlan.placement === 'below';
         const identityMetrics = resolveSessionListRowIdentityMetrics({
-            density: isMinimal ? 'minimal' : compact ? 'compact' : 'default',
+            density: 'minimal',
             readableNativePhoneMinimal: touchCompactRow,
         });
         const avatarSize = identityMetrics.slotSize;
         const agentLogoSize = identityMetrics.agentLogoSize;
-        const identityTitleLoadingStyle = isMinimal
-            ? styles.sessionTitleLoadingMinimal
-            : compact
-                ? styles.sessionTitleLoadingCompact
-                : styles.sessionTitleLoading;
         const sessionTitleColorRole = resolveSessionRowTitleColorRole({
             mode: normalizeSessionListActiveColorMode(sessionListActiveColorMode),
             selected: selected === true || rowSelection.isSelected,
@@ -1579,8 +1411,7 @@ const SessionItemContent = React.memo(
                 style={[
                     styles.tagsRow,
                     placement === 'inline' ? styles.tagsInlineRow : null,
-                    compact ? styles.tagsRowCompact : null,
-                    isMinimal ? styles.tagsRowMinimal : null,
+                    styles.tagsRowMinimal,
                 ]}
             >
                 {tagChips.map((tag) => (
@@ -1588,8 +1419,7 @@ const SessionItemContent = React.memo(
                         key={tag.key}
                         style={[
                             styles.tagChip,
-                            tagChipDensity === 'compact' ? styles.tagChipCompact : null,
-                            tagChipDensity === 'minimal' ? styles.tagChipMinimal : null,
+                            styles.tagChipMinimal,
                             placement === 'inline' ? styles.tagChipInline : null,
                         ]}
                     >
@@ -1725,6 +1555,45 @@ const SessionItemContent = React.memo(
         </>) : null;
         const rowActionCount = (showTagAction ? 1 : 0) + (talkActionVisible ? 1 : 0) + (supportsPin ? 1 : 0)
             + (moreMenuItems.length > 0 ? 1 : 0);
+        // Where it runs, beyond what its group and leading mark already say (lab `clctx`; owner 11-19: a mark that
+        // shows the Project is not repeated in words).
+        const contextProjectLabel = !isSessionIdentityLoading && rowContext?.project
+            && !(rowContext.project.yieldsToFavicon && rowProjectFavicon) ? rowContext.project.label : null;
+        const contextCheckout = !isSessionIdentityLoading ? rowContext?.checkout ?? null : null;
+        const lineTextScale = typeof uiFontScale === 'number' ? uiFontScale : undefined;
+        // Line text: the draft being written, else the now line (or an external Session's own line), else the branch.
+        const workText = draft && draftPreview && draft.hasPreview ? (
+            <SessionRowDraftPreviewLine source={draftPreview} rowTestID={`session-list-draft-preview:${occurrenceTestId}`}
+                density={collectionRowDensity} textScale={lineTextScale} style={styles.detailLineText} />
+        ) : nowLine ? (
+            <SessionRowLineText testID={`session-list-now-line-${occurrenceTestId}`}
+                tone={nowLineIsNote && !rowIsWorking && !isWorkStatusNeedsYou(workStatus) ? 'quiet' : 'secondary'}
+                ageAt={noteSetAt}>{nowLine}</SessionRowLineText>
+        ) : externalSessionIdentity?.rowMetadataLabel ? (
+            <SessionRowLineText tone="secondary">{externalSessionIdentity.rowMetadataLabel}</SessionRowLineText>
+        ) : null;
+        const checkoutText = contextCheckout ? (
+            <SessionRowLineText testID={`session-list-row-context-checkout-${occurrenceTestId}`} tone="quiet"
+                icon={contextCheckout.kind === 'branch' ? 'git-branch' : 'folder'}>{contextCheckout.label}</SessionRowLineText>
+        ) : null;
+        const lineTwoText = workText ?? checkoutText;
+        const lineTwoStart = contextProjectLabel || lineTwoText ? (
+            <>
+                {contextProjectLabel ? (
+                    <SessionRowLineText testID={`session-list-row-context-project-${occurrenceTestId}`} tone="quiet"
+                        separated={lineTwoText !== null}>{contextProjectLabel}</SessionRowLineText>
+                ) : null}
+                {lineTwoText}
+            </>
+        ) : null;
+        // Lines 2: line 2 is one text and the count. Lines 3: the count still ends line 2, and line 3 takes the branch
+        // when the work took line 2. A row with nothing to say stays one line (D3: rows grow and shrink).
+        // Lines 2 and 3 always pass their list (empty when the row has nothing to say), so a line coming or going keeps
+        // the row mounted; Lines 1 draws the plain one-line row.
+        const detailLines: HappierCollectionRowContentProps['lines'] = rowLines === 1 ? undefined : [
+            ...(lineTwoStart || progressChip ? [{ key: 'line-2', start: lineTwoStart, end: progressChip }] : []),
+            ...(rowLines === 3 && workText && checkoutText ? [{ key: 'line-3', start: checkoutText }] : []),
+        ];
         const itemContent = (
             <CollectionRowContent
                 density={collectionRowDensity}
@@ -1745,7 +1614,7 @@ const SessionItemContent = React.memo(
                             importantForAccessibility="no-hide-descendants"
                             style={[
                                 styles.appearanceStripe,
-                                isMinimal ? styles.appearanceStripeMinimal : null,
+                                styles.appearanceStripeMinimal,
                                 { backgroundColor: appearanceStripeColor },
                             ]}
                         />
@@ -1819,13 +1688,7 @@ const SessionItemContent = React.memo(
                             <View
                                 testID={`session-list-avatar-loading-${occurrenceTestId}`}
                                 style={[
-                                    isMinimal
-                                        ? touchCompactRow
-                                            ? styles.avatarLoadingMinimalNativePhone
-                                            : styles.avatarLoadingMinimal
-                                        : compact
-                                            ? styles.avatarLoadingCompact
-                                            : styles.avatarLoading,
+                                    touchCompactRow ? styles.avatarLoadingMinimalNativePhone : styles.avatarLoadingMinimal,
                                 ]}
                             />
                         ) : (
@@ -1846,27 +1709,6 @@ const SessionItemContent = React.memo(
                                 />
                             </View>
                         )}
-                        {!isMinimal && shouldRenderSessionListAvatar && pendingBadge ? (
-                            <View
-                                style={[
-                                    styles.pendingCountContainer,
-                                    compact ? styles.pendingCountContainerCompact : null,
-                                ]}
-                            >
-                                <Text style={styles.pendingCountText} numberOfLines={1}>
-                                    {pendingBadge}
-                                </Text>
-                            </View>
-                        ) : null}
-                        {!isMinimal && shouldRenderSessionListAvatar && draft && draftPreview ? (
-                            <SessionRowDraftIndicator
-                                source={draftPreview}
-                                rowTestID={`session-list-draft-indicator:${occurrenceTestId}`}
-                                style={[styles.draftIconContainer, compact ? styles.draftIconContainerCompact : null]}
-                                iconSize={compact ? 11 : 12}
-                                iconColor={theme.colors.text.secondary}
-                            />
-                        ) : null}
                     </>
                 ) : null}
                 title={<>
@@ -1874,7 +1716,7 @@ const SessionItemContent = React.memo(
                             <View
                                 testID={`session-list-title-loading-${occurrenceTestId}`}
                                 style={[
-                                    identityTitleLoadingStyle,
+                                    styles.sessionTitleLoadingMinimal,
                                 ]}
                             />
                         ) : (
@@ -1902,100 +1744,28 @@ const SessionItemContent = React.memo(
                                 testID={`session-list-reminder-indicator:${occurrenceTestId}`}
                                 accessibilityRole="text"
                                 accessibilityLabel={`${t(reminder.state === 'due' ? 'sessionsList.reminders.due' : 'sessionsList.reminders.title')}, ${formatSessionAttentionReminderDateTime(reminder.remindAt, Date.now())}`}
-                                style={[styles.reminderIndicator, compact ? styles.reminderIndicatorCompact : null]}
+                                style={[styles.reminderIndicator, styles.reminderIndicatorCompact]}
                             >
                                 <Icon
                                     name="clock"
-                                    size={compact ? 11 : 12}
+                                    size={11}
                                     color={reminder.state === 'due' ? theme.colors.accent.orange : theme.colors.text.secondary}
                                 />
                             </View>
                         ) : null}
-                        {/* A lead's progress hugs its title (lab `clgroups` coordinator: "3/5 done"); the context
-                            badges after it take only the room the name and progress leave. */}
-                        {reportsChip}
-                        {/* Where it runs, beyond what its group implies (lab `clctx`): Project and branch. */}
-                        {rowContext && !showStandardSecondaryLine && !isSessionIdentityLoading
-                            && ((rowContext.project && !(rowContext.project.yieldsToFavicon && rowProjectFavicon)) || rowContext.checkout) ? (
+                        {/* One line (lab ideas-1118-shell scene 7, Lines 1): the title, then its one count; the Project's name
+                            only where the leading mark cannot show the Project (owner 11-19). */}
+                        {rowLines === 1 ? progressChip : null}
+                        {rowLines === 1 && contextProjectLabel ? (
                             <CollectionRowBadges>
-                                {rowContext.project && !(rowContext.project.yieldsToFavicon && rowProjectFavicon) ? (
-                                    <CollectionRowBadge testID={`session-list-row-context-project-${occurrenceTestId}`}
-                                        label={rowContext.project.label} />
-                                ) : null}
-                                {rowContext.checkout ? (
-                                    <CollectionRowBadge testID={`session-list-row-context-checkout-${occurrenceTestId}`}
-                                        icon={rowContext.checkout.kind === 'branch' ? 'git-branch' : 'folder'} label={rowContext.checkout.label} />
-                                ) : null}
+                                <CollectionRowBadge testID={`session-list-row-context-project-${occurrenceTestId}`} label={contextProjectLabel} />
                             </CollectionRowBadges>
                         ) : null}
                 </>}
                 children={<>
-                    {draft && draftPreview && !compact && draft.hasPreview ? (
-                        <SessionRowDraftPreviewLine
-                            source={draftPreview}
-                            rowTestID={`session-list-draft-preview:${occurrenceTestId}`}
-                            density={collectionRowDensity}
-                            textScale={typeof uiFontScale === 'number' ? uiFontScale : undefined}
-                        />
-                    ) : showStandardSecondaryLine ? (
-                        shouldShowIdentitySubtitleSkeleton ? (
-                            <View
-                                testID={`session-list-subtitle-loading-${occurrenceTestId}`}
-                                style={[
-                                    compact ? styles.sessionSubtitleLoadingCompact : styles.sessionSubtitleLoading,
-                                ]}
-                            />
-                        ) : effectiveSecondaryLineMode === 'status' ? (
-                            <View
-                                testID={`session-list-status-subtitle-${occurrenceTestId}-${rowAttentionState}`}
-                                style={styles.secondaryLineRow}
-                            >
-                                {/* The mark's column exists only when there is a mark: a quiet word ("Ready") sits on the title's edge (labs r2 add-popover, r9 rail). */}
-                                {rowStatusMark !== 'none' ? (
-                                    <View style={styles.secondaryStatusDotContainer}>
-                                        <WorkStatusRowMark
-                                            status={workStatus}
-                                            testIDSuffix={`${occurrenceTestId}-secondary`}
-                                            hasUnreadMessages={rowHasUnreadAttention}
-                                            animationEnabled={attentionIndicatorAnimationEnabled}
-                                            needsYouHighlight={needsYouHighlight}
-                                        />
-                                    </View>
-                                ) : null}
-                                <Text
-                                    dataSet={themeSurfaceDataSet('session-row', 'status', rowSurfaceState)}
-                                    testID={`session-list-status-subtitle-text-${occurrenceTestId}-${rowAttentionState}`}
-                                    style={[
-                                        styles.statusText,
-                                        compact ? styles.statusTextCompact : null,
-                                        workStatusWord ?? styles.statusTextQuiet,
-                                        themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'status', state: rowSurfaceState } : undefined),
-                                    ]}
-                                    numberOfLines={1}
-                                >
-                                    {statusLineText}
-                                </Text>
-                            </View>
-                        ) : (
-                            <CollectionRowLine
-                                dataSet={themeSurfaceDataSet('session-row', 'meta', rowSurfaceState)}
-                                density={collectionRowDensity}
-                                textScale={typeof uiFontScale === 'number' ? uiFontScale : undefined}
-                                style={[shouldUseWebPathSubtitleStartEllipsis ? styles.sessionPathSubtitleWeb : null,
-                                    themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'meta', state: rowSurfaceState } : undefined)]}
-                                ellipsizeMode={shouldUseWebPathSubtitleStartEllipsis ? undefined : effectiveSubtitleEllipsizeMode}
-                            >
-                                {shouldUseWebPathSubtitleStartEllipsis ? (
-                                    <Text style={styles.sessionPathSubtitleTextWeb}>
-                                        {rowContextSubtitle}
-                                    </Text>
-                                ) : rowContextSubtitle}
-                            </CollectionRowLine>
-                        )
-                    ) : null}
-
                     {showBelowTagChips ? renderTagChipRow('below') : null}
                 </>}
+                lines={detailLines}
                 engagedTrailing={hoverEngaged && rowActionCount > 0 ? { node: rowActionButtons, actionCount: rowActionCount } : null}
                 trailingProps={{
                     testID: 'session-item-right-area',
@@ -2179,28 +1949,7 @@ function SessionRowGuardWord(props: Readonly<{ guardState: SessionListGuardState
     );
 }
 
-/** Typing changes only these two leaves of a row: the row's structure follows `draft`, never its text. */
-function SessionRowDraftIndicator(props: Readonly<{
-    source: SessionListRowDraftPreviewSource;
-    rowTestID: string;
-    style: StyleProp<ViewStyle>;
-    iconSize: number;
-    iconColor: string;
-}>) {
-    const preview = useSessionListRowDraftPreview(props.source);
-    return (
-        <View
-            testID={props.rowTestID}
-            accessibilityRole="text"
-            accessibilityLabel={preview ? `${t('sessionDrafts.badge')}, ${preview}` : t('sessionDrafts.badge')}
-            accessibilityHint={t('sessionDrafts.continueEditing')}
-            style={props.style}
-        >
-            <Icon name="pencil-simple" size={props.iconSize} color={props.iconColor} />
-        </View>
-    );
-}
-
+/** Typing changes only this leaf of a row: the row's structure follows `draft`, never its text. */
 function SessionRowDraftPreviewLine(props: Readonly<{
     source: SessionListRowDraftPreviewSource;
     rowTestID: string;
@@ -2241,7 +1990,6 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
         <SessionItemContent
             {...itemProps}
             session={session}
-            subtitleEllipsizeMode={itemProps.subtitleEllipsizeMode ?? rowViewModel.subtitleEllipsizeMode}
             serverId={itemProps.serverId}
             serverName={itemProps.serverName}
             showServerBadge={rowViewModel.showServerBadge}
@@ -2249,14 +1997,12 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             tags={rowViewModel.tags}
             tagsEnabled={itemProps.tagsEnabled}
             selected={rowViewModel.selected}
-            secondaryLineMode={itemProps.secondaryLineMode ?? rowViewModel.secondaryLineMode}
             activityAt={rowViewModel.activityAt}
             guardState={rowViewModel.guardState}
             sessionStatus={sessionStatus}
             botActivity={managedWakeFacts ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}
             externalSessionIdentity={rowViewModel.externalSessionIdentity}
             sessionNameResolved={sessionNameResolved}
-            sessionSubtitle={contentUnavailable ? '' : itemProps.subtitleOverride ?? rowViewModel.subtitleOverride ?? getSessionSubtitle(session, itemProps.serverId)}
             isSessionIdentityLoading={rowViewModel.isIdentityLoading}
             hasUnreadMessages={rowViewModel.hasUnreadMessages}
             attentionStanding={rowViewModel.attentionStanding}

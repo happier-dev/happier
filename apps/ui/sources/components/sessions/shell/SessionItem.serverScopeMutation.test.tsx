@@ -168,7 +168,7 @@ describe('SessionItem server-scoped mutations', () => {
         const screen = await renderScreen(<SessionItem
             session={createSessionFixture({ id: 'sess_archived_delete', active: false, activeAt: 0, presence: 0, archivedAt: 42,
                 metadata: { path: '/repo', host: 'tester.local' } })}
-            serverId="server_a" selected={false} variant="default" compact={false}
+            serverId="server_a" selected={false} compact={false}
         />);
         const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
@@ -190,7 +190,7 @@ describe('SessionItem server-scoped mutations', () => {
             const sessionId = 'sess_archived_changed';
             const screen = await renderScreen(<SessionItem
                 session={createSessionFixture({ id: sessionId, active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
-                serverId="server_a" selected={false} variant="default" compact={false}
+                serverId="server_a" selected={false} compact={false}
             />);
             const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
                 Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
@@ -211,7 +211,7 @@ describe('SessionItem server-scoped mutations', () => {
         const sessionId = 'sess_archived_now_active';
         const screen = await renderScreen(<SessionItem
             session={createSessionFixture({ id: sessionId, active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
-            serverId="server_a" selected={false} variant="default" compact={false}
+            serverId="server_a" selected={false} compact={false}
         />);
         const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
@@ -231,7 +231,7 @@ describe('SessionItem server-scoped mutations', () => {
         const screen = await renderScreen(<SessionItem
             session={createSessionFixture({ id: 'sess_archived_managed', active: false, activeAt: 0, presence: 0, archivedAt: 42,
                 metadata: { path: '/managed', host: 'tester.local', machineId: 'machine-row', sessionDirectoryV1: { v: 1, kind: 'managed' } } })}
-            serverId="server_a" selected={false} variant="default" compact={false}
+            serverId="server_a" selected={false} compact={false}
         />);
         rowMachine = createMachineFixture({ ...rowMachine, active: false, activeAt: 0 });
         storage.getState().applyMachines([rowMachine], true,
@@ -251,7 +251,7 @@ describe('SessionItem server-scoped mutations', () => {
         const SessionItem = await importSessionItem();
         const screen = await renderScreen(<SessionItem
             session={createSessionFixture({ id: 'sess_archived_cancel', active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
-            serverId="server_a" selected={false} variant="default" compact={false}
+            serverId="server_a" selected={false} compact={false}
         />);
         const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
@@ -269,7 +269,7 @@ describe('SessionItem server-scoped mutations', () => {
             session={createSessionFixture({ id: 'sess_direct_stop', active: true })}
             serverId="server_a" serverName="Server A" showServerBadge={true}
             selected={false}
-            variant="default" compact={false}
+            compact={false}
         />);
         const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_STOP_ID));
@@ -332,7 +332,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server A"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -384,7 +383,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server B"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -437,7 +435,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server B"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -489,7 +486,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server C"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -542,7 +538,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server D"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -596,7 +591,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server D"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
                 pinned={true}
             />,
@@ -648,7 +642,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Read"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -695,7 +688,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Raw"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );
@@ -736,7 +728,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Folder"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
                 onMoveToFolder={onMoveToFolder}
                 onMoveToWorkspaceRoot={onMoveToWorkspaceRoot}
@@ -806,7 +797,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Archived"
                 showServerBadge={true}
                 selected={false}
-                variant="default"
                 compact={false}
             />,
         );

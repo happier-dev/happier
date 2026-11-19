@@ -6,7 +6,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
-import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { WORK_STATUS_WORKING_SPINNER_VARIANT, workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 
 import { useCollectionRowNeedsYouHighlight, type CollectionRowNeedsYouFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 
@@ -103,6 +103,7 @@ function HighlightedAttentionDot(props: Readonly<{ testID: string; facts: Collec
 /**
  * The working mark in the Account's restored 0.2 style (owner amendment 2026-11-01): the spinner, or a pulsing dot
  * through the shared status-dot pulse (CSS on the web, the native driver elsewhere). Only working rows read it.
+ * The spinner is the work arc (`WORK_STATUS_WORKING_SPINNER_VARIANT`).
  */
 function WorkingRowMark(props: Readonly<{ testIDSuffix: string; color: string; animationEnabled: boolean }>) {
     const style = useSetting('sessionListNarrowWorkingIndicatorStyle');
@@ -111,7 +112,7 @@ function WorkingRowMark(props: Readonly<{ testIDSuffix: string; color: string; a
             size={NEWS_DOT_SIZE} isPulsing animationEnabled={props.animationEnabled} />;
     }
     return <ActivitySpinner testID={`session-row-attention-indicator-spinner-${props.testIDSuffix}`} size={WORKING_SPINNER_SIZE}
-        color={props.color} animationEnabled={props.animationEnabled} />;
+        color={props.color} animationEnabled={props.animationEnabled} variant={WORK_STATUS_WORKING_SPINNER_VARIANT} />;
 }
 
 /**

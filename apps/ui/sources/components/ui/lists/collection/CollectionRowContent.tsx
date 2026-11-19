@@ -214,8 +214,8 @@ const badgeStyles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * Content that belongs to the comfortable row above it (a Bot's readiness in the roster): it starts on the
- * row's title edge, past the identity column, so it reads as part of that row rather than a new one.
+ * Content that belongs to the work row above it (a Bot's readiness in the roster): like the row's detail lines it
+ * starts at the row's leading edge, tucked under its title line, so it reads as part of that row, not a new one.
  */
 export function CollectionRowFooter(
   props: Readonly<{
@@ -236,13 +236,10 @@ export function CollectionRowFooter(
 const M = HAPPIER_COLLECTION_ROW_METRICS;
 const footerStyles = StyleSheet.create((theme) => ({
   footer: {
-    paddingLeft:
-      M.padding.comfortable +
-      M.identity.comfortable.slotSize +
-      M.contentGap.comfortable,
-    paddingRight: M.padding.comfortable,
-    // Tucks under the row's own last line instead of starting a new row's rhythm.
-    marginTop: -theme.space.s8,
-    paddingBottom: theme.space.s10,
+    paddingLeft: M.padding.compact,
+    paddingRight: M.padding.compact,
+    // Tucks under the row's title line instead of starting a new row's rhythm.
+    marginTop: -theme.space.s2,
+    paddingBottom: theme.space.s8,
   },
 }));

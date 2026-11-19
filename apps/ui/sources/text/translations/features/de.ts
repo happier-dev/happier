@@ -15249,6 +15249,8 @@ const de: typeof en = {
         reportsWorking: ({ count }) => `${count} arbeiten`,
         reportsNeedYou: ({ count }) => (count === 1 ? '1 Untersitzung braucht dich' : `${count} Untersitzungen brauchen dich`),
         reportsDoneA11y: ({ finished, total }) => `${finished} von ${total} Untersitzungen fertig`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}, ${done} von ${total} erledigt` : `${done} von ${total} erledigt`),
+        noteAge: ({ age }) => `vor ${age}`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => (count === 1 ? 'Auch 1 Untersitzung archivieren' : `Auch ${count} Untersitzungen archivieren`),

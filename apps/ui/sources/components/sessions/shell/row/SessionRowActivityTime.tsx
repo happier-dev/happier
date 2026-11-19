@@ -10,13 +10,15 @@ import { formatShortRelativeTimeAt, readShortRelativeTimeRefreshAtMs } from '@/u
 import { useSessionListSurfaceDataActiveSignal } from '@/components/sessions/shell/surface/sessionListSurfaceDataActive';
 
 /**
- * A row's age ("44m") on the shared session-list clock. Only this leaf wakes at its own label
+ * A row's age ("44m"), or a note's own age, on the shared session-list clock. Only this leaf wakes at its own label
  * boundary, so a minute turning never rebuilds the row's view model or re-renders the row.
  */
 export const SessionRowActivityTime = React.memo(function SessionRowActivityTime(props: Readonly<{
     activityAt: number;
     selected?: boolean;
     style?: StyleProp<TextStyle>;
+    /** Words around the age ("1d ago" for a note's own age); the bare age by default. */
+    format?: (age: string) => string;
 }>) {
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const { activityAt } = props;
@@ -27,7 +29,7 @@ export const SessionRowActivityTime = React.memo(function SessionRowActivityTime
     return (
         <Text dataSet={themeSurfaceDataSet('session-row', 'meta', props.selected ? 'selected' : 'default')}
             style={[props.style, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'meta', state: props.selected ? 'selected' : 'default' } : undefined)]} numberOfLines={1}>
-            {formatShortRelativeTimeAt(activityAt, nowMs)}
+            {props.format ? props.format(formatShortRelativeTimeAt(activityAt, nowMs)) : formatShortRelativeTimeAt(activityAt, nowMs)}
         </Text>
     );
 });

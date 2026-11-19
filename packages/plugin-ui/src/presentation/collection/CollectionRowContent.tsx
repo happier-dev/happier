@@ -95,6 +95,11 @@ export const HAPPIER_COLLECTION_ROW_METRICS = Object.freeze({
   /** Where the row's actions stand over the title's tail on the web, the title fades out over this far. */
   actionFadePx: 12,
   radius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
+  /**
+   * Detail lines under the title line (lab ideas-1118-shell scene 7): each a meta line at least this tall (a 12 px
+   * progress ring beside meta text), one `gap` below the line before it; the row closes `bottomPad` under the last.
+   */
+  detailLine: Object.freeze({ minHeight: 18, gap: 2, bottomPad: 8, role: 'meta' as const }),
 });
 
 const TITLE_ROLES: Readonly<
@@ -175,6 +180,9 @@ export function resolveHappierCollectionRowHeight(
     : HAPPIER_COLLECTION_ROW_METRICS.height[density];
 }
 
+/** One detail line of a work row: its text at the start, one compact detail (a count, a pull request) at the end. */
+export type HappierCollectionRowDetailLine = Readonly<{ key: string; start?: ReactNode; end?: ReactNode }>;
+
 export type HappierCollectionRowContentProps = Readonly<{
   density: HappierCollectionRowDensity;
   /** A compact row drawn for a finger (a phone): the readable touch height and mark. */
@@ -198,6 +206,16 @@ export type HappierCollectionRowContentProps = Readonly<{
   title: ReactNode;
   /** Lines under the title (comfortable and detailed rows). */
   children?: ReactNode;
+  /**
+   * Detail lines under the title line, from the row's leading edge (the mark's edge, lab ideas-1118-shell scene 7 and
+   * the round-3 phone rows): each line's text at its start and at most one compact detail at its end, which sits under
+   * the status slot at the row's end. A row is as tall as what it has to say: the title line keeps its one-line place
+   * and the row grows by one line per entry, so an empty list is a one-line row. A row that can have lines passes the
+   * list even when it is empty, so a line coming or going never remounts the press target or the status slot. The lines
+   * are drawn over the press target, which stays the row's one target; they are hidden from assistive technology, so
+   * the row's owner names their facts in its accessible label.
+   */
+  lines?: ReadonlyArray<HappierCollectionRowDetailLine> | null;
   /** The status slot and any independent controls at the row's end; never a child of the press target. */
   trailing?: ReactNode;
   /**
@@ -283,6 +301,16 @@ const trailingBeneathBase: ViewStyle = {
   marginTop: M.titleGap,
 };
 const beneathLine: ViewStyle = { flexDirection: 'row', alignItems: 'center', minWidth: 0 };
+/** A row with detail lines grows with them: its lines' pitch, not the density's fixed height. */
+const linedRow: ViewStyle = { alignItems: 'flex-start' };
+const linedColumn: ViewStyle = { flex: 1, minWidth: 0 };
+const linedBody: ViewStyle = { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0 };
+const linedTitleLine: ViewStyle = { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' };
+const linedTrailing: ViewStyle = { alignSelf: 'flex-start' };
+const linedLines: ViewStyle = { position: 'absolute', left: 0, right: 0 };
+const detailLineRow: ViewStyle = { flexDirection: 'row', alignItems: 'center', minWidth: 0 };
+const detailLineStart: ViewStyle = { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' };
+const detailLineEnd: ViewStyle = { flexShrink: 0, marginLeft: M.trailingGap, flexDirection: 'row', alignItems: 'center' };
 const restingTrailing: ViewStyle = {
   flexDirection: 'row',
   alignItems: 'center',
@@ -330,7 +358,8 @@ const pressTarget = {
   minWidth: 0,
   alignSelf: 'stretch',
   flexDirection: 'row',
-  alignItems: 'center',
+  // A row with detail lines tops its title line instead (`lines`); the owner's press target takes either.
+  alignItems: 'center' as 'center' | 'flex-start',
 } satisfies HappierPortableStyle;
 
 export type HappierCollectionRowMainProps = Readonly<{
@@ -462,6 +491,78 @@ export function HappierCollectionRowContent(
   const titleEdge = props.identity != null
     ? resolveHappierCollectionRowIdentityMetrics(props.density, touchCompact).slotSize + M.contentGap[props.density]
     : 0;
+  const lines = !beneath && !wraps && props.lines ? props.lines : null;
+  if (lines) {
+    // The title line keeps the one-line row's place (same top inset); each detail line adds its pitch below it.
+    const scale = Math.min(textScale, 2.5);
+    const identitySlot = props.identity != null ? resolveHappierCollectionRowIdentityMetrics(props.density, touchCompact).slotSize : 0;
+    const titleLinePx = Math.max(identitySlot,
+      Math.ceil(resolveHappierCollectionRowTitleMetrics(props.density, Platform.OS, touchCompact).lineHeight * scale));
+    const linePx = Math.max(M.detailLine.minHeight, Math.ceil(resolveHappierTypeScale(M.detailLine.role, Platform.OS).lineHeight * scale));
+    const linesPx = lines.length * (linePx + M.detailLine.gap);
+    const topPad = Math.max(0, Math.floor((height - titleLinePx) / 2));
+    const linedMain = props.renderContainer
+      ? props.renderContainer(<View style={[linedTitleLine, { height: titleLinePx }]}>{content}</View>,
+        { ...containerStyle, alignItems: 'flex-start' })
+      : <View style={[linedTitleLine, { height: titleLinePx }]}>{content}</View>;
+    return (
+      <View
+        style={[rowBase, linedRow, {
+          paddingHorizontal: M.padding[props.density],
+          paddingTop: topPad,
+          // With no line to say, the row is exactly the one-line row.
+          paddingBottom: lines.length > 0 ? M.detailLine.bottomPad : Math.max(0, height - titleLinePx - topPad),
+        }, fill ? { backgroundColor: paintColor(fill) } : null, props.style]}
+        onLayout={props.onLayout}
+      >
+        {props.leading}
+        <View style={linedColumn}>
+          {/* The press target spans every line; the status slot stays on the title line. */}
+          <View style={[linedBody, { height: titleLinePx + linesPx }]}>
+            {linedMain}
+            <View {...props.trailingProps} style={[trailingBase, linedTrailing, { height: titleLinePx }]}>
+              <View
+                testID={restingTestID}
+                style={engaged ? restingTrailingHidden : restingTrailing}
+                aria-hidden={engaged ? true : undefined}
+                accessibilityElementsHidden={engaged ? true : undefined}
+                importantForAccessibility={engaged ? 'no-hide-descendants' : undefined}
+                onFocus={Platform.OS === 'web' ? () => setRestingFocused(true) : undefined}
+                onBlur={Platform.OS === 'web' ? () => setRestingFocused(false) : undefined}
+              >
+                {props.trailing}
+              </View>
+              {engaged ? <View style={engagedTrailingBand}>{engaged.node}</View> : null}
+            </View>
+          </View>
+          <View
+            pointerEvents="none"
+            aria-hidden
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[linedLines, { top: titleLinePx + M.detailLine.gap }]}
+          >
+            {lines.map((line) => (
+              <View key={line.key} style={[detailLineRow, { height: linePx, marginBottom: M.detailLine.gap }]}>
+                <View style={detailLineStart}>{line.start}</View>
+                {line.end != null ? <View style={detailLineEnd}>{line.end}</View> : null}
+              </View>
+            ))}
+          </View>
+        </View>
+        {props.separator ? (
+          <CollectionRowContentRule
+            // Lines run from the leading edge, so the rule does too; a row with no line parts by spacing.
+            startPx={lines.length > 0 ? M.padding[props.density] : M.padding[props.density] + titleEdge}
+            color={props.separator.color}
+            multiline={lines.length > 0}
+            selected={props.selected === true}
+            hovered={props.hovered === true}
+          />
+        ) : null}
+      </View>
+    );
+  }
   return (
     <View style={rowStyle} onLayout={props.onLayout}>
       {beneath ? <View style={beneathLine}>{props.leading}{main}</View> : <>{props.leading}{main}</>}

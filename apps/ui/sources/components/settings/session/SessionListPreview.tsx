@@ -64,14 +64,37 @@ export function PreviewRows(props: Readonly<{ density: SessionListRowDensity; id
     </CollectionRowContent>)}</>;
 }
 
+/** The Lines a stored density draws (lab ideas-1118-shell scene 7): narrow 1, cozy 2, detailed 3. */
+function readPreviewLines(density: 'detailed' | 'cozy' | 'narrow'): 1 | 2 | 3 {
+    const viewState = resolveSessionListDensityViewState(density);
+    return viewState.compactMinimal ? 1 : viewState.compact ? 2 : 3;
+}
+
+const previewLineStyle = { flexShrink: 1 } as const;
+
+/** A sample row's detail lines at a Lines setting: what it is doing on line 2, its branch on line 3. */
+function previewDetailLines(lines: 1 | 2 | 3, lineTwo: React.ReactNode, lineThree: string) {
+    const lineDensity = resolveCollectionRowDensity('minimal');
+    return lines === 1 ? null : [
+        { key: 'line-2', start: lineTwo },
+        ...(lines === 3 ? [{ key: 'line-3', start: <CollectionRowLine density={lineDensity} style={previewLineStyle}>{lineThree}</CollectionRowLine> }] : []),
+    ];
+}
+
 /** Static props feed the same physical row presentation as the mounted list. */
 export const SessionListDensityPreview = React.memo(function SessionListDensityPreview(props: Readonly<{
     density: 'detailed' | 'cozy' | 'narrow';
 }>) {
     usePreferredLanguage();
-    const viewState = resolveSessionListDensityViewState(props.density);
-    const rowDensity: SessionListRowDensity = viewState.compactMinimal ? 'minimal' : viewState.compact ? 'compact' : 'default';
-    return <PreviewStage><PreviewRows density={rowDensity} ids={SAMPLE_IDS} /></PreviewStage>;
+    const lines = readPreviewLines(props.density);
+    const density = resolveCollectionRowDensity('minimal');
+    return <PreviewStage>{SAMPLE_IDS.map((id) => <CollectionRowContent
+        key={id}
+        density={density}
+        identity={<AvatarGradient id={id} size={SESSION_LIST_ROW_IDENTITY_METRICS.minimal.slotSize} />}
+        title={<CollectionRowTitle density={density}>{t('settingsSessionPages.preview.userMessage')}</CollectionRowTitle>}
+        lines={previewDetailLines(lines, <CollectionRowLine density={density} style={previewLineStyle}>~/happier</CollectionRowLine>, 'main')}
+    />)}</PreviewStage>;
 });
 
 // A little under the list's own size, so the arrangement reads as the sidebar it previews.
@@ -120,8 +143,8 @@ export function SessionListSample(props: Readonly<{
     /** Omit to fill the stage's native content width. */
     width?: number;
 }>) {
-    const viewState = resolveSessionListDensityViewState(props.density);
-    const density: SessionListRowDensity = viewState.compactMinimal ? 'minimal' : viewState.compact ? 'compact' : 'default';
+    const lines = readPreviewLines(props.density);
+    const density = resolveCollectionRowDensity('minimal');
     return <View
         style={{ width: props.width }}
         pointerEvents="none"
@@ -132,21 +155,16 @@ export function SessionListSample(props: Readonly<{
     >
         {props.groups.map((group, groupIndex) => <React.Fragment key={group.heading}>
             <CollectionListGroupLabel title={group.heading} first={groupIndex === 0} />
-            {group.rows.map((row, index) => <CollectionRowContent
+            {group.rows.map((row) => <CollectionRowContent
                 key={row.id}
-                density={resolveCollectionRowDensity(density)}
-                identity={density === 'minimal' ? null : <AvatarGradient id={row.id} size={SESSION_LIST_ROW_IDENTITY_METRICS[density].slotSize} />}
-                title={<CollectionRowTitle density={resolveCollectionRowDensity(density)}>{row.title}</CollectionRowTitle>}
-                trailing={density === 'minimal' && row.status
-                    ? <CollectionRowLine density={resolveCollectionRowDensity(density)} style={workStatusWordStyle(row.status.tone)}>{row.status.label}</CollectionRowLine>
+                density={density}
+                identity={<AvatarGradient id={row.id} size={SESSION_LIST_ROW_IDENTITY_METRICS.minimal.slotSize} />}
+                title={<CollectionRowTitle density={density}>{row.title}</CollectionRowTitle>}
+                trailing={row.status
+                    ? <CollectionRowLine density={density} style={workStatusWordStyle(row.status.tone)}>{row.status.label}</CollectionRowLine>
                     : null}
-            >
-                {density !== 'minimal' ? (
-                    <CollectionRowLine density={resolveCollectionRowDensity(density)} style={row.status ? workStatusWordStyle(row.status.tone) : null}>
-                        {row.status?.label ?? row.project}
-                    </CollectionRowLine>
-                ) : null}
-            </CollectionRowContent>)}
+                lines={previewDetailLines(lines, <CollectionRowLine density={density} style={previewLineStyle}>{row.project}</CollectionRowLine>, 'main')}
+            />)}
         </React.Fragment>)}
     </View>;
 }

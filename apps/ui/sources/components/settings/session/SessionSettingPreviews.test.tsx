@@ -182,7 +182,8 @@ describe('Session settings previews', () => {
             expect(screen.getTextContent()).toContain((await import('@/text')).t('sessionHistory.today'));
             const originalSize = StyleSheet.flatten(text().props.style).fontSize;
             expect(originalSize).toBeGreaterThan(0);
-            expect(originalSize).toBeLessThan(detailedSize);
+            // Lines add detail lines; the title keeps one size at every Lines setting (lab ideas-1118-shell scene 7).
+            expect(originalSize).toBe(detailedSize);
             clearSettingsReads();
 
             await act(async () => { getStorage().getState().applyLocalSettings({ uiFontScale: 1.4 }, { persist: false }); });

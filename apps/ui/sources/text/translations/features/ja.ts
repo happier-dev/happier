@@ -15186,6 +15186,8 @@ const ja: typeof en = {
         reportsWorking: ({ count }) => `${count} 件作業中`,
         reportsNeedYou: ({ count }) => `${count} 件のサブセッションが対応待ち`,
         reportsDoneA11y: ({ finished, total }) => `${total} 件中 ${finished} 件のサブセッションが完了`,
+        progressA11y: ({ label, done, total }) => (label ? `${label}、${total} 件中 ${done} 件完了` : `${total} 件中 ${done} 件完了`),
+        noteAge: ({ age }) => `${age}前`,
     },
     archive: {
         alsoArchiveReports: ({ count }) => `${count} 件のサブセッションもアーカイブ`,
