@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ComputerInputOperationV1Schema } from '../../computer/v1.js';
 import { BrowserInputEventV1Schema, BrowserInteractionStateV1Schema } from './v1.js';
 import { MachineLiveStreamControlSidebandV1Schema, machineLiveStreamControlRequiresInputLeaseV1 } from '../../machines/peer/mediation/stream/controlV1.js';
 
@@ -40,4 +41,15 @@ describe('human browser input', () => {
     expect(BrowserInputEventV1Schema.safeParse({ kind: 'fileChooser', target: 'page', sequence: 1,
       chooserId: 'chooser', files: [{ name: 'example.txt', path: '/private/secret' }] }).success).toBe(false);
   });
+});
+
+it.each([' ', 'Enter', 'Tab', 'Backspace', 'ArrowLeft', 'Dead', 'é'])('preserves DOM key %j in Computer input', key => {
+  expect(ComputerInputOperationV1Schema.parse({ kind: 'press', key })).toMatchObject({ key });
+});
+it.each([' ', 'Enter', 'Tab', 'Backspace', 'ArrowLeft', 'Dead', 'é'])('preserves DOM key %j in Browser input', key => {
+  expect(BrowserInputEventV1Schema.parse({ kind: 'key', target: 'page', key, sequence: 1 })).toMatchObject({ key });
+});
+it('rejects an empty native key', () => {
+  expect(BrowserInputEventV1Schema.safeParse({ kind: 'key', target: 'page', key: '', sequence: 1 }).success).toBe(false);
+  expect(ComputerInputOperationV1Schema.safeParse({ kind: 'press', key: '' }).success).toBe(false);
 });

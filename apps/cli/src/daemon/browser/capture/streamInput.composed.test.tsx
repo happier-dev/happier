@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { HappierLiveStreamInputLayer } from '@happier-dev/plugin-ui/presentation';
 import { MachineLiveStreamDecodedEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
-import { buildBrowserStreamSidebandControl } from '../../../../../ui/sources/components/browser/adapters/browserStreamSidebandControl';
+import { buildBrowserViewerInput, buildBrowserStreamSidebandControl } from '../../../../../ui/sources/components/browser/adapters/browserStreamSidebandControl';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter';
 import { createBrowserAutomationDaemonService } from '../automation/service';
 import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
@@ -71,7 +71,11 @@ describe('streamed browser human input composition', () => {
             await act(async () => root.render(<HappierLiveStreamInputLayer inputAccepted supports={() => true}
                 testID="viewer" viewport={{ width: 800, height: 400 }}
                 onGesture={({ eventId, action: gesture }) => {
-                    const control = buildBrowserStreamSidebandControl({ sourceId, streamId: 'human', eventId, gesture });
+                    const viewerInput = buildBrowserViewerInput(gesture);
+                    const control = viewerInput ? { v: 1 as const, kind: 'browser_input' as const, sourceId, streamId: 'human', eventId,
+                        controlEpoch: automation.getStatus(view).controlEpoch,
+                        event: { ...viewerInput, target: 'page' as const, sequence: admissions.length } }
+                        : buildBrowserStreamSidebandControl({ sourceId, streamId: 'human', eventId, gesture });
                     if (control) admissions.push(relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse({
                         v: 1, sourceMachineId: 'machine', targetMachineId: 'machine', message: { kind: 'sideband_control', control },
                     })));

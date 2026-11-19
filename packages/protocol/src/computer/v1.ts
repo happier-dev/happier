@@ -87,7 +87,7 @@ export const ComputerInputOperationV1Schema = lazyZodSchema(() => z.discriminate
   z.strictObject({ kind: z.literal('move'), x: CoordinateSchema, y: CoordinateSchema }),
   z.strictObject({ kind: z.literal('click'), x: CoordinateSchema, y: CoordinateSchema, button: z.optional(z.enum(['left', 'right', 'middle'])),
     clickCount: z.optional(z.literal(2)), modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
-  z.strictObject({ kind: z.literal('press'), key: IdSchema, modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
+  z.strictObject({ kind: z.literal('press'), key: z.string().check(z.minLength(1)), modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
   z.strictObject({ kind: z.literal('type'), text: z.string() }),
   z.strictObject({ kind: z.literal('drag'), fromX: CoordinateSchema, fromY: CoordinateSchema, toX: CoordinateSchema, toY: CoordinateSchema }),
   z.strictObject({ kind: z.literal('wheel'), x: CoordinateSchema, y: CoordinateSchema, deltaX: CoordinateSchema, deltaY: CoordinateSchema }),

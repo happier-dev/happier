@@ -10,7 +10,7 @@ export type BrowserInputModifierV1 = z.infer<typeof BrowserInputModifierV1Schema
 export const BrowserKeyInputEventV1Schema = z.strictObject({
     kind: z.literal('key'),
     target: BrowserInputTargetV1Schema,
-    key: z.string().check(z.trim(), z.minLength(1)),
+    key: z.string().check(z.minLength(1)),
     modifiers: z._default(z.array(BrowserInputModifierV1Schema), []),
     sequence: z.number().check(z.int(), z.nonnegative()),
   });
