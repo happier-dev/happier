@@ -1,10 +1,17 @@
+import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { createPluginContextualResourceReadClient, type PluginSurfaceResourceReadTransport } from '@/components/plugins/surfaces/pluginSurfaceResourceRead';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { readPluginUiResourceProjection, type PluginUiProjectionModel } from '../ui/projection';
-import { readPluginUiAccountExecutableOrigin, readPluginUiContributionOrigin } from '../ui/projectionOrigins';
+import {
+    PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY,
+    readPluginUiAccountExecutableOrigin,
+    readPluginUiContributionOrigin,
+    readPluginUiProjectionEntryExecutionOrigin,
+} from '../ui/projectionOrigins';
 import { readBundledPluginUiAppArtifactAssetBytes } from './bundledPluginUiArtifactAssetReader';
 import type { BundledPluginPackagedResource } from './bundledPluginUiArtifactInventory';
 import * as bundledPluginUiInventory from './generatedBundledPluginUiArtifacts';
@@ -63,11 +70,21 @@ export function createPluginUiTranslationResourceByteReader(input: Readonly<{
                     return current() && acquired.lease.isCurrent() ? bytes : null;
                 } finally { acquired.lease.dispose(); }
             }
+            const { serverId } = input.accountLifetime.scope;
             const origin = readPluginUiContributionOrigin(resource);
-            if (!origin || origin.phase !== 'current' || !origin.interactionEnabled
-                || origin.serverId !== input.accountLifetime.scope.serverId) return null;
+            let machineId: string;
+            if (origin) {
+                if (origin.phase !== 'current' || !origin.interactionEnabled || origin.serverId !== serverId) return null;
+                machineId = origin.machineId;
+            } else {
+                // Exact Machine projections carry the daemon's execution origin directly.
+                if (Object.hasOwn(resource, PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY)) return null;
+                const directOrigin = readPluginUiProjectionEntryExecutionOrigin(resource);
+                if (!directOrigin || !areServerProfileIdentifiersEquivalent(directOrigin.serverIdentityId, serverId)) return null;
+                machineId = getPluginMachineExecutionOriginRef(directOrigin).machineId;
+            }
             const client = createPluginContextualResourceReadClient({ pluginId, isCurrent: current, resource: {
-                machineId: origin.machineId, serverId: origin.serverId, expectedCallerOccurrenceId: installed.occurrenceId,
+                machineId, serverId, expectedCallerOccurrenceId: installed.occurrenceId,
                 ...(input.resourceRead ? { read: input.resourceRead } : {}),
             } });
             const value = await client.readResource(resourceId, { signal: merged.signal });

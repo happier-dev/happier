@@ -22,6 +22,10 @@ const pluginId = 'com.acme.locale';
 const bytes = new TextEncoder().encode('{"label":"Hello"}');
 const digest = computePluginUiArtifactSha256DigestV1(bytes);
 const scope = { serverId: 'server-a', accountId: 'account-a' };
+const selectedExecutionOrigin = {
+    serverIdentityId: 'srv_selected_home',
+    sourceRef: { pluginId, machineId: 'machine-selected', sourceCustody: { kind: 'development' as const, registeredRootId: 'locale' } },
+};
 
 function lifetime() {
     let current = true;
@@ -101,9 +105,25 @@ describe('translation packaged Resource byte sources', () => {
         }));
     });
 
+    it('reads a locale asset from the direct Machine occurrence carried by a selected projection', async () => {
+        const base = projection();
+        const key = `${pluginId}/locale-en`;
+        const { hostOrigin: _unionOrigin, ...asset } = base.resourcesById[key]!;
+        const serverId = selectedExecutionOrigin.serverIdentityId;
+        const current = { ...base, resourcesById: { [key]: { ...asset, executionOrigin: selectedExecutionOrigin } } };
+        const accountLifetime = { ...lifetime().accountLifetime, scope: { ...scope, serverId } };
+        const read = machineRead();
+        const acquire = createPluginUiTranslationResourceByteReader({ accountLifetime, readCurrentProjection: () => current, resourceRead: read });
+        await expect(acquire(current, pluginId, 'locale-en')).resolves.toEqual(bytes);
+        expect(read).toHaveBeenCalledWith('machine-selected', expect.objectContaining({
+            serverId, callerPluginId: pluginId, expectedCallerOccurrenceId: 'occurrence-1',
+        }));
+    });
+
     it('refuses invalid declaration, cross-plugin identity, disabled occurrence and wrong Home before IO', async () => {
         const base = projection();
         const resource = base.resourcesById[`${pluginId}/locale-en`]!;
+        const { hostOrigin: _unionOrigin, ...directResource } = resource;
         const installed = base.installedPackagesById[pluginId]!;
         const read = machineRead();
         for (const bad of [
@@ -113,6 +133,7 @@ describe('translation packaged Resource byte sources', () => {
             { ...base, resourcesById: { [`${pluginId}/locale-en`]: { ...resource, occurrenceId: 'other' } } },
             { ...base, installedPackagesById: { [pluginId]: { ...installed, enabled: false } } },
             { ...base, resourcesById: { [`${pluginId}/locale-en`]: { ...resource, hostOrigin: { machineId: 'machine-a', serverId: 'other', phase: 'current', interactionEnabled: true } } } },
+            { ...base, resourcesById: { [`${pluginId}/locale-en`]: { ...directResource, executionOrigin: selectedExecutionOrigin } } },
         ]) {
             const readBytes = createPluginUiTranslationResourceByteReader({ ...lifetime(), readCurrentProjection: () => bad, resourceRead: read });
             await expect(readBytes(bad, pluginId, 'locale-en')).resolves.toBeNull();
