@@ -57,7 +57,9 @@ export function DeploymentTemplateChoices(props: Readonly<{
         {variables.length ? <ItemGroup title={t('projects.deployments.tabVariables')}>
             {variables.map(variable => {
                 const binding = bindings.get(variable.key);
-                const label = text(variable.label);
+                const authoredLabel = text(variable.label);
+                const label = authoredLabel && authoredLabel !== variable.key ? authoredLabel
+                    : t(variable.secret ? 'profiles.requirements.secretRequired' : 'projects.deployments.sourceValue');
                 const saved = binding?.source.kind === 'secret';
                 const chooseSaved = t(saved ? 'capabilities.store.appPage.choices.savedSelected' : 'approvals.confidential.useSaved');
                 return <Item key={variable.key} title={label} subtitle={variable.help ? text(variable.help) : undefined}

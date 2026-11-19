@@ -73,9 +73,15 @@ services:
       getBytes: async () => { throw new Error('Unexpected bytes fetch'); },
     } });
     const result = await host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'app', itemId: '9router' });
-    expect(result).toMatchObject({ op: 'read', item: { payload: { state: 'ready', app: { domains: [{
-      key: 'SERVICE_URL_9ROUTER_20128', healthCheck: { path: '/api/health', expectStatus: 200 },
-    }] } } } });
+    expect(result).toMatchObject({ op: 'read', item: { payload: { state: 'ready', app: {
+      domains: [{ key: 'SERVICE_URL_9ROUTER_20128', healthCheck: { path: '/api/health', expectStatus: 200 } }],
+      variables: expect.arrayContaining([
+        expect.objectContaining({ key: 'SERVICE_PASSWORD_PASSWORD', label: 'Initial password', secret: true }),
+        expect.objectContaining({ key: 'SERVICE_PASSWORD_64_JWTSECRET', label: 'JWT secret', secret: true }),
+        expect.objectContaining({ key: 'SERVICE_PASSWORD_KEYSECRET', label: 'API key secret', secret: true }),
+        expect.objectContaining({ key: 'SERVICE_HEX_64_HMACSALT', label: 'Machine ID salt', secret: true }),
+      ]),
+    } } } });
   });
 
   it('retains an authored path and non-default HTTP status in the reviewed Domain declaration', () => {

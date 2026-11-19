@@ -272,6 +272,25 @@ export function normalizeComposeTemplateV1(input: Readonly<{ document: string; t
       }
     } else if (config?.file !== undefined) issue(`configs.${id}.file`, 'sidecar_file_requires_review');
   }
+  // Prefer the application's own environment name for a direct binding.
+  // Multiple distinct aliases do not establish one display label.
+  for (const variable of variables.values()) {
+    const aliases = new Set<string>();
+    for (const site of variable.sites) {
+      const [section, alias] = site.path;
+      if (section !== 'environment' || site.path.length !== 2 || !alias || alias === variable.key) continue;
+      const environment = templateRecordV1(templateRecordV1(services[site.service])?.environment);
+      if (environment?.[alias] === '${' + variable.key + '}') aliases.add(alias);
+    }
+    const alias = aliases.size === 1 ? aliases.values().next().value : undefined;
+    if (!alias) continue;
+    const label = alias.split('_').filter(Boolean)
+      .map(word => /^(API|ID|JWT)$/.test(word) ? word : word.toLowerCase()).join(' ');
+    if (!label) continue;
+    variable.label = label[0]!.toUpperCase() + label.slice(1);
+    const generated = generatedSecrets.get(variable.key);
+    if (generated) generated.label = variable.label;
+  }
   const documentationUrl = header.documentation ?? input.documentationUrl;
   const app = DeploymentTemplateV1Schema.safeParse({ schemaVersion: 1, title: input.title,
     ...((header.slogan ?? input.description) ? { description: header.slogan ?? input.description } : {}),

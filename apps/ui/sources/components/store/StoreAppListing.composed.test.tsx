@@ -109,7 +109,10 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
       profiles: [],
       services: ['kuma'],
     },
-    variables: options.templateInputs ? [{ key: 'APP_USER', label: 'App user', required: true, valueKind: 'string', secret: false, sites: [] }] : [],
+    variables: options.templateInputs ? [
+      { key: 'APP_USER', label: 'App user', required: true, valueKind: 'string', secret: false, sites: [] },
+      { key: 'INTERNAL_APP_REGION', label: 'INTERNAL_APP_REGION', required: false, valueKind: 'string', secret: false, sites: [] },
+    ] : [],
     ...(options.templateInputs ? { companions: [{ id: 'sidecar', title: 'Add sidecar', services: ['sidecar'] }] } : {}),
     generatedSecrets: [],
     domains: options.domains ?? [
@@ -903,7 +906,9 @@ it('keeps typed template values and volume names through review without writing 
     await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
     const userId = 'store.app.prepare.choices.variable.APP_USER';
     const volumeId = 'store.app.prepare.choices.volume.data';
-    expect(screen.findHostByTestId(userId)).toBeTruthy();
+    expect(screen.findHostByTestId(userId)?.props.accessibilityLabel).toBe('App user');
+    expect(screen.findHostByTestId('store.app.prepare.choices.variable.INTERNAL_APP_REGION')?.props.accessibilityLabel)
+      .toBe(t('projects.deployments.sourceValue'));
     await act(async () => { changeTextTestInstance(screen.findHostByTestId(userId)!, 'alice'); });
     await act(async () => { changeTextTestInstance(screen.findHostByTestId(volumeId)!, 'status-data'); });
     // An optional companion is a reviewed choice like any other input: off until switched on.
@@ -913,6 +918,7 @@ it('keeps typed template values and volume names through review without writing 
     expect(fixture.creations).toEqual([]);
     await chooseMachine(screen, 'target');
     await chooseProject(screen, 'storefront');
+    expect(screen.findHostByTestId('store.app.prepare.environmentName')?.props.placeholder).toBe('Uptime Kuma');
     await nameIt(screen, {});
     await press('store.app.prepare.review');
     await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
@@ -1111,7 +1117,7 @@ it.each([
     for (const [index, address] of addresses.entries()) {
       const field = screen.findHostByTestId(`store.app.prepare.domain.${domains[index]!.key}`)!;
       expect(field.props.accessibilityLabel).toBe(address.label);
-      expect(field.props.placeholder).toBe('status.example.com');
+      expect(field.props.placeholder).toBe('example.com');
       const helper = `Point this name's DNS at the Machine; Happier routes it to ${address.service} on port ${address.port}`;
       expect(field.props.accessibilityHint).toBe(helper);
       expect(screen.getTextContent()).toContain(helper);

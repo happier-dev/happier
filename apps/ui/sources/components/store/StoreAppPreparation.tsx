@@ -441,7 +441,7 @@ export function StoreAppPreparationReview(
               value={environmentName}
               onChangeText={(environmentName) => reviewState.setState({ environmentName })}
               accessibilityLabel={t('projects.deployments.name')}
-              placeholder={t('projects.deployments.namePlaceholder')}
+              placeholder={name}
             />
           }
           showChevron={false}
