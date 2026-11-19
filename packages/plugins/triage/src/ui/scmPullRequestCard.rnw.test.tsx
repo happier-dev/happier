@@ -319,6 +319,7 @@ describe('Git pane PR card', () => {
     const second = { ...bound.pullRequests[0]!, bindingId: 'binding-2',
       link: { provider: 'github', repository: 'acme/widgets', number: 43, url: 'https://github.com/acme/widgets/pull/43' },
       watch: { ...bound.pullRequests[0]!.watch, reason: 'credentials' } };
+    const opened: unknown[] = [];
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'git-card-multi', mountNonce: 'git-card-multi-nonce' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: renderSurface,
@@ -330,6 +331,7 @@ describe('Git pane PR card', () => {
         readResource: async () => ({ contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
           bytes: new TextEncoder().encode(JSON.stringify({ ...bound, pullRequests: [bound.pullRequests[0], second] })) }),
         watchResource: () => ({ digest: `sha256:${'a'.repeat(64)}` }),
+        openResource: ({ resource }) => { opened.push(resource); },
         executeAction: () => { throw new Error('No Action in this fixture'); },
       },
     });
@@ -338,11 +340,11 @@ describe('Git pane PR card', () => {
     await expect(fixture.getByText('2 pull requests linked to this session')).resolves.toBeDefined();
     const chosen = await fixture.findByRole('radio', { name: '#43' });
     expect(chosen.state?.checked).toBe(true);
-    await expect(fixture.getByText('GitHub · #43')).resolves.toBeDefined();
-    await expect(fixture.queryByText('GitHub · #42')).resolves.toBeUndefined();
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open' })); });
+    expect(opened).toEqual([{ kind: 'pullRequest', url: second.link.url }]);
     await act(async () => { await fixture.press(await fixture.findByRole('radio', { name: '#42' })); });
-    await expect(fixture.getByText('GitHub · #42')).resolves.toBeDefined();
-    await expect(fixture.queryByText('GitHub · #43')).resolves.toBeUndefined();
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open' })); });
+    expect(opened).toEqual([{ kind: 'pullRequest', url: second.link.url }, { kind: 'pullRequest', url }]);
   });
 
   it('offers the Account’s own default mode right after linking', async () => {
