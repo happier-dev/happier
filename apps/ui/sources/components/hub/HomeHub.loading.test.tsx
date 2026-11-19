@@ -16,6 +16,7 @@ import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', () => vi.importActual('react-native-web'));
+vi.mock('@/components/atmosphere/glyph/GlyphSurface', () => import('@/components/atmosphere/glyph/GlyphSurface.web'));
 vi.mock('react-native-unistyles', async () =>
     (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -148,10 +149,19 @@ describe('Home Loading at the RN-web layout boundary', () => {
         vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(() => height);
         vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, width, height));
         let cloudDraws = 0;
-        // Only the physical 2D canvas is used here; the DOM overload's last signature is WebGPU.
-        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
-            setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, fillText() { cloudDraws++; },
-        })) as unknown as typeof HTMLCanvasElement.prototype.getContext);
+        // jsdom supplies no GPU; the real Still painter targets a recorded 2D canvas.
+        vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} });
+        Object.defineProperty(document, 'fonts', { configurable: true, value: { load: async () => [] } });
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((function(this: HTMLCanvasElement, kind: string) {
+            if (kind !== '2d') return null;
+            const image = (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) });
+            return {
+                setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, fillText() {}, fillRect() {},
+                save() {}, restore() {}, clip() {}, putImageData() {}, createPattern() { return null; },
+                getImageData: (_x: number, _y: number, w: number, h: number) => image(w, h), createImageData: image,
+                drawImage: () => { if (this.closest('[data-testid="loading-planet.assembly"]')) cloudDraws++; },
+            };
+        }) as unknown as typeof HTMLCanvasElement.prototype.getContext);
         vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] });
         container = document.createElement('div');
         document.body.appendChild(container);
@@ -205,11 +215,11 @@ describe('Home Loading at the RN-web layout boundary', () => {
         expect(assemblyShown).toBe(delay > 250);
         expect(cloudDraws > 0).toBe(delay > 250);
         if (delay > 250) {
-            expect(find('loading-planet.assembly')?.getAttribute('width')).toBe('800');
+            expect(find('loading-planet.assembly')?.querySelector('canvas[style*="visibility: visible"]')?.getAttribute('width')).toBe('800');
             width = 640;
             await deliverLayout();
             await frames(32, observe);
-            expect(find('loading-planet.assembly')?.getAttribute('width')).toBe('640');
+            expect(find('loading-planet.assembly')?.querySelector('canvas[style*="visibility: visible"]')?.getAttribute('width')).toBe('640');
         }
         await act(async () => read.resolve());
         await flushHookEffects({ cycles: 20, turns: 2 });
