@@ -13,6 +13,7 @@ import { completeTerminalConnectForTest } from '@happier-tests/ui-terminal-enrol
 import { readAccountIdFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { decodeStoredCredentials, type Settings } from '../../../../../apps/cli/src/persistence';
 import { createCliActionExecutorFromCredentials } from '../../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { consumeDeferredCliApprovalResult } from '../../../../../apps/cli/src/session/actions/approvals/deferredResult';
 import { createTestAuth, createTestTerminalAuth } from '../auth';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
@@ -138,8 +139,16 @@ export async function startProjectDaemonFixture(params: Readonly<{
          * and never a reviewer (isApprovalDecisionReviewerBindingV1). The retained
          * execution, including any child Ask, supplies the final typed result. */
         async executeReviewed(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
-          return await executeWithApproval(actionId, input, async (artifactId): ReturnType<typeof execute> =>
-            await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }), context);
+          const approve = async (artifactId: string, signal: AbortSignal) =>
+            await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }, { signal });
+          const result = await executeWithApproval(actionId, input, approve, context);
+          return await consumeDeferredCliApprovalResult(result, {
+            onApprovalRequested: approve,
+            execute,
+            token: credentials.token,
+            serverHttpBaseUrl: actionServerApiUrl,
+            context: { signal: context.signal },
+          });
         },
         async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
           const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
