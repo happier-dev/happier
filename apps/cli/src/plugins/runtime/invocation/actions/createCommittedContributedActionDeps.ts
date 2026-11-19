@@ -1,3 +1,4 @@
+import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -194,9 +195,12 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       const machine = context.invocationServices?.managedMachine;
       const launch = machine?.launch;
       const seed = context.invocationServices?.connectedAccountPurposeBinding;
-      const contribution = launch && lease.registry.contributes.machineProvisioners?.find(candidate =>
-        candidate.identity.pluginId === launch.provider.pluginId && candidate.identity.localId === launch.provider.localId);
-      const role = contribution && readMachineProvisionerActionRolesV1(contribution.definition).find(candidate => candidate.action === action.localId)?.role;
+      const contribution = launch && resolveRetainedMachineProvisioner(lease.registry.contributes.machineProvisioners, launch);
+      const role = contribution?.identity.pluginId === action.pluginId
+        ? readMachineProvisionerActionRolesV1(contribution.definition).find(candidate => candidate.action === action.localId)?.role : undefined;
+      if (launch?.provider.pluginId === action.pluginId && seed?.managedOperation && !role) {
+        return { ok: false, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
+      }
       let admittedManagedProviderOperation: AdmittedManagedProviderOperationExecutionRequest | undefined;
       const binding = seed ? captureConnectedAccountInvocationPurposeBinding(seed, action) : undefined;
       if (binding) {

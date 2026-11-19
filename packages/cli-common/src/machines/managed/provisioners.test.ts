@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { qualifyManagedOpaquePresetProvisionerV1, readMachineProvisionerHostAvailability,
-    prepareManagedPowerProvisionerAdmissionV1 } from './provisioners.js';
+    prepareManagedPowerProvisionerAdmissionV1, resolveRetainedMachineProvisioner } from './provisioners.js';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
@@ -15,6 +15,16 @@ const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'home'
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
         retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+
+describe('retained provisioner resolution', () => {
+    it('keeps a retained resource tied to its exact provider and schema version', () => {
+        const upgraded = { identity: launch.provider, definition: { ...provisioner, schemaVersion: 2 } };
+        const foreign = { identity: { ...launch.provider, pluginId: 'acme.foreign' }, definition: provisioner };
+        const pinned = { identity: launch.provider, definition: provisioner };
+        expect(resolveRetainedMachineProvisioner([upgraded, foreign], launch)).toBeNull();
+        expect(resolveRetainedMachineProvisioner([upgraded, foreign, pinned], launch)).toBe(pinned);
+    });
+});
 
 describe('Account managed power role preparation', () => {
     const selected = [{ contribution: launch.provider, occurrenceId: 'selected', descriptor: provisioner, acquireExecutionTarget: 'account' as const }];

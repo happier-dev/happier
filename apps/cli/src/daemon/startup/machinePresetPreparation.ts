@@ -1,3 +1,4 @@
+import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import axios from 'axios';
 import { randomBytes } from 'node:crypto';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
@@ -75,9 +76,7 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
     const preset = await read();
     const hydrator = createManagedPresetHydrator({ credentials: requester.credentials, serverUrl: host.serverBaseUrl });
     const qualify = (launch: ManagedMachinePresetPreparationRootV1['launch']) => {
-        const contribution = host.registry.contributes.machineProvisioners?.find(candidate =>
-            candidate.pluginId === launch.provider.pluginId && candidate.definition.id === launch.provider.localId
-            && candidate.definition.schemaVersion === launch.schemaVersion);
+        const contribution = resolveRetainedMachineProvisioner(host.registry.contributes.machineProvisioners, launch);
         if (!contribution?.definition.preparation) throw new ManagedMachineControllerError('provider_unavailable');
         return { launch, provisioner: contribution.definition };
     };

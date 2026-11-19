@@ -1,3 +1,4 @@
+import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
     readManagedOpaquePresetAcquireEffectDigestV1, type ManagedNativeChannelIO } from '@happier-dev/cli-common/machines/managed';
@@ -326,12 +327,8 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     const machine = readMachine();
     // Native placement keeps the leased controller registry as its role authority;
     // reviewed facts neither select roles nor require Account catalog membership.
-    const selectedContribution = params.input.runtimeRegistry.contributes.machineProvisioners?.find((candidate) =>
-        candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId);
-    if (!selectedContribution || selectedContribution.definition.schemaVersion !== machine.launch.schemaVersion) {
-        throw new ManagedMachineControllerError('provider_unavailable');
-    }
-    const contribution = selectedContribution;
+    const contribution = resolveRetainedMachineProvisioner(params.input.runtimeRegistry.contributes.machineProvisioners, machine.launch);
+    if (!contribution) throw new ManagedMachineControllerError('provider_unavailable');
     const bootstrapCredentialKind = contribution.definition.bootstrapCredential?.kind
         ?? (contribution.definition.bootstrapTransport ? undefined : 'ssh');
     let retainedBootstrapCredential: Promise<BootstrapCredentialValue> | undefined;
@@ -613,9 +610,8 @@ export async function reconcileManagedAcquisitionIdentity(params: ManagedMachine
 
 export async function reconcileManagedMachine(params: ManagedMachineReconciliationInput): Promise<JsonValue | null> {
     params.client.assertConnection(params.machine);
-    const retainedProvisioner = params.input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-        candidate.identity.pluginId === params.machine.launch.provider.pluginId && candidate.identity.localId === params.machine.launch.provider.localId
-        && candidate.definition.schemaVersion === params.machine.launch.schemaVersion);
+    const retainedProvisioner = resolveRetainedMachineProvisioner(
+        params.input.runtimeRegistry.contributes.machineProvisioners, params.machine.launch);
     let credentialConfigurations = params.credentialConfigurations;
     if (params.action !== 'machines.managed.inspect' && params.machine.allocation === 'unsubmitted'
         && params.hydrator?.isOpaque(params.machine) && retainedProvisioner

@@ -18,7 +18,7 @@ import type { ActionExecuteResult, ActionExecutorContext, JsonValue, ExternalAct
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { executeManagedProvisionerDiscovery, qualifyManagedOpaquePresetProvisionerV1,
-    readManagedOpaquePresetProvisionerV1, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
+    readManagedOpaquePresetProvisionerV1, resolveRetainedMachineProvisioner, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedGetOutputV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1, type ManagedAcceptedV1, type ManagedAcquireInputV1, type ManagedAdmissionOutputV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAdmissionInputV1Schema, isManagedPresetAcquireInputV1, managedWorkspaceAttachmentIdV1, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
@@ -448,9 +448,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
     }
     // Opaque rows are structural at Home; every claimed effect continues from the locally opened row.
     async function submitIdentity(machine: ManagedMachineFullV1, kind: 'acquire' | 'rebuild' | 'intent', presetContent?: import('@happier-dev/protocol/machines/managed/actionsV1').ManagedControllerPresetContentV1) {
-        const provider = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-            candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
-            && candidate.definition.schemaVersion === machine.launch.schemaVersion);
+        const provider = resolveRetainedMachineProvisioner(input.runtimeRegistry.contributes.machineProvisioners, machine.launch);
         const path = kind === 'acquire' ? 'submit' : 'submit-intent';
         const response = await post(`/v1/machines/managed/controller/${path}`, { ...correlation(machine),
             ...(presetContent === undefined ? {} : { presetContent }) }, ManagedControllerSubmitOutputV1Schema);
@@ -518,9 +516,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             const current = await readCurrent(machine);
             if (!current) throw new ManagedMachineControllerError('intent_changed');
             assertConnection(current);
-            const provider = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                candidate.identity.pluginId === current.launch.provider.pluginId && candidate.identity.localId === current.launch.provider.localId
-                && candidate.definition.schemaVersion === current.launch.schemaVersion);
+            const provider = resolveRetainedMachineProvisioner(input.runtimeRegistry.contributes.machineProvisioners, current.launch);
             const captured = captureManagedPendingNativeIdentity({ machine: hydrator.structural(machine), privateMachine: machine,
                 current: hydrator.structural(current), privateCurrent: current, provisioner: provider?.definition });
             return async (bound: Extract<AcquireResultV1, { kind: 'bound' }>) => await reportIssuedNativeFact(machine, bound, 'pending-acquire', captured);
@@ -610,9 +606,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         inFlight.set(params.machine.id, work);
         try { await work; } finally { if (inFlight.get(params.machine.id) === work) inFlight.delete(params.machine.id); }
     }
-    const nativeLifetimeRenewal = (machine: ManagedMachineFullV1) => input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-        candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId
-        && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition.actions.renew;
+    const nativeLifetimeRenewal = (machine: ManagedMachineFullV1) => resolveRetainedMachineProvisioner(input.runtimeRegistry.contributes.machineProvisioners, machine.launch)?.definition.actions.renew;
     async function openPolicyMachine(machine: ManagedMachineV1, options: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal' | 'context' | 'policyPurpose' | 'policyMachine'>,
         action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator, sessionId?: string): Promise<ManagedMachineFullV1> {
         if (!isManagedOpaquePresetMachineV1(machine)) {
@@ -823,10 +817,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         openProjectWorkspaceTarget: (request: ManagedProjectWorkspaceTargetRequest) => openTarget(request),
         async snapshotAdmitted({ machine, label, reason, options }: ManagedNativeSnapshotRequest): Promise<MachineProvisionerSnapshotResultV1> {
             options.signal?.throwIfAborted();
-            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                candidate.identity.pluginId === machine.launch.provider.pluginId
-                && candidate.identity.localId === machine.launch.provider.localId
-                && candidate.definition.schemaVersion === machine.launch.schemaVersion);
+            const contribution = resolveRetainedMachineProvisioner(input.runtimeRegistry.contributes.machineProvisioners, machine.launch);
             if (!contribution?.definition.actions.snapshot || !contribution.definition.snapshot) {
                 return { kind: 'unsupported', code: 'native_snapshot_unsupported' };
             }
@@ -855,9 +846,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 && current.observation.power === 'running' && current.observation.nativeExpiry !== undefined);
         },
         async reconcileNativeCredentials(machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
-            const ref = machine.resource?.contributionRef;
-            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                candidate.identity.pluginId === ref?.pluginId && candidate.identity.localId === ref?.localId);
+            const contribution = machine.resource && resolveRetainedMachineProvisioner(
+                input.runtimeRegistry.contributes.machineProvisioners, machine.resource);
             if (!contribution?.definition.nativeCredentialDelivery) return;
             if (!input.externalActionMachineRequestPrivateKey || !input.prepareTeamCredentialNativeSource) {
                 throw new ManagedMachineControllerError('credential_unavailable');
@@ -1073,10 +1063,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     // The Home projection deliberately has no private provider
                     // definition. The installed daemon declaration is the sole
                     // executable capability for the locally opened snapshot.
-                    const provisioner = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                        candidate.identity.pluginId === machine.launch.provider.pluginId
-                        && candidate.identity.localId === machine.launch.provider.localId
-                        && candidate.definition.schemaVersion === machine.launch.schemaVersion)?.definition;
+                    const provisioner = resolveRetainedMachineProvisioner(input.runtimeRegistry.contributes.machineProvisioners, machine.launch)?.definition;
                     if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
                     options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id } });
                     const size = hydrator.isOpaque(machine)
@@ -1524,9 +1511,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const requester = options.context?.externalActionExecutionAuthorization?.binding.accountId;
                 if (inspection?.includeGuestDiagnostics) {
                     const machine = localMachine.data;
-                    const provisioner = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
-                        candidate.identity.pluginId === machine.launch.provider.pluginId
-                        && candidate.identity.localId === machine.launch.provider.localId)?.definition;
+                    const provisioner = resolveRetainedMachineProvisioner(input.runtimeRegistry.contributes.machineProvisioners, machine.launch)?.definition;
                     output.guestDiagnostics = await readManagedGuestDiagnostics({ machine,
                         requesterAccountId: requester ?? readAccountIdFromToken(input.credentials.token) ?? undefined,
                         requestId: retained.requestId,

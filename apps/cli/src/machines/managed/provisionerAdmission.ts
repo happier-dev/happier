@@ -1,3 +1,4 @@
+import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { prepareManagedAcquireProvisionerAdmissionV1, prepareManagedPowerProvisionerAdmissionV1, projectAccountManagedProvisioners,
     type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -43,8 +44,7 @@ export async function prepareCliManagedProvisionerAdmission(
         });
         if (!content.prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(content.prepared)) return null;
         const launch = content.prepared.binding.configuration.launch;
-        const selected = (await readSelected(launch.provider.pluginId))?.find(candidate =>
-            candidate.contribution.localId === launch.provider.localId && candidate.descriptor.schemaVersion === launch.schemaVersion);
+        const selected = resolveRetainedMachineProvisioner(await readSelected(launch.provider.pluginId) ?? undefined, launch);
         if (!selected?.descriptor.preparation) return { ok: false as const, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
         return { children: readMachineProvisionerActionRolesV1(selected.descriptor)
             .filter(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy')

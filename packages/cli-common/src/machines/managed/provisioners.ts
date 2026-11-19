@@ -19,13 +19,31 @@ export type ManagedProvisionerDiscoveryEntry = MachineProvisionersListResultV1['
 export type ManagedProvisionerSelectionRead = (pluginId: string) => Promise<readonly ManagedProvisionerDiscoveryEntry[] | null>;
 export type ManagedOpaquePresetProvisionerCandidateV1 = Pick<ManagedProvisionerDiscoveryEntry, 'contribution' | 'descriptor'>;
 
+type RetainedProvisionerEntry = ManagedOpaquePresetProvisionerCandidateV1 | Readonly<{
+    identity: ManagedOpaquePresetProvisionerCandidateV1['contribution'];
+    definition: Pick<MachineProvisionerContributionV1, 'schemaVersion'>;
+}>;
+
+/** Resolve the declaration that can interpret this retained provider's launch or resource bytes. */
+export function resolveRetainedMachineProvisioner<T extends RetainedProvisionerEntry>(
+    provisioners: readonly T[] | undefined,
+    retained: Pick<ValidatedLaunchSnapshotV1, 'provider' | 'schemaVersion'>
+        | Pick<NonNullable<ManagedMachineV1['resource']>, 'contributionRef' | 'schemaVersion'>,
+): T | null {
+    const provider = 'provider' in retained ? retained.provider : retained.contributionRef;
+    return provisioners?.find(entry => {
+        const identity = 'identity' in entry ? entry.identity : entry.contribution;
+        const descriptor = 'definition' in entry ? entry.definition : entry.descriptor;
+        return identity.pluginId === provider.pluginId && identity.localId === provider.localId
+            && descriptor.schemaVersion === retained.schemaVersion;
+    }) ?? null;
+}
+
 export function readManagedOpaquePresetProvisionerV1(params: Readonly<{
     launch: Pick<ValidatedLaunchSnapshotV1, 'provider' | 'schemaVersion'>;
     provisioners: readonly ManagedOpaquePresetProvisionerCandidateV1[];
 }>): MachineProvisionerContributionV1 | null {
-    return params.provisioners.find(entry => entry.contribution.pluginId === params.launch.provider.pluginId
-        && entry.contribution.localId === params.launch.provider.localId
-        && entry.descriptor.schemaVersion === params.launch.schemaVersion)?.descriptor ?? null;
+    return resolveRetainedMachineProvisioner(params.provisioners, params.launch)?.descriptor ?? null;
 }
 
 /**

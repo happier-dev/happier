@@ -2,7 +2,7 @@ import { createExternalActionRequesterServerRequestHeaders } from '@/api/externa
 import type { CurrentAccountMachineInventoryItem } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
     bindManagedMachineRoleCredentials, createManagedOpaquePresetReviewedChildPortV1, ManagedMachineControllerError,
-    ManagedMachineNativeEffectGuardRefusal,
+    ManagedMachineNativeEffectGuardRefusal, projectAccountManagedProvisioners, resolveRetainedMachineProvisioner,
     type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
 import { projectConnectedAccountHostAccessScopes, type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -10,7 +10,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { PluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
-import { MachineProvisionerContributionV1Schema, readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -142,11 +142,7 @@ function createAccountNativeInvocation(input: Readonly<{
 /** The Account-selected declaration is the local effect-time provider owner. */
 export function resolveCliManagedAccountProvisioner(machine: ManagedMachineFullV1,
     selected: Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }>): MachineProvisionerContributionV1 {
-    const declared = selected.manifest.contributes.machineProvisioners.find(candidate => candidate.id === machine.launch.provider.localId);
-    const provisioner = MachineProvisionerContributionV1Schema.safeParse(declared);
-    if (!provisioner.success || selected.manifest.id !== machine.launch.provider.pluginId
-        || provisioner.data.schemaVersion !== machine.launch.schemaVersion) {
-        throw new ManagedMachineControllerError('provider_unavailable');
-    }
-    return provisioner.data;
+    const entry = resolveRetainedMachineProvisioner(projectAccountManagedProvisioners([selected]), machine.launch);
+    if (!entry) throw new ManagedMachineControllerError('provider_unavailable');
+    return entry.descriptor;
 }
