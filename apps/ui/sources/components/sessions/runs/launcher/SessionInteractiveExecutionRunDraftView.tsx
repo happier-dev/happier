@@ -77,7 +77,9 @@ import { createExecutionRunReportChip, createExecutionRunStartContentChip } from
 import { getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
 import { ExecutionRunRouteChoiceContent } from './ExecutionRunRouteChoiceContent';
 import { resolveExecutionRunRouteChoice } from './resolveExecutionRunRouteChoice';
-import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import { isFreshExecutionRunBackendChoice, type ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
+import { presentMachineAgentSetupListRow } from '@/components/sessions/agentPicker/machineAgentSetupRow';
+import { MachineAgentSetupPane } from '@/components/machines/agents/MachineAgentSetupPane';
 import { useExecutionRunTeamCredentialModel } from './useExecutionRunTeamCredentialModel';
 import { ExecutionRunDraftSelectionContext } from './ExecutionRunDraftSelectionContext';
 import { resolveExecutionRunIntentTitle } from '@/components/sessions/runs/resolveExecutionRunIntentTitle';
@@ -869,7 +871,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         // A role on its own Agent moves the shared Who selection to that Agent.
         const roleAgent = item?.agentTargetKey;
         const follow = roleAgent
-            ? options.backendChoices.find((choice) => !choice.disabled && choiceRunsAgent(choice, roleAgent))
+            ? options.backendChoices.find((choice) => isFreshExecutionRunBackendChoice(choice) && choiceRunsAgent(choice, roleAgent))
             : undefined;
         setActionInput(previous => {
             if (intent === 'review') {
@@ -945,22 +947,16 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         includeFieldPath?: (path: string) => boolean,
     ) => (
         <ExecutionRunLauncherOptions
-            backendChoices={options.backendChoices}
-            selectedBackendTargetKeys={options.selectedBackendTargetKeys}
             profileChoices={options.profileChoices}
             selectedProfileId={options.selectedProfileId}
             selectedPermissionMode={options.selectedPermissionMode}
             permissionModeOptions={options.visiblePermissionModeOptions}
             fields={options.fields}
-            input={actionInput}
+            input={engineConfiguration}
             editable={editable}
             resolveFieldOptions={options.resolveFieldOptions}
-            machineName={machine.name}
             sections={sections}
             {...(includeFieldPath ? { includeFieldPath } : {})}
-            backendSectionLabel={intent === 'review' ? t('runPage.launcher.who.review') : undefined}
-            multiSelect={intent === 'review'}
-            onSelectBackend={selectBackend}
             onSelectProfile={(choice) => {
                 setError(null);
                 options.onSelectProfile(choice);
@@ -970,7 +966,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 options.onPatch(patch);
             }}
         />
-    ), [actionInput, editable, intent, machine.name, options, selectBackend]);
+    ), [actionInput, editable, options]);
 
     // RT4: a new Run follows the session's route and model unless the draft chooses its own. On a
     // phone the composer's rail scrolls and shows whole chips only, so a chip with a long label
@@ -1172,19 +1168,23 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const contextualSource = React.useMemo<ContextualStartSource>(() => ({
         enabled: accountLifetime !== null,
         busy: !editable,
-        sections: [{ category: 'newAgent', section: { kind: 'static', id: 'new-agents', options: options.backendChoices.map(choice => ({
-            id: choice.targetKey, testID: `contextual-start-agent:${choice.agentId}`,
-            label: choice.title, disabled: choice.disabled,
-            icon: <ExecutionRunAgentMark agentId={choice.agentId} size={16} />,
-            ...(choice.unavailable === 'notOnMachine' ? { subtitle: t('machineAgents.notOnMachineYet', { machine: machine.name }) }
-                : choice.unavailable === 'cantRun' ? { subtitle: t('machineAgents.cantRunOn', { machine: machine.name }) } : {}),
-            ...(intent !== 'review' && selectedChoice?.targetKey === choice.targetKey
-                && (draftModelSelection || options.inheritedDraftSelection || teamCredential.selected)
-                ? { subtitle: exactModelPresentation.subtitle } : {}),
-            ...(intent === 'review' && reviewModelSubtitle && options.selectedBackendChoice?.targetKey === choice.targetKey
-                ? { subtitle: reviewModelSubtitle } : {}),
-            onSelect: () => selectBackend(choice.targetKey),
-        })) } }],
+        sections: [{ category: 'newAgent', section: { kind: 'static', id: 'new-agents', options: options.backendChoices.map(choice => {
+            // The shared Agent-picker rule: a not-ready Agent reads placed and marked, and its row opens the
+            // Machine's setup (the detail below) rather than choosing it. A chosen one stays a choice.
+            const setup = choice.setup && !options.selectedBackendTargetKeys.includes(choice.targetKey) ? choice.setup : null;
+            return {
+                id: choice.targetKey, testID: `contextual-start-agent:${choice.agentId}`,
+                label: choice.title, disabled: choice.disabled,
+                icon: <ExecutionRunAgentMark agentId={choice.agentId} size={16} />,
+                ...(choice.setup ? presentMachineAgentSetupListRow(choice.setup) : {}),
+                ...(intent !== 'review' && selectedChoice?.targetKey === choice.targetKey
+                    && (draftModelSelection || options.inheritedDraftSelection || teamCredential.selected)
+                    ? { subtitle: exactModelPresentation.subtitle } : {}),
+                ...(intent === 'review' && reviewModelSubtitle && options.selectedBackendChoice?.targetKey === choice.targetKey
+                    ? { subtitle: reviewModelSubtitle } : {}),
+                ...(setup ? {} : { onSelect: () => selectBackend(choice.targetKey) }),
+            };
+        }) } }],
         selectedIds: new Set(options.selectedBackendTargetKeys),
         where: { accountLifetime, target: whereTarget, machineName: machine.name,
             machineHomeDir: session ? readSessionOwnerMetadataView(session)?.homeDir : null,
@@ -1200,15 +1200,20 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     // `recipe`), never as a whole model list drawn inline.
     const reviewModelChoice = intent === 'review' && !props.credentialSelectionOnly ? reviewOptions.modelChoice : null;
     const reviewModelTarget = reviewModelChoice ? options.selectedBackendChoice?.targetKey ?? null : null;
-    const agentDetails = React.useMemo(() => new Map(intent === 'review' ? reviewModelTarget ? [[reviewModelTarget, () => reviewModelChoice] as const] : [] : options.backendChoices.map(choice => [choice.targetKey, () =>
+    const setupDetails = React.useMemo(() => options.backendChoices.flatMap(choice => {
+        const setup = choice.setup && !options.selectedBackendTargetKeys.includes(choice.targetKey) ? choice.setup : null;
+        return setup && serverId && machineId ? [[choice.targetKey, () => <MachineAgentSetupPane agent={setup.agent} serverId={serverId}
+            machineId={machineId} machineName={machine.name} />] as const] : [];
+    }), [machine.name, machineId, options.backendChoices, options.selectedBackendTargetKeys, serverId]);
+    const agentDetails = React.useMemo(() => new Map<string, () => React.ReactNode>([...setupDetails, ...intent === 'review' ? reviewModelTarget ? [[reviewModelTarget, () => reviewModelChoice] as const] : [] : options.backendChoices.flatMap(choice => choice.setup && !options.selectedBackendTargetKeys.includes(choice.targetKey) ? [] : [[choice.targetKey, () =>
         <ExecutionRunAgentModelPicker choice={choice} sessionId={props.sessionId} machineId={machineId}
             serverId={serverId} actionInput={actionInput}
             selected={[draftModelSelection, options.inheritedDraftSelection].find(ref => ref && choiceRunsAgent(choice, ref.agentTargetKey)) ?? null}
             inheritedTeamCredentialModel={options.inheritedDraftTeamCredentialModel
                 && choiceRunsAgent(choice, options.inheritedDraftTeamCredentialModel.agentTargetKey) ? options.inheritedDraftTeamCredentialModel : null}
-            selectBackend={selectBackend} setActionInput={setActionInput} />] as const)),
-    [actionInput, draftModelSelection, intent, machineId, options.backendChoices, options.inheritedDraftSelection, reviewModelChoice, reviewModelTarget,
-        options.inheritedDraftTeamCredentialModel, props.sessionId, selectBackend, serverId, setActionInput]);
+            selectBackend={selectBackend} setActionInput={setActionInput} />] as const])]),
+    [actionInput, draftModelSelection, intent, machineId, options.backendChoices, options.inheritedDraftSelection, options.selectedBackendTargetKeys, reviewModelChoice, reviewModelTarget,
+        options.inheritedDraftTeamCredentialModel, props.sessionId, selectBackend, serverId, setActionInput, setupDetails]);
 
     const reviewStepControls: NonNullable<React.ComponentProps<typeof ReviewStartBody>['stepControls']> = (input, setInput, stepIndex) => {
         const reviewers = readReviewLauncherReviewers(input);
@@ -1217,10 +1222,10 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         const item = roles.find(candidate => candidate.roleId === value);
         const selected = options.backendChoices.filter(choice => reviewers.some(reviewer => reviewer.kind === 'engine'
             && reviewer.engineId === (choice.reviewEngineId ?? choice.backendId)));
-        const rail = buildRolesRailPickerOption({ value, roles, onManageRoles: openRoleSettings,
+        const rail = buildRolesRailPickerOption({ value: value ?? null, roles, onManageRoles: openRoleSettings,
             onChange: roleId => setInput(previous => {
                 const role = roles.find(candidate => candidate.roleId === roleId);
-                const follow = role?.agentTargetKey ? options.backendChoices.find(choice => !choice.disabled
+                const follow = role?.agentTargetKey ? options.backendChoices.find(choice => isFreshExecutionRunBackendChoice(choice)
                     && choiceRunsAgent(choice, role.agentTargetKey!)) : null;
                 const next = follow ? selectReviewLauncherEngines(previous, [follow.reviewEngineId ?? follow.backendId]) : previous;
                 return { ...next, reviewers: readReviewLauncherReviewers(next).map(reviewer => reviewer.kind === 'engine'
@@ -1345,7 +1350,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             ) : null}
             {intent === 'review' && !props.credentialSelectionOnly ? <ReviewStartBody input={actionInput}
                 onChange={setActionInput} source={contextualSource} choices={options.backendChoices}
-                stepControls={reviewStepControls}
+                consumerSessionId={props.sessionId} stepControls={reviewStepControls}
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}
                 credentials={reviewOptions.controls} onSaveAsWorkflow={saveReviewAsWorkflow}

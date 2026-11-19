@@ -315,15 +315,17 @@ export function ReviewStartSpecimen(props: Readonly<{ scene: string | null }>) {
           onThenChange={setThen}
           walkthrough={walkthrough}
           onWalkthroughChange={setWalkthrough}
-          cost={
+          costs={
             scene === 'deep' && hasDeepSec
-              ? {
+              ? [{
+                  id: 'deepsec',
                   engine: 'DeepSec',
                   estimate: '$4.80',
+                  title: t('reviewWalkthrough.start.acceptEstimate', { engine: 'DeepSec', estimate: '$4.80' }),
                   accepted,
                   onAcceptedChange: setAccepted,
-                }
-              : null
+                }]
+              : []
           }
         />
       </View>

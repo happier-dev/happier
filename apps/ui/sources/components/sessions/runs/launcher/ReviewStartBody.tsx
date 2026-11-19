@@ -2,13 +2,16 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { ReviewStartSteps } from '@/components/reviews/start/ReviewStartSteps';
 import { ReviewStartOptions, type ReviewStartOptionsProps } from '@/components/reviews/start/ReviewStartOptions';
-import { ContextualStartComposerBody, useContextualStartComposer, type ContextualStartSource } from '@/components/sessions/authoring/ContextualStartComposer';
+import { ContextualStartComposerBody, useContextualStartComposer, useContextualStartParticipantSource, type ContextualStartSource } from '@/components/sessions/authoring/ContextualStartComposer';
+import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 import { useExecutableParticipantLabels } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { t } from '@/text';
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
-import { readReviewLauncherSteps, updateReviewLauncherStepInput } from './reviewLauncherSelection';
+import { readReviewLauncherReviewers, readReviewLauncherSteps, updateReviewLauncherStepInput } from './reviewLauncherSelection';
 
 const ADMISSIBLE = { who: ['newAgent', 'engine', 'session', 'bot', 'person'], machine: 'fixed', folder: 'fixed' } as const;
 
@@ -22,6 +25,7 @@ type Props = Readonly<{
     disabled: boolean;
     details?: ReadonlyMap<string, () => React.ReactNode>;
     whoAccessory?: React.ComponentProps<typeof ContextualStartComposerBody>['whoAccessory'];
+    consumerSessionId?: string | null;
     stepControls?: (input: Record<string, unknown>, setInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>>, stepIndex: number) => Readonly<{
         details?: React.ComponentProps<typeof ContextualStartComposerBody>['details'];
         whoAccessory?: React.ComponentProps<typeof ContextualStartComposerBody>['whoAccessory'];
@@ -30,7 +34,6 @@ type Props = Readonly<{
     narrator?: React.ReactNode;
     credentials?: React.ReactNode;
     onSaveAsWorkflow?: () => void;
-    cost?: ReviewStartOptionsProps['cost'];
 }>;
 
 /** Bind the visual owner's steps to the retained Run draft and its existing Who source. */
@@ -39,6 +42,19 @@ export function ReviewStartBody(props: Props) {
     const selections = React.useMemo(() => steps.flatMap(step => step.reviewers), [steps]);
     const labels = useExecutableParticipantLabels(selections, props.source.where?.accountLifetime?.scope.serverId ?? null);
     const update = (next: typeof steps) => props.onChange({ ...props.input, steps: next, reviewers: next[0]?.reviewers ?? [] });
+    const costs: ReviewStartOptionsProps['costs'] = steps.flatMap((step, stepIndex) => step.reviewers.flatMap((reviewer, reviewerIndex) => {
+        if (reviewer.kind !== 'engine') return [];
+        const choice = props.choices.find(choice => (choice.reviewEngineId ?? choice.backendId) === reviewer.engineId);
+        if (!choice) return [];
+        const consent = choice.reviewInventoryItem?.costConsent;
+        if (!consent) return [];
+        return [{ id: `${stepIndex}:${reviewerIndex}`, engine: choice.title, title: consent.title,
+            description: consent.description, accepted: reviewer.options?.[consent.optionKey] === true,
+            onAcceptedChange: (accepted: boolean) => props.onChange(updateReviewLauncherStepInput(props.input, stepIndex, current => ({
+                ...current, reviewers: readReviewLauncherReviewers(current).map((value, index) => index === reviewerIndex && value.kind === 'engine'
+                    ? { ...value, options: { ...value.options, [consent.optionKey]: accepted } } : value),
+            }))) }];
+    }));
     return <View>
         <ReviewStartSteps steps={steps} onStepsChange={update} disabled={props.disabled}
             transcriptAvailable={props.transcriptAvailable}
@@ -54,7 +70,7 @@ export function ReviewStartBody(props: Props) {
             onThenChange={then => props.onChange({ ...props.input, then })}
             walkthrough={props.walkthrough}
             onWalkthroughChange={walkthrough => props.onChange({ ...props.input, outputs: walkthrough ? ['walkthrough'] : [] })}
-            narrator={props.narrator} credentials={props.credentials} cost={props.cost ?? null} disabled={props.disabled}
+            narrator={props.narrator} credentials={props.credentials} costs={costs} disabled={props.disabled}
             onSaveAsWorkflow={props.onSaveAsWorkflow} />
     </View>;
 }
@@ -83,9 +99,7 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
                 if (!choice) return [option];
                 const id = choice.reviewEngineId ?? choice.backendId;
                 const positions = enginePositions.get(id) ?? [];
-                if (choice.disabled || option.onSelect === undefined) return positions.length > 1
-                    ? positions.map(position => ({ ...option, id: reviewReviewerIdForSelectionV1(position),
-                        testID: `review-start-reviewer:${reviewReviewerIdForSelectionV1(position)}` })) : [option];
+                if (positions.length === 0 && (choice.disabled || option.onSelect === undefined)) return [option];
                 const remove = (position: number) => changeReviewers(step.reviewers.filter((_reviewer, index) => index !== position));
                 if (positions.length > 1) return positions.map(position => ({ ...option,
                     id: reviewReviewerIdForSelectionV1(position),
@@ -104,5 +118,52 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
         props.onChange(updateReviewLauncherStepInput(props.input, props.stepIndex, update));
     const controls = props.stepControls?.(input, setInput, props.stepIndex) ?? { details: props.stepIndex === 0 ? props.details : undefined,
         whoAccessory: props.stepIndex === 0 ? props.whoAccessory : undefined };
-    return <ContextualStartComposerBody model={model} whoLabel={t('reviewWalkthrough.start.whoReviews')} {...controls} />;
+    const accountLifetime = props.source.where?.accountLifetime;
+    return accountLifetime ? <ParticipantStepWho {...props} accountLifetime={accountLifetime} source={source}
+        input={input} onChange={next => setInput(next)} controls={controls} />
+        : <ContextualStartComposerBody model={model} whoLabel={t('reviewWalkthrough.start.whoReviews')} {...controls} />;
+}
+
+const NO_PROJECT_CHANGE = () => undefined;
+
+/** Each visible step consumes the same exact-Home participant and recipe owner as second opinions. */
+function ParticipantStepWho(props: Props & Readonly<{
+    accountLifetime: ServerAccountScopeLifetime;
+    controls: Pick<React.ComponentProps<typeof ContextualStartComposerBody>, 'details' | 'whoAccessory'>;
+}>) {
+    const reviewers = readReviewLauncherSteps(props.input)[0]!.reviewers;
+    const selected = reviewers.filter((reviewer): reviewer is ExecutableParticipantSelectionV1 =>
+        reviewer.kind === 'session' || reviewer.kind === 'model');
+    const replace = (next: typeof reviewers) => props.onChange({ ...props.input, reviewers: next });
+    const onChoose = (selection: ExecutableParticipantSelectionV1) => {
+        const has = (reviewer: typeof reviewers[number]) => reviewer === selection || (reviewer.kind === 'session'
+            && selection.kind === 'session' && reviewer.session.serverId === selection.session.serverId
+            && reviewer.session.sessionId === selection.session.sessionId);
+        replace(reviewers.some(has) ? reviewers.filter(reviewer => !has(reviewer)) : [...reviewers, selection]);
+    };
+    const people = {
+        includeModels: true,
+        title: t('session.collaboration.discussion.participants.peopleGroup'),
+        chosen: reviewers.flatMap(reviewer => reviewer.kind === 'person'
+            ? [presentSharePrincipal({ ref: reviewer.principal, viewerAccountId: props.accountLifetime.scope.accountId })] : []),
+        onChoose: (principal: Readonly<{ kind: 'account'; accountId: string }>) => {
+            const has = (reviewer: typeof reviewers[number]) => reviewer.kind === 'person'
+                && reviewer.principal.kind === 'account' && reviewer.principal.accountId === principal.accountId;
+            replace(reviewers.some(has) ? reviewers.filter(reviewer => !has(reviewer))
+                : [...reviewers, { kind: 'person', principal, required: false }]);
+        },
+    };
+    const participantSource = useContextualStartParticipantSource({ accountLifetime: props.accountLifetime,
+        enabled: props.source.enabled, busy: props.disabled, selected, onChoose, people,
+        onReplace: (previous, next) => replace(reviewers.map(reviewer => reviewer === previous ? next : reviewer)),
+        consumerSessionId: props.consumerSessionId,
+        question: '', onQuestionChange: NO_PROJECT_CHANGE, showWhere: false, onProject: NO_PROJECT_CHANGE,
+        sessionsContext: t('session.collaboration.discussion.secondOpinion.yourSession'),
+    });
+    const source: ContextualStartSource = { ...participantSource,
+        sections: [...participantSource.sections, ...props.source.sections.map(entry => ({ ...entry, category: 'engine' as const }))],
+        selectedIds: new Set([...participantSource.selectedIds, ...props.source.selectedIds]),
+    };
+    const model = useContextualStartComposer(source, ADMISSIBLE);
+    return <ContextualStartComposerBody model={model} whoLabel={t('reviewWalkthrough.start.whoReviews')} {...props.controls} />;
 }

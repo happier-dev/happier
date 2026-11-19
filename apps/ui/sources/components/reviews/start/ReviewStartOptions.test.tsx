@@ -36,10 +36,10 @@ function Harness(
       onThenChange={setThen}
       walkthrough={walkthrough}
       onWalkthroughChange={setWalkthrough}
-      cost={
+      costs={
         props.cost
-          ? { ...props.cost, accepted, onAcceptedChange: setAccepted }
-          : null
+          ? [{ ...props.cost, accepted, onAcceptedChange: setAccepted }]
+          : []
       }
     />
   );
@@ -62,7 +62,7 @@ describe('ReviewStartOptions', () => {
     const states: Readonly<{ accepted: boolean }>[] = [];
     const screen = await renderScreen(
       <Harness
-        cost={{ engine: 'DeepSec', estimate: '$4.80' }}
+        cost={{ id: 'deepsec', engine: 'DeepSec', estimate: '$4.80', title: 'Accept DeepSec’s $4.80 estimate' }}
         onChange={(state) => states.push(state)}
       />,
     );

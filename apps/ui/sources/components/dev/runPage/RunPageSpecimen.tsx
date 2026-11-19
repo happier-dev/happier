@@ -113,12 +113,6 @@ const reviewPayload = {
     generatedAtMs: NOW,
 } as const;
 
-const backendChoices = [
-    { backendTarget: { kind: 'backend', backendId: 'claude' }, targetKey: 'agent:claude', backendId: 'claude', agentId: 'claude', title: 'Claude Code', disabled: false },
-    { backendTarget: { kind: 'backend', backendId: 'codex' }, targetKey: 'agent:codex', backendId: 'codex', agentId: 'codex', title: 'Codex', disabled: false },
-    { backendTarget: { kind: 'backend', backendId: 'gemini' }, targetKey: 'agent:gemini', backendId: 'gemini', agentId: 'gemini', title: 'Gemini', disabled: true },
-] as const;
-
 function RunColumn(props: Readonly<{ phone: boolean; children: React.ReactNode }>) {
     const { width } = useWindowDimensions();
     return (
@@ -234,8 +228,6 @@ export function RunPageSpecimen(props: Readonly<{ frame: string | null }>) {
             {frame === 'LN' ? (
                 <RunColumn phone={phone}>
                     <ExecutionRunLauncherOptions
-                        backendChoices={backendChoices as never}
-                        selectedBackendTargetKeys={['agent:claude', 'agent:codex']}
                         profileChoices={LAUNCHER_PROFILES}
                         selectedProfileId={LAUNCHER_PROFILES[0]!.id}
                         selectedPermissionMode="read-only"
@@ -244,9 +236,6 @@ export function RunPageSpecimen(props: Readonly<{ frame: string | null }>) {
                         input={{}}
                         editable
                         resolveFieldOptions={() => []}
-                        backendSectionLabel={t('runPage.launcher.who.review')}
-                        multiSelect
-                        onSelectBackend={noop}
                         onSelectProfile={noop}
                         onPatch={noop}
                     />

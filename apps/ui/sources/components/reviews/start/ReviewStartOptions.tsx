@@ -18,8 +18,11 @@ import { ReviewLabel } from '../ReviewLabel';
  * `confirmedCostWarning` for this start only, so it is never a saved preference.
  */
 export type ReviewStartCostConsent = Readonly<{
+  id: string;
   engine: string;
-  estimate: string;
+  title: string;
+  description?: string;
+  estimate?: string;
   accepted: boolean;
   onAcceptedChange: (accepted: boolean) => void;
 }>;
@@ -33,7 +36,7 @@ export type ReviewStartOptionsProps = Readonly<{
   narrator?: React.ReactNode;
   /** The host's keys and accounts control (Secret / Team credential selection). */
   credentials?: React.ReactNode;
-  cost: ReviewStartCostConsent | null;
+  costs: readonly ReviewStartCostConsent[];
   disabled?: boolean;
   onSaveAsWorkflow?: () => void;
 }>;
@@ -52,7 +55,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
     ],
     [],
   );
-  const cost = props.cost;
+  const costs = props.costs;
   const commands = useCurrentUiContextLocalCommands(props.disabled ? [] : [{
     key: 'review.start.then',
     title: t('reviewWalkthrough.start.then'),
@@ -131,7 +134,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
               expanded
                 ? undefined
                 : t(
-                    cost
+                    costs.length > 0
                       ? 'reviewWalkthrough.start.advancedContentsWithCost'
                       : 'reviewWalkthrough.start.advancedContents',
                   )
@@ -163,28 +166,27 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
           onPress={props.onSaveAsWorkflow}
           disabled={props.disabled}
         /> : null}
-        {cost ? (
+        {costs.map(cost => (
           <Item
-            title={t('reviewWalkthrough.start.costEstimate')}
+            key={cost.id}
+            title={cost.estimate ? t('reviewWalkthrough.start.costEstimate') : cost.title}
             mode="info"
             showChevron={false}
-            detail={`${cost.engine} · ${cost.estimate}`}
+            detail={[cost.engine, cost.estimate ?? cost.description].filter(Boolean).join(' · ')}
           />
-        ) : null}
+        ))}
       </ExpandableItem>
-      {cost ? (
+      {costs.map((cost, index) => (
         <Item
-          testID="review-start-cost-consent"
+          key={cost.id}
+          testID={index === 0 ? 'review-start-cost-consent' : `review-start-cost-consent:${cost.id}`}
           leftElement={
             <SelectionCheckGlyph
               state={cost.accepted ? 'checked' : 'unchecked'}
             />
           }
-          title={t('reviewWalkthrough.start.acceptEstimate', {
-            engine: cost.engine,
-            estimate: cost.estimate,
-          })}
-          subtitle={t('reviewWalkthrough.start.billedTo', {
+          title={cost.title}
+          subtitle={cost.description ?? t('reviewWalkthrough.start.billedTo', {
             engine: cost.engine,
           })}
           accessibilityRole="checkbox"
@@ -193,7 +195,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
           disabled={props.disabled}
           showChevron={false}
         />
-      ) : null}
+      ))}
     </View>
   );
 }

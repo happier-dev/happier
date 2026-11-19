@@ -198,6 +198,9 @@ let serverId = '';
 let sequence = 0;
 let screen: Screen;
 let backends: Record<string, { available: boolean; intents: string[] }>;
+let reviewCostConsent: ReturnType<typeof ReviewEngineListItemSchema.parse>['costConsent'];
+let reviewCostEngineId = 'claude';
+let uninstalledAgentId: string | null = null;
 let reviewProfileIds: Readonly<Record<string, string>> = {};
 let protocolSupported = true;
 let detachedScopeSupported = true;
@@ -235,8 +238,9 @@ function teamResource(application?: unknown) {
         sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } } });
 }
 const secretRef = 'happier:shared-secret:v1:personal-secret';
-const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
-    agentsById: Object.fromEntries((['claude', 'codex'] as const).map(agentId => [agentId, { id: agentId,
+function reviewAgentIds() { return ['claude', 'codex', ...(['coderabbit', 'deepsec'] as const).filter(id => id in backends)] as const; }
+function reviewAgentProjection() { return PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
+    agentsById: Object.fromEntries(reviewAgentIds().map(agentId => [agentId, { id: agentId,
         title: t(BUNDLED_CANONICAL_AGENTS_CORE[agentId]!.displayNameKey),
         identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId],
         providerRequirements: BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId]?.providerRequirements ?? undefined,
@@ -251,10 +255,10 @@ const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation:
             return [declaration.contributionKey, { id: declaration.contributionKey, pluginId: identity.pluginId,
                 definition: declaration.definition, provenance: declaration.provenance, sourceKind: 'bundled' }];
         }),
-    ) } }, resourcesById: {}, settingsById: {}, diagnostics: [] });
-function reviewAgentReadiness() { return Object.fromEntries(['claude', 'codex'].map(agentId => [`cli.${agentId}`, {
-    ok: true, checkedAt: Date.now(), data: MachineAgentInventoryItemSchema.parse({ agentId, title: agentId, installed: true,
-        version: '1', latestVersion: null, update: { supported: false, command: null },
+    ) } }, resourcesById: {}, settingsById: {}, diagnostics: [] }); }
+function reviewAgentReadiness() { return Object.fromEntries(reviewAgentIds().map(agentId => [`cli.${agentId}`, {
+    ok: true, checkedAt: Date.now(), data: MachineAgentInventoryItemSchema.parse({ agentId, title: agentId, installed: agentId !== uninstalledAgentId,
+        version: agentId === uninstalledAgentId ? null : '1', latestVersion: null, update: { supported: false, command: null },
         signIn: { status: 'signedIn', loginSupport: 'status_only' }, platform: { supported: true },
         install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [],
     }),
@@ -417,6 +421,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         secretAvailable = false;
         publishedProfiles = [];
         roleOverrides = {};
+        reviewCostConsent = undefined;
+        reviewCostEngineId = 'claude';
+        uninstalledAgentId = null;
         reviewProfileIds = {};
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
@@ -517,7 +524,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
                 protocolVersion: 1,
                 projection: pluginProjection ? { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
-                    agentsById: { ...reviewAgentProjection.agentsById, ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.agentsById } } : reviewAgentProjection,
+                    agentsById: { ...reviewAgentProjection().agentsById, ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.agentsById } } : reviewAgentProjection(),
             });
             return { errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'Method not found' };
         });
@@ -589,9 +596,13 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 if (request.path === '/v1/actions/review.engines.list') return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
                     v: 1, actionId: 'review.engines.list', requestId: record(request.body).requestId,
                     execution: { ok: true, result: { items: Object.keys(backends).map((engineId) => ReviewEngineListItemSchema.parse({
-                        engineId, value: engineId, label: engineId, enabled: backends[engineId]!.available,
+                        engineId, value: engineId === 'coderabbit' || engineId === 'deepsec'
+                            ? buildBackendTargetKeyV2({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[engineId] }) : engineId,
+                        label: engineId, enabled: backends[engineId]!.available,
+                        ...(!backends[engineId]!.available ? { available: false, unavailableCode: 'notInstalled', readiness: 'notInstalled' } : {}),
                         capabilities: { structuredNarration: true },
                         ...(reviewProfileIds[engineId] ? { profileId: reviewProfileIds[engineId] } : {}),
+                        ...(engineId === reviewCostEngineId && reviewCostConsent ? { costConsent: reviewCostConsent } : {}),
                     })) } },
                 }));
                 if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
@@ -774,6 +785,52 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(screen.getTextContent()).not.toContain('contributed options');
         expect(emittedStarts).toEqual([]);
     });
+    it.each([[1, 'claude'], [2, 'claude'], [1, 'deepsec']] as const)('acknowledges each of %i engine costs for this start while retaining the mixed roster (%s)', async (engineCount, engineId) => {
+        reviewCostEngineId = engineId;
+        if (engineId === 'deepsec') backends.deepsec = { available: true, intents: ['review'] };
+        reviewCostConsent = engineId === 'deepsec'
+            ? { optionKey: 'confirmedCostWarning', title: 'Accept DeepSec estimate', description: 'Some review scopes can be expensive. Accept the cost warning for this start only; never saved as a preference.' }
+            : { optionKey: 'confirmedCostWarning', title: 'Paid analysis', description: 'Charged by the engine' };
+        const reviewers = [
+            { kind: 'engine', engineId, modelId: 'chosen-model', options: { existing: 'retained' } },
+            ...(engineCount === 2 ? [{ kind: 'engine', engineId: 'claude', modelId: 'second-model', options: { existing: 'second' } }] : []),
+            { kind: 'session', session: { serverId, sessionId: 'session_1' } },
+            { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
+        ];
+        await mount({ intent: 'review', initialActionInput: { reviewers } });
+        await waitFor(() => expect(screen.findHostByTestId('review-start-cost-consent')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(reviewCostConsent.title);
+        const settings = getStorage().getState().settings;
+        await screen.pressByTestIdAsync('review-start-cost-consent');
+        const draftKey = composer().launcherDraftKey;
+        if (!draftKey) throw new Error('Expected a retained Review draft');
+        const selection = () => getSessionDraftDocumentField(getSessionDraftSnapshot(
+            { serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' })?.document ?? null,
+            executionRunLauncherDraftFieldPath(draftKey, 'selection'))?.value;
+        await waitFor(() => expect(selection()).toMatchObject({ actionInput: { reviewers: [
+            { ...reviewers[0], options: { existing: 'retained', confirmedCostWarning: true } }, ...reviewers.slice(1),
+        ] } }));
+        if (engineCount === 2) {
+            const second = screen.findHostByTestId('review-start-cost-consent:0:1');
+            expect(second?.props.accessibilityState?.checked ?? second?.props['aria-checked']).toBe(false);
+            await screen.pressByTestIdAsync('review-start-cost-consent:0:1');
+            await waitFor(() => expect(selection()).toMatchObject({ actionInput: { reviewers: [
+                { ...reviewers[0], options: { existing: 'retained', confirmedCostWarning: true } },
+                { ...reviewers[1], options: { existing: 'second', confirmedCostWarning: true } },
+                ...reviewers.slice(2),
+            ] } }));
+        }
+        expect(getStorage().getState().settings).toBe(settings);
+        expect(emittedStarts).toEqual([]);
+        await screen.unmount();
+        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+            initialActionInput: { reviewers } });
+        await waitFor(() => {
+            const host = screen.findHostByTestId('review-start-cost-consent');
+            expect(host?.props.accessibilityState?.checked ?? host?.props['aria-checked']).toBe(false);
+        });
+    });
+
     it.each([false, true])('summarizes the reviewed working changes from the scoped SCM source (detached=%s)', async detached => {
         const snapshot: ScmWorkingSnapshot = {
             projectKey: `${serverId}:machine_1:/repo`, fetchedAt: 1,
@@ -1932,6 +1989,51 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(screen.getTextContent()).not.toContain(t('runPage.launcher.unavailableReason'));
     });
 
+    it.each(['codex', 'coderabbit', 'deepsec'] as const)('opens Machine setup from a not-ready Review engine without selecting or starting it (%s)', async engineId => {
+        uninstalledAgentId = engineId;
+        backends[engineId] = { available: false, intents: ['review'] };
+        await mount({ intent: 'review' });
+        await showAgentChoices();
+        await waitFor(() => expect(screen.findByTestId(`contextual-start-agent:${engineId}`)).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('machineAgents.notOnThisMachineYet'));
+        const selected = selectedAgentIds();
+        await screen.pressByTestIdAsync(`contextual-start-agent:${engineId}`);
+        await waitFor(() => expect(screen.findByTestId(`engine-setup-pane.${engineId}`)).not.toBeNull());
+        expect(selectedAgentIds()).toEqual(selected);
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+    });
+
+    it('removes a retained unavailable reviewer from its own step without changing another roster', async () => {
+        uninstalledAgentId = 'codex';
+        backends.codex!.available = false;
+        const first = { kind: 'review', reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Inspect' };
+        const person = { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true };
+        const second = { kind: 'verify', reviewers: [{ kind: 'engine', engineId: 'codex' }, person], instructions: 'Verify' };
+        await mount({ intent: 'review', initialActionInput: { reviewers: first.reviewers, steps: [first, second] } });
+        await screen.pressByTestIdAsync('review-start-step:1:header');
+        await waitFor(() => expect(screen.findByTestId('contextual-start-agent:codex')).not.toBeNull());
+        const codexIsSelected = () => screen.findAllByType(SelectionList).some(node => {
+            if (node.props.testID !== 'contextual-start-who') return false;
+            const row = node.props.rootStep.sections.flatMap((section: SelectionListSectionDescriptor) =>
+                section.kind === 'static' ? section.options : []).find((option: SelectionListOption) =>
+                option.testID === 'contextual-start-agent:codex');
+            return row !== undefined && node.props.selection.selectedIds.has(row.id);
+        });
+        await waitFor(() => expect(codexIsSelected()).toBe(true));
+        await screen.pressByTestIdAsync('contextual-start-agent:codex');
+        const draftKey = composer().launcherDraftKey;
+        if (!draftKey) throw new Error('Expected a retained Review draft');
+        await waitFor(() => expect(codexIsSelected()).toBe(false));
+        await waitFor(() => expect(getSessionDraftDocumentField(getSessionDraftSnapshot(
+            { serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' })?.document ?? null,
+            executionRunLauncherDraftFieldPath(draftKey, 'selection'))?.value).toMatchObject({ actionInput: {
+                steps: [first, { ...second, reviewers: [person] }],
+            } }));
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+    });
+
     async function chooseRole(roleId: string) {
         await screen.pressByTestIdAsync('contextual-start-who-accessory');
         await waitFor(() => expect(screen.findByTestId(`roles-rail-option:${roleId}`)).not.toBeNull());
@@ -1998,6 +2100,23 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const roleLabels = screen.findAllByType(TextLinkButton)
             .filter(node => node.props.testID === 'contextual-start-who-accessory').map(node => node.props.label);
         expect(roleLabels).toEqual(['Reviewer', 'Scout']);
+        expect(emittedStarts).toEqual([]);
+    });
+    it('edits a mixed review roster through the shared Who picker without dropping its Session or engine', async () => {
+        await mount({ intent: 'review', initialActionInput: { reviewers: [
+            { kind: 'engine', engineId: 'claude' },
+            { kind: 'session', session: { serverId, sessionId: 'session_1' } },
+            { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
+        ] } });
+        await waitFor(() => expect(screen.findByTestId('discussion-invite-person-alice')).not.toBeNull());
+        const selected = () => [...screen.findAllByType(SelectionList)
+            .find(node => node.props.testID === 'contextual-start-who')!.props.selection.selectedIds];
+        expect(selected()).toContain('account:alice');
+        expect(selected()).toHaveLength(3);
+        await screen.pressByTestIdAsync('discussion-invite-person-alice');
+        await waitFor(() => expect(selected()).not.toContain('account:alice'));
+        expect(selected()).toHaveLength(2);
+        expect(selectedAgentIds()).toHaveLength(1);
         expect(emittedStarts).toEqual([]);
     });
     it('starts Second opinion through the real review Action with its explicit role', async () => {

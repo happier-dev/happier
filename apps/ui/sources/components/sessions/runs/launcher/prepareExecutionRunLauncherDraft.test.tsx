@@ -17,7 +17,7 @@ afterEach(async () => { await standardCleanup(); resetSessionDraftRepositoryForT
 
 it('opens the existing draft with complete nondefault Action input and text outside the pane resource', async () => {
     const input = buildExecutionRunActionDraftInputForUi({ actionId: 'review.start', sessionId: 's1',
-        instructions: 'Check the selected comparison', extra: { engineIds: ['codex', 'claude'], roleId: 'second_opinion',
+        instructions: 'Check the selected comparison', extra: { reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], roleId: 'second_opinion',
             permissionMode: 'workspace_write', modelId: 'chosen-model', changeType: 'committed', base: 'main' } });
     const tab = prepareExecutionRunLauncherDraft({ scope, sessionId: 's1', actionId: 'review.start', input });
     const hook = await renderHook(() => useExecutionRunLauncherDraft({ lifetime: { scope, isCurrent: () => true,
