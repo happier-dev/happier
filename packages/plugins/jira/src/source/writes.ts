@@ -101,7 +101,11 @@ async function confirmedObservation(client: JiraClient, configuration: JiraConfi
     const issue = await readExactJiraIssue(client, configuration, id);
     return { issue, observation: projectJiraIssue(issue, client.origin, await jiraViewer(client)) };
 }
-function settledResult(result: Awaited<ReturnType<typeof settleAtMostOnceProviderWrite<Dispatch, Extract<TriageTaskWriteResultV1, { kind: 'applied' }>['observation'], ReturnType<typeof jiraFailure>>>>): TriageTaskWriteResultV1 {
+const settleJiraWrite = settleAtMostOnceProviderWrite<
+    Dispatch, Extract<TriageTaskWriteResultV1, { kind: 'applied' }>['observation'], ReturnType<typeof jiraFailure>
+>;
+
+function settledResult(result: Awaited<ReturnType<typeof settleJiraWrite>>): TriageTaskWriteResultV1 {
     if (result.kind === 'settled') return result.result.ok ? { kind: 'uncertain' } : failed(result.result.error);
     if (result.kind === 'unchanged') return { kind: 'uncertain', observation: result.observation };
     return result;
@@ -127,7 +131,7 @@ export async function createJiraIssue(raw: unknown, context: JiraSourceContext):
         const metadata = await readJiraCreateDirectory(client, `/rest/api/3/issue/createmeta/${configuration.projectId}/issuetypes/${configuration.issueTypeId}`, 'fields');
         validateMetadata(fields, Object.fromEntries(metadata.map((field) => [String(field.fieldId ?? field.key), field])), true);
         let sent: Dispatch;
-        return settledResult(await settleAtMostOnceProviderWrite({
+        return settledResult(await settleJiraWrite({
             dispatch: async () => sent = await dispatch(() => client.request('/rest/api/3/issue', 'POST', { fields })), mayHaveChanged,
             confirm: async () => {
                 if (!sent.ok || !numericId(object(sent.value).id)) return { kind: 'uncertain' as const, ...(!sent.ok ? { failure: jiraFailure(sent.error) } : {}) };
@@ -150,7 +154,7 @@ export async function editJiraIssue(raw: unknown, context: JiraSourceContext): P
         const metadata = object(await client.request(`/rest/api/3/issue/${input.localRef.entryId}/editmeta`));
         validateMetadata(fields, object(metadata.fields), false);
         if (matches(before, input.fields)) return { kind: 'applied', observation: projectJiraIssue(before, client.origin, await jiraViewer(client)) };
-        return settledResult(await settleAtMostOnceProviderWrite({
+        return settledResult(await settleJiraWrite({
             dispatch: () => dispatch(() => client.request(`/rest/api/3/issue/${input.localRef.entryId}`, 'PUT', { fields })), mayHaveChanged,
             confirm: async () => {
                 try {
@@ -227,7 +231,7 @@ export async function transitionJiraIssue(raw: unknown, context: JiraSourceConte
         const values = input.fieldValues ?? [];
         const fields = transitionNativeFields(transition, before, values);
         let sent: Dispatch;
-        return settledResult(await settleAtMostOnceProviderWrite({
+        return settledResult(await settleJiraWrite({
             dispatch: async () => sent = await dispatch(() => client.request(`/rest/api/3/issue/${input.localRef.entryId}/transitions`, 'POST', {
                 transition: { id: input.transitionId }, ...(values.length === 0 ? {} : { fields }),
             })), mayHaveChanged,
@@ -250,7 +254,7 @@ export async function commentJiraIssue(raw: unknown, context: JiraSourceContext)
         const id = input.entry.localRef.entryId;
         await readExactJiraIssue(client, configuration, id);
         let sent: Dispatch;
-        return settledResult(await settleAtMostOnceProviderWrite({
+        return settledResult(await settleJiraWrite({
             dispatch: async () => sent = await dispatch(() => client.request(`/rest/api/3/issue/${id}/comment`, 'POST', { body: jiraAdfBody(input.body) })), mayHaveChanged,
             confirm: async () => {
                 const commentId = sent.ok ? string(object(sent.value).id) : undefined;

@@ -1,27 +1,31 @@
 import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
-import type { ConnectedAccountRuntime, ConnectedAccountAuthenticationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountRuntime, ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { jiraCloudOrigin, jiraResponseFailure, object, string } from './api.js';
 
 function authorization(email: string, token: string): string { return `Basic ${encodeBase64(new TextEncoder().encode(`${email}:${token}`))}`; }
 function diagnostic(code: string) { return { code, severity: 'error' as const, message: 'Jira could not confirm this account. Check the site, account email and API token.' }; }
 
 async function confirm(context: Pick<ConnectedAccountAuthenticationContext, 'services' | 'signal'>,
-    origin: string, email: string, token: string, signal = context.signal) {
+    origin: string, email: string, token: string, signal = context.signal): Promise<
+        Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' | 'rejected' | 'unavailable' }>
+    > {
     try {
         const response = await context.services.http.request({ url: `${origin}/rest/api/3/myself`, method: 'GET', redirect: 'error',
             headers: { Accept: 'application/json', authorization: authorization(email, token) } }, { signal });
         if (response.status !== 200) {
             const failure = jiraResponseFailure(response.status, response.headers);
-            return { status: response.status === 401 || response.status === 403 ? 'rejected' as const : 'unavailable' as const,
-                diagnostic: diagnostic(failure.code), ...(failure.class === 'rateLimit'
-                    ? { failureClass: 'rateLimit' as const, ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }) } : {}) };
+            const evidence = { diagnostic: diagnostic(failure.code), ...(failure.class === 'rateLimit'
+                ? { failureClass: failure.class, ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }) } : {}) };
+            return response.status === 401 || response.status === 403
+                ? { status: 'rejected', ...evidence }
+                : { status: 'unavailable', ...evidence };
         }
         const user = object(JSON.parse(new TextDecoder().decode(response.body)));
-        if (!string(user.accountId)) return { status: 'unavailable' as const, diagnostic: diagnostic('jira/viewerUnavailable') };
-        return { status: 'connected' as const, displayName: string(user.displayName) ?? new URL(origin).hostname, scopes: [] };
+        if (!string(user.accountId)) return { status: 'unavailable', diagnostic: diagnostic('jira/viewerUnavailable') };
+        return { status: 'connected', displayName: string(user.displayName) ?? new URL(origin).hostname, scopes: [] };
     } catch {
-        return { status: 'unavailable' as const, diagnostic: diagnostic(signal.aborted ? 'jira/cancelled' : 'jira/verificationUnavailable') };
+        return { status: 'unavailable', diagnostic: diagnostic(signal.aborted ? 'jira/cancelled' : 'jira/verificationUnavailable') };
     }
 }
 
