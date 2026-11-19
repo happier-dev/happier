@@ -173,6 +173,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
 
     const updateCustomModalProps = useCallback((id: string, props: Record<string, unknown>) => {
         setState((prev) => {
+            if (!prev.modals.some(modal => modal.id === id && modal.type === 'custom')) return prev;
             const nextState = {
                 modals: prev.modals.map((modal) => {
                     if (modal.id !== id || modal.type !== 'custom') {

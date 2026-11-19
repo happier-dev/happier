@@ -18,7 +18,6 @@ class ModalManagerClass implements IModal {
     private showModalFn: ((config: ModalShowConfig) => string) | null = null;
     private hideModalFn: ((id: string) => void) | null = null;
     private hideAllModalsFn: (() => void) | null = null;
-    private updateCustomModalPropsFn: ((id: string, props: Record<string, unknown>) => void) | null = null;
     private providerRegistrations: ModalProviderRegistration[] = [];
     private nextProviderRegistrationId = 0;
     private confirmResolvers: Map<string, (value: boolean) => void> = new Map();
@@ -93,7 +92,6 @@ class ModalManagerClass implements IModal {
         this.showModalFn = currentRegistration?.functions.showModal ?? null;
         this.hideModalFn = currentRegistration?.functions.hideModal ?? null;
         this.hideAllModalsFn = currentRegistration?.functions.hideAllModals ?? null;
-        this.updateCustomModalPropsFn = currentRegistration?.functions.updateCustomModalProps ?? null;
     }
 
     alert(title: string, message?: string, buttons?: AlertButton[], options?: Parameters<IModal['alert']>[3]): void {
@@ -245,12 +243,14 @@ class ModalManagerClass implements IModal {
         id: string,
         props: Partial<CustomModalCallerProps<P>>,
     ): void {
-        if (!this.updateCustomModalPropsFn) {
+        if (this.providerRegistrations.length === 0) {
             console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
             return;
         }
 
-        this.updateCustomModalPropsFn(id, props as Record<string, unknown>);
+        for (const registration of this.providerRegistrations) {
+            registration.functions.updateCustomModalProps(id, props as Record<string, unknown>);
+        }
     }
 
     hide(id: string): void {
@@ -259,7 +259,9 @@ class ModalManagerClass implements IModal {
             return;
         }
 
-        this.hideModalFn(id);
+        for (const registration of this.providerRegistrations) {
+            registration.functions.hideModal(id);
+        }
     }
 
     hideAll(): void {
