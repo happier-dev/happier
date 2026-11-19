@@ -26,6 +26,35 @@ import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approv
 import { createExternalActionRuntime, publishAccountExternalActionRuntime } from './externalActionRuntime.testkit';
 
 describe('Account relay consent at a contributed child admission', () => {
+  it('keeps a default-only CLI confirmation marker out of Account relay consent admission', async () => {
+    let effects = 0;
+    const runtime = createExternalActionRuntime('global', 'acme.account', () => { effects++; },
+      () => null, () => null, undefined, undefined, 'safe', undefined,
+      { surfaces: ['cli'], executionTarget: 'account', sourceCustody: {
+        kind: 'account_release', pluginId: 'acme.account', version: '1.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+      } });
+    const published = await publishAccountExternalActionRuntime(runtime);
+    const list = createCommittedContributedActionDefinitionLister({
+      tryAcquireRuntimeRegistryLease: () => tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller: published.controller }),
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
+      invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: published.acquire }),
+    });
+    const input = { action: { pluginId: 'acme.account', localId: 'inspect' }, input: {} };
+    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'alice', serverId: 'home', serverIdentityId: 'home', actionRequestId: 'read-results',
+      externalActionTarget: { kind: 'machine', machineId: 'machine', project: { machineId: 'machine', directory: '/workspace' } },
+    } satisfies Parameters<typeof executor.execute>[2];
+    try {
+      expect(await executor.execute('action.invoke', input, context)).toMatchObject({ ok: true });
+      expect(await executor.execute('action.invoke', input, { ...context,
+        presentUserConfirmation: { actionId: 'action.invoke' },
+      })).toMatchObject({ ok: true });
+      expect(effects).toBe(2);
+    } finally { await published.dispose(); }
+  });
+
   it.each([
     { scenario: 'matching Account', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true },
     { scenario: 'matching Account with unrelated retained parent', bindingAccountId: 'alice', confirmationAccountId: 'alice', allowed: true, change: 'parent' },

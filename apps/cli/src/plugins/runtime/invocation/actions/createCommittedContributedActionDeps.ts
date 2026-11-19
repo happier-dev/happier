@@ -144,7 +144,10 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
     const approvalContext = { ...context };
     const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
-    const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1;
+    // Default-only markers select native confirmation policy; only a bound
+    // digest carries Account relay consent for this exact invocation.
+    const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1
+      && context.presentUserConfirmation.inputDigest !== undefined;
     const requestedSignal = signal ?? context.signal ?? new AbortController().signal;
     const observation = context.machineServiceLogsResource?.observation;
     const invocationSignal = observation ? AbortSignal.any([requestedSignal, observation.signal]) : requestedSignal;
