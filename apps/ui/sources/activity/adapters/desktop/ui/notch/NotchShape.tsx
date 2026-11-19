@@ -28,6 +28,7 @@ import {
   resolveNotchCameraSeamStops,
   resolveNotchFootFinish,
   resolveNotchMaterialRect,
+  resolveNotchPaintInsets,
   isNotchEdgeDock,
   isNotchVerticalDock,
   resolveNotchBodySize,
@@ -103,7 +104,6 @@ const SHOULDER_UNIT_PATH = buildNotchShoulderPath(1);
 
 /** The body casts `glass.castShadow`; its reach is read from that same recipe (it is one geometry in both themes). */
 const CAST_SHADOW_PAINT_INSETS = resolveBoxShadowPaintInsets(buildGlassCastShadow(true));
-const NO_PAINT_INSETS = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 
 /**
  * The island's plane paint (lab R6): the body fills with it, and every mark standing on the plane cuts its
@@ -236,16 +236,17 @@ export function NotchShape(
 
   const { onPresent } = props;
   const castsShadow = !isNotchEdgeDock(props.dock) || props.form === 'open';
-  const paintInsets = castsShadow ? CAST_SHADOW_PAINT_INSETS : NO_PAINT_INSETS;
+  const paintInsets = resolveNotchPaintInsets(props.dock, castsShadow ? CAST_SHADOW_PAINT_INSETS : null);
   const present = React.useCallback(
     // Nothing is framed until the content has been measured: native needs a real extent.
     (settled: boolean) =>
       body.width > 0 && body.height > 0
-        ? onPresent({ extent, cameraOffset, settled, material: resolveNotchMaterialRect(props.dock, body, extent, shoulder, corner), paintInsets })
+        ? onPresent({ extent, cameraOffset, settled, material: resolveNotchMaterialRect(props.dock, body, extent, shoulder, corner, paintInsets), paintInsets })
         : undefined,
     // The frame is read when motion asks for it, never on its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onPresent, extent.width, extent.height, body.width, body.height, cameraOffset, props.dock, shoulder, corner, paintInsets],
+    [onPresent, extent.width, extent.height, body.width, body.height, cameraOffset, props.dock, shoulder, corner,
+      paintInsets.top, paintInsets.right, paintInsets.bottom, paintInsets.left],
   );
 
   const motion = useNotchMotion({

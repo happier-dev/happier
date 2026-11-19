@@ -244,9 +244,29 @@ export function resolveNotchStatusRowShift(
   return shift + (clamped - settled);
 }
 
+export type NotchPaintInsets = Readonly<{ top: number; right: number; bottom: number; left: number }>;
+
+const NO_PAINT_INSETS: NotchPaintInsets = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+
 /**
- * Where the native material stands while the island rests, in window points: the body alone. The side
- * against the screen edge runs a corner's length past the window, so only the free corners round.
+ * How far the native window reaches past the island for its cast shadow: every side but the one against
+ * the screen edge, where there is nothing to cast onto. The planner frames exactly this, so the island sits
+ * `left`/`top` into the window.
+ */
+export function resolveNotchPaintInsets(dock: NotchDock, shadow: NotchPaintInsets | null): NotchPaintInsets {
+  if (!shadow) return NO_PAINT_INSETS;
+  return {
+    top: dock === 'top' ? 0 : shadow.top,
+    right: dock === 'right' ? 0 : shadow.right,
+    bottom: shadow.bottom,
+    left: dock === 'left' ? 0 : shadow.left,
+  };
+}
+
+/**
+ * Where the native material stands, in window points: the body alone, on the island inside the window the
+ * shadow pads. The side against the screen edge runs a corner's length past the window, so only the free
+ * corners round.
  */
 export function resolveNotchMaterialRect(
   dock: NotchDock,
@@ -254,16 +274,19 @@ export function resolveNotchMaterialRect(
   extent: NotchSize,
   shoulder: number,
   radius: number,
+  paint: NotchPaintInsets = NO_PAINT_INSETS,
 ): Readonly<{ x: number; y: number; width: number; height: number; radius: number }> {
+  const at = (rect: Readonly<{ x: number; y: number; width: number; height: number }>) =>
+    ({ ...rect, x: rect.x + paint.left, y: rect.y + paint.top, radius });
   switch (dock) {
     case 'top':
-      return { x: shoulder, y: -radius, width: body.width, height: body.height + radius, radius };
+      return at({ x: shoulder, y: -radius, width: body.width, height: body.height + radius });
     case 'left':
-      return { x: -radius, y: shoulder, width: body.width + radius, height: body.height, radius };
+      return at({ x: -radius, y: shoulder, width: body.width + radius, height: body.height });
     case 'right':
-      return { x: extent.width - body.width, y: shoulder, width: body.width + radius, height: body.height, radius };
+      return at({ x: extent.width - body.width, y: shoulder, width: body.width + radius, height: body.height });
     case 'floating':
-      return { x: 0, y: 0, width: body.width, height: body.height, radius };
+      return at({ x: 0, y: 0, width: body.width, height: body.height });
   }
 }
 

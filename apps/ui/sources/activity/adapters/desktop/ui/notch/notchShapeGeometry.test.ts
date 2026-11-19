@@ -7,6 +7,7 @@ import {
   resolveNotchExtent,
   resolveNotchFootFinish,
   resolveNotchMaterialRect,
+  resolveNotchPaintInsets,
   resolveNotchShoulder,
   resolveNotchStatusRowShift,
   type NotchMetrics,
@@ -205,6 +206,23 @@ describe('notch material', () => {
       .toEqual({ x: 80, y: 8, width: 482, height: 300, radius: 18 });
     expect(resolveNotchMaterialRect('floating', body, body, 0, 18))
       .toEqual({ x: 0, y: 0, width: 464, height: 300, radius: 18 });
+  });
+
+  it('pads the window for the cast shadow on free sides only, and keeps the material on the island inside it', () => {
+    const shadow = { top: 24, right: 28, bottom: 32, left: 28 };
+    expect(resolveNotchPaintInsets('left', shadow)).toEqual({ top: 24, right: 28, bottom: 32, left: 0 });
+    expect(resolveNotchPaintInsets('right', shadow)).toEqual({ top: 24, right: 0, bottom: 32, left: 28 });
+    expect(resolveNotchPaintInsets('top', shadow)).toEqual({ top: 0, right: 28, bottom: 32, left: 28 });
+    expect(resolveNotchPaintInsets('floating', shadow)).toEqual(shadow);
+    // Round 7 / owner 11-19: the material stood where the island would be in an unpadded window, so it
+    // showed as a flat grey band in the top margin. It now sits on the island inside the padded window.
+    const body = { width: 464, height: 300 };
+    expect(resolveNotchMaterialRect('left', body, { width: 464, height: 316 }, 8, 18, resolveNotchPaintInsets('left', shadow)))
+      .toEqual({ x: -18, y: 32, width: 482, height: 300, radius: 18 });
+    expect(resolveNotchMaterialRect('right', body, { width: 464, height: 316 }, 8, 18, resolveNotchPaintInsets('right', shadow)))
+      .toEqual({ x: 28, y: 32, width: 482, height: 300, radius: 18 });
+    expect(resolveNotchMaterialRect('floating', body, body, 0, 18, shadow))
+      .toEqual({ x: 28, y: 24, width: 464, height: 300, radius: 18 });
   });
 
   it('holds the black row at the hardware, then eases it away with no step', () => {

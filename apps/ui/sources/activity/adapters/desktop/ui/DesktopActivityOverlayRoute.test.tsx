@@ -14,6 +14,7 @@ import type {
 import { buildGlassCastShadow, resolveBoxShadowPaintInsets } from '@/shadowElevation';
 
 import { DesktopActivityOverlayRoute } from './DesktopActivityOverlayRoute';
+import { resolveNotchPaintInsets } from './notch/notchShapeGeometry';
 import { resolveDesktopActivityOverlayCardActionInstanceTestID } from './shared/desktopActivityOverlaySelectors.mjs';
 
 const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
@@ -394,8 +395,9 @@ describe('DesktopActivityOverlayRoute', () => {
         await act(async () => { screen.pressByTestId('desktop-activity-overlay-collapsed'); });
         await flushHookEffects();
         expect(notchForm(screen)).toBe('open');
-        expect(lastInsets()).toEqual(resolveBoxShadowPaintInsets(buildGlassCastShadow(true)));
-        expect(lastInsets()).toEqual({ top: 24, right: 28, bottom: 32, left: 28 });
+        // A top dock casts onto every side but the screen edge it hangs from.
+        expect(lastInsets()).toEqual(resolveNotchPaintInsets('top', resolveBoxShadowPaintInsets(buildGlassCastShadow(true))));
+        expect(lastInsets()).toEqual({ top: 0, right: 28, bottom: 32, left: 28 });
     });
 
     it('balances detail demand once for Action opens, native closes and repeated presentation requests', async () => {
