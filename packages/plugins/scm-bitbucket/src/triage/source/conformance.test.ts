@@ -135,7 +135,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     }]);
   });
 
-  it('declares each source-native detail plane as a UI-surfaced account-bound read', () => {
+  it('declares each source-native detail plane as an account-bound read on every supported surface', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
     for (const id of Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS)) {
@@ -144,7 +144,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
       // refused by the host, and the panel would report a contract break the user
       // cannot act on.
       expect(action, `${id} must be declared`).toBeDefined();
-      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
+      expect(action?.surfaces).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
       // Every detail plane carries a configured instance, so every one binds the
