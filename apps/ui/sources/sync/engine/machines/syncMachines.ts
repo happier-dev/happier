@@ -924,7 +924,7 @@ export async function fetchAndApplyMachines(params: {
         if (!hydrationYield) hydrationYield = yieldToEventLoop().then(() => {
             // Gather the previous cohort's asynchronous completions before
             // releasing the next one through the existing crypto yield.
-            hydrationPublication.flush();
+            hydrationPublication.flushDue();
             hydrationYield = null;
         });
         return hydrationYield;

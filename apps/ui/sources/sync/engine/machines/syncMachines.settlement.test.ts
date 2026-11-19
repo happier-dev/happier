@@ -160,6 +160,44 @@ describe('Machine-list settlement through sync and the real store', () => {
         } finally { stop(); await hook.unmount(); }
     });
 
+    it('publishes a cold fleet\'s hydration in a number of store commits that does not grow with the fleet', async () => {
+        // QA A (483 Machines): a cold Home made 192 Machine store commits over 115 s, and each one re-rendered every
+        // fleet-wide consumer, so the page stayed busy until hydration ended (BL2-MACHINE-CHOOSER-1119).
+        const secret = new Uint8Array(32).fill(17);
+        const hydrate = async (count: number) => {
+            const inventory = createInventory();
+            const encryption = await Encryption.create(secret);
+            encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+            const key = new Uint8Array(32).fill(23);
+            const envelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+            const rows = Array.from({ length: count }, (_, index) => createPlainMachineRowFixture({ id: `fleet-${index}`, accountId: 'account-1' }));
+            await encryption.initializeMachines(new Map(rows.map(row => [row.id, key])));
+            const cipher = encryption.getMachineEncryption(rows[0]!.id)!;
+            const metadata = createMachineFixture().metadata!;
+            const ciphertext = await cipher.encryptMetadata(metadata);
+            const daemonCiphertext = await cipher.encryptDaemonState({ status: 'running' });
+            for (const row of rows) Object.assign(row, { metadata: ciphertext, daemonState: daemonCiphertext, daemonStateVersion: 1,
+                dataEncryptionKey: envelope, access: { ...row.access!, resourceMode: 'e2ee' } });
+            const notifications = countStoreNotifications(storage);
+            try {
+                await fetchAndApplyMachines({ ...inventory.callbacks,
+                    credentials: { ...credentials, secret: encodeBase64(secret, 'base64url') },
+                    expectedAccountMode: 'e2ee', encryption, machineDataKeys: new Map(), machineDisplayHydrationConcurrencyLimit: 4,
+                    request: async () => Response.json(rows),
+                    applyMachineDisplayEntries: (machines, options) => storage.getState().replaceMachineDisplays(machines,
+                        { sourceServerId: inventory.serverId, ...options }),
+                });
+                // Every Machine is fully opened, so fewer commits did not drop content.
+                expect(rows.every(row => storage.getState().machines[row.id]?.metadata?.host === metadata.host)).toBe(true);
+                return notifications.read().filter(keys => keys.includes('machines')).length;
+            } finally { notifications.stop(); storage.setState(initialState, true); }
+        };
+        const fleet = await hydrate(160);
+        const doubled = await hydrate(320);
+        // Twice the Machines may add a few commits, never twice the commits.
+        expect(doubled - fleet).toBeLessThanOrEqual(4);
+    });
+
     it.each(['plain', 'e2ee'] as const)('reuses admitted %s page content and store identities until a revision changes', async (mode) => {
         const inventory = createInventory();
         const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(17)) : null;
