@@ -11,6 +11,21 @@ describe('projectTranscriptBodySearchableText', () => {
       type: 'output', data: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'send-1', content: [{ type: 'text', text: '{"ok":true,"result":{"status":"accepted","localId":"input-1"}}' }] }] } },
     } })).toMatchObject({ semanticRole: 'tool', toolResults: [{ callId: 'send-1', isError: false }] });
   });
+  it('retains failed Claude result correlation when the durable shell has no output body', () => {
+    const content = {
+      type: 'output',
+      data: {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'cli-1', is_error: true }] },
+      },
+    };
+    expect(protocol.projectTranscriptBodySemanticContent({ role: 'agent', content })).toMatchObject({
+      semanticRole: 'tool',
+      kind: 'tool_result',
+      toolResults: [{ callId: 'cli-1', isError: true }],
+    });
+  });
+
   it('projects protocol-valid ACP tool-result content that transcript readers expose', () => {
     expect(protocol.projectTranscriptBodySearchableText({
       role: 'agent',

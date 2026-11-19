@@ -227,11 +227,11 @@ function projectOutputContent(content: Record<string, unknown>): TranscriptBodyS
   const text = data.type === 'assistant' ? extractTextParts(message.content) : null;
   if (text) return { semanticRole: 'assistant', kind: 'assistant_message', text, ...evidence, ...commonFields };
   const summary = summaries.join('\n').trim();
-  if (summary.length === 0) return null;
+  if (!summary && toolResults.length === 0) return null;
   return {
     semanticRole: 'tool',
     kind: messageRole === 'assistant' ? 'tool_call' : 'tool_result',
-    summary,
+    ...(summary ? { summary } : {}),
     ...evidence,
     ...commonFields,
   };
