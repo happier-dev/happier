@@ -9284,6 +9284,12 @@ Private-input-only requests keep their existing deferred acknowledgement lifetim
 stdout remains the final Action result. A decision from another surface closes
 the pending prompt through the invocation's existing cancellation signal.
 
+When a one-shot CLI call leaves a durable deferred approval for the app, it
+returns `approval_request_created` as its final result and closes its approval
+subscription. The app's Inbox can still decide the request. A progress event
+for a blocking Action identifies the approval. The original invocation still
+holds the private input or result.
+
 In 0.3 development, a standalone CLI or saved-profile MCP approval whose live
 invocation owns the operands publishes an Account RPC origin before creating its approval Artifact.
 Another present-user client in that Account sends only the exact Artifact and

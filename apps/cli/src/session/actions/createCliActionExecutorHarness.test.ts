@@ -367,14 +367,15 @@ describe('createCliActionExecutorHarness', () => {
       let releaseRead!: () => void;
       const initialRead = new Promise<void>(resolve => { releaseRead = resolve; });
       let completed = delivery !== 'late-recorded';
-      const notification = vi.fn(async () => {
+      const notification = vi.fn(async (_id: string, signal: AbortSignal) => {
         if (delivery === 'late-recorded') {
           await initialRead;
           await new Promise<void>(resolve => setImmediate(resolve));
           completed = true; // The deciding host persisted completion; its push is lost.
         }
-        return delivery === 'notification' ? undefined
-        : delivery === 'refused' ? failure
+        return delivery === 'notification' ? await new Promise<void>(resolve => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        }) : delivery === 'refused' ? failure
           : { ok: true as const, result: { ok: true, status: delivery === 'rejected' ? 'rejected' : 'executed',
             ...(delivery === 'live' ? { liveExecution: { ok: true, result: receipt } } : {}) } };
       });
@@ -460,7 +461,34 @@ describe('createCliActionExecutorHarness', () => {
     } finally { lifetime.abort(); await pending.catch(() => undefined); restoreHttp(); await app.close(); }
   });
 
-  it.each(['rejected', 'executed'] as const)('waits after a notification-only deferred approval until remote %s', async status => {
+  it('returns the durable receipt and closes observation when the one-shot caller leaves approval to the app', async () => {
+    const receipt = { kind: 'approval_request_created', artifactId: 'unattended-approval', actionId: 'browser.diagnostics.snapshot' };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: receipt.actionId,
+      actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
+      approval: { flow: 'deferred', result: 'required' }, status: 'open',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId: receipt.actionId, requestId: 'browser-request' } });
+    const lifetime = new AbortController();
+    // The daemon returns a durable receipt and sends no subsequent event. The
+    // terminal presenter prints it and returns without making an inline decision.
+    const presentApproval = vi.fn<(artifactId: string) => void>();
+    const { executor } = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      serverId: 'home', serverHttpBaseUrl: 'https://approval-home.example.test', onApprovalRequested: presentApproval,
+    }, { ...createUnavailableActionTransportDeps(), runtimeActionExecute: async () => receipt, approvalsGet: async () => request });
+    const pending = executor.execute(receipt.actionId, request.actionArgs, { surface: 'cli', signal: lifetime.signal });
+    try {
+      const settled = await Promise.race([pending, new Promise<void>(resolve => setImmediate(resolve))]);
+      expect(presentApproval.mock.calls.map(call => call[0])).toEqual([receipt.artifactId]);
+      expect(settled).toEqual({ ok: true, result: receipt });
+      expect(wire.sockets.filter(socket => socket.connected || socket.listenerCount() > 0)).toEqual([]);
+    } finally {
+      lifetime.abort();
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it.each(['rejected', 'executed'] as const)('waits after notification when the caller still wants a remote %s result', async status => {
     const artifactId = 'notification-only-deferred-approval';
     const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
     let request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
@@ -486,7 +514,10 @@ describe('createCliActionExecutorHarness', () => {
     // HTTP and daemon RPC are boundaries; the Artifact store and waiter remain real.
     const native = vi.fn(async () => ({ kind: 'approval_request_created', artifactId, actionId: request.actionId }));
     const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
-      serverId: 'home', serverHttpBaseUrl: 'https://approval-home.example.test', onApprovalRequested: () => notify() },
+      serverId: 'home', serverHttpBaseUrl: 'https://approval-home.example.test', onApprovalRequested: (_id, signal) => new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), { once: true });
+        notify();
+      }) },
     { ...createUnavailableActionTransportDeps(), runtimeActionExecute: native, approvalsGet: store.approvalsGet });
     const pending = harness.executor.execute('browser.diagnostics.snapshot', { browserSessionId: 'session', viewId: 'view' },
       { surface: 'cli', signal: lifetime.signal });

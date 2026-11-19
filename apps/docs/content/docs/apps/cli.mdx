@@ -1174,8 +1174,11 @@ happier session set-permission-mode <session-id-or-prefix-or-tag> <mode>
 
 Some actions can be configured as **approval-gated** on the CLI surface.
 
-In that case, the CLI command does not execute immediately; it creates an approval request instead.
-Use the app’s **Inbox** to review/approve/deny and see the final execution result:
+In that case, the CLI creates an approval request before the Action can execute.
+Use the app’s **Inbox** to review the request and see the final execution result.
+In 0.3 development, when a one-shot command leaves a deferred approval to the
+app, it exits after returning the approval receipt. Scripts using `--json` get
+`approval_request_created` on stdout.
 
 - [Inbox and approvals](/sessions/inbox-and-approvals)
 - [Happier tools & actions](/extending/happier-tools)
