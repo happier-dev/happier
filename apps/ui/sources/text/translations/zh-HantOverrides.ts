@@ -11216,6 +11216,7 @@ settingsSession: {
             layoutPickerTitle: '逐字稿版面',
             messageTimestampsTitle: '在訊息下方顯示時間與日期',
             showTurnDurationTitle: "顯示輪次用時",
+            linkAgentNamesTitle: '將訊息中的代理程式名稱顯示為連結',
             showTurnDurationSubtitle: "在每個已完成輪次末尾顯示「用時 1m 12s」",
             messageTimestampsSubtitle: '在每則使用者與助理訊息下方顯示時間戳。',
             messageTimestamps: {

@@ -13356,6 +13356,7 @@ settingsSession: {
         layoutPickerTitle: "Макет стенограммы",
         messageTimestampsTitle: "Показывать время и дату под сообщениями",
         showTurnDurationTitle: "Показывать длительность хода",
+        linkAgentNamesTitle: 'Добавлять ссылки на имена агентов в сообщениях',
         showTurnDurationSubtitle: "«Работал 1m 12s» в конце каждого завершённого хода",
         messageTimestampsSubtitle:
           "Показывать отметку времени каждого сообщения пользователя и ассистента под сообщением.",

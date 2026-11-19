@@ -4,9 +4,11 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { MarkdownInlineReferences } from '@/components/markdown/markdownInlineReferences';
 import { referenceChipFill } from '@/components/ui/referenceChip/referenceChipFill';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { resolveSessionSubagentFullRoute } from '@/components/sessions/agents/navigation/resolveSessionSubagentFullRoute';
 import { useSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
 import { resolveInlineMessageReference, type MessageStructuredReferences } from './messageStructuredReferences';
 import { useTranscriptSessionReferenceIdentities } from './useTranscriptSessionIdentity';
+import { useTranscriptNicknameNavigation } from './TranscriptNicknameReferences';
 
 /** How long a picture keeps the ring its "Image #N" chip put on it. */
 const IMAGE_RING_MS = 1600;
@@ -85,7 +87,9 @@ export function useMessageInlineReferences(
   const ink = input.surface === 'agent' ? theme.colors.text.primary : theme.colors.message.user.foreground;
   const goneInk = theme.colors.text.tertiary;
   const navigate = transcriptSource.navigate;
+  const navigateNativeChild = useTranscriptNicknameNavigation();
   const { openPath, serverId } = input;
+  const nativeServerId = serverId ?? transcriptSource.serverId;
   const inlineReferences = React.useMemo<
     MarkdownInlineReferences | undefined
   >(() => {
@@ -119,6 +123,16 @@ export function useMessageInlineReferences(
           if (path) setRingedPath(path);
           return;
         }
+        const target = reference.sessionTarget;
+        if (target?.kind === 'nativeChild' && navigateNativeChild) {
+          const route = resolveSessionSubagentFullRoute({
+            sessionId: target.parentSessionId,
+            serverId: nativeServerId,
+            subagent: { kind: 'subagent_sidechain', transcript: { toolMessageRouteId: target.toolMessageRouteId } },
+          });
+          if (route) navigateNativeChild(route);
+          return;
+        }
         if (reference.sessionId && identityBySessionId.get(reference.sessionId)?.deleted) return;
         if (reference.sessionId && navigate) {
           navigate(
@@ -132,7 +146,7 @@ export function useMessageInlineReferences(
         if (reference.path) openPath(reference.path);
       },
     };
-  }, [goneInk, identityBySessionId, ink, inline, navigate, openPath, pathByNumber, previews, serverId]);
+  }, [goneInk, identityBySessionId, ink, inline, nativeServerId, navigate, navigateNativeChild, openPath, pathByNumber, previews, serverId]);
 
   const pictures = React.useMemo<MessageInlinePictures>(
     () => ({ numbers, ringedPath, onPreviewLoaded }),

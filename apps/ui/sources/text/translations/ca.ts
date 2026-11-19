@@ -12719,6 +12719,7 @@ settingsSession: {
               layoutPickerTitle: 'Disseny de transcripció',
               messageTimestampsTitle: 'Mostra hora i data sota els missatges',
               showTurnDurationTitle: "Mostra la durada del torn",
+              linkAgentNamesTitle: 'Enllaça els noms dels agents als missatges',
               showTurnDurationSubtitle: "«Ha treballat 1m 12s» al final de cada torn acabat",
               messageTimestampsSubtitle: 'Mostra la marca de temps de cada missatge d’usuari i assistent sota el missatge.',
               messageTimestamps: {

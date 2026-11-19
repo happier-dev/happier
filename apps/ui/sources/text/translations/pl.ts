@@ -13334,6 +13334,7 @@ settingsSession: {
         layoutPickerTitle: "Układ transkryptu",
         messageTimestampsTitle: "Pokaż godzinę i datę pod wiadomościami",
         showTurnDurationTitle: "Pokaż czas trwania tury",
+        linkAgentNamesTitle: 'Linkuj nazwy agentów w wiadomościach',
         showTurnDurationSubtitle: "„Praca: 1m 12s” na końcu każdej zakończonej tury",
         messageTimestampsSubtitle:
           "Wyświetlaj znacznik czasu każdej wiadomości użytkownika i asystenta pod wiadomością.",

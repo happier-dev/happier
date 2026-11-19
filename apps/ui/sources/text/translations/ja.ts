@@ -13800,6 +13800,7 @@ settingsSession: {
         layoutPickerTitle: "トランスクリプトレイアウト",
         messageTimestampsTitle: "メッセージ下に日時を表示",
         showTurnDurationTitle: "ターンの所要時間を表示",
+        linkAgentNamesTitle: 'メッセージ内のエージェント名をリンクする',
         showTurnDurationSubtitle: "終了した各ターンの最後に「作業時間 1m 12s」",
         messageTimestampsSubtitle:
           "各ユーザーおよびアシスタントメッセージのタイムスタンプをメッセージ下に表示します。",

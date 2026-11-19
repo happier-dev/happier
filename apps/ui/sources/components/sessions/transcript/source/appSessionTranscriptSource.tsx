@@ -33,6 +33,7 @@ export { useTranscriptVisualContext } from './SessionTranscriptSourceContext';
 import type { SessionTranscriptSource, TranscriptHistoryState } from './types';
 import type { SessionMessagesWindowState } from '@/sync/runtime/sessionMessagesWindowState';
 import { createAppSessionTranscriptActions } from './appSessionTranscriptActions';
+import { TranscriptNicknameReferences } from '../references/TranscriptNicknameReferences';
 
 const EMPTY_IDS: readonly string[] = [];
 const EMPTY_MESSAGES: readonly Message[] = [];
@@ -447,5 +448,7 @@ function AppSessionTranscriptSourceRoot(props: AppSourceProviderProps) {
         } };
     });
     React.useLayoutEffect(() => { cell.update(props); }, [cell, props.interaction, props.loadOlder]);
-    return <SessionTranscriptSourceProvider source={cell.source}>{props.children}</SessionTranscriptSourceProvider>;
+    return <SessionTranscriptSourceProvider source={cell.source}>
+        <TranscriptNicknameReferences source={cell.source}>{props.children}</TranscriptNicknameReferences>
+    </SessionTranscriptSourceProvider>;
 }

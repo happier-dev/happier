@@ -44,6 +44,7 @@ import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { readSessionHostOnboardingPresentationV1 } from '@happier-dev/protocol/sessions';
 import { useMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
+import { useTranscriptNicknameTargets } from '@/components/sessions/transcript/references/TranscriptNicknameReferences';
 import { StructuredReferencesRow } from '@/components/sessions/transcript/references/StructuredReferencesRow';
 import { useMessageInlineReferences } from '@/components/sessions/transcript/references/useMessageInlineReferences';
 import { ComposerAttachmentFallbackRow } from '@/components/sessions/transcript/composerAttachments/ComposerAttachmentFallbackRow';
@@ -987,18 +988,22 @@ function UserTextBlock(props: {
   }), [props.message, props.sessionId, props.serverId, transcriptSource.serverId, transcriptSource.kind,
     props.canSendMessages, sourceCanSendMessages, props.historical, isDiscarded, isStructuredOnly, unsupportedContentMeta, renderedMarkdownText]);
 
-  // One projection for both branches (D-6). Sessions come only from the envelope (INV-5);
-  // files additionally keep the permanent text scan (D-5).
+  const nicknameTargets = useTranscriptNicknameTargets();
   const structuredReferenceProjection = useMessageStructuredReferences({
+    message: props.message,
     meta: props.message.meta,
     text: renderedMarkdownText,
     ownSessionId: props.sessionId,
+    nicknameTargets,
   });
+  const userFindRanges = React.useMemo(() => structuredReferenceProjection.projectFindRange
+    ? findSourceRanges?.map(structuredReferenceProjection.projectFindRange)
+    : findSourceRanges, [findSourceRanges, structuredReferenceProjection]);
   const structuredReferences = structuredReferenceProjection.row;
   const composerAttachments = useMessageComposerAttachments(props.message.meta, isStructuredOnly ? undefined : structuredReferenceProjection.inline);
   // D5: a message composed with inline references shows its pictures numbered above the text and
   // its chips in place; a legacy (0.2) message keeps today's composition.
-  const inlineComposition = structuredReferenceProjection.inline.size > 0
+  const inlineComposition = (structuredReferenceProjection.hasAuthoredInline ?? structuredReferenceProjection.inline.size > 0)
     || (attachmentsMeta?.attachments.some((attachment) => attachment.id !== undefined) ?? false);
   const inlinePictureKeys = React.useMemo(() => [
     ...(attachmentsMeta?.attachments ?? []).map((attachment) => ({ path: attachment.path, numberKey: attachment.id ?? attachment.path })),
@@ -1208,8 +1213,8 @@ function UserTextBlock(props: {
   const bubbleContent = (
           <>
             <TranscriptPassageMarkdownView passageSource={passageSource} destinationSessionId={props.sessionId}
-                codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText}
-                findActive={findActive} findSourceRanges={findSourceRanges} renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
+                codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={structuredReferenceProjection.markdown ?? renderedMarkdownText}
+                findActive={findActive} findSourceRanges={userFindRanges} renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                 onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress}
                 selectable profile="user" textStyle={styles.transcriptMarkdownText} inlineReferences={inlineReferences} />
             {inlineComposition ? null : bubblePictures}
@@ -1601,12 +1606,18 @@ function AgentTextBlock(props: {
         'aria-atomic': false,
       }
     : null;
+  const nicknameTargets = useTranscriptNicknameTargets();
   const structuredReferenceProjectionDeferred = useMessageStructuredReferences({
+    message: props.message,
     meta: props.message.meta,
     text: markdown,
     ownSessionId: props.sessionId,
     enabled: messageDisplay.text !== null && !shouldRenderStreamingPlain,
+    nicknameTargets: !shouldRenderStreamingMarkdown && !props.message.isThinking ? nicknameTargets : undefined,
   });
+  const agentFindRanges = React.useMemo(() => structuredReferenceProjectionDeferred.projectFindRange
+    ? findSourceRanges?.map(structuredReferenceProjectionDeferred.projectFindRange)
+    : findSourceRanges, [findSourceRanges, structuredReferenceProjectionDeferred]);
   const structuredReferencesDeferred = structuredReferenceProjectionDeferred.row;
   // An agent's own `@Session` references draw as the same inline chips as a user's.
   const { inlineReferences: agentInlineReferences } = useMessageInlineReferences({
@@ -1755,9 +1766,9 @@ function AgentTextBlock(props: {
                   revealRequestId={findRevealId}
                 >
                   <TranscriptPassageMarkdownView
-                    passageSource={passageSource} destinationSessionId={props.sessionId} markdown={markdown}
+                    passageSource={passageSource} destinationSessionId={props.sessionId} markdown={structuredReferenceProjectionDeferred.markdown ?? markdown}
                     codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
-                    findActive={findActive} findSourceRanges={findSourceRanges}
+                    findActive={findActive} findSourceRanges={agentFindRanges}
                     agentTexMath
                     renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                     onOptionPress={handleOptionPress}
@@ -1796,9 +1807,9 @@ function AgentTextBlock(props: {
                   </Text>
               ) : (
                   <TranscriptPassageMarkdownView
-                      passageSource={passageSource} destinationSessionId={props.sessionId} markdown={markdown}
+                      passageSource={passageSource} destinationSessionId={props.sessionId} markdown={structuredReferenceProjectionDeferred.markdown ?? markdown}
                       codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
-                      findActive={findActive} findSourceRanges={findSourceRanges}
+                      findActive={findActive} findSourceRanges={agentFindRanges}
                       agentTexMath
                       renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
                       onOptionPress={handleOptionPress}

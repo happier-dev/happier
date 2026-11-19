@@ -13622,6 +13622,7 @@ settingsSession: {
         layoutPickerTitle: "Layout da transcrição",
         messageTimestampsTitle: "Mostrar hora e data abaixo das mensagens",
         showTurnDurationTitle: "Mostrar duração do turno",
+        linkAgentNamesTitle: 'Vincular nomes de agentes nas mensagens',
         showTurnDurationSubtitle: "“Trabalhou por 1m 12s” no fim de cada turno concluído",
         messageTimestampsSubtitle:
           "Exibir o horário de cada mensagem do usuário e do assistente abaixo da mensagem.",

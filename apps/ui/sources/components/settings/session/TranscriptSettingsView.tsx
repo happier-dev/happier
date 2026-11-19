@@ -67,6 +67,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptToolCallsGroupShowBackground, setTranscriptToolCallsGroupShowBackground] = useSettingMutable('transcriptToolCallsGroupShowBackground');
     const [transcriptMessageTimestampDisplayMode, setTranscriptMessageTimestampDisplayMode] = useSettingMutable('transcriptMessageTimestampDisplayMode');
     const [transcriptShowTurnDuration, setTranscriptShowTurnDuration] = useSettingMutable('transcriptShowTurnDuration');
+    const [transcriptLinkAgentNames, setTranscriptLinkAgentNames] = useSettingMutable('transcriptLinkAgentNames');
     const [transcriptMessageSelectionEnabled, setTranscriptMessageSelectionEnabled] = useSettingMutable('transcriptMessageSelectionEnabled');
     const [transcriptMessageCopyActionEnabled, setTranscriptMessageCopyActionEnabled] = useSettingMutable('transcriptMessageCopyActionEnabled');
     const [transcriptMessageForkActionEnabled, setTranscriptMessageForkActionEnabled] = useSettingMutable('transcriptMessageForkActionEnabled');
@@ -276,6 +277,13 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     }
                     showChevron={false}
                     onPress={() => setTranscriptShowTurnDuration(transcriptShowTurnDuration === false)}
+                />
+                <SettingRow
+                    setting={TRANSCRIPT_SETTINGS.settings.linkAgentNames}
+                    testID="settings-session-transcript-link-agent-names"
+                    rightElement={<Switch value={transcriptLinkAgentNames} onValueChange={setTranscriptLinkAgentNames} />}
+                    showChevron={false}
+                    onPress={() => setTranscriptLinkAgentNames(!transcriptLinkAgentNames)}
                 />
             </ItemGroup>
 

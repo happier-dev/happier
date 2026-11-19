@@ -5,7 +5,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 export function resolveSessionSubagentFullRoute(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
-    subagent: SessionSubagent;
+    subagent: Pick<SessionSubagent, 'kind' | 'runRef' | 'transcript'>;
 }>): string | null {
     const normalizedSessionId = normalizeSessionId(params.sessionId);
     if (!normalizedSessionId) return null;

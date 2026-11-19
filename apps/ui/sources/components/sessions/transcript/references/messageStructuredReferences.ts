@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { MENTION_KIND_V1, buildMentionRefV1, parseMentionRefV1, readMentionRefOpaqueForKindV1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -13,6 +14,7 @@ import { parseMarkdownSyntax } from '@/components/markdown/streaming/splitMarkdo
 
 import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
+import { projectMessageNicknameReferences, type InlineSessionReferenceTarget } from './messageNicknameReferences';
 
 /** One detection for inline chips, legacy rows and the hand-typed file scan (O1). */
 
@@ -42,6 +44,7 @@ export type InlineMessageReference = Readonly<{
     glyph: NonNullable<MarkdownInlineReference['glyph']>;
     path?: string;
     sessionId?: string;
+    sessionTarget?: InlineSessionReferenceTarget;
     /**
      * The Agent mark a reference leads with when no live Session identity supplies one (a native
      * child's agent is its parent's provider). A `sessionId` target's live Agent wins.
@@ -57,6 +60,17 @@ export type MessageStructuredReferences = Readonly<{
     row: readonly TranscriptStructuredReference[];
     /** Message image order, keyed by upload id or canonical session-media:<id>. */
     imageNumbers: ReadonlyMap<string, number>;
+    /** Display-only source. The committed message and its authored metadata stay intact. */
+    markdown?: string;
+    hasAuthoredInline?: boolean;
+    projectFindRange?: (range: FindTextRange) => FindTextRange;
+}>;
+
+type MessageReferenceInput = Readonly<{
+    meta: unknown;
+    text: string;
+    ownSessionId?: string;
+    nicknameTargets?: ReadonlyMap<string, InlineSessionReferenceTarget>;
 }>;
 
 /** Uploaded file/folder presentation is shared by Session and resource-backed readers. */
@@ -81,6 +95,20 @@ export function projectMessageAttachmentReference(attachment: Readonly<{
 
 const NO_REFERENCES: readonly TranscriptStructuredReference[] = Object.freeze([]);
 const NO_PROJECTION: MessageStructuredReferences = Object.freeze({ inline: new Map(), row: NO_REFERENCES, imageNumbers: new Map() });
+const messageProjections = new WeakMap<object, Readonly<{
+    input: MessageReferenceInput;
+    projection: MessageStructuredReferences;
+}>>();
+
+/** The authored destinations admitted by the same envelope that feeds message references. */
+export function readMessageMentionedSessionIds(meta: unknown): readonly string[] {
+    const { mentions } = readStructuredInputMentionSourcesV1(readHappierStructuredInputV1FromMeta(meta));
+    return mentions.flatMap(mention => {
+        if (mention.kind !== MENTION_KIND_V1.session) return [];
+        const sessionId = readMentionRefOpaqueForKindV1(MENTION_KIND_V1.session, mention.ref);
+        return sessionId === null ? [] : [sessionId];
+    });
+}
 
 /** Shared authored-token eligibility; code never acquires a live reference. */
 export function readEligibleMessageInlineReferenceTokens(text: string): ReturnType<typeof scanInlineReferenceTokensV1> {
@@ -118,7 +146,7 @@ export function projectMessageMentionReference(mention: MentionRefV1, tokenLabel
         }
         case MENTION_KIND_V1.session: {
             const sessionId = readMentionRefOpaqueForKindV1(MENTION_KIND_V1.session, mention.ref);
-            return sessionId === null ? null : { ...base, sessionId, glyph: 'conversations' };
+            return sessionId === null ? null : { ...base, sessionId, glyph: 'conversations', sessionTarget: { kind: 'session', sessionId } };
         }
         case MENTION_KIND_V1.skill:
             return ref.scheme === 'skill' ? { ...base, glyph: 'terminal' } : null;
@@ -151,9 +179,7 @@ function referenceIdentity(reference: TranscriptStructuredReference): string {
  * participant (the provider prompt needs them), but the reference row is what the person sees, and
  * a Session never lists itself in its own transcript. Inline chips are authored words and stay.
  */
-export function resolveMessageStructuredReferences(
-    input: Readonly<{ meta: unknown; text: string; ownSessionId?: string }>,
-): MessageStructuredReferences {
+export function resolveMessageStructuredReferences(input: MessageReferenceInput): MessageStructuredReferences {
     const envelope = readHappierStructuredInputV1FromMeta(input.meta);
     // D-4 precedence lives at one owner: with `mentions` present the legacy per-kind arrays
     // and meta-root aliases are ignored entirely.
@@ -245,7 +271,53 @@ export function resolveMessageStructuredReferences(
         add({ kind: 'file', path });
     }
 
-    return inline.size === 0 && references.length === 0 && imageNumbers.size === 0 ? NO_PROJECTION : { inline, row: references, imageNumbers };
+    const nicknames = input.nicknameTargets ? projectMessageNicknameReferences(input.text, input.nicknameTargets) : [];
+    if (nicknames.length === 0) {
+        return inline.size === 0 && references.length === 0 && imageNumbers.size === 0 ? NO_PROJECTION : { inline, row: references, imageNumbers };
+    }
+    cursor = 0;
+    const hasAuthoredInline = inline.size > 0;
+    const display: string[] = [];
+    let addedLength = 0;
+    const displayEdits = nicknames.map(({ start, end, token }) => {
+        const displayStart = start + addedLength;
+        const displayEnd = displayStart + token.length;
+        addedLength = displayEnd - end;
+        return { start, end, displayStart, displayEnd };
+    });
+    const projectOffset = (offset: number, isEnd = false): number => {
+        let shift = 0;
+        for (const { start, end, displayStart, displayEnd } of displayEdits) {
+            if (offset <= start) break;
+            if (offset < end) return isEnd ? displayEnd : displayStart;
+            shift = displayEnd - end;
+        }
+        return offset + shift;
+    };
+    for (const reference of inline.values()) {
+        const originalStarts = [...reference.tokenStarts];
+        reference.tokenStarts.clear();
+        for (const start of originalStarts) reference.tokenStarts.add(projectOffset(start));
+    }
+    for (const { ref, token, label, start, end, target } of nicknames) {
+        display.push(input.text.slice(cursor, start), token);
+        cursor = end;
+        const previous = inline.get(ref);
+        if (previous) {
+            previous.tokenStarts.add(projectOffset(start));
+            continue;
+        }
+        inline.set(ref, {
+            ref, token, label, marker: label, kind: MENTION_KIND_V1.session, glyph: 'conversations',
+            sessionTarget: target, tokenStarts: new Set([projectOffset(start)]),
+            ...(target.kind === 'session' ? { sessionId: target.sessionId } : { agentId: target.agentId }),
+        });
+    }
+    display.push(input.text.slice(cursor));
+    return {
+        inline, row: references, imageNumbers, markdown: display.join(''), hasAuthoredInline,
+        projectFindRange: range => ({ ...range, start: projectOffset(range.start), end: projectOffset(range.end, true) }),
+    };
 }
 
 /**
@@ -253,14 +325,22 @@ export function resolveMessageStructuredReferences(
  * still arriving, and a half-arrived path must not flash a chip.
  */
 export function useMessageStructuredReferences(
-    input: Readonly<{ meta: unknown; text: string; ownSessionId?: string; enabled?: boolean }>,
+    input: MessageReferenceInput & Readonly<{ enabled?: boolean; message?: object }>,
 ): MessageStructuredReferences {
     const enabled = input.enabled !== false;
     const meta = input.meta;
     const text = input.text;
-    const ownSessionId = input.ownSessionId;
-    return React.useMemo(
-        () => (enabled ? resolveMessageStructuredReferences({ meta, text, ownSessionId }) : NO_PROJECTION),
-        [enabled, meta, text, ownSessionId],
-    );
+    const { message, ownSessionId, nicknameTargets } = input;
+    return React.useMemo(() => {
+        if (!enabled) return NO_PROJECTION;
+        const projectionInput = { meta, text, ownSessionId, nicknameTargets };
+        const previous = message && nicknameTargets?.size ? messageProjections.get(message) : undefined;
+        if (previous && previous.input.meta === meta && previous.input.text === text
+            && previous.input.ownSessionId === ownSessionId && previous.input.nicknameTargets === nicknameTargets) {
+            return previous.projection;
+        }
+        const projection = resolveMessageStructuredReferences(projectionInput);
+        if (message && nicknameTargets?.size) messageProjections.set(message, { input: projectionInput, projection });
+        return projection;
+    }, [enabled, message, meta, text, ownSessionId, nicknameTargets]);
 }

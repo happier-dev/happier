@@ -13131,6 +13131,7 @@ settingsSession: {
       layoutPickerTitle: "会话记录布局",
       messageTimestampsTitle: "在消息下方显示时间和日期",
       showTurnDurationTitle: "显示轮次用时",
+      linkAgentNamesTitle: '将消息中的智能体名称显示为链接',
       showTurnDurationSubtitle: "在每个已完成轮次末尾显示“用时 1m 12s”",
       messageTimestampsSubtitle: "在每条用户和助手消息下方显示时间戳。",
       messageTimestamps: {

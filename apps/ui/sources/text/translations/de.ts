@@ -13406,6 +13406,7 @@ settingsSession: {
             layoutPickerTitle: 'Transkript-Layout',
             messageTimestampsTitle: 'Uhrzeit und Datum unter Nachrichten zeigen',
             showTurnDurationTitle: "Dauer des Durchgangs zeigen",
+            linkAgentNamesTitle: 'Agentennamen in Nachrichten verlinken',
             showTurnDurationSubtitle: "„Gearbeitet: 1m 12s“ am Ende jedes beendeten Durchgangs",
             messageTimestampsSubtitle: 'Den Zeitstempel jeder Nutzer- und Assistenznachricht unter der Nachricht anzeigen.',
             messageTimestamps: {

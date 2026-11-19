@@ -29,6 +29,10 @@ import type { ActionId } from '../../actions/actionIds.js';
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../../plugins/pluginId.js';
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
 import { readRetainedConnectedAccountCatalogRecordV1 } from '../../connect/connectedAccountCatalogV1.js';
+it('links agent nicknames by default and preserves an explicit opt-out', () => {
+  expect(accountSettingsParse({})).toHaveProperty('transcriptLinkAgentNames', true);
+  expect(accountSettingsParse({ transcriptLinkAgentNames: false })).toHaveProperty('transcriptLinkAgentNames', false);
+});
 
 describe('recording Session-list privacy preference', () => {
   it('defaults retained settings to no hidden tags and retains deliberate Home-local choices', () => {

@@ -29,6 +29,7 @@ import {
 import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
 import { SessionTranscriptSourceProvider, useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { toolDetailsTranscriptSource } from '@/components/sessions/transcript/source/toolDetailsTranscriptSource';
+import { TranscriptNicknameSidechainScope } from '@/components/sessions/transcript/references/TranscriptNicknameReferences';
 import { createAppSidechainHistoryLoader } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 import {
@@ -270,6 +271,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
             <View style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
                 <View style={[styles.contentWrapper, contentMaxWidthStyle, { flex: 1, minHeight: 0 }]}>
                     <View style={styles.transcriptSection}>
+                        <TranscriptNicknameSidechainScope sidechainId={transcriptDatasetIdentity}>
                         <ChainTranscriptList
                             key={sidechainDatasetKey}
                             sessionId={normalizedSessionId}
@@ -297,6 +299,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
                             }
                             messageWrapperTestIdPrefix="tool-fullview-transcript-message"
                         />
+                        </TranscriptNicknameSidechainScope>
                     </View>
                 </View>
             </View>

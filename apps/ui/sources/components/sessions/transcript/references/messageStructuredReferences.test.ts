@@ -4,6 +4,7 @@ import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/inpu
 import { buildComposerReferenceMentionPayloadV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
 
 import { resolveMessageStructuredReferences } from './messageStructuredReferences';
+import { selectNicknameTargets } from './messageNicknameReferences';
 
 function metaWithMentions(mentions: readonly Record<string, unknown>[]): Record<string, unknown> {
     return { happierStructuredInputV1: { v: 1, mentions } };
@@ -27,6 +28,62 @@ function fileMention(path: string, token: string) {
 }
 
 describe('resolveMessageStructuredReferences', () => {
+    it('admits only direct family and structured destinations, leaving ambiguous names plain', () => {
+        const session = (sessionId: string) => ({ kind: 'session', sessionId } as const);
+        const eligible = selectNicknameTargets({
+            currentId: 'current',
+            candidates: [
+                { id: 'lead', parentId: 'grand', nickname: 'Lead', target: session('lead') },
+                { id: 'current', parentId: 'lead', nickname: 'Self', target: session('current') },
+                { id: 'sibling', parentId: 'lead', nickname: 'Twin', target: session('sibling') },
+                { id: 'child', parentId: 'current', nickname: 'Leaf', target: session('child') },
+                { id: 'grandchild', parentId: 'child', nickname: 'Grandchild', target: session('grandchild') },
+                { id: 'mentioned', parentId: null, nickname: 'Aside', target: session('mentioned') },
+                { id: 'mentionedTwin', parentId: null, nickname: 'Twin', target: session('mentionedTwin') },
+                { id: 'unrelated', parentId: 'other', nickname: 'Elsewhere', target: session('unrelated') },
+            ],
+            mentionedSessionIds: new Set(['mentioned', 'mentionedTwin']),
+        });
+        const result = resolveMessageStructuredReferences({
+            text: 'Lead, Self, Twin, Leaf, Grandchild, Aside, Elsewhere.',
+            meta: undefined,
+            nicknameTargets: eligible,
+        });
+        expect([...result.inline.values()].map(reference => reference.sessionId)).toEqual(['lead', 'child', 'mentioned']);
+        expect(result.markdown).toContain('Self, Twin');
+        expect(result.markdown).toContain('Grandchild');
+        expect(result.markdown).toContain('Elsewhere');
+    });
+
+    it('projects unique whole nicknames into the same inline references, skipping Markdown links and code', () => {
+        const scout = { kind: 'nativeChild', parentSessionId: 'parent', toolMessageRouteId: 'tool:scout', agentId: 'codex' } as const;
+        const text = 'Scout, Scout_2, éScout, `Scout`, [Scout](https://example.com/Scout), Scout.\n\n```\nScout\n```';
+        const result = resolveMessageStructuredReferences({ text, meta: undefined, nicknameTargets: new Map([['Scout', scout]]) });
+        const [reference] = [...result.inline.values()];
+        expect(reference).toMatchObject({ kind: MENTION_KIND_V1.session, label: 'Scout', sessionTarget: scout });
+        expect(result.markdown?.split(reference!.token!)).toEqual([
+            '',
+            ', Scout_2, éScout, `Scout`, [Scout](https://example.com/Scout), ',
+            '.\n\n```\nScout\n```',
+        ]);
+        expect(result.row).toEqual([]);
+    });
+
+    it('keeps authored bindings and Find coordinates after an earlier nickname expands into a token', () => {
+        const ref = buildMentionRefForKindV1(MENTION_KIND_V1.session, 'linked');
+        const token = formatInlineReferenceTokenV1({ label: 'Already linked', ref });
+        const text = `Scout then ${token} and needle.`;
+        const result = resolveMessageStructuredReferences({
+            text,
+            meta: metaWithMentions([sessionMention('linked', token)]),
+            nicknameTargets: new Map([['Scout', { kind: 'session', sessionId: 'scout' }]]),
+        });
+        expect([...result.inline.get(ref)!.tokenStarts!]).toEqual([result.markdown!.indexOf(token)]);
+        const start = text.indexOf('needle');
+        const projected = result.projectFindRange!({ start, end: start + 'needle'.length, current: true });
+        expect(result.markdown!.slice(projected.start, projected.end)).toBe('needle');
+        expect(projected.current).toBe(true);
+    });
     it('projects every built-in mention and qualified contributed item through typed identity and portable glyphs', () => {
         const mentions: MentionRefV1[] = ([
             [MENTION_KIND_V1.file, 'src/components/', 'components/'],

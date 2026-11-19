@@ -13342,6 +13342,7 @@ settingsSession: {
         layoutPickerTitle: "Mise en page du transcript",
         messageTimestampsTitle: "Afficher l’heure et la date sous les messages",
         showTurnDurationTitle: "Afficher la durée du tour",
+        linkAgentNamesTitle: 'Lier les noms des agents dans les messages',
         showTurnDurationSubtitle: "« A travaillé 1m 12s » à la fin de chaque tour terminé",
         messageTimestampsSubtitle:
           "Affiche l’horodatage de chaque message utilisateur et assistant sous le message.",
