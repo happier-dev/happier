@@ -154,6 +154,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
       return account;
     }
     return { server, serverId, sourceOptions, actionServerApiUrl, requestProxy, createAccount,
+      // Public fixture CA only; native guests install it through ordinary OS trust.
+      guestHomeCaCertificatePath: tls?.caCertificatePath,
       takeRequestObservations() {
         if (!requestProxy) throw new Error('Project Action request observation was not enabled');
         const observations = requestProxy.entries().map(({ method, path, statusCode }) => ({ method, path, statusCode }));
