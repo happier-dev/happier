@@ -15,6 +15,7 @@ import {
   readTriageListFailureNotice,
   readTriageRefreshPacingNotice,
   readTriageListReadFailureNotice,
+  readTriageSourceFailureRowV1,
   resolveTriageListRefreshV1,
   resolveTriageListShellState,
 } from './windowState.js';
@@ -105,6 +106,21 @@ describe('resolveTriageListShellState', () => {
     }] }) }));
     if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
     expect(readTriageListFailureNotice(state.failure).details).toContain('provider-42');
+  });
+
+  // QB-24: a throttle exposes the provider's retry time at once, in Manage sources and in the notice.
+  it('says when a rate-limited source may be read again', () => {
+    const retryNotBeforeMs = 1_760_000_120_000;
+    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
+      source: SOURCE, sourceInstanceId: INSTANCE, exhausted: false,
+      health: { kind: 'failed', failure: { class: 'rateLimit', code: 'rate_limited', retryNotBeforeMs } },
+    }] }) }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
+    const retryAt = formatTriageTimestampV1('en-US', retryNotBeforeMs, 'absolute', retryNotBeforeMs);
+    const [source] = state.failure.sources;
+    if (source === undefined) throw new Error('Expected a named source');
+    expect(readTriageSourceFailureRowV1(source, undefined, 'en-US').reason).toContain(`Try again at ${retryAt}.`);
+    expect(readTriageListFailureNotice(state.failure, undefined, 'en-US').description).toContain(`Try again at ${retryAt}.`);
   });
 
   // VIEW-HEALTH-1109: the selected view owns the body; the whole scan owns Manage sources.

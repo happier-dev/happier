@@ -78,6 +78,8 @@ export type TriageListSourceFailureV1 = Readonly<{
    */
   lineReason?: string;
   retryable?: boolean;
+  /** The provider's own deadline before which a read is refused (a rate limit), when it sent one. */
+  retryNotBeforeMs?: number;
   /**
    * Present only for an invocation the host could not make (an offline Machine, a broken transport): its typed
    * code and the reason together. Connections that all carry one key failed for one cause, which is said once.
@@ -188,6 +190,7 @@ export function projectTriageSourceHealthFailureV1(entry: TriageSourceHealthV1):
     reason: listReadFailureMessage(failure.code, failure.detail ?? SOURCE_FAILURE_COPY_V1[failure.class]),
     code: failure.code,
     ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+    ...(failure.retryNotBeforeMs === undefined ? {} : { retryNotBeforeMs: failure.retryNotBeforeMs }),
     ...(failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(failure.code, SOURCE_FAILURE_COPY_V1[failure.class]) }),
     needsConnectionChange: failure.class === 'authentication' || failure.class === 'permission',
   });
@@ -345,7 +348,7 @@ export function readTriageListFailureNotice(
   const describe = (source: TriageListSourceFailureV1) => source.retryable === false
     && source.reason === SOURCE_FAILURE_COPY_V1.transient
     ? text('plugins.triage.surface.listFailed.permanent', 'Trying again will not fix this. The details below can help support find out why.')
-    : resolveSourceFailureReason(text, source.reason);
+    : withRetryAt(resolveSourceFailureReason(text, source.reason), source, text, locale);
   const details = failure.sources.flatMap((source) => source.code === undefined ? [] : [
     `${source.displayName} — ${readSourceFailureDetails(source, text)}`,
   ]).join('\n');
@@ -369,6 +372,13 @@ export function readTriageListFailureNotice(
   });
 }
 
+/** A source that sent its own deadline says when it may be read again, in the pacing notice's words. */
+function withRetryAt(reason: string, source: TriageListSourceFailureV1, text: TriageTextResolverV1, locale?: string): string {
+  if (source.retryNotBeforeMs === undefined) return reason;
+  const retryAt = formatTriageTimestampV1(locale ?? 'en', source.retryNotBeforeMs, 'absolute', source.retryNotBeforeMs);
+  return `${reason} ${text('plugins.triage.surface.waiting.retryAt', 'Try again at')} ${retryAt}.`;
+}
+
 /** Details: the producer's own explanation when the line said something shorter, then the code support can look up. */
 function readSourceFailureDetails(source: TriageListSourceFailureV1, text: TriageTextResolverV1): string {
   const code = `${text('plugins.triage.surface.sources.supportCode', 'For support')}: ${source.code}${source.requestId === undefined ? '' : ` · Request ID: ${source.requestId}`}`;
@@ -387,6 +397,7 @@ export type TriageSourceFailureRowV1 = Readonly<{
 export function readTriageSourceFailureRowV1(
   source: TriageListSourceFailureV1,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
+  locale?: string,
 ): TriageSourceFailureRowV1 {
   const lineReason = source.lineReason ?? source.reason;
   const permanent = source.retryable === false;
@@ -394,7 +405,7 @@ export function readTriageSourceFailureRowV1(
     // The row's reason stands beside its ⋯, so it names Details rather than pointing below.
     reason: permanent && lineReason === SOURCE_FAILURE_COPY_V1.transient
       ? text('plugins.triage.surface.sources.permanent', 'Trying again won’t fix this. Details has what support needs.')
-      : resolveSourceFailureReason(text, lineReason),
+      : withRetryAt(resolveSourceFailureReason(text, lineReason), source, text, locale),
     fix: source.needsConnectionChange === true ? 'connection' : permanent ? null : 'retry',
     details: source.code === undefined ? null
       : readSourceFailureDetails(source, text),

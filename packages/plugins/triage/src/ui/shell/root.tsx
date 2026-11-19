@@ -1624,8 +1624,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     configuredActions.actions, selectedBulkWorkflowSubjects([...selectedBulkKeys]),
   ), [configuredActions.actions, selectedBulkKeys, selectedBulkWorkflowSubjects]);
   const sourceHealthRows = React.useMemo(() => new Map(
-    (listWindow?.wholeScanFailure?.sources ?? []).map(failure => [failure.sourceInstanceId, readTriageSourceFailureRowV1(failure, text)]),
-  ), [listWindow?.wholeScanFailure, text]);
+    (listWindow?.wholeScanFailure?.sources ?? []).map(failure => [failure.sourceInstanceId, readTriageSourceFailureRowV1(failure, text, surfaceContext.locale)]),
+  ), [listWindow?.wholeScanFailure, text, surfaceContext.locale]);
   const runMountedOperation = React.useCallback(async (
     operation: TriageMountedUiOperationV1, signal: AbortSignal,
   ): Promise<TriageMountedUiResultV1> => {
