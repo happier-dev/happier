@@ -167,7 +167,7 @@ import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actio
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { decodeBase64 } from './encryption';
 import { resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
@@ -776,14 +776,7 @@ export class ApiMachineClient {
                 context?.signal?.throwIfAborted();
                 const runtime = await this.resolveInstalledAccountRuntime(lifetime.signal, accountId);
                 if (!runtime) return null;
-                const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
-                const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
-                const snapshot = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
-                    credentials: runtime.credentials, serverId: runtime.serverId, signal: lifetime.signal,
-                    selection: { key: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.workspaceId } },
-                }));
-                const ref = snapshot.workspaceRefs[0];
-                if (!ref || !isDeepStrictEqual(workspaceAddressFromRefV2(ref), workspace)) return null;
+                if (!(await this.readAcceptedManagedWorkspaceRef(runtime, workspace, lifetime.signal))) return null;
                 const target = await openTarget({ workspace, requesterAccountId: runtime.accountId, lifetime: lifetime.signal });
                 lifetime.signal.throwIfAborted();
                 retained = registerManagedWorkspaceTarget({ workspace, target });
@@ -971,6 +964,24 @@ export class ApiMachineClient {
             // local lifetime without re-reading Home admission.
             return runtime;
         } catch { return unavailable('exception'); }
+    }
+
+    private async readAcceptedManagedWorkspaceRef(
+        runtime: MachineTerminalAccountReadRuntime,
+        workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>,
+        signal: AbortSignal,
+        scope: 'workspace' | 'project' = 'workspace',
+    ) {
+        const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
+        const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+        const { workspaceRefs } = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
+            credentials: runtime.credentials, serverId: runtime.serverId, signal,
+            selection: scope === 'project'
+                ? { kinds: ['workspace-ref'], serverId: workspace.serverId }
+                : { key: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.workspaceId } },
+        }));
+        const ref = workspaceRefs.find(candidate => candidate.id === workspace.workspaceId);
+        return ref && isDeepStrictEqual(workspaceAddressFromRefV2(ref), workspace) ? { ref, workspaceRefs } : null;
     }
 
     private async resolveInstalledAccountRuntime(signal: AbortSignal, expectedAccountId?: string,
@@ -2198,6 +2209,28 @@ export class ApiMachineClient {
         // even when no session is currently active.
         registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
+            readManagedProjectRepository: async (workspace, ingress) => {
+                const accountId = ingress.machineAdmission?.actorAccountId;
+                if (!accountId) return undefined;
+                const runtime = await this.resolveInstalledAccountRuntime(ingress.signal, accountId);
+                if (!runtime) return undefined;
+                const accepted = await this.readAcceptedManagedWorkspaceRef(runtime, workspace, ingress.signal, 'project').catch(() => null);
+                if (!accepted) return undefined;
+                const { projectWorkspaceRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+                const { resolveProjectContextSourceV1 } = await import('@happier-dev/protocol/projects/projectListProjectionV1');
+                const source = resolveProjectContextSourceV1({ projectRef: projectWorkspaceRefV1(accepted.ref),
+                    workspaceRefs: accepted.workspaceRefs, organizationPresent: false });
+                if (source.kind !== 'source') return undefined;
+                const { createCliProjectSourceActionDeps } = await import('@/session/actions/projectSourceActionDeps');
+                const projectSources = createCliProjectSourceActionDeps({ serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                    admitAccount: async serverId => serverId === runtime.serverId && await runtime.isCurrent() ? null
+                        : { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' },
+                    resolveRequestHeaders: () => ({ Authorization: `Bearer ${runtime.credentials.token}` }),
+                });
+                const result = await projectSources.projectSourcesRead!({ serverId: runtime.serverId, sourceId: source.sourceId },
+                    { authority: ingress.callerAuthority, signal: ingress.signal });
+                return result.ok ? result.source.repository : undefined;
+            },
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,
             selectWorkspaceSource: (context, input) => this.filesystemEffectAdmission.selectWorkspaceSource(context, input),

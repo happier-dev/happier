@@ -132,6 +132,8 @@ import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceD
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 import { runWithScmAccountScope } from '@/scm/accountScope';
+import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
@@ -147,6 +149,8 @@ export function registerScmHandlers(
         /** The filesystem admission's source decision, shared so SCM reads the same workspace. */
         selectWorkspaceSource?: (context: RpcHandlerContext | undefined, input: unknown) => WorkspaceSource | Promise<WorkspaceSource>;
         admitWorkspaceSource?: FilesystemEffectAdmission['rpc'];
+        readManagedProjectRepository?: (workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>, context: RpcHandlerContext)
+            => Promise<ProjectSourceRepositorySelectorV1 | undefined>;
         /** The filesystem admission's requester decision, shared so SCM runs where that person may run. */
         resolveRequester?: (context: RpcHandlerContext) => Promise<FilesystemEffectRequester>;
         /** The member execution owner (as bash, Project Open and Sync use it). */
@@ -285,7 +289,8 @@ export function registerScmHandlers(
             rpcHandlerManager.registerHandler(method, async (request, context) => {
                 const wrapped = request && typeof request === 'object' && 'kind' in request
                     && request.kind === 'targeted_action_rpc';
-                const managed = wrapped && unwrapTarget && isScmLocalRepositoryReadRpcMethod(method)
+                const handledPush = method === RPC_METHODS.SCM_REMOTE_PUSH;
+                const managed = wrapped && unwrapTarget && (isScmLocalRepositoryReadRpcMethod(method) || handledPush)
                     ? ManagedWorkspaceScmRpcRequestV1Schema.safeParse(request).data : undefined;
                 if (managed && (!deps?.selectWorkspaceSource || managed.target.controller.machineId !== deps.machineId)) {
                     return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
@@ -306,6 +311,9 @@ export function registerScmHandlers(
                     const failure = await deps.admitWorkspaceSource(context, selected);
                     if (failure) return refused(failure.errorCode);
                 }
+                const managedProject = managed && handledPush
+                    ? { repository: context ? await deps?.readManagedProjectRepository?.(managed.target, context) : undefined }
+                    : undefined;
                 return runWithWorkspaceSourceDemand(selected, () => {
                     const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
                     const machinePolicy = deps?.accessPolicy ?? resolveFilesystemAccessPolicy();
@@ -320,7 +328,8 @@ export function registerScmHandlers(
                         const accessPolicy: FilesystemAccessPolicy = scoped
                             ? { kind: 'restrictedRoots', roots: [scoped.cwd] } : machinePolicy;
                         return scmRpcOperationContextStorage.run(
-                            { context: operationContext, workingDirectory: scoped?.cwd ?? workingDirectory, accessPolicy },
+                            { context: operationContext, workingDirectory: scoped?.cwd ?? workingDirectory, accessPolicy,
+                                ...(managedProject ? { managedProject } : {}) },
                             () => handler((unwrapTarget ? semanticInput : request) as TRequest, operationContext));
                     };
                     // Local member placement resolves the root in its own child.

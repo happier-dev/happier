@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
-import type { RpcHandler } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { registerManagedWorkspaceTarget, registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -15,6 +15,7 @@ import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ScmWorkspaceWatchResponseSchema } from '@happier-dev/protocol/scm';
+import { ProjectSourceV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
@@ -28,6 +29,61 @@ const holderPath = resolveSessionHolderExecutablePath();
 const helperPath = resolveProcessCustodySupportExecutable('linux');
 const devcontainerImage = process.env.HAPPIER_TEST_SCM_DEVCONTAINER_IMAGE;
 const dockerPath = process.env.HAPPIER_TEST_SCM_DOCKER_BIN ?? 'docker';
+
+it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
+    'F2: managed Project Push uses its recorded repository source and refuses a Project without one', async () => {
+        const rootPath = await mkdtemp(join(tmpdir(), 'managed-scm-push-'));
+        const lifetime = new AbortController();
+        const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'push-project', managedId: 'guest',
+            controller: { machineId: 'controller', installationId: 'install' }, rootPath } as const;
+        const holderExits: Promise<number | null>[] = [];
+        try {
+            const git = (...args: string[]) => execFileSync('git', args, { cwd: rootPath, stdio: 'pipe' });
+            git('init', '-q', '--initial-branch=main');
+            git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'initial');
+            git('remote', 'add', 'origin', 'https://github.com/example/checkout.git');
+            registerManagedWorkspaceTarget({ workspace, target: { lifetime: lifetime.signal,
+                holderPath: holderPath!, helperPath: helperPath!, openChannel(argv) {
+                    const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+                    holderExits.push(new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }));
+                    return Duplex.from({ readable: child.stdout, writable: child.stdin });
+                } } });
+            const source = ProjectSourceV1Schema.parse({ id: 'confirmed-source', revision: 1, name: 'Confirmed',
+                createdByAccountId: 'owner', audience: [], repository: {
+                    provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'example/confirmed', cloneUrl: 'https://github.com/example/confirmed.git' },
+                    protocol: 'https',
+                } });
+            const registration = createGitScmBackendRuntimeRegistration();
+            const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+                definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+                executableDefinition: registration.runtime!, registration,
+                scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+                hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
+            })]);
+            const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
+                resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+            const handlers = new Map<string, RpcHandler>();
+            let recordedSource = source.repository;
+            const deps = { registry, machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource,
+                admitWorkspaceSource: admission.rpc, readManagedProjectRepository: async () => recordedSource };
+            registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, rootPath, deps);
+            const context: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
+                machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'controller',
+                    installationId: 'install', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+            const push = () => handlers.get(RPC_METHODS.SCM_REMOTE_PUSH)!({ v: 1, kind: 'targeted_action_rpc',
+                target: workspace, input: { cwd: rootPath, remote: 'origin', branch: 'main', outcomeVersion: 1 } }, context);
+            const changed = await push();
+            expect(changed, JSON.stringify(changed)).toMatchObject({ success: false, errorCode: 'SCM_SOURCE_CHANGED' });
+            recordedSource = undefined;
+            await expect(push()).resolves.toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
+        } finally {
+            lifetime.abort();
+            await Promise.all(holderExits);
+            await rm(rootPath, { recursive: true, force: true });
+        }
+    }, 30_000,
+);
 
 it('refuses an exact managed SCM request when the guest source is not registered', async () => {
     const handlers = new Map<string, RpcHandler>();

@@ -1,6 +1,7 @@
 import { readHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createScmRepositoryFileSystem } from '@/scm/repositoryFileSystem';
 import { runAuthenticatedScmRepositoryCommand } from '@/scm/repositoryTransport';
+import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
@@ -128,7 +129,10 @@ function createScmBackendRuntimeServices(
         }));
     };
     return { readEnvironment: sessionProcessEnvironment, runCommand, runCommandStreaming: runCommand,
-        get projectFilesSource() { return readHostedSessionScope()?.projectFilesSource; },
+        get projectFilesSource() {
+            const project = scmRpcOperationContextStorage.getStore()?.managedProject;
+            return project ? project.repository : readHostedSessionScope()?.projectFilesSource;
+        },
         get repositoryTransport() { return {
             requiresConnectedAccount: currentWorkspaceSource().kind === 'target',
             run: ({ repositories, command }: Parameters<NonNullable<ScmBackendRuntimeServices['repositoryTransport']>['run']>[0]) =>
