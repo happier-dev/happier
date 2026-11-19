@@ -1021,7 +1021,7 @@ async function readConfigurationDefaultsEnvironmentInTx(tx: Tx, binding: Externa
 }
 
 /**
- * Native deploy, backup, restore and backup setup select the definition's workspace references.
+ * Deployment preparation and native work select the workspace references they require.
  * Row keys carry the Home server identity (O-DEPLOY ruling 2026-11-12); the row reader owns Account isolation.
  */
 export function isDeploymentWorkspaceListHttpPurpose(serverId: string,
@@ -1906,6 +1906,8 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             return isReadOnlyArtifactPurpose?.(proof) === true;
         }
         if (admission.mode !== 'apply') return false;
+        if (effectActionId === binding.actionId && admission.workspace && binding.custodianAccountId === binding.accountId
+            && isDeploymentWorkspaceListHttpPurpose(binding.serverIdentityId, proof)) return true;
         if (effectActionId === binding.actionId && method === 'POST' && proof.path === '/v1/artifacts') {
             const parsed = ArtifactJsonCreateHttpInputV1Schema.safeParse(proof.body);
             return parsed.success && (parsed.data.kind === undefined || parsed.data.kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1

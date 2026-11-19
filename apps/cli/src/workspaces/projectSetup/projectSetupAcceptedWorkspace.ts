@@ -36,9 +36,14 @@ export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAc
     const homeServerId = await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId;
     let workspaceRefs: readonly WorkspaceRefV1[];
     try {
-        // Read the exact qualified ids, or the reached Home's root census.
-        // Retained profile qualifiers still participate in alias ambiguity.
-        const qualifiers = [...new Set([input.serverId, homeServerId, input.address.serverId])];
+        const binding = input.authorization?.binding;
+        const admission = binding?.deploymentPreparationAdmission;
+        // Repository Apply signs its scratch checkout census for the portable Home.
+        // Ordinary Project reads still include retained qualifiers to detect alias ambiguity.
+        const qualifiers = binding && input.address.workspaceId === undefined
+            && admission?.operation === 'template' && admission.mode === 'apply' && admission.workspace
+            ? [binding.serverIdentityId]
+            : [...new Set([input.serverId, homeServerId, input.address.serverId])];
         const snapshots = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => Promise.all(qualifiers.map(serverId => readProjectAccountRows({
             ...input, serverId: input.serverId,
             selection: input.address.workspaceId

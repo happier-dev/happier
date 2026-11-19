@@ -7438,6 +7438,96 @@ describe('deployment children retain their controller Action authority', () => {
             { method: 'POST', path: '/v1/account/project-rows/read', body: { key }, routeInput: { key } }, {}))).toBe(false);
     });
 
+    it('admits the same-Home workspace census for repository Apply checkout cleanup', async () => {
+        const f = await fixture('account', 'account', { templateRoot: true });
+        const actionId = 'deployments.templates.instantiate';
+        const target = f.authorization.binding.target;
+        const { deploy: _deploy, ...templateInput } = f.templateInput;
+        const key = { kind: 'workspace-ref', serverId, id: 'source-checkout' } as const;
+        const apply = getActionSpec(actionId).inputSchema.parse({ ...templateInput, mode: 'apply',
+            destination: { kind: 'repositoryPullRequest', workspace: key, sourceRevision: 1,
+                repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+                baseCommit: 'a'.repeat(40), baseBranch: 'main', branchName: 'add-database', composePath: 'compose.yaml',
+                title: 'Add database' } });
+        const mint = (input: typeof apply) => {
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+                authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId, machineId: f.controller.id,
+                target, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) }, { input });
+        };
+        const root = await mint(apply);
+        const preview = await mint({ ...apply, mode: 'preview' });
+        const stored = await mint({ ...apply, destination: f.templateInput.destination });
+        const path = '/v1/account/project-rows/list';
+        const selection = { kinds: ['workspace-ref'], serverId };
+        const signed = (authorization: typeof root, url: string, body: Record<string, unknown>, privateKey = f.controller.keys.secretKey) => ({
+            method: 'POST' as const, url, payload: body,
+            headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId: authorization.binding.requestId,
+                    method: 'POST', path: url, body, privateKey }),
+            },
+        });
+        const cleanupSelections: unknown[] = [];
+        await withAuthenticatedTestApp(app => {
+            registerProjectAccountRowRoutes(app);
+            registerAccountProfileRoute(app);
+            registerAccountSettingsRoutes(app);
+            registerAccountEncryptionRoutes(app);
+            changesRoutes(app);
+            app.addHook('onResponse', async request => {
+                if (request.url === path) cleanupSelections.push(request.body);
+            });
+        }, async app => {
+            const accepted = await app.inject(signed(root, path, selection));
+            expect.soft(accepted.statusCode, accepted.body).toBe(200);
+            expect.soft(accepted.json()).toMatchObject({ status: 'listed', rows: [] });
+            for (const request of [
+                signed(preview, path, selection), signed(stored, path, selection),
+                signed(root, path, { ...selection, serverId: 'foreign-home' }),
+                signed(root, path, { ...selection, kinds: ['workspace-ref', 'relationship-graph'] }),
+                signed(root, path, selection, f.outsider.keys.secretKey),
+                signed(root, '/v1/account/project-rows/read', { key: { ...key, id: 'other-checkout' } }),
+            ]) {
+                const denied = await app.inject(request);
+                expect(denied.statusCode, denied.body).toBe(401);
+            }
+            cleanupSelections.length = 0;
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            await withConfiguredDaemonTestHome({ prefix: 'app-repo-checkout-cleanup-',
+                env: { HAPPIER_SERVER_URL: origin } }, async () => {
+                const profile = await addServerProfile({ name: 'app-repo-checkout-cleanup', serverUrl: origin, webappUrl: origin });
+                expect(profile.id).not.toBe(serverId);
+                await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+                    descriptor: { v: 1, homeServerIdentityId: serverId, canonicalServerUrl: origin,
+                        revision: 1, endpoints: [{ kind: 'https', url: origin }] } });
+                const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+                const channel = await createRequesterCurrentnessSocketHarness();
+                let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+                try {
+                    requester = await admitRequesterAccountActionContext({ authorization: root, credentials: { token, encryption: null },
+                        serverId: profile.id, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                    if (!requester) throw new Error('Expected admitted repository Apply custody');
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                        serverId: profile.id, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                        installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                    if (!authorization) throw new Error('Expected signed repository Apply HTTP projection');
+                    const { resolveProjectSetupAcceptedWorkspace } = await import('../../../../cli/src/workspaces/projectSetup/projectSetupAcceptedWorkspace');
+                    await expect.soft(resolveProjectSetupAcceptedWorkspace({ authorization, effectActionId: actionId,
+                        serverId: profile.id, serverHttpBaseUrl: origin,
+                        address: { serverId: profile.id, machineId: f.controller.id, rootPath: '/scratch/app-repo' },
+                        allowUnassociated: true, allowProjectless: true })).resolves.toBeNull();
+                    expect(cleanupSelections).toEqual([selection]);
+                } finally { await requester?.dispose(); await channel.close(); }
+            });
+        }, { authentication: 'real' });
+    });
+
     it.each([
         { withdrawal: 'machine', workflowOrigin: false, templateRoot: true }, { withdrawal: 'team', workflowOrigin: false, templateRoot: true },
         { withdrawal: 'machine', workflowOrigin: true, templateRoot: true }, { withdrawal: 'team', workflowOrigin: true, templateRoot: true },

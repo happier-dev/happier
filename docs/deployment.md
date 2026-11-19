@@ -3045,6 +3045,9 @@ another installed Machine. Preview reads the exact ready registry pin and the
 current definition without generating secrets or writing Artifacts. Repository
 review includes the exact base commit, Compose path and before/after files; apply
 uses the shared SCM worktree/commit/PR composition and returns the exact PR.
+On the requester's own checkout Machine, repository Apply uses its admitted root
+to look for a workspace association before retiring the scratch worktree. Home
+scopes this read to the requester's workspace references at its portable Home ID.
 Merge and deployment are separate Actions. Stored apply uses the ordinary Compose
 writer. Both paths use normal agent Ask policy, P42 generation and binding custody
 and the metadata-only CAS route. A later failure returns
