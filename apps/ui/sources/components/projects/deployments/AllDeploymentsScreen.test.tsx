@@ -210,7 +210,7 @@ describe('Projects → All deployments', () => {
     controller.retire();
   });
 
-  it('says its count is this page\'s when more pages continue (the read reports no Account total)', async () => {
+  it('says its count is at least this page\'s when more pages continue (the read reports no Account total)', async () => {
     const { controller } = controllerFor((cursor) => cursor
       ? page([environment('env-later', 'source-later', 'Later', { projectSourceName: 'later' })])
       : page([environment('env-shop', 'source-shop', 'Production', { projectSourceName: 'storefront' })], { nextCursor: 'env-later' }));
@@ -218,7 +218,7 @@ describe('Projects → All deployments', () => {
     await act(async () => {
       await waitForTestEvent(screen.subscribe, () => screen.findHostByTestId('all-deployments.header:count'), (node) => node !== null);
     });
-    expect(screen.getTextContent()).toContain('on this page');
+    expect(screen.getTextContent()).toContain('1+ environments in 1+ projects');
     controller.retire();
   });
 
@@ -243,7 +243,7 @@ describe('Projects → All deployments', () => {
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-shop'), (node) => node !== null);
     });
     expect(calls).toEqual([{ cursor: undefined, counted: false }]);
-    expect(screen.getTextContent()).toContain('on this page');
+    expect(screen.getTextContent()).toContain('1+ environments in 1+ projects');
     await screen.pressByTestIdAsync('all-deployments.paging.older');
     await act(async () => {
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-later'), (node) => node !== null);
@@ -255,7 +255,7 @@ describe('Projects → All deployments', () => {
     ]);
     await act(async () => { await controller.refreshDemanded(); });
     expect(calls.filter((call) => call.counted)).toEqual([{ cursor: 'env-later', counted: true }]);
-    expect(screen.getTextContent()).toContain('on this page');
+    expect(screen.getTextContent()).toContain('1+ environments in 1+ projects');
     await screen.pressByTestIdAsync('all-deployments.paging.older');
     await act(async () => {
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('all-deployments.row.env-oldest'), (node) => node !== null);
@@ -284,7 +284,7 @@ describe('Projects → All deployments', () => {
       await act(async () => { head().props.search.onChangeText('payments'); });
       expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
       expect(screen.findByTestId('all-deployments.row.env-api')).not.toBeNull();
-      expect(head().props.count).toContain(t('projects.deployments.services.countEnvironments', { environments: 1, projects: 1 }));
+      expect(head().props.count).toContain(t('projects.deployments.services.countEnvironmentsAtLeast', { environments: 1, projects: 1 }));
       expect(head().props.count).not.toContain(t('projects.deployments.services.countEnvironmentsTotal', { count: 2417 }));
       await act(async () => { head().props.search.onChangeText(''); });
       expect(head().props.count).toContain(t('projects.deployments.services.countEnvironmentsTotal', { count: 2417 }));
