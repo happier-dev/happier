@@ -5,8 +5,9 @@ import { ScmComparisonSchema } from '../scm/comparison.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import { ReviewStartInputSchema } from './reviewStart.js';
-import { ExecutionRunStartResponseSchema } from '../execution/runs/responseSchemas.js';
+import { ExecutionRunStartResponseSchema, type ExecutionRunPublicState } from '../execution/runs/responseSchemas.js';
 import { WorkflowRunStartResultV1Schema } from '../workflows/actionsV1.js';
+import { ExecutionRunActionResponseSchema } from '../execution/runs/index.js';
 
 /** The first workflow stage consumes initial admission or prepares the next pass. */
 export const ReviewPrepareRoundInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -38,6 +39,32 @@ export const ReviewSettleRoundInputV1Schema = lazyZodSchema(() => z.strictObject
 }));
 export type ReviewSettleRoundInputV1 = z.infer<typeof ReviewSettleRoundInputV1Schema>;
 
+export type ReviewRunContinuityV1 =
+  | Readonly<{ ok: true; continuity: 'continues' | 'fresh' }>
+  | Readonly<{ ok: false; errorCode: 'review_follow_up_ended' | 'review_follow_up_not_resumable'
+    | 'review_follow_up_resume_unavailable'; error: string }>;
+
+/** Continuity from exact host facts; ordinary active-run admission remains with the Run owner. */
+export function resolveReviewRunContinuityV1(
+  run: Pick<ExecutionRunPublicState, 'status' | 'retentionPolicy' | 'lifecycle'>,
+  input: Readonly<{ kind: 'new_round'; fresh?: boolean } | { kind: 'follow_up' }>,
+): ReviewRunContinuityV1 {
+  const continueRetained = input.kind === 'follow_up'
+    || (!input.fresh && run.retentionPolicy === 'resumable');
+  if (!continueRetained) return { ok: true, continuity: 'fresh' };
+  if (run.status === 'cancelled' || run.status === 'failed' || run.status === 'timeout') {
+    return { ok: false, errorCode: 'review_follow_up_ended', error: 'The review ended without a resumable result' };
+  }
+  if (run.retentionPolicy !== 'resumable') {
+    return { ok: false, errorCode: 'review_follow_up_not_resumable', error: 'The review was not retained for follow-up' };
+  }
+  const state = run.lifecycle?.state;
+  if (state !== 'current' && state !== 'recoverable' && state !== 'recoverable_with_input') {
+    return { ok: false, errorCode: 'review_follow_up_resume_unavailable', error: 'The retained reviewer session is unavailable' };
+  }
+  return { ok: true, continuity: 'continues' };
+}
+
 /** A fresh native retry is always an explicit choice after unavailable continuation. */
 export const ReviewNativeNewRoundInputV1Schema = lazyZodSchema(() => z.strictObject({
   fresh: z.optional(z.boolean()),
@@ -56,6 +83,7 @@ export const ReviewNativeNewRoundResultV1Schema = lazyZodSchema(() => z.looseObj
   ...ExecutionRunStartResponseSchema.shape,
   reviewRound: ReviewRoundBindingV1Schema,
   comparisonId: z.optional(z.string().check(z.minLength(1))),
+  narration: z.optional(ExecutionRunActionResponseSchema),
 }));
 
 export const ReviewNewRoundResultV1Schema = lazyZodSchema(() => z.union([

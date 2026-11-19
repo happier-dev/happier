@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { BackendTargetRefV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ReviewFollowUpInputSchema } from '@happier-dev/protocol/reviews/reviewFollowUp';
-import { ReviewNativeNewRoundInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
+import { ReviewNativeNewRoundInputV1Schema, resolveReviewRunContinuityV1 } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -16,7 +16,6 @@ import {
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { buildExecutionRunProfileStartParams } from './profileStart';
-import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
 import { projectExecutionRunPublicState } from './publicState';
 import type {
   ExecutionRunActionParams,
@@ -106,21 +105,10 @@ export async function applyExecutionRunAction(args: Readonly<{
     if (newRound && !newRound.success) {
       return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid new-round input' };
     }
-    const continueRetained = !newRound || (newRound.success && !newRound.data.fresh && run.retentionPolicy === 'resumable');
-    if (continueRetained) {
-      if (run.status === 'cancelled' || run.status === 'failed' || run.status === 'timeout') {
-        return { ok: false, errorCode: 'review_follow_up_ended', error: 'The review ended without a resumable result' };
-      }
-      // A live controller owns its conversation directly. A provider resume handle
-      // is needed only when that controller has gone away.
-      const lifecycle = resolveExecutionRunLifecycle(run, args.controllers.get(args.runId) ?? null);
-      if (run.retentionPolicy !== 'resumable' || lifecycle.unavailableReason === 'not_resumable') {
-        return { ok: false, errorCode: 'review_follow_up_not_resumable', error: 'The review was not retained for follow-up' };
-      }
-      if (lifecycle.projection.state !== 'current' && lifecycle.projection.state !== 'recoverable' && lifecycle.projection.state !== 'recoverable_with_input') {
-        return { ok: false, errorCode: 'review_follow_up_resume_unavailable', error: 'The retained reviewer session is unavailable' };
-      }
-    }
+    const continuity = resolveReviewRunContinuityV1(current, newRound?.success
+      ? { kind: 'new_round', ...newRound.data } : { kind: 'follow_up' });
+    if (!continuity.ok) return continuity;
+    const continueRetained = continuity.continuity === 'continues';
 
     if (newRound?.success) {
       if (!args.reviewComments) return { ok: false, errorCode: 'review_record_unavailable', error: 'Review records are unavailable' };
