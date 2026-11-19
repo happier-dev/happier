@@ -62,7 +62,12 @@ export function DeploymentTemplateChoices(props: Readonly<{
                     : t(variable.secret ? 'profiles.requirements.secretRequired' : 'projects.deployments.sourceValue');
                 const saved = binding?.source.kind === 'secret';
                 const chooseSaved = t(saved ? 'capabilities.store.appPage.choices.savedSelected' : 'approvals.confidential.useSaved');
-                return <Item key={variable.key} title={label} subtitle={variable.help ? text(variable.help) : undefined}
+                // Without an authored label the row is named by its purpose; the key stays as its quiet second line, so
+                // several unlabelled secrets stay told apart (PAGE-ACCEPT-176 R5-D2, rendered half; labels are the
+                // catalog's).
+                const subtitle = [variable.help ? text(variable.help) : null, authoredLabel && authoredLabel !== variable.key ? null : variable.key]
+                    .filter(Boolean).join(' · ') || undefined;
+                return <Item key={variable.key} title={label} subtitle={subtitle}
                     accessoryLayout="stacked" showChevron={false} rightElement={variable.secret
                         ? generated.has(variable.key) ? <SegmentedTabBar testIDPrefix={`${testID}.secret.${variable.key}`}
                             tabs={[{ id: 'generated', label: t('capabilities.store.appPage.choices.generate') },

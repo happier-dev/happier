@@ -655,7 +655,9 @@ export function DeploymentPlatformTargetEditor(
             <ItemGroup {...(embedded ? {
               title: t('projects.deployments.platformLink.onPlatformTitle', { platform: target.title }),
               description: t('projects.deployments.platformLink.onPlatformBody'),
-              ...(primary ? { action: <SectionActionButton {...primary} /> } : {}),
+              // The section's Check stands only once it can run (an account and its choices made); a disabled
+              // header action that cannot succeed yet is not drawn (DESIGN-ACCEPT C1 follow-up).
+              ...(primary && (!primary.disabled || primary.loading) ? { action: <SectionActionButton {...primary} /> } : {}),
             } : { header: 'none' as const })}>
               {needsConnect ? (
                 <SurfaceStateCard
