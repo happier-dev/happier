@@ -315,6 +315,37 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
         } finally { clock.mockRestore(); stream.destroy(); }
     });
 
+    it('records the approval creation refusal under the configured document quota (owner decision pending)', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: owner.id })).toString('base64url')}.signature`;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = owner.id; });
+        artifactsRoutes(app);
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        try {
+            await runWithServerHttpBaseUrl(origin, async () => {
+                const store = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain',
+                    resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+                        features: { artifacts: { queryHints: { enabled: true } } }, capabilities: {},
+                    }) }) });
+                const lifecycle = createTargetActionApprovalLifecycle({ accountArtifactStore: store, getAccountId: () => owner.id,
+                    newId: () => crypto.randomUUID(), prepareRequesterRecipient: async () => {} });
+                const request = TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
+                    createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+                    qualifiedActionId: 'acme.database/actions/statement', input: { sql: 'SELECT 1', parameters: ['x'.repeat(1024)] },
+                    sourceCustody: { kind: 'development', registeredRootId: 'database-test' },
+                    policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Run statement' });
+                const control = await lifecycle.targetActionApprovalsCreate({ request });
+                expect(await lifecycle.targetActionApprovalsGet({ artifactId: control.artifactId })).toEqual(request);
+                vi.stubEnv('HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES', '1024');
+                // Characterize today's refusal; changing approval quota policy requires the owner's decision.
+                await expect(lifecycle.targetActionApprovalsCreate({ request: { ...request, subjectFingerprint: 'c'.repeat(64), createdAtMs: 2, updatedAtMs: 2 } })).rejects.toMatchObject({
+                    code: 'quota_exceeded', details: { budget: 'document', limitBytes: 1024 },
+                });
+            });
+        } finally { await app.close(); }
+    });
+
     it('admits a capped 45-byte binary upload and returns typed document and Account refusals', async () => {
         vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST', 'none');
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
