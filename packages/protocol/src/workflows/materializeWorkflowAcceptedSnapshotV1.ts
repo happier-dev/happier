@@ -175,7 +175,9 @@ function profileSelection(profile: AiLaunchProfile, selection: WorkflowResolvedS
     // A background run keeps no transcript of its own to store.
     ...(persistenceMode === undefined || target.kind === 'detached_run' ? {} : { transcriptStorage: persistenceMode }),
     ...(isLaunchProfileV2(profile) && profile.preferredModelSelection
-      && profile.preferredModelSelection.ref.agentTargetKey === key ? { modelSelection: profile.preferredModelSelection } : {}),
+      && profile.preferredModelSelection.ref.agentTargetKey === key
+      && readAuthoredSessionModelSelection({ ...selection, agentTarget }) === undefined
+      ? { modelSelection: profile.preferredModelSelection } : {}),
     ...(!isLaunchProfileV2(profile) && permissionMode === undefined && profile.defaultPermissionMode
       ? { permissionMode: profile.defaultPermissionMode } : {}),
   };
@@ -775,9 +777,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                     const key = buildBackendTargetKeyV2(current.agentTarget);
                     if (isLaunchProfileV2(profile) && Object.keys(profile.compatibilityByTargetKey).length > 0
                       && profile.compatibilityByTargetKey[key] !== true) return unavailable(leaf.id);
-                    const currentModel = readAuthoredSessionModelSelection(current);
                     const portable = profileSelection(profile, { agentTarget: current.agentTarget,
-                      ...(currentModel ? { modelSelection: currentModel } : {}),
+                      modelSelection: current.modelSelection, teamCredentialBindings: current.teamCredentialBindings,
                       ...(current.permissionMode ? { permissionMode: current.permissionMode } : {}),
                       ...(current.transcriptStorage ? { transcriptStorage: current.transcriptStorage } : {}) },
                     { kind: 'session' });
@@ -787,7 +788,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                     const permissionMode = parseAgentPermissionIntentV1Alias(permission);
                     if (!permissionMode) return unavailable(leaf.id);
                     projected = { ...current, permissionMode,
-                      ...(currentModel === undefined && !current.configuration?.model.value && portable.modelSelection
+                      ...(current.modelSelection === undefined && !current.configuration?.model.value && portable.modelSelection
                         ? { modelSelection: portable.modelSelection } : {}),
                       ...(current.transcriptStorage === undefined && portable.transcriptStorage
                         ? { transcriptStorage: portable.transcriptStorage } : {}) };

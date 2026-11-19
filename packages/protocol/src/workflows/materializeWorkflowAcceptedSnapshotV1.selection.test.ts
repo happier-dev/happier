@@ -12,6 +12,8 @@ import { getActionSpec } from '../actions/actionSpecs.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actions/actionCatalog.js';
 import { projectDiscussionModelParticipantLaunchV1 } from '../discussions/modelParticipantLaunch.js';
+import type { JsonValue } from '../json/strictJsonValue.js';
+import { sessionModelSelectionV2TeamBindingIntent } from '../providers/selection/v2.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const context = {
@@ -556,6 +558,38 @@ describe('accepted Workflow selection bindings', () => {
     ] } });
     expect(await materialize({ definition: authored, context: { ...context, inputs: { ...inputs, answerer: { agentTarget: reviewer, unexpected: true } } } }))
       .toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'work' } });
+  });
+
+  it.each(['ordinary step', 'bound engine'] as const)('keeps the Team model ahead of the Profile default for the %s', async scenario => {
+    const agentTargetKey = buildBackendTargetKeyV2(agentTarget);
+    const modelSelection = { v: 2 as const, updatedAt: 0, ref: {
+      source: 'team_resource' as const, teamId: 'team', resourceId: 'credential', expectedResourceRevision: 3,
+      deliveryMode: 'brokered' as const, agentTargetKey, modelId: 'team-model',
+    } };
+    const teamCredentialBindings = [sessionModelSelectionV2TeamBindingIntent(modelSelection)];
+    const profile = LaunchProfileV2Schema.parse({ ...emptyProfile('profile'),
+      preferredModelSelection: { v: 1, updatedAt: 1, ref: { providerConnectionId: 'profile-connection', agentTargetKey, modelId: 'profile-model' } } });
+    const effects = { resolveTargetAvailability: available, readLaunchProfile: async () => profile };
+    const expected = { ok: true, agentStartLeaves: [{ facts: { modelSelection } }] };
+
+    if (scenario === 'ordinary step') {
+      const authored = { ...definition, defaults: { agentTarget, profileId: profile.id, teamCredentialBindings } };
+      const result = await materialize({ definition: authored, effects });
+      expect(result).toMatchObject({ ...expected, snapshot: { materializedLeaves: [{ selection: { teamCredentialBindings } }] } });
+      return;
+    }
+
+    const authored = { version: 1, inputs: [{ name: 'engines', valueType: 'json', required: true }],
+      defaults: { profileId: profile.id }, blocks: [{
+        kind: 'loop', id: 'panel', repetition: { kind: 'items', items: { kind: 'input', name: 'engines' },
+          execution: 'parallel', failurePolicy: 'collect_outcomes' },
+        body: [{ ...definition.blocks[0], execution: { engine: { kind: 'item', field: 'value' } } }],
+      }] };
+    const admit = (engines: JsonValue[]) => materialize({ definition: authored, context: { ...context, inputs: { engines } }, effects });
+    expect(await admit([{ agentTarget, teamCredentialBindings }])).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+    expect(await admit([{ agentTarget, modelSelection }])).toMatchObject({ ...expected, snapshot: { materializedLeaves: [
+      { engineBindings: { selections: [{ selection: { modelSelection } }] } },
+    ] } });
   });
 
   it('admits every finite item-bound engine and rejects items outside the accepted choices', async () => {
