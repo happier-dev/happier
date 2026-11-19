@@ -162,7 +162,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                 <View style={[styles.text, props.subtitleWraps ? styles.textWrapping : null]}>
                     <Text
                         {...{ dataSet: themeSurfaceDataSet('tool-row', 'title', 'default') }}
-                        style={[styles.title, props.density === 'compact' ? styles.titleCompact : null, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'title', state: 'default' })]}
+                        style={[styles.title, showSubtitleInline || showStatusInline ? styles.titleBesideDetail : null, props.density === 'compact' ? styles.titleCompact : null, themeSurfaceStyles.surface({ surface: 'tool-row', part: 'title', state: 'default' })]}
                         numberOfLines={props.findRevealBlockId === 'tool-title' ? undefined : 1}
                     >
                         {findRanges('tool-title')?.length ? <FindHighlightedText text={props.title} ranges={findRanges('tool-title')} /> : props.title}
@@ -340,9 +340,13 @@ const styles = StyleSheet.create((theme, _runtime) => ({
     title: {
         ...Typography.variant('body', 'semiBold'),
         color: resolveToolRowPaint(theme, 'title').foreground.color,
-        // The title keeps its width and the subtitle gives way first, but a long title still ends in an
-        // ellipsis on a narrow row instead of pushing the row past its edge (lab `.l12-tl .tt`).
+        // The title keeps its width and the subtitle gives way first. Alone on its line it may use the whole line
+        // and ends in an ellipsis only when that is full, so the row never pushes past its edge (C10b).
         flexShrink: 0,
+        maxWidth: '100%',
+    },
+    titleBesideDetail: {
+        // With a subtitle or status beside it, the title leaves that detail some room (lab `.l12-tl .tt`).
         maxWidth: '70%',
     },
     titleCompact: {
