@@ -2879,26 +2879,32 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { lifetime.retire(); }
     });
 
-    it.each(['notStarted', undefined] as const)('retains the daemon dispatch evidence for a nested source refusal (%s)', async actionHandlerInvocation => {
+    it.each([
+        { code: 'plugin_action_current_intent_unavailable', actionHandlerInvocation: 'notStarted', kind: 'refused' },
+        { code: 'plugin_action_outcome_unknown', actionHandlerInvocation: undefined, kind: 'uncertain' },
+    ] as const)('retains the daemon dispatch evidence for a nested source refusal ($kind)', async ({ code, actionHandlerInvocation, kind }) => {
         const { createPluginSurfaceActionFailureError } = await import('./actionFailure');
         const { triageTaskWriteInvocationFailureV1 } = await import('../../../../../../packages/plugins/triage/src/actions/taskWriteFailure');
         // The daemon RPC is a process boundary; the real dispatcher, error
         // projection and Triage outcome owner remain underneath this response.
-        const contributed: PluginSurfaceContributedActionTransport = async () => ({
-            supported: true, result: { ok: false, code: 'plugin_action_current_intent_unavailable',
+        const requestId = 'nested-source-transport-refusal';
+        const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true, result: { ok: false, code, requestId,
                 ...(actionHandlerInvocation ? { actionHandlerInvocation } : {}) },
-        });
+        }));
         const outcome = await dispatchPluginSurfaceAction({ action: { pluginId: 'acme.releases', localId: 'publish' },
-            input: { serverId: 'server-composed' },
+            input: {},
+            hostAction: { execute: vi.fn(), context: { authority: 'present_user' } },
             resolveContributedAction: resolveConfirmedDaemonTargetAction,
             requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }),
-            contributedAction: { machineId: 'machine-1', serverId: 'server-composed', execute: contributed },
+            contributedAction: { machineId: 'machine-1', execute: contributed },
         });
+        expect(contributed).toHaveBeenCalledExactlyOnceWith('machine-1', expect.objectContaining({ presentUserIntent: 'confirmed' }));
         expect(outcome.ok).toBe(false);
         if (outcome.ok) throw new Error('Expected source refusal');
         expect(triageTaskWriteInvocationFailureV1(createPluginSurfaceActionFailureError(outcome)))
-            .toEqual(actionHandlerInvocation ? { kind: 'refused', reason: 'plugin_action_current_intent_unavailable' }
-                : { kind: 'uncertain', failure: { class: 'unknown', code: 'plugin_action_current_intent_unavailable' } });
+            .toMatchObject(kind === 'refused' ? { kind, reason: code, retryable: false, requestId }
+                : { kind, failure: { class: 'unknown', code, requestId } });
     });
 
     it('lets the daemon Environment admission request UI confirmation without a second UI policy read', async () => {
