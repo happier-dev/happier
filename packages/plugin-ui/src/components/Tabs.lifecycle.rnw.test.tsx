@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { Tabs, Text, useTabPanelActivity, type TabPanelActivity } from './index.js';
+import { ScrollArea, Tabs, Text, useTabPanelActivity, type TabPanelActivity } from './index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 
 /**
@@ -48,6 +48,59 @@ beforeEach(() => { vi.stubGlobal('requestAnimationFrame', undefined); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Tabs panel retention and active interval', () => {
+  it('restores a retained hosted tab after a shorter tab clamps the frame scroll', async () => {
+    // The host and targeted source ship separate copies of plugin-ui in the same React tree.
+    vi.resetModules();
+    const { Tabs: SourceTabs } = await import('./Tabs.js');
+    const { PluginUiProvider: SourceProvider } = await import('./PluginUiProvider.js');
+    expect(SourceTabs).not.toBe(Tabs);
+    const context = createSurfaceContext();
+    const hostApi = createHostApiStub(context);
+    const frame = (value: string, presented = true) => (
+      <PluginUiProvider hostApi={hostApi} context={context}>
+        <ScrollArea testID="detail-frame" scrollEnabled={presented} scrollEventThrottle={16}>
+          <SourceProvider context={context} hostApi={hostApi}>
+            <SourceTabs value={value} onValueChange={() => {}} ariaLabel="Detail" tabList="host" layout="page">
+              <SourceTabs.Item value="overview" title="Overview" retention="retain"><Text value="Overview" /></SourceTabs.Item>
+              <SourceTabs.Item value="files" title="Files" retention="retain"><Text value="Files" /></SourceTabs.Item>
+              <SourceTabs.Item value="activity" title="Activity"><Text value="Activity" /></SourceTabs.Item>
+            </SourceTabs>
+          </SourceProvider>
+        </ScrollArea>
+      </PluginUiProvider>
+    );
+    const mounted = mountThroughReactNativeWeb(frame('overview'));
+    const scroller = mounted.container.querySelector<HTMLElement>('[data-testid="detail-frame"]')!;
+    let now = 1_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (now += 50));
+    const scroll = (top: number) => act(() => {
+      scroller.scrollTop = top;
+      scroller.dispatchEvent(new Event('scroll'));
+    });
+    try {
+      scroll(240);
+      await mounted.render(frame('files'));
+      scroll(0); // jsdom has no layout engine to clamp the shorter content.
+      scroll(48);
+      await mounted.render(frame('activity'));
+      scroll(31);
+      await mounted.render(frame('overview'));
+      expect(scroller.scrollTop).toBe(240);
+      await mounted.render(frame('files'));
+      expect(scroller.scrollTop).toBe(48);
+      await mounted.render(frame('activity'));
+      expect(scroller.scrollTop).toBe(48); // The discarded tab has no saved position to restore.
+      await mounted.render(frame('overview'));
+      await mounted.render(frame('overview', false));
+      scroll(0);
+      await mounted.render(frame('overview'));
+      expect(scroller.scrollTop).toBe(240);
+    } finally {
+      mounted.unmount();
+      clock.mockRestore();
+    }
+  });
+
   it('unmounts a panel that declares no retention, so an incumbent caller keeps its cleanup', async () => {
     const cleanup = vi.fn();
 

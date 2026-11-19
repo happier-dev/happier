@@ -134,12 +134,13 @@ function SourceDetailInstance(props: Readonly<{
     [props.navigation, props.publishVisiblePanels, props.publishFilesCount]);
   // The source declares whether its List owns scrolling. Keep ancestry stable across ownership changes so
   // retained panels keep their state and viewport while the frame only bounds source-owned Lists (QB-55/81).
+  // A parked source withdraws its shared scroller so the retained tab can save its offset before hiding.
   return (
     <TriageDetailPanelNavigationProvider navigation={navigation}>
     <TriageDetailPageScrollProvider pageScroll={pageScroll}>
     <ScrollArea
       style={FILL_STYLE}
-      scrollEnabled={!ownsScroller}
+      scrollEnabled={props.panel !== null && !ownsScroller}
       contentContainerStyle={ownsScroller ? FILL_STYLE : undefined}
     >
       <Stack gap={ownsScroller ? undefined : overview ? 'large' : 'medium'} style={ownsScroller ? FILL_STYLE : undefined}>

@@ -2027,6 +2027,8 @@ strip and requests one panel. Use `layout="fill"` inside a bounded region for a
 self-scrolling view. A retained `Tabs.Item retention="retain"` mounts only after
 its first visit; its asynchronous work must consume `useTabPanelActivity()` and
 stop when `activeSignal` aborts. Retention ends with the Tabs mount.
+In **0.3 development source**, a retained hosted tab also returns to its
+previous position in the detail frame's shared `ScrollArea`.
 
 A tab can carry its count after the title with `badge` ("3"). When the count is
 itself a state, such as how many apps are failing, give it that state's tone

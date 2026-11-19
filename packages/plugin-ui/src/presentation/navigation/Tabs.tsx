@@ -25,6 +25,7 @@ import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
+import { HappierRetainedScrollContextInternal, type HappierRetainedScrollInternal } from '../../presentationHost/scrollActivity.js';
 import { HappierScrollHeadContextInternal, type HappierScrollHeadInternal } from '../layout/scrollHead.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { hasWebFocusableElement } from '../interaction/webFocusableElements.js';
@@ -143,11 +144,26 @@ function HappierTabPanel(props: Readonly<{
    * where focus goes next, and the panel is the thing disappearing.
    */
   onFocusWithinChange?: (focused: boolean) => void;
+  retainedScroll?: HappierRetainedScrollInternal | null;
   fill?: boolean;
   children?: ReactNode;
 }>): ReactElement {
   const ancestorActivity = useOptionalHappierTabPanelActivityInternal();
   const active = props.active && ancestorActivity?.active !== false;
+  const { retainedScroll } = props;
+  const savedScrollOffset = useRef<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!active || !retainedScroll) return;
+    const release = savedScrollOffset.current === undefined
+      ? undefined
+      : retainedScroll.restoreOffset(savedScrollOffset.current);
+    return () => {
+      // The browser can clamp the shared scroller after this commit. Its last
+      // delivered offset still belongs to the panel that is leaving.
+      savedScrollOffset.current = retainedScroll.readOffset();
+      release?.();
+    };
+  }, [active, retainedScroll]);
   const panelRef = useRef<View>(null);
   useLayoutEffect(() => {
     const panel: unknown = panelRef.current;
@@ -440,6 +456,7 @@ export function HappierTabs(props: Readonly<{
       ? [tab.value]
       : []
   ));
+  const enclosingScroll = useContext(HappierRetainedScrollContextInternal);
 
   // The tablist reaches the same roving tab-stop rule every composite
   // collection uses, so a tablist whose controlled value names a disabled tab
@@ -628,6 +645,7 @@ export function HappierTabs(props: Readonly<{
           nativeID={`${instanceId}-panel-${tabIndex}`}
           labelledBy={hideStrip ? undefined : `${instanceId}-tab-${tabIndex}`}
           onFocusWithinChange={(focused) => { recordFocusWithin(tab.value, focused); }}
+          retainedScroll={props.tabList === 'host' && tab.retention === 'retain' ? enclosingScroll : null}
           fill={fill}
         >
           <HappierScrollHeadContextInternal.Provider value={tab.value === selectedValue ? panelHead : null}>

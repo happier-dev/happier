@@ -24,7 +24,11 @@ import type {
   HappierStyleProp,
 } from '../portableTypes.js';
 import { PluginUiPopoverScrollSourceProvider, useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
-import { PluginUiScrollActivityProvider } from '../../presentationHost/scrollActivity.js';
+import {
+  HappierRetainedScrollContextInternal,
+  PluginUiScrollActivityProvider,
+  type HappierRetainedScrollInternal,
+} from '../../presentationHost/scrollActivity.js';
 import { useHappierPageChrome } from './pageChrome.js';
 import { HappierColumnEdgeContext, useHappierColumnEdgePx } from './columnEdge.js';
 import { HAPPIER_PAGE_METRICS } from './pageMetrics.js';
@@ -232,6 +236,7 @@ export function HappierScrollArea({
   const theme = useOptionalHappierUiTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? (theme === null ? null : resolveHappierUiPalette(theme));
   const offsetRef = useRef(0);
+  const retainedRestore = useRef<{ offset: number; waitingForContent: boolean } | null>(null);
   const leadHeightRef = useRef(0);
   // Under the pinned row the content is at least the rest of the viewport, so the row can stay just under the lead
   // whatever the selected tab holds: a short panel would otherwise clamp the scroll and drop the row back down.
@@ -243,7 +248,7 @@ export function HappierScrollArea({
   useEffect(() => {
     if (lastSelection.current === selection) return;
     lastSelection.current = selection;
-    if (selection !== undefined && offsetRef.current > leadHeightRef.current) {
+    if (selection !== undefined && retainedRestore.current === null && offsetRef.current > leadHeightRef.current) {
       scrollSourceRef.current?.scrollTo({ y: leadHeightRef.current, animated: false });
     }
   }, [selection]);
@@ -252,6 +257,26 @@ export function HappierScrollArea({
   // On the web, content that already holds a control adds no tab stop (the browser's keyboard-focusable scrollers).
   const viewportRef = useRef({ width: 0, height: 0 });
   const contentRef = useRef({ width: 0, height: 0 });
+  const retainedScroll = useMemo<HappierRetainedScrollInternal>(() => ({
+    readOffset: () => {
+      const request = retainedRestore.current;
+      return request?.waitingForContent ? request.offset : Math.max(0, offsetRef.current);
+    },
+    restoreOffset: (offset) => {
+      const scroller = scrollSourceRef.current;
+      const request = {
+        offset,
+        waitingForContent: Platform.OS !== 'web' && offset > Math.max(0, contentRef.current.height - viewportRef.current.height),
+      };
+      retainedRestore.current = request;
+      scroller?.scrollTo({ y: offset, animated: false });
+      const webNode: unknown = Platform.OS === 'web' ? scroller?.getScrollableNode() : null;
+      offsetRef.current = typeof HTMLElement !== 'undefined' && webNode instanceof HTMLElement ? webNode.scrollTop : offset;
+      return () => {
+        if (retainedRestore.current === request) retainedRestore.current = null;
+      };
+    },
+  }), []);
   const [overflowing, setOverflowing] = useState(false);
   const axis = scrollProps.horizontal === true ? 'width' : 'height';
   const remeasureOverflow = () => {
@@ -281,12 +306,18 @@ export function HappierScrollArea({
     <PluginUiPopoverScrollSourceProvider scrollSourceRef={scrollSourceRef}>
       <PluginUiScrollActivityProvider tracker={tracker}>
       <HappierScrollAreaNestedContext.Provider value={true}>
+      <HappierRetainedScrollContextInternal.Provider
+        value={scrollProps.horizontal === true || scrollProps.scrollEnabled === false ? null : retainedScroll}
+      >
       <ScrollView
         ref={scrollSourceRef}
         {...scrollProps}
         onScroll={event => {
           offsetRef.current = event.nativeEvent.contentOffset.y;
           tracker?.onScroll(event); reportTop?.(event.nativeEvent.contentOffset.y); scrollProps.onScroll?.(event);
+        }}
+        onScrollBeginDrag={() => {
+          if (retainedRestore.current) retainedRestore.current.waitingForContent = false;
         }}
         {...(head === null ? {} : { stickyHeaderIndices: [1] })}
         onLayout={event => {
@@ -297,6 +328,13 @@ export function HappierScrollArea({
         }}
         onContentSizeChange={(width: number, height: number) => {
           contentRef.current = { width, height };
+          const request = retainedRestore.current;
+          // Native may receive the restore while the outgoing, shorter content is still laid out.
+          if (request?.waitingForContent && request.offset <= height - viewportRef.current.height) {
+            request.waitingForContent = false;
+            offsetRef.current = request.offset;
+            scrollSourceRef.current?.scrollTo({ y: request.offset, animated: false });
+          }
           remeasureOverflow();
           tracker?.onContentSizeChange(width, height);
         }}
@@ -326,6 +364,7 @@ export function HappierScrollArea({
             {...(testID === undefined ? {} : { testID: `${testID}:pinned-content` })}>{column(children)}</View>
         )}
       </ScrollView>
+      </HappierRetainedScrollContextInternal.Provider>
       </HappierScrollAreaNestedContext.Provider>
       </PluginUiScrollActivityProvider>
     </PluginUiPopoverScrollSourceProvider>

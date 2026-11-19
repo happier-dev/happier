@@ -13813,6 +13813,11 @@ runtime ABI, released wire epoch, registry, or reverse-development adapter.
 
 Public `Tabs` can declare `presentation="page"` with a qualified `pageKind`. Its Items remain the declaration for panels, labels, badges, disabled state and portable navigation metadata. The installed HostApi `setPageNavigation(descriptor | null)` lends that declaration to the physical page mount; it adds no Resource read or backend request. Nested `tabList="host"` Tabs retain their panel behavior and do not publish another declaration.
 
+When a hosted detail tab declares `retain`, the retained panel keeps its last
+offset in the frame's shared `ScrollArea`. The frame applies the offset when
+that panel returns, including when the frame and targeted source use separate
+Plugin UI bundles.
+
 The host validates the closed Protocol request and resolves Items through the existing detail-navigation owner. The optional `SurfaceContext.page.navigation` projection returns saved strip order, desktop overflow ids, presentation and a transient selection request through `watchContext`. The strip stays in the document's detail column. Its strip and desktop More select through the existing `shell.column.set` Action; hosted desktop Customize invokes the existing `appearance.navigationPlacements` settings anchor to open the shared host customizer for the mounted kind. An absent mounted kind is unavailable. Phone top mode leaves overflow in the single host bottom More. Phone bottom chrome follows the same descriptor's controlled value. Tabs calls its existing `onValueChange` once for a request and republishes the controlled descriptor even on rejection; the host clears that request on the next publication. Clearing the request, changing placement or changing theme does not select again. Mount retirement withdraws its declaration.
 
 The operation belongs to HostApi 1.1.0's installed method set. A host without it retains ordinary local Tabs; the 1.0.0 context projection omits `page.navigation` for its closed reader. This does not change the runtime ABI or introduce a new transport. The schemas live in `packages/protocol/src/plugins/ui/pageNavigation.ts`; public SDK types derive from them.
