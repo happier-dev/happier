@@ -51,7 +51,7 @@ type IsEqual<Left, Right> = (
 ) ? true : false;
 
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
-  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader' | 'useDetailHeader'
+  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'titleKind' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader' | 'useDetailHeader'
   | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'narrowGrid' | 'groupAction' | 'collapsedGroups'
   | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'useRowItem' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
