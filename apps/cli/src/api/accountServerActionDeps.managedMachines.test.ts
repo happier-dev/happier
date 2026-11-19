@@ -181,7 +181,7 @@ describe('managed inventory CLI Home adapter', () => {
     const { launch: _launch, ...structural } = retired;
     const opaqueMachine = { ...structural, preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' } };
     const presetContent = { content: { t: 'plain', v: { v: 1, name: 'Guest', launch: machine.launch,
-      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } }, recipients: [] };
+      enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } }, recipientEnvelope: null };
     const requests: unknown[] = [];
     app.post('/v1/machines/managed/controller/admit-control', async request => {
       requests.push(request.body);
@@ -192,8 +192,7 @@ describe('managed inventory CLI Home adapter', () => {
     const deps = createAccountServerActionDeps({ token, serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
     const result = await deps.managedMachineAction!({ actionId: 'machines.managed.retire', input: actionInput,
       context: { ...context, actionRequestId: 'retained-retire' } });
-    expect(result).toEqual(opaque ? { machine: opaqueMachine,
-      presetContent: { content: presetContent.content, recipientEnvelope: null } } : retired);
+    expect(result).toEqual(opaque ? { machine: opaqueMachine, presetContent } : retired);
     expect(ManagedMachineActionOutputSchemasV1['machines.managed.retire'].safeParse(result).success).toBe(true);
     expect(requests).toEqual([{ action: 'machines.managed.retire', input: actionInput, requestId: 'retained-retire' }]);
   });

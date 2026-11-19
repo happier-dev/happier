@@ -670,6 +670,16 @@ export const ManagedAdmissionOutputV1Schema = lazyZodSchema(() => z.union([
     replayed: mini.boolean(), resizeProvisioner: z.optional(MachineProvisionerContributionV1Schema) }),
 ]));
 export type ManagedAdmissionOutputV1 = z.infer<typeof ManagedAdmissionOutputV1Schema>;
+/** Metadata-only controls carry the authenticated actor's read of the committed row. */
+export const ManagedMetadataControlAdmissionOutputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ machine: ManagedMachinePublicFullV1Schema, replayed: mini.boolean() }),
+  z.safeExtend(ManagedOpaquePresetReadV1Schema, { replayed: mini.boolean() }),
+]));
+export function projectManagedMetadataControlResultV1(
+  admission: z.infer<typeof ManagedMetadataControlAdmissionOutputV1Schema>,
+): ManagedMachineReadV1 {
+  return 'presetContent' in admission ? { machine: admission.machine, presetContent: admission.presetContent } : admission.machine;
+}
 export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
   requestId: z.optional(id()),
   sessionId: z.optional(id()),

@@ -4,7 +4,6 @@ import { TEAM_CREDENTIAL_GET_ACTION_ID_V1, isTeamCredentialRetainedLabelActionId
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
-import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { externalActionHeaderRefusalFailure, refuseExternalActionHeaders, requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
@@ -41,7 +40,7 @@ import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Sch
 import { MachinePoolWireInputSchemasV1, MachinePoolWireOutputSchemasV1, openMachinePoolActionOutputV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
-import { ManagedAdmissionOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, ManagedMetadataControlAdmissionOutputV1Schema, managedMachineActionEndpointPathV1, projectManagedMetadataControlResultV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { executeCliManagedAccountDelete } from '@/machines/managed/accountDelete';
 import { executeCliMachinePresetArchive } from '@/machines/managed/accountPresetArchive';
@@ -987,13 +986,8 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (actionId === MANAGED_RETIRE_ACTION_ID_V1) {
         try {
           const admitted = await post('admit-control', { action: actionId, input: body, requestId: actionContext.actionRequestId },
-            ManagedAdmissionOutputV1Schema);
-          if (!('presetContent' in admitted)) return admitted.machine;
-          const recipientAccountId = readAccountIdFromToken(input.token);
-          if (!recipientAccountId) throw new ManagedMachineControllerError('credential_unavailable');
-          return { machine: admitted.machine, presetContent: projectManagedMachinePresetForRecipientV1({
-            ...admitted.presetContent, recipientAccountId,
-          }) };
+            ManagedMetadataControlAdmissionOutputV1Schema);
+          return projectManagedMetadataControlResultV1(admitted);
         } catch (error) {
           if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
           throw error;

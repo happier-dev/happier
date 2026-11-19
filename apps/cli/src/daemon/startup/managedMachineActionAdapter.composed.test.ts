@@ -2927,9 +2927,10 @@ describe('daemon managed Machine Action factory', () => {
             context: { actionRequestId: 'request' } })).rejects.toMatchObject({ code: 'controller_unavailable' });
     });
     it.each([
-        ['cli', false], ['agent', false], ['mcp', false],
-        ['cli', true], ['agent', true], ['mcp', true],
-    ] as const)('invokes installed provisioner checks and managed retention through the real %s executor (unbound observer: %s)', async (surface, withUnboundObserver) => {
+        ['cli', false, false], ['agent', false, false], ['mcp', false, false],
+        ['cli', true, false], ['agent', true, false], ['mcp', true, false],
+        ['cli', false, true],
+    ] as const)('invokes installed provisioner checks and managed retention through the real %s executor (unbound observer: %s, opaque preset: %s)', async (surface, withUnboundObserver, opaquePreset) => {
         const native = nativeFixture({ privateNative: true });
         const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => null });
@@ -2967,20 +2968,33 @@ describe('daemon managed Machine Action factory', () => {
             contribution: { pluginId: 'acme.compute', localId: 'vm' } };
         await expect(invoke('machines.provisioners.check', probe)).resolves.toEqual({ ok: true, result: { available: true } });
         expect(native.effects()).toBe(1);
+        const launch = { provider: probe.contribution, schemaVersion: 1, name: 'Guest', choices: {} };
+        const resource = { contributionRef: probe.contribution, schemaVersion: 1, value: {} };
+        const presetId = 'retention-preset';
         const changed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
-            controller: probe.controller, launch: { provider: probe.contribution, schemaVersion: 1, name: 'Guest', choices: {} },
-            allocation: 'bound', resource: { contributionRef: probe.contribution, schemaVersion: 1, value: {} },
+            controller: probe.controller, ...(opaquePreset
+                ? { preset: { id: presetId, revision: 1, contentEncryptionMode: 'plain' } } : { launch, resource }),
+            allocation: 'bound',
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+        const presetContent = (() => {
+            if (!opaquePreset) return undefined;
+            const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: { v: 1, name: launch.name, launch } });
+            const content = replaceManagedMachinePresetLaunchNameV1({ presetId, mode: 'plain', content: sealed.content,
+                launchName: launch.name, nativeResult: { kind: 'bound', resource } });
+            if (!content) throw new Error('Could not create retained opaque preset content');
+            return projectManagedMachinePresetForRecipientV1({ ...sealed, content, recipientAccountId: 'account' });
+        })();
         const seen: unknown[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             if (new URL(String(url)).pathname !== '/v1/machines/managed/controller/admit-control') throw new Error(`Unexpected native lifecycle request: ${url}`);
             seen.push(body);
-            return { status: 200, data: { machine: changed, replayed: false } };
+            return { status: 200, data: { machine: changed, replayed: false, ...(presetContent ? { presetContent } : {}) } };
         });
         const update = { homeId: 'srv_home', managedId: 'managed', expectedIntentRevision: 1,
             retention: changed.retention, wakeOnAcceptedMessage: true };
-        await expect(invoke('machines.managed.retention.update', update)).resolves.toEqual({ ok: true, result: changed });
+        const expected = presetContent ? { machine: changed, presetContent } : changed;
+        await expect(invoke('machines.managed.retention.update', update)).resolves.toEqual({ ok: true, result: expected });
         expect(seen).toEqual([{ action: 'machines.managed.retention.update', requestId: 'parity-request', input: update }]);
         expect(native.effects()).toBe(1);
     });

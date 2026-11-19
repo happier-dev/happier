@@ -1,8 +1,8 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
-import { requireManagedCreationAccessInTx } from './managedRead';
-import { isManagedResizeActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { projectManagedMachineReadForActorInTx, requireManagedCreationAccessInTx } from './managedRead';
+import { isManagedMetadataControlActionIdV1, isManagedResizeActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -241,6 +241,14 @@ export async function admitManagedControl(params: Readonly<{
             if (role !== 'manage') throw new ManagedMachineError(request.action === 'machines.managed.power.set' && !controller
                 ? 'managed_power_required' : 'permission_denied');
         }
+        const projectControl = async (current: StoredManagedMachine) => {
+            if (!isManagedMetadataControlActionIdV1(request.action)) {
+                return projectManagedAdmissionCarrier(current, await projectManagedMachineInTx(tx, current));
+            }
+            const admittedRole = current.controllerMachineId === row.controllerMachineId ? 'manage' : undefined;
+            const read = await projectManagedMachineReadForActorInTx(tx, current, params.actorAccountId, admittedRole);
+            return 'machine' in read ? read : { machine: read };
+        };
         // A retained request remains routed to its admitted Home.  Replays do
         // not re-admit the controller's current availability; fresh control
         // admission below still does.
@@ -272,7 +280,7 @@ export async function admitManagedControl(params: Readonly<{
         if (readManagedCurrentRequestId(row) === request.requestId) {
             if (admitted.currentAdmission?.kind !== 'control'
                 || !sameManagedInput(admitted.currentAdmission.request, request)) throw new ManagedMachineError("request_conflict");
-            return { ...projectManagedAdmissionCarrier(row, await projectManagedMachineInTx(tx, row)), replayed: true,
+            return { ...await projectControl(row), replayed: true,
                 ...(!isStoredOpaquePresetMachine(row) && admitted.currentAdmission.resizeProvisioner
                     ? { resizeProvisioner: admitted.currentAdmission.resizeProvisioner } : {}) };
         }
@@ -428,7 +436,7 @@ export async function admitManagedControl(params: Readonly<{
         await invalidateManagedMachineInTx(tx, row);
         if (row.controllerMachineId !== current.controllerMachineId) await invalidateManagedMachineInTx(tx, current);
         const retainedControl = readManagedAdmissionState(current.admittedInput).currentAdmission;
-        return { ...projectManagedAdmissionCarrier(current, await projectManagedMachineInTx(tx, current)), replayed: false,
+        return { ...await projectControl(current), replayed: false,
             ...(!isStoredOpaquePresetMachine(current) && retainedControl?.kind === 'control' && retainedControl.resizeProvisioner
                 ? { resizeProvisioner: retainedControl.resizeProvisioner } : {}) };
     });

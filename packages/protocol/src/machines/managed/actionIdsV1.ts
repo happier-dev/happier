@@ -224,3 +224,9 @@ export function readManagedProvisionerCredentialRootRoleV1(actionId: string): 'c
 export const MANAGED_GET_ACTION_ID_V1 = 'machines.managed.get';
 export const MANAGED_LIST_ACTION_ID_V1 = 'machines.managed.list';
 export const MANAGED_RETENTION_UPDATE_ACTION_ID_V1 = 'machines.managed.retention.update';
+
+/** These controls settle at Home and have no controller-native effect. */
+export function isManagedMetadataControlActionIdV1(actionId: string): boolean {
+  return actionId === MANAGED_RETENTION_UPDATE_ACTION_ID_V1
+    || actionId === 'machines.managed.controller.update' || actionId === MANAGED_RETIRE_ACTION_ID_V1;
+}

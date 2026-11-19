@@ -206,11 +206,11 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
     });
 }
 /** Private native custody and public creator results share one actor-aware projection. */
-export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<ManagedMachineV1> {
+export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, admittedRole?: 'manage'): Promise<ManagedMachineV1> {
     const machine = await projectManagedMachineInTx(tx, row);
     if (row.custodianAccountId === actorAccountId
         || !isManagedMachineCreator(row, actorAccountId)
-            && await resolveManagedMachineRoleInTx(tx, row, actorAccountId) === 'manage') return machine;
+            && (admittedRole ?? await resolveManagedMachineRoleInTx(tx, row, actorAccountId)) === 'manage') return machine;
     if (!row.controllerMachineId || !row.controllerInstallationId) return redactManagedMachineCredentialReferences(machine);
     const controller = await tx.machine.findUnique({ where: { id: row.controllerMachineId }, select: {
         kind: true, accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
@@ -235,8 +235,8 @@ export function projectManagedMachineReadForActor(
         presetContent: projectManagedMachinePresetForRecipientV1({ content, recipients, recipientAccountId: actorAccountId }),
     };
 }
-export async function projectManagedMachineReadForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<ManagedMachineReadV1> {
-    return projectManagedMachineReadForActor(row, await projectManagedMachineForActorInTx(tx, row, actorAccountId), actorAccountId);
+export async function projectManagedMachineReadForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, admittedRole?: 'manage'): Promise<ManagedMachineReadV1> {
+    return projectManagedMachineReadForActor(row, await projectManagedMachineForActorInTx(tx, row, actorAccountId, admittedRole), actorAccountId);
 }
 export async function listManagedMachines(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.list"> }>) {
     const input = ManagedListInputV1Schema.parse(params.input);

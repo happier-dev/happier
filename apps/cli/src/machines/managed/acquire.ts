@@ -22,7 +22,8 @@ import { executeManagedProvisionerDiscovery, qualifyManagedOpaquePresetProvision
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedGetOutputV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1, type ManagedAcceptedV1, type ManagedAcquireInputV1, type ManagedAdmissionOutputV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedAdmissionInputV1Schema, isManagedPresetAcquireInputV1, managedWorkspaceAttachmentIdV1, ManagedControlAdmissionInputV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedMetadataControlActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataControlResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedResizeOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -1029,12 +1030,16 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const client = createManagedMachineControllerClient(input, options, action, hydrator);
             if (MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === action)) {
                 if (review.homeId !== input.homeId) throw new ManagedMachineControllerError('controller_unavailable');
+                const request = ManagedControlAdmissionInputV1Schema.parse({ action, requestId: options.requestId, input: parsed });
+                if (isManagedMetadataControlActionIdV1(request.action)) {
+                    const admission = await client.post('/v1/machines/managed/controller/admit-control', request, ManagedMetadataControlAdmissionOutputV1Schema);
+                    return projectNativeJsonValueForTransport(projectManagedMetadataControlResultV1(admission));
+                }
                 const operationId = options.context?.operationAcceptance?.operationId;
                 const executesIntent = action === 'machines.managed.power.set' || action === 'machines.managed.rebuild' || action === 'machines.managed.delete';
                 if (executesIntent && !operationId) {
                     throw new ManagedMachineControllerError('admission_unavailable');
                 }
-                const request = ManagedControlAdmissionInputV1Schema.parse({ action, requestId: options.requestId, input: parsed });
                 const unconfirmed = (error: ManagedMachineControllerError, committed: true | null) => {
                     const failure = projectUnexpectedActionFailureV1(committed, options.requestId);
                     const failureCause = error.failureCause ?? readActionFailureCauseV1({
@@ -1093,7 +1098,6 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     await client.post('/v1/machines/managed/controller/report-resize', reported.report, ManagedControllerMachineOutputV1Schema, null);
                     return projectNativeJsonValueForTransport(ManagedResizeOutputV1Schema.parse(reported.output));
                 }
-                if (!executesIntent) return projectNativeJsonValueForTransport(hydrator.structural(admission.machine));
                 client.assertConnection(admission.machine);
                 if (!operationId) throw new ManagedMachineControllerError('admission_unavailable');
                 const accepted = ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: admission.machine.id,

@@ -1181,12 +1181,18 @@ describe("managed acquisition durable authority", () => {
         await reportManagedAcquire(preset
             ? { ...original, result: { kind: 'bound' }, presetContent: { t: 'plain', v: { ...admittedContent.v, nativeResult: { kind: 'bound', resource } } } }
             : { ...original, result: { kind: 'bound', resource } });
-        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+        const control = { actorAccountId: account.id, custodianAccountId: account.id, input: {
             action: 'machines.managed.retention.update', requestId: `identity-${kind}-control`, input: {
                 homeId, managedId: created.machine.id, expectedIntentRevision: 0,
                 retention: { kind: 'deadline', at: 1, effect: 'stop' }, wakeOnAcceptedMessage: false,
             },
-        } });
+        } } as const;
+        const updated = await admitManagedControl(control);
+        if (preset) {
+            const actorRead = await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id } });
+            expect(updated).toEqual({ ...actorRead, replayed: false });
+            await expect(admitManagedControl(control)).resolves.toEqual({ ...actorRead, replayed: true });
+        }
         const controlled = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
         expect(controlled.admittedInput).toMatchObject({ currentAdmission: { kind: 'control', request: {
             requestId: `identity-${kind}-control` } }, computeInput: preset ? { selection: computeInput.selection } : { enrollmentIdentity } });
