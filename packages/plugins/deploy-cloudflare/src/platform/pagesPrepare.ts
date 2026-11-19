@@ -37,7 +37,9 @@ function relativeDirectory(value: unknown): value is string {
 }
 
 export const pagesPrepareInput = { type: 'object', additionalProperties: false, properties: { ...base.properties, product: targetProductSchema,
-    repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema }, required: [...base.required ?? [], 'providerIdentity', 'preparedNative', 'repository'] } satisfies PluginJsonSchema;
+    repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema }, required: [...base.required ?? [], 'preparedNative', 'repository'],
+  // The sheet selects native coordinates (account + project name); reinspection passes the complete identity.
+  oneOf: [{ required: ['providerAccountId'] }, { required: ['providerIdentity'] }] } satisfies PluginJsonSchema;
 
 export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt the selected existing Cloudflare Pages project',
   dangerLevel: 'safe', readOnly: true,
@@ -47,16 +49,19 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
     const input = value as unknown as DeploymentTargetPreparationBaseV1 & {
       repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>;
     };
-    if (!input.providerIdentity || !input.preparedNative || (input.providerEnvironment.kind !== 'production'
+    const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
+    if (!accountId || !input.preparedNative || (input.providerEnvironment.kind !== 'production'
       && (input.providerEnvironment.kind !== 'preview' || 'scriptName' in input.providerEnvironment))) {
       throw new PluginError({ code: 'unsupported_action' });
     }
-    const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId,
+    const reply = await request(pagesIo(context), accountId,
       `/pages/projects/${encodeURIComponent(input.preparedNative.projectName)}`, 'link');
     if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } }), { phase: `deployment.cloudflare.${reply.phase}`,
       causeKind: 'native_failure', error: reply });
     const project = reply.value;
-    if (!isObject(project) || project.id !== input.providerIdentity.providerResourceId || project.name !== input.preparedNative.projectName
+    // Native coordinates take the project's id from this read; a complete identity must still name this project.
+    if (!isObject(project) || typeof project.id !== 'string' || !project.id
+      || (input.providerIdentity && project.id !== input.providerIdentity.providerResourceId) || project.name !== input.preparedNative.projectName
       || typeof project.production_branch !== 'string' || !project.production_branch) invalid();
     const build = project.build_config;
     if (build !== undefined && !isObject(build)) invalid();
@@ -67,11 +72,12 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
     if (source !== undefined && source !== null && (!isObject(source) || typeof source.type !== 'string')) invalid();
     const projectMode = source ? 'gitIntegration' : 'directUpload';
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
-      providerIdentity: { ...input.providerIdentity, providerEnvironment: input.providerEnvironment.kind === 'production' ? 'production'
+      providerIdentity: { providerAccountId: accountId, providerResourceId: project.id,
+        providerEnvironment: input.providerEnvironment.kind === 'production' ? 'production'
         : input.providerEnvironment.gitBranch ? `preview:${input.providerEnvironment.gitBranch}` : 'preview' },
       providerEnvironment: input.providerEnvironment,
       ...(input.sourceMethod !== undefined ? { sourceMethod: input.sourceMethod } : {}),
-      ...(input.sourceMethod === 'upload' ? {} : { repositoryAccess: pagesRepositoryAccess(source, input.repository, input.providerIdentity.providerAccountId) }),
+      ...(input.sourceMethod === 'upload' ? {} : { repositoryAccess: pagesRepositoryAccess(source, input.repository, accountId) }),
       preparedNative: { projectName: project.name,
         reviewNotice: cloudflareReviewNotice('pages', input.sourceMethod ?? (projectMode === 'gitIntegration' ? 'gitIntegration' : 'upload')),
         pages: { projectMode, productionBranch: project.production_branch,

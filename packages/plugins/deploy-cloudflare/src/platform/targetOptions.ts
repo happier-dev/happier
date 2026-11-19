@@ -49,7 +49,9 @@ async function read(input: Input, context: DeploymentContext) {
     reply = await requestAccounts(context, params.size ? `?${params}` : '');
   } else {
     const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
-    if (!accountId) missingDependency('providerIdentity.providerAccountId');
+    // The Pages sheet names its project by native coordinates (targetProductInputHints); identity fields keep theirs.
+    if (!accountId) missingDependency(input.product === 'pages' && !input.fieldPath.startsWith('providerIdentity.')
+      ? 'providerAccountId' : 'providerIdentity.providerAccountId');
     let path: string;
     if (input.fieldPath === 'triggerUuid') {
       if (!input.providerIdentity?.providerResourceId) missingDependency('providerIdentity.providerResourceId');
@@ -197,6 +199,11 @@ export const targetProductSchema = product;
 
 export function targetProductInputHints(product: 'workers' | 'pages') {
   return { fields: targetOptionInputHints.fields
-    .filter(field => product === 'workers' ? field.path !== 'preparedNative.projectName' : field.path !== 'triggerUuid')
-    .map(field => ({ ...field, inputType: { pluginId, localId: `${product}-target-choice` } })) };
+    .filter(field => product === 'workers' ? field.path !== 'preparedNative.projectName'
+      // A Pages project is named by its account and project name; Inspect reads its id, so the sheet asks once.
+      : field.path !== 'triggerUuid' && field.path !== 'providerIdentity.providerResourceId')
+    // Pages selects native coordinates and Inspect produces the comparison identity (as Vercel does); a partial
+    // providerIdentity is neither the Action's nor host admission's preparation input.
+    .map(field => ({ ...field, ...(product === 'pages' && field.path === 'providerIdentity.providerAccountId' ? { path: 'providerAccountId' } : {}),
+      inputType: { pluginId, localId: `${product}-target-choice` } })) };
 }

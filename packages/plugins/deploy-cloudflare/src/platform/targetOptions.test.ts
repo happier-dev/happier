@@ -34,9 +34,9 @@ it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves re
   const action = entry.manifest.contributes.actions.find(value => value.id === actionId);
   if (!action) throw new Error('Missing Cloudflare inspect Action');
   const fields = (input: unknown) => resolveEffectiveActionInputFields({ inputHints: action.inputHints }, input);
-  expect(fields({}).filter(field => field.required).map(field => field.path)).toEqual(expect.arrayContaining([
-    'providerIdentity.providerAccountId', 'providerIdentity.providerResourceId', 'providerEnvironment',
-  ]));
+  // Pages names its project by native coordinates (account + project name); Inspect reads the project's identity.
+  expect(fields({}).filter(field => field.required).map(field => field.path)).toEqual(expect.arrayContaining(actionId === 'pages-inspect'
+    ? ['providerAccountId', 'providerEnvironment'] : ['providerIdentity.providerAccountId', 'providerIdentity.providerResourceId', 'providerEnvironment']));
   if (actionId !== 'pages-inspect') {
     expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
       .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
@@ -62,14 +62,17 @@ it.each([
   { targetKind: 'cloudflare-workers', row: { id: 'selected-worker', tag: 'worker-tag' },
     expected: { value: 'worker-tag', label: 'selected-worker' }, endpoint: '/workers/scripts' },
   { targetKind: 'cloudflare-pages', row: { id: 'pages-id', name: 'selected-pages' },
-    expected: { value: 'pages-id', label: 'selected-pages' }, endpoint: '/pages/projects' },
-])('a per-product $targetKind target exposes no product choice and discovers its own projects from an empty draft', async ({ targetKind, row, expected, endpoint }) => {
+    expected: { value: 'selected-pages', label: 'selected-pages' }, endpoint: '/pages/projects',
+    projectPath: 'preparedNative.projectName', account: { providerAccountId: 'account' } },
+])('a per-product $targetKind target exposes no product choice and discovers its own projects from an empty draft', async ({ targetKind, row, expected, endpoint, ...variant }) => {
+  const projectPath = 'projectPath' in variant ? variant.projectPath : 'providerIdentity.providerResourceId';
+  const account = 'account' in variant ? variant.account : { providerIdentity: { providerAccountId: 'account' } };
   const target = entry.manifest.contributes.deploymentTargets.find(value => value.targetKind === targetKind);
   if (!target || target.role !== 'runtime') throw new Error('Missing Cloudflare runtime target');
   const inspect = entry.manifest.contributes.actions.find(action => action.id === target.actions.inspect);
   const fields = inspect?.inputHints?.fields ?? [];
   expect(fields.map(field => field.path)).not.toContain('product');
-  const project = fields.find(field => field.path === 'providerIdentity.providerResourceId');
+  const project = fields.find(field => field.path === projectPath);
   if (!project?.inputType || !('localId' in project.inputType)) throw new Error('Missing project input type');
   const typeId = project.inputType.localId;
   const inputType = entry.manifest.contributes.inputTypes?.find(type => type.id === typeId);
@@ -82,10 +85,16 @@ it.each([
   try {
     const resource = kit.registration('resources', resourceId);
     if (!resource) throw new Error('Missing project choices Resource');
+    // Before an account is chosen, the dependency names the field this target's sheet draws.
+    const accountField = fields.find(field => field.path.endsWith('providerAccountId'))?.path;
+    await expect(resource.read(createTestResourceInvocationContext({
+      query: { draftInput: { credentialRef, credentialPrincipal }, fieldPath: project.path },
+      readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) })))
+      .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: accountField } });
     const bytes = await resource.read(createTestResourceInvocationContext({
       query: { draftInput: { credentialRef, credentialPrincipal: { ...credentialPrincipal, purpose: {
         ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: target.actions.inspect } } },
-        providerIdentity: { providerAccountId: 'account' } }, fieldPath: project.path },
+        ...account }, fieldPath: project.path },
       readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
     expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
       .toEqual({ options: [expected] });

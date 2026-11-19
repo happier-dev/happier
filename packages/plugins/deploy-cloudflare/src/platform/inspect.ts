@@ -25,9 +25,10 @@ function withPreCreateNotice(action: typeof workersPrepare & { inputSchema: Plug
       anyOf: [action.inputSchema, draft] } satisfies PluginJsonSchema,
     resultSchema: { anyOf: [action.resultSchema, noticeResult] } satisfies PluginJsonSchema,
     async run(input: JsonValue, context: PluginAccountActionContext) {
-      // Admission distinguishes a source-choice draft from a complete existing-resource input.
+      // Admission distinguishes a source-choice draft from an existing-resource input: the draft names no account
+      // (native coordinates) and no identity.
       const request = input as unknown as DeploymentTargetPreparationBaseV1 & { product: 'workers' | 'pages' };
-      if (!request.providerIdentity) return { preparedNative: {
+      if (!request.providerIdentity && !request.providerAccountId) return { preparedNative: {
         reviewNotice: cloudflareReviewNotice(product ?? request.product, request.sourceMethod!),
       } };
       return action.run(input, context);
