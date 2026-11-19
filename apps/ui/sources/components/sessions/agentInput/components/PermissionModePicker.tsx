@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
 
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
@@ -63,12 +63,12 @@ export function PermissionModePicker(props: {
             {props.options.map((option) => {
                 const isSelected = selected === option.value;
                 return (
-                    <Pressable
+                    <HappierPressable
                         key={option.value}
                         testID={`permission-mode-${option.value}`}
                         accessibilityRole="radio"
                         accessibilityLabel={option.label}
-                        accessibilityState={{ checked: isSelected }}
+                        checked={isSelected}
                         onPress={() => props.onSelect(option.value)}
                         style={({ pressed }) => [props.styles.overlayOptionRow, pressed ? props.styles.overlayOptionRowPressed : null]}
                     >
@@ -90,7 +90,7 @@ export function PermissionModePicker(props: {
                                 {option.attribution}
                             </Text>
                         ) : null}
-                    </Pressable>
+                    </HappierPressable>
                 );
             })}
         </View>

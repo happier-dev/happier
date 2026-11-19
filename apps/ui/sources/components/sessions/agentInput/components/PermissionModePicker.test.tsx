@@ -76,12 +76,12 @@ describe('PermissionModePicker', () => {
             }),
         });
         expect(screen.getTextContent()).toContain(t('agentInput.permissionMode.nativeSandboxUnavailable'));
-        expect(screen.findByTestId('permission-mode-default')?.props.accessibilityState).toEqual({ checked: true });
+        expect(screen.findHostByTestId('permission-mode-default')?.props.accessibilityState?.checked).toBe(true);
     });
     it('chooses no row while several targets differ (Mixed) and still applies a choice', async () => {
         const { screen, onSelect } = await renderPicker({ selected: null, effectivePermissionLabel: 'Mixed' });
-        expect(screen.findByTestId('permission-mode-default')?.props.accessibilityState).toEqual({ checked: false });
-        expect(screen.findByTestId('permission-mode-yolo')?.props.accessibilityState).toEqual({ checked: false });
+        expect(screen.findHostByTestId('permission-mode-default')?.props.accessibilityState?.checked).toBe(false);
+        expect(screen.findHostByTestId('permission-mode-yolo')?.props.accessibilityState?.checked).toBe(false);
         screen.pressByTestId('permission-mode-yolo');
         expect(onSelect).toHaveBeenCalledWith('yolo');
     });
@@ -110,14 +110,14 @@ describe('PermissionModePicker', () => {
         const onSelect = vi.fn<(mode: PermissionMode) => void>();
         const { screen } = await renderPicker({ selected: 'default', onSelect });
 
-        const selected = screen.findByTestId('permission-mode-default');
-        const unselected = screen.findByTestId('permission-mode-yolo');
+        const selected = screen.findHostByTestId('permission-mode-default');
+        const unselected = screen.findHostByTestId('permission-mode-yolo');
         expect(selected).toBeTruthy();
         expect(unselected).toBeTruthy();
         expect(selected?.props.accessibilityRole).toBe('radio');
         expect(selected?.props.accessibilityLabel).toBe('Default');
-        expect(selected?.props.accessibilityState).toEqual({ checked: true });
-        expect(unselected?.props.accessibilityState).toEqual({ checked: false });
+        expect(selected?.props.accessibilityState?.checked).toBe(true);
+        expect(unselected?.props.accessibilityState?.checked).toBe(false);
 
         screen.pressByTestId('permission-mode-yolo');
 
@@ -128,7 +128,7 @@ describe('PermissionModePicker', () => {
         const { screen } = await renderPicker({ selected: 'plan' as unknown as PermissionMode });
 
         // The first option stands in for an unknown mode: exactly one radio reads as chosen.
-        const checked = ['default', 'yolo'].map((mode) => screen.findByTestId(`permission-mode-${mode}`)?.props.accessibilityState?.checked);
+        const checked = ['default', 'yolo'].map((mode) => screen.findHostByTestId(`permission-mode-${mode}`)?.props.accessibilityState?.checked);
         expect(checked).toEqual([true, false]);
     });
 });
