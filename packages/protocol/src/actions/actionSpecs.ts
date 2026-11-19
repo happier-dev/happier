@@ -961,6 +961,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
 // user UI capability. Grant/dismiss remain human-owned approval proposals;
 // list/revoke are user administration and are exposed to Agent and MCP.
 export const AGENT_ACTION_EXCLUSION_REASONS = Object.freeze({
+  [ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1]: 'Terminal pairing requires the person’s Approve press on an authenticated client.',
   'account.apiTokens.create': 'Token creation is human-only: the new bearer secret must never enter an Agent or MCP flow (owner ruling 2026-11-07).',
   [ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1]: 'Adding a device to an Account requires the person’s Approve press on a trusted device.',
   'plugins.permissions.grants.request': 'Permission requests originate from host-stamped plugin provenance, not a user UI operation.',
