@@ -2,7 +2,7 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, createMachineFixture, renderHook, standardCleanup, teamSummaryFixture, teamPolicyFixture, teamCapabilitiesFixture } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createPlainProjectAccountRowListFixture, renderHook, standardCleanup, teamSummaryFixture, teamPolicyFixture, teamCapabilitiesFixture } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -58,7 +58,11 @@ describe('shared Team defaults through New Session', () => {
         }) });
         const source = { id: 'shared-source', name: 'Shared project', revision: 1,
             owner: { kind: 'team', teamId: team.id }, audience: [], createdByAccountId: 'owner' };
+        const checkout = { id: 'project-checkout', projectKey: 'project-anchor', serverId: home.id, machineId: 'machine-1',
+            rootPath: '/repo', createdAtMs: 1, source: { sourceId: source.id, revision: source.revision } };
+        const projectRows = createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] });
         const sourceArrival = createDeferred<void>();
+        let sourceRequested = false;
         network.setHttpResponder(async (input, init) => {
             const response = accountSettings.handle(input, init);
             if (response) return response;
@@ -67,9 +71,11 @@ describe('shared Team defaults through New Session', () => {
             if (path === '/v1/teams/list') return Response.json({ items: [team], nextCursor: null });
             if (path === '/v1/teams/get') return Response.json(team);
             if (path === `/v1/projects/sources/${source.id}`) {
+                sourceRequested = true;
                 await sourceArrival.promise;
                 return Response.json({ ok: true, source, canManage: false });
             }
+            if (path === '/v1/account/project-rows/list') return Response.json(projectRows);
             if (path === '/v1/account/project-rows/read') return Response.json({ status: 'absent' });
             return null;
         });
@@ -79,10 +85,7 @@ describe('shared Team defaults through New Session', () => {
         storage.getState().applySettingsLocal(settings);
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', active: true, storageMode: 'plain' })], false,
             { sourceServerId: home.id });
-        const checkout = { id: 'project-checkout', projectKey: 'project-anchor', serverId: home.id, machineId: 'machine-1',
-            rootPath: '/repo', createdAtMs: 1, source: { sourceId: source.id, revision: source.revision } };
-        const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
-        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+        await vi.waitFor(() => expect(storage.getState().projectAccountRows?.workspaceRefs).toContainEqual(expect.objectContaining({ id: checkout.id })));
         const { buildProjectNewSessionOrigin, admitProjectAuthoringOrigin } = await import('@/components/projects/detail/projectRouteState');
         const { workspaceAddressFromRefV1 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
         const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
@@ -110,6 +113,7 @@ describe('shared Team defaults through New Session', () => {
                 simple().onAgentPickerSelect?.(codex.id);
             });
             expect(simple().permissionMode).toBe('default');
+            await vi.waitFor(() => expect(sourceRequested).toBe(true));
             await act(async () => sourceArrival.resolve());
             await vi.waitFor(() => expect({ permissionMode: simple().permissionMode, modelMode: simple().modelMode })
                 .toEqual({ permissionMode: 'read-only', modelMode: modelId }));
