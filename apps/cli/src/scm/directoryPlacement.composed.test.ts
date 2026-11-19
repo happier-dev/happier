@@ -183,7 +183,12 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                         },
                     } : {}) });
             const statusResponse = disjointRoots ? await handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ cwd: addressedRoot }) : null;
-            if (disjointRoots) expect(statusResponse, JSON.stringify(statusResponse)).toMatchObject({ success: true });
+            if (disjointRoots) expect(statusResponse, JSON.stringify(statusResponse)).toMatchObject({
+                success: true,
+                snapshot: { repo: { rootPath: addressedRoot, worktrees: expect.arrayContaining([
+                    expect.objectContaining({ path: addressedRoot, isCurrent: true, isMain: true }),
+                ]) } },
+            });
             const request = {
                 cwd: statusResponse?.snapshot?.repo.rootPath ?? addressedRoot, ...operation,
             };

@@ -173,6 +173,7 @@ export async function getGitSnapshot(input: {
         args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
         timeoutMs: 10_000,
     });
+    const commandPaths = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths;
     const mainWorktreePath = worktreesResult.success ? await resolveGitMainWorktreePath({
         worktreesOutput: worktreesResult.stdout, currentWorktreePath: context.detection.rootPath,
     }) : null;
@@ -199,6 +200,7 @@ export async function getGitSnapshot(input: {
         pendingNumStatSuccess: pendingResult.success,
         untrackedStatsByPath,
         worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
+        fromCommandPath: commandPaths?.fromCommandPath,
         remotesOutput: remotesResult.success ? (remotesResult.stdout ?? '') : '',
         remoteHeadRefsOutput: remoteHeadRefsResult.success ? (remoteHeadRefsResult.stdout ?? '') : '',
         operationState: request?.operationStateVersion === 1 ? operationState : operationState && (operationState.kind === 'merge' || operationState.kind === 'rebase') ? { kind: operationState.kind, sourceRef: operationState.sourceRef, canContinue: operationState.canContinue, canAbort: operationState.canAbort } : null,
@@ -308,6 +310,7 @@ export async function getGitWorktreesEnrichment(input: {
         worktreesOutput: worktreesList.stdout ?? '',
         currentWorktreePath: input.context.cwd,
         mainWorktreePath: repoRoot,
+        fromCommandPath: readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths?.fromCommandPath,
     });
     const canonicalToRegisteredPath = new Map<string, string>();
     const knownCanonicalEntries = await Promise.all(knownWorktrees.map(async (worktree) => ({

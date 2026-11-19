@@ -102,6 +102,7 @@ export function buildGitSnapshot(input: {
     pendingNumStatSuccess?: boolean;
     untrackedStatsByPath?: Record<string, { pendingAdded: number; isBinary: boolean }>;
     worktreesOutput?: string;
+    fromCommandPath?: (path: string) => string;
     remotesOutput?: string;
     remoteHeadRefsOutput?: string;
     operationState?: ScmOperationState | null;
@@ -200,6 +201,7 @@ export function buildGitSnapshot(input: {
             worktreesOutput: input.worktreesOutput,
             currentWorktreePath: input.currentWorktreePath ?? input.rootPath,
             mainWorktreePath: input.mainWorktreePath ?? input.rootPath,
+            fromCommandPath: input.fromCommandPath,
         })]
         : [];
     const remotes = parseGitRemoteVerbose(input.remotesOutput ?? '');

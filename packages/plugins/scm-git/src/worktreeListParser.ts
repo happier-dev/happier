@@ -27,9 +27,20 @@ export function parseGitWorktreeListPorcelain(input: {
     worktreesOutput: string;
     currentWorktreePath: string | null;
     mainWorktreePath?: string | null;
+    fromCommandPath?: (path: string) => string;
 }): ReadonlyArray<ScmWorktree> {
-    return parseGitWorktreeRecords(input).map(({ bare: _bare, ...worktree }) => worktree)
-        .sort((left, right) => left.path.localeCompare(right.path));
+    return parseGitWorktreeRecords(input).flatMap(({ bare: _bare, ...worktree }) => {
+        if (!input.fromCommandPath) return [worktree];
+        let path: string;
+        try { path = input.fromCommandPath(worktree.path); }
+        catch (error) {
+            // A guest can register additional worktrees outside the admitted Session.
+            if (error instanceof Error && 'code' in error && error.code === 'workspace_root_unsafe') return [];
+            throw error;
+        }
+        return [{ ...worktree, path, id: deriveGitWorktreeId(path),
+            isCurrent: path === input.currentWorktreePath, isMain: path === input.mainWorktreePath }];
+    }).sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function parseGitWorktreeRecords(input: {

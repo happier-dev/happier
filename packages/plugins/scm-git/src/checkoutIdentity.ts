@@ -1,3 +1,4 @@
+import { readCurrentBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -13,11 +14,13 @@ export async function resolveGitMainWorktreePath(input: Readonly<{
 }>): Promise<string | null> {
     const main = parseGitWorktreeListRecords(input.worktreesOutput)[0];
     if (!main) return null;
-    if (main.bare || main.path === input.currentWorktreePath) return main.path;
-    const proof = await runScmCommand({ bin: 'git', cwd: main.path,
+    const paths = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths;
+    const addressedPath = paths?.fromCommandPath(main.path) ?? main.path;
+    if (main.bare || addressedPath === input.currentWorktreePath || main.path === input.currentWorktreePath) return addressedPath;
+    const proof = await runScmCommand({ bin: 'git', cwd: addressedPath,
         args: ['rev-parse', '--show-toplevel'], signal: input.signal,
         env: buildScmNonInteractiveEnv({ LC_ALL: 'C' }) });
-    if (proof.success) return proof.stdout.replace(/\n$/, '') === main.path ? main.path : null;
+    if (proof.success) return proof.stdout.replace(/\n$/, '') === main.path ? addressedPath : null;
     // Separate-git-dir administration is not proof of a main checkout.
     if (/not a git repository|must be run in a work tree/i.test(proof.stderr)) return null;
     throw new Error(`Git main checkout inspection unavailable: ${proof.stderr}`);
