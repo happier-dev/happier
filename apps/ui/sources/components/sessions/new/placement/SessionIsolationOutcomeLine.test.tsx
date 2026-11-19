@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
-import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, renderScreen, standardCleanup } from '@/dev/testkit';
+import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
@@ -36,6 +38,34 @@ async function render(props: Partial<React.ComponentProps<typeof import('./Sessi
 }
 
 describe('session isolation outcome line', () => {
+    it('reads the proposed sandbox preset without loading the Home preset catalog', async () => {
+        const homeId = 'srv_sandbox_outcome';
+        const preset = createPlainManagedMachinePresetFixture({
+            id: 'node-22', homeId, revision: 1, name: 'Node workspace', owner: { kind: 'account', accountId: 'owner' },
+            launch: { provider: docker, schemaVersion: 1, name: 'Node workspace', choices: {} },
+            projectFiles: { kind: 'sync', mode: 'keep_both_in_sync' },
+        });
+        const homes = await serveAccountHomes({
+            homes: [{ key: 'home', serverUrl: 'https://sandbox-outcome.test', serverIdentityId: homeId, accountId: 'owner' }],
+            route: request => {
+                if (request.path === '/v1/machines/presets/get') return Response.json({ kind: 'found', preset });
+                if (request.path === '/v1/machines/presets/list') return Response.json({ kind: 'listed', presets: [preset] });
+            },
+        });
+        onTestFinished(async () => { await standardCleanup(); await homes.dispose(); });
+        const serverId = homes.homes.home!.id;
+        const { SessionIsolationOutcomeLine } = await import('./SessionIsolationOutcomeLine');
+        const outcome = proposeMachineIsolationOutcome(stored, 'sessions') ?? undefined;
+        const screen = await renderScreen(<SessionIsolationOutcomeLine serverId={serverId}
+            machineName="devbox" snapshot={stored} outcome={outcome}
+            projectFiles={{ source: undefined, override: undefined, onChange: () => {} }} />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('machineDetailPage.projectFiles.withFresh'));
+        expect(homes.requests.filter(request => request.path.startsWith('/v1/machines/presets/'))
+            .map(({ path, body }) => ({ path, body }))).toEqual([
+            { path: '/v1/machines/presets/get', body: { homeId, id: preset.id } },
+        ]);
+    });
+
     it('says the work runs directly when the Machine has no policy, with nothing to override', async () => {
         const { text, link } = await render({ outcome: proposeMachineIsolationOutcome(unset, 'sessions') ?? undefined });
         expect(text).toContain('machineDetailPage.isolation.outcome.directly');

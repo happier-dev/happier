@@ -1,10 +1,13 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ManagedMachineReadV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { MachinePageStateContext, type MachinePageState } from '../page/machinePageContext';
+import { MachineIsolationPage } from '../security/isolation/MachineIsolationPage';
 import { useManagedEnrolledMachine } from '@/components/settings/machines/managed/ManagedMachineSections';
 import { t } from '@/text';
 import { MachineSandboxesTab } from './MachineSandboxesTab';
@@ -14,6 +17,39 @@ const { router } = await import('expo-router');
 
 let homes: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { await standardCleanup(); await homes?.dispose(); homes = undefined; });
+
+it('reads the host sandbox inventory only once the configured Machine has an installation', async () => {
+    const homeId = 'srv_isolation_before_installation';
+    const provisioner = { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' };
+    const preset = createPlainManagedMachinePresetFixture({ id: 'dev-box', homeId, revision: 1, name: 'Build environment',
+        owner: { kind: 'account', accountId: 'owner' },
+        launch: { provider: provisioner, schemaVersion: 1, name: 'Build environment', choices: {} } });
+    const policy: MachineIsolationPolicyV1 = {
+        configuredSandboxes: { build: { provisioner, presetId: preset.id } },
+        workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'build', lifecycle: 'fresh' },
+            botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
+    };
+    let hasInstallation = false;
+    const listArrivals: boolean[] = [];
+    homes = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://isolation-installation.test',
+        serverIdentityId: homeId, accountId: 'owner' }], route: request => {
+        if (request.path === '/v1/machines/presets/list') return Response.json({ kind: 'listed', presets: [preset] });
+        if (request.path === '/v1/machines/managed/actions/list') {
+            listArrivals.push(hasInstallation);
+            return Response.json({ machines: [] });
+        }
+    } });
+    const serverId = homes.homes.home!.id;
+    const base = createMachineFixture();
+    const machine = { ...base, installationId: undefined, metadata: { ...base.metadata!, isolationPolicyV1: policy } };
+    const screen = await renderScreen(<MachineIsolationPage serverId={serverId} machine={machine} machineName="Host" online />);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Build environment'));
+    expect(listArrivals).toEqual([]);
+
+    hasInstallation = true;
+    await screen.update(<MachineIsolationPage serverId={serverId} machine={{ ...machine, installationId: 'installation' }} machineName="Host" online />);
+    await vi.waitFor(() => expect(listArrivals).toEqual([true]));
+});
 
 it('keeps an unopened preset sandbox visible and openable beside a named sandbox', async () => {
     const homeId = 'srv_host_sandboxes';

@@ -4,19 +4,16 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineIsolationGetResultV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 import type { SessionProjectFilesSourceV1, SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 
-import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { useMachinePreset } from '@/components/settings/machines/managed/useMachinePresets';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { proposeMachineIsolationOutcome } from '@/sync/domains/machines/machineIsolationPolicy';
-import { isOpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { t } from '@/text';
 import type { MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { ProjectFilesOutcomeChoice } from './ProjectFilesOutcomeChoice';
-
-const NO_SERVERS: readonly string[] = Object.freeze([]);
 
 export type SessionIsolationOutcome = ReturnType<
   typeof proposeMachineIsolationOutcome
@@ -73,7 +70,8 @@ export function SessionIsolationOutcomeLine(
     outcome?.status === 'proposed' && outcome.choice.kind === 'sandbox'
       ? outcome.configuredSandbox?.presetId
       : undefined;
-  const preset = usePreset(props.serverId, presetId);
+  const presetServerId = presetId ? props.serverId ?? '' : '';
+  const { state: { value: preset } } = useMachinePreset(presetServerId, presetId ?? '');
   if (!machineName) return null;
   if (props.managedPresence?.offline?.state === 'resource_absent')
     return <OutcomeRow testID={testID} glyph="cloud-slash" text={props.managedPresence.offline.word} link={null} />;
@@ -173,25 +171,6 @@ export function SessionIsolationOutcomeLine(
       }
     />
   );
-}
-
-/** The chosen preset, read from the Account's preset resource only while a sandbox is proposed. */
-function usePreset(
-  serverId: string | null,
-  presetId: string | undefined,
-) {
-  const serverIds = React.useMemo(
-    () => (serverId && presetId ? [serverId] : NO_SERVERS),
-    [serverId, presetId],
-  );
-  const presets = useMachinePresets(serverIds);
-  const preset =
-    serverId && presetId
-      ? presets.presetsByServerId[serverId]?.find(
-          (entry) => entry.id === presetId,
-        )
-      : undefined;
-  return preset && isOpenedManagedMachinePresetV1(preset) ? preset : null;
 }
 
 /** The meta line's mark: one step under the row mark, the size of the line's own glyphs. */

@@ -39,7 +39,6 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useHostMachineSandboxes } from '@/components/settings/machines/managed/useHostMachineSandboxes';
 import { projectManagedPresetAllocationCounts } from '@/components/settings/machines/managed/hostMachineSandboxes';
 
-const NO_CONTROLLER: ManagedControllerV1 = Object.freeze({ machineId: '', installationId: '' });
 
 type SaveFailure = Readonly<
   | { kind: 'failed'; policy: MachineIsolationPolicyV1; code?: string; message?: string }
@@ -247,8 +246,8 @@ function MachineIsolationConfiguredPage(
   const presets = useMachineIsolationPresets(serverId, policy);
   // Running (MACH-PRESETS-DATA-1119): this host's live sandboxes per preset, from the existing managed inventory;
   // nothing is said while that read hasn't settled or a sandbox's power is unknown.
-  const host = useHostMachineSandboxes({ serverId, controller: controller ?? NO_CONTROLLER });
-  const hostSettled = controller !== undefined && host.entry?.status === 'ready';
+  const host = useHostMachineSandboxes({ serverId, controller });
+  const hostSettled = host.entry?.status === 'ready';
   const running = React.useMemo(
     () => (hostSettled && controller ? projectManagedPresetAllocationCounts(host.sandboxes, controller) : null),
     [controller, host.sandboxes, hostSettled],
