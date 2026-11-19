@@ -205,12 +205,12 @@ export const PLUGIN = definePlugin({
       inputSchema: ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
         if (input.intent !== 'start' && input.intent !== 'stop') return { kind: 'refused' as const, code: 'native_unsupported_intent' };
-        try { const native = await runtime(context);
-        const changed = await native.power(input.resource, input.intent);
-        if (changed.kind === 'refused') return { kind: 'refused' as const, code: changed.code };
-        const observed = await native.inspect(input.resource);
-        return observed.kind === 'present' && observed.power === (input.intent === 'start' ? 'running' : 'stopped')
-          ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' }; } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) })); }
+        try {
+          return await (await runtime(context)).power(input.resource, input.intent, () => context.services.machineProvisioners.waitForNativeObservation());
+        } catch (error) {
+          context.signal.throwIfAborted();
+          return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'provider_unavailable', ...failureCause(error) }));
+        }
       },
     },
     destroy: { ...defaults, title: 'Delete exact Hetzner resource', dangerLevel: 'destructive',

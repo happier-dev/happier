@@ -54,6 +54,28 @@ describe('public hetzner machine provisioner', () => {
       ['power', { resource, intent: 'stop' }], ['destroy', { resource }],
     ] as const) await expect(host.handlers.get(id)!(input, host.context)).rejects.toBe(refusal);
   });
+  it('confirms a graceful Stop only after the exact Hetzner Server turns off', async () => {
+    let serverReads = 0;
+    const host = await activated(undefined, 200, undefined, (url, method) => {
+      const path = new URL(url).pathname;
+      if (method === 'POST' && path === '/v1/servers/41/actions/shutdown') {
+        return { status: 201, body: { action: { id: 8, status: 'running' } } };
+      }
+      if (method === 'GET' && path === '/v1/servers/41/actions/8') {
+        return { status: 200, body: { action: { id: 8, status: 'success' } } };
+      }
+      if (method === 'GET' && path === '/v1/servers/41') {
+        const status = ++serverReads === 1 ? 'running' : 'off';
+        return { status: 200, body: { server: { id: 41, status, labels: {}, public_net: { ipv4: null, ipv6: null } } } };
+      }
+      return { status: 400, body: { error: { code: 'invalid_input' } } };
+    });
+    const result = await host.handlers.get('power')!({ resource, intent: 'stop' }, host.context);
+    expect(MachineProvisionerPowerResultV1Schema.parse(result)).toEqual({ kind: 'confirmed' });
+    expect(host.requests.filter(request => request.method === 'POST').map(request => new URL(request.url).pathname))
+      .toEqual(['/v1/servers/41/actions/shutdown']);
+    expect(serverReads).toBe(2);
+  });
   it.each(['success', 'error', 'unavailable'] as const)('settles one exact native snapshot Action with truthful coverage after %s', async outcome => {
     let observations = 0;
     const host = await activated(undefined, 200, undefined, (url, method) => {

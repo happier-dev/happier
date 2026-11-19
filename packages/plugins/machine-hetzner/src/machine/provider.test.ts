@@ -192,14 +192,10 @@ describe('Hetzner native boundary', () => {
     expect(body).not.toHaveProperty('enrollment');
   });
 
-  it('reports stopped compute charges independently and shutdown remains pending', async () => {
-    const transport = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(json({ server }))
-      .mockResolvedValueOnce(json({ action: { id: 8, status: 'running' } }));
+  it('reports stopped compute charges independently of power', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(json({ server }));
     const client = createHetznerNativeClient({ token: 'private', fetch: transport });
     expect(await client.inspect(resource)).toMatchObject({ kind: 'present', power: 'stopped', billing: { location: 'cloud', stoppedBilling: 'billed' } });
-    expect(await client.power(resource, 'stop')).toEqual({ kind: 'pending', nativeAction: { id: 8, status: 'running' } });
-    expect(String(transport.mock.calls[1][0])).toMatch(/\/servers\/41\/actions\/shutdown$/);
   });
 
   it('deletes only exact owned resources and retains partial cleanup after a native refusal', async () => {

@@ -16,11 +16,12 @@ function context(status: number): ConnectedAccountReadContext {
 describe('hetzner captured account health', () => {
   it('uses the public HTTP purpose binding for exact-resource control without native credential services', async () => {
     const requests: HttpRequest[] = [];
+    let serverReads = 0;
     const request: HttpService['request'] = async input => {
       requests.push(input);
-      const body = input.method === 'GET'
-        ? { server: { id: 41, status: 'off', labels: {}, public_net: { ipv4: null, ipv6: null } } }
-        : { action: { id: 9, status: 'running' } };
+      const body = new URL(input.url).pathname === '/v1/servers/41'
+        ? { server: { id: 41, status: ++serverReads === 1 ? 'off' : 'running', labels: {}, public_net: { ipv4: null, ipv6: null } } }
+        : { action: { id: 9, status: input.method === 'POST' ? 'running' : 'success' } };
       return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
     };
     // Only the host HTTP transport is substituted. Account hosts have no native materialize service.
@@ -29,10 +30,15 @@ describe('hetzner captured account health', () => {
     const retained = { serverId: 41, owned: { volumeIds: [7], primaryIpIds: [9] } };
     await expect(provider.inspect(retained)).resolves.toMatchObject({ kind: 'present', power: 'stopped',
       billing: { location: 'cloud', stoppedBilling: 'billed' } });
-    await expect(provider.power(retained, 'start')).resolves.toMatchObject({ kind: 'pending' });
+    await expect(provider.power(retained, 'start', async () => {})).resolves.toEqual({ kind: 'confirmed' });
     expect(requests.map(input => ({ path: new URL(input.url).pathname, method: input.method, credentialBinding: input.credentialBinding })))
-      .toEqual(['GET', 'POST'].map((method, index) => ({
-        path: index === 0 ? '/v1/servers/41' : '/v1/servers/41/actions/poweron', method,
+      .toEqual([
+        ['GET', '/v1/servers/41'],
+        ['POST', '/v1/servers/41/actions/poweron'],
+        ['GET', '/v1/servers/41/actions/9'],
+        ['GET', '/v1/servers/41'],
+      ].map(([method, path]) => ({
+        path, method,
         credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'cloud-api', origin: 'https://api.hetzner.cloud', method, headerNames: ['authorization'] },
       })));
     expect(requests.every(input => !new Headers(input.headers).has('authorization'))).toBe(true);

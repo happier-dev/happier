@@ -160,8 +160,7 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       ...resource.owned.primaryIpIds.map(id => ({ kind: 'primary-ip' as const, id })),
     ];
   }
-  async function inspectServer(rawResource: unknown) {
-    const resource = parseHetznerValue(HetznerResourceV1Schema, rawResource);
+  async function inspectServer(resource: HetznerResourceV1) {
     const reply = await request(`/servers/${resource.serverId}`, 'GET', undefined, true);
     if (reply.kind === 'absent') return { kind: 'absent' as const };
     const { server } = decode(mini.object({ server: serverSchema }), reply);
@@ -264,13 +263,20 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: codeOf(error), correlation,
         ...(error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) })); }
     },
-    async power(rawResource: unknown, rawIntent: unknown) {
+    async power(rawResource: unknown, rawIntent: unknown, waitForObservation: () => Promise<void>) {
       const resource = parseHetznerValue(HetznerResourceV1Schema, rawResource);
       const intent = parseHetznerValue(HetznerPowerIntentSchema, rawIntent);
       const { action } = decode(mini.object({ action: actionSchema }), await request(`/servers/${resource.serverId}/actions/${intent === 'start' ? 'poweron' : 'shutdown'}`, 'POST'));
-      // Action success acknowledges shutdown; only exact inspect proves stopped.
-      return action.status === 'error' ? { kind: 'refused' as const, code: 'native_action_failed', nativeAction: action }
-        : { kind: 'pending' as const, nativeAction: action };
+      const settled = await waitForAction(resource.serverId, action, waitForObservation);
+      if (settled.status === 'error') return { kind: 'refused' as const, code: 'native_action_failed' };
+      // Hetzner can acknowledge a graceful shutdown while the OS is still running.
+      const targetPower = intent === 'start' ? 'running' : 'stopped';
+      let observed = await inspectServer(resource);
+      while (observed.kind === 'present' && observed.power !== targetPower) {
+        await waitForObservation();
+        observed = await inspectServer(resource);
+      }
+      return observed.kind === 'present' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending' };
     },
     async destroy(rawResource: unknown, continuing = false) {
       const operation = parseHetznerValue(HetznerDeleteOperationV1Schema, rawResource);
