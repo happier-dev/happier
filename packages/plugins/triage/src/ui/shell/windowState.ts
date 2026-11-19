@@ -375,8 +375,13 @@ export function readTriageListFailureNotice(
 /** A source that sent its own deadline says when it may be read again, in the pacing notice's words. */
 function withRetryAt(reason: string, source: TriageListSourceFailureV1, text: TriageTextResolverV1, locale?: string): string {
   if (source.retryNotBeforeMs === undefined) return reason;
-  const retryAt = formatTriageTimestampV1(locale ?? 'en', source.retryNotBeforeMs, 'absolute', source.retryNotBeforeMs);
-  return `${reason} ${text('plugins.triage.surface.waiting.retryAt', 'Try again at')} ${retryAt}.`;
+  return `${reason} ${readRetryAtSentence(text, locale ?? 'en', source.retryNotBeforeMs)}`;
+}
+
+/** "Try again at <time>." as one translated sentence, so each locale places the time and punctuation itself. */
+function readRetryAtSentence(text: TriageTextResolverV1, locale: string, retryAtMs: number): string {
+  const retryAt = formatTriageTimestampV1(locale, retryAtMs, 'absolute', retryAtMs);
+  return text('plugins.triage.surface.waiting.retryAt', 'Try again at {time}.').replace('{time}', retryAt);
 }
 
 /** Details: the producer's own explanation when the line said something shorter, then the code support can look up. */
@@ -525,10 +530,9 @@ export function readTriageRefreshPacingNotice(
   text: TriageTextResolverV1 = ENGLISH_TEXT,
 ): TriageListFailureNoticeV1 {
   const copy = PACING_REASON_COPY_V1[reason];
-  const retryAt = formatTriageTimestampV1(locale, nextEligibleAtMs, 'absolute', nextEligibleAtMs);
   return Object.freeze({
     title: text('plugins.triage.surface.waiting', 'Waiting before the next read'),
-    description: `${text(copy.key, copy.fallback)} ${text('plugins.triage.surface.waiting.retryAt', 'Try again at')} ${retryAt}.`,
+    description: `${text(copy.key, copy.fallback)} ${readRetryAtSentence(text, locale, nextEligibleAtMs)}`,
   });
 }
 

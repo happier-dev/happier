@@ -19,6 +19,7 @@ import {
   resolveTriageListRefreshV1,
   resolveTriageListShellState,
 } from './windowState.js';
+import type { TriageTextResolverV1 } from './windowState.js';
 
 const SOURCE = { pluginId: 'happier.forge', localId: 'items' } as const;
 const INSTANCE = '11111111-1111-4111-8111-111111111111';
@@ -121,6 +122,11 @@ describe('resolveTriageListShellState', () => {
     if (source === undefined) throw new Error('Expected a named source');
     expect(readTriageSourceFailureRowV1(source, undefined, 'en-US').reason).toContain(`Try again at ${retryAt}.`);
     expect(readTriageListFailureNotice(state.failure, undefined, 'en-US').description).toContain(`Try again at ${retryAt}.`);
+    // One translated sentence owns the time's position and punctuation (ja puts it first).
+    const ja: TriageTextResolverV1 = (key, fallback = '') => key === 'plugins.triage.surface.waiting.retryAt' ? '{time}以降に再試行できます。' : fallback;
+    const jaAt = formatTriageTimestampV1('ja', retryNotBeforeMs, 'absolute', retryNotBeforeMs);
+    expect(readTriageSourceFailureRowV1(source, ja, 'ja').reason).toMatch(new RegExp(`${jaAt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}以降に再試行できます。$`));
+    expect(readTriageRefreshPacingNotice('sourceRetryDeadline', retryNotBeforeMs, 'ja', ja).description).toMatch(/以降に再試行できます。$/);
   });
 
   // VIEW-HEALTH-1109: the selected view owns the body; the whole scan owns Manage sources.
