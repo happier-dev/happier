@@ -129,7 +129,7 @@ vi.mock('expo-sharing', () => ({
     },
 }));
 vi.mock('@/utils/files/nativePickFiles', () => ({ nativePickFiles: shared.nativePickFiles }));
-vi.mock('expo-router', async () => {
+const routerMock = await vi.hoisted(async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         params: () => shared.params,
@@ -138,8 +138,9 @@ vi.mock('expo-router', async () => {
             back: shared.routerBack,
             dismissTo: shared.routerDismissTo,
         },
-    }).module;
+    });
 });
+vi.mock('expo-router', () => routerMock.module);
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -354,6 +355,7 @@ afterEach(async () => {
     shared.modalConfirm.mockReset();
     shared.modalConfirm.mockResolvedValue(true);
     shared.params = {};
+    routerMock.resetParams();
     shared.colorScheme = 'light';
     storage.getState().applyLocalSettings({
         ...localSettingsDefaults,
@@ -758,6 +760,9 @@ describe('Theme profile editor', () => {
         const { JSDOM } = await import('jsdom');
         const { buildThemeCommands } = await import('@/components/appShell/commandPalette/themeCommands');
         const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const { resolveCompactAppDestinations, resolveDestinationRefFromHref } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+        const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
         const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
         vi.stubGlobal('window', dom.window);
         vi.stubGlobal('document', dom.window.document);
@@ -769,32 +774,49 @@ describe('Theme profile editor', () => {
         setThemeProfiles({ profiles: [profile], activeProfileIds: { light: profile.id, dark: null } });
         const profileId = getThemePresetSourceReferenceId(entry.reference);
         const pathname = `/settings/appearance/themes/${encodeURIComponent(profileId)}`;
-        const navigation = { push: shared.routerPush, replace: vi.fn(), back: shared.routerBack };
-        const body = (path: string) => (
+        const tabId = 'saved-theme';
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const target = resolveDestinationRefFromHref(catalog, pathname);
+        if (!target) throw new Error(`Missing Theme destination for ${pathname}`);
+        let workspace = createWorkspaceState({ id: tabId, target, pinned: false, preview: false });
+        let nextId = 0;
+        const adapter = createWorkspaceNavigationAdapter({ getState: () => workspace, getCatalog: () => catalog,
+            dispatch: action => { workspace = reduceWorkspaceState(workspace, action); },
+            transport: { commit: () => {} }, createId: () => `theme-tab:${++nextId}`, onChange: () => {} });
+        const navigation = { push: shared.routerPush, replace: vi.fn(), back: shared.routerBack,
+            setParams: (values: Parameters<typeof adapter.setParams>[1]) => adapter.setParams(tabId, values) };
+        const body = () => (
             <DestinationInstanceContext.Provider value={{ tabId: 'saved-theme', pathname, navigation,
                 focused: true, visible: true, isFocused: () => true,
-                ref: { kind: 'settings', params: { pageId: `appearance/themes/${profileId}`, profileId,
-                    ...Object.fromEntries(new URL(path, dom.window.location.href).searchParams) } },
+                ref: workspace.tabs[tabId].target,
             }}>
                 <ThemeProfileRuntimeSync />
                 <ThemeProfileEditorScreen />
             </DestinationInstanceContext.Provider>
         );
-        const screen = await renderSettingsView(body(pathname));
+        const screen = await renderSettingsView(body());
         expect(screen.findByTestId('settings-theme-profile-css')).toBeNull();
         await act(async () => { screen.changeTextByTestId('settings-theme-profile-name', 'Unsaved ocean'); });
 
-        let href = '';
         const command = buildThemeCommands({ entries: [entry], mode: 'light', undoHandle: null,
             selection: { light: entry.reference, dark: null },
-            execute: async () => undefined, push: path => { href = path; },
+            execute: async () => undefined, push: path => { expect(adapter.openHref(path)).toBe(true); },
         }).find(item => item.id === 'theme.editCss');
         await command!.action();
-        expect(href).toBe(`${pathname}?view=css`);
-        await screen.update(body(href));
+        await screen.update(body());
 
         expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
         await screen.pressByTestIdAsync('settings-theme-profile-view:colors');
+        await screen.update(body());
+        expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Unsaved ocean');
+
+        await command!.action();
+        await screen.update(body());
+        expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-theme-profile-view:colors');
+        await screen.update(body());
         expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Unsaved ocean');
     });
 

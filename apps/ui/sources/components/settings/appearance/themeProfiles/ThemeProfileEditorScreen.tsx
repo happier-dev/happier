@@ -108,7 +108,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const isNewProfile = profileId === createNewProfileRouteId;
     const previewRef = isNewProfile ? getProfileIdParam(params.previewRef) : null;
     const startFrom = isNewProfile && !previewRef ? getProfileIdParam(params.from) : null;
-    const requestedView = getProfileIdParam(params.view) === 'css' ? 'css' : 'colors';
+    const viewParam = getProfileIdParam(params.view);
+    const requestedView = viewParam === 'css' || viewParam === 'style' ? viewParam : 'colors';
     const draftKey = isNewProfile ? JSON.stringify([profileId, previewRef, startFrom, requestedView]) : profileId;
     return <ThemeProfileEditorDraft key={draftKey} profileId={profileId} previewRef={previewRef}
         startFrom={startFrom} requestedView={requestedView} />;
@@ -196,12 +197,13 @@ function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, requestedVi
         if (!parsed.ok) throw new Error(parsed.error);
         return parsed.document;
     }, []);
-    const [view, setView] = React.useState(requestedView);
-    const [previousRequestedView, setPreviousRequestedView] = React.useState(requestedView);
-    if (previousRequestedView !== requestedView) {
-        setPreviousRequestedView(requestedView);
-        setView(requestedView);
-    }
+    // A new Theme's view param seeds its draft. A saved Theme can change the addressed view in place.
+    const [newProfileView, setNewProfileView] = React.useState(requestedView);
+    const view = isNewProfile ? newProfileView : requestedView;
+    const selectView = React.useCallback((nextView: ThemeEditorView) => {
+        if (isNewProfile) setNewProfileView(nextView);
+        else router.setParams({ view: nextView });
+    }, [isNewProfile, router]);
     const [colorQuery, setColorQuery] = React.useState('');
     const codeEditorRef = React.useRef<CodeEditorHandle>(null);
     const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});
@@ -446,7 +448,7 @@ function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, requestedVi
         readonly,
         editorRef: codeEditorRef,
         onChange: updateCss,
-        onViewChange: setView,
+        onViewChange: selectView,
         onQueryChange: setColorQuery,
     });
 
@@ -489,7 +491,7 @@ function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, requestedVi
         },
         readonly,
         view,
-        onViewChange: setView,
+        onViewChange: selectView,
         ...(!readonly ? {
             details: {
                 name: draft.name,
