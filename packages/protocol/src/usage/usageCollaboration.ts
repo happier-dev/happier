@@ -38,7 +38,7 @@ export type PreparedUsageCollaborationFact = Readonly<{
     source: UsageCollaborationFact; fact: UsageCollaborationFact; identity: string;
     unknownTimestamp: boolean; inPeriod: boolean;
 }>;
-function collaborationIdentity(fact: UsageCollaborationFact) {
+function collaborationIdentity(fact: Pick<UsageCollaborationFact, 'relation' | 'sourceSessionId' | 'targetId' | 'evidenceId'>) {
     const relation = fact.relation === 'review' || fact.relation === 'plan' ? 'run' : fact.relation;
     return JSON.stringify([relation, fact.relation === 'report' ? fact.sourceSessionId : null,
         fact.targetId, fact.relation === 'handoff' ? fact.evidenceId : null]);
@@ -53,18 +53,61 @@ export function prepareUsageCollaborationFacts(facts: readonly UsageCollaboratio
     });
 }
 
-function distinctCollaborationFacts<T extends Pick<PreparedUsageCollaborationFact, 'fact' | 'identity'>>(facts: readonly T[]): T[] {
-    const unique = new Map<string, T>();
-    const runNativeTargets = new Set(facts.flatMap(({ fact }) => fact.relation !== 'native' && fact.nativeTargetId ? [fact.nativeTargetId] : []));
-    for (const prepared of facts) {
-        const fact = prepared.fact;
-        if (fact.relation === 'native' && runNativeTargets.has(fact.targetId)) continue;
-        const previous = unique.get(prepared.identity)?.fact;
-        if (!previous || fact.observedAtMs !== null && (previous.observedAtMs === null || fact.observedAtMs < previous.observedAtMs)
-            || fact.observedAtMs === previous.observedAtMs && (previous.relation === 'run' && fact.relation !== 'run'
-                || previous.sourceAgentId === null && fact.sourceAgentId !== null)) unique.set(prepared.identity, prepared);
+type CollaborationCandidate = Pick<PreparedUsageCollaborationFact, 'fact' | 'identity'>;
+
+function blockingNativeTarget(fact: UsageCollaborationFact | undefined): string | undefined {
+    return fact?.relation === 'native' ? undefined : fact?.nativeTargetId || undefined;
+}
+
+function preferCollaborationFact(fact: UsageCollaborationFact, previous: UsageCollaborationFact | undefined): boolean {
+    return !previous || fact.observedAtMs !== null && (previous.observedAtMs === null || fact.observedAtMs < previous.observedAtMs)
+        || fact.observedAtMs === previous.observedAtMs && (previous.relation === 'run' && fact.relation !== 'run'
+            || previous.sourceAgentId === null && fact.sourceAgentId !== null);
+}
+
+function createDistinctCollaborationFold<T extends CollaborationCandidate>() {
+    const winners = new Map<string, T>();
+    const winningRunReferences = new Map<string, number>();
+    const changeRunReference = (targetId: string, change: number) => {
+        const count = (winningRunReferences.get(targetId) ?? 0) + change;
+        if (count === 0) winningRunReferences.delete(targetId);
+        else winningRunReferences.set(targetId, count);
+    };
+    function append(candidates: readonly T[]) {
+        const blockedOnPage = new Set<string>();
+        for (const { fact } of candidates) {
+            const target = blockingNativeTarget(fact);
+            if (target) blockedOnPage.add(target);
+        }
+        // A candidate may suppress a native fact even when another run wins.
+        for (const targetId of blockedOnPage) {
+            winners.delete(collaborationIdentity({ relation: 'native', targetId, sourceSessionId: null, evidenceId: targetId }));
+        }
+        for (const candidate of candidates) {
+            const { fact, identity } = candidate;
+            if (fact.relation === 'native' && (blockedOnPage.has(fact.targetId) || winningRunReferences.has(fact.targetId))) continue;
+            const previous = winners.get(identity)?.fact;
+            if (!preferCollaborationFact(fact, previous)) continue;
+            const previousTarget = blockingNativeTarget(previous);
+            const nextTarget = blockingNativeTarget(fact);
+            if (previousTarget !== nextTarget) {
+                if (previousTarget) {
+                    // The displaced run was still a candidate for this page.
+                    blockedOnPage.add(previousTarget);
+                    changeRunReference(previousTarget, -1);
+                }
+                if (nextTarget) changeRunReference(nextTarget, 1);
+            }
+            winners.set(identity, candidate);
+        }
     }
-    return [...unique.values()];
+    return { append, values: () => winners.values() };
+}
+
+function distinctCollaborationFacts<T extends CollaborationCandidate>(facts: readonly T[]): T[] {
+    const fold = createDistinctCollaborationFold<T>();
+    fold.append(facts);
+    return [...fold.values()];
 }
 
 export function resolveUsageCollaboration(input: Readonly<{
@@ -172,13 +215,19 @@ export function resolveUsageCollaborationHistoricalSource(fact: UsageCollaborati
     return sourceAgentId === null ? fact : { ...fact, sourceAgentId };
 }
 
-/** Projects only already-opened metadata and typed native/tool witnesses; never scrapes prose. */
-export function projectSessionUsageCollaboration(input: Readonly<{
-    session: OpenedUsageSession; tools: readonly UsageCollaborationToolEvidence[];
-    observedSidechainIds: ReadonlySet<string>; retained?: readonly UsageCollaborationFact[];
-}>): UsageCollaborationFact[] {
-    const { session } = input;
-    const facts: UsageCollaborationFact[] = [];
+type SessionCollaborationPage = Readonly<{
+    tools: readonly UsageCollaborationToolEvidence[];
+    observedSidechainIds: ReadonlySet<string>;
+}>;
+
+/** Retain selected collaboration facts across pages while joining tools only within one page. */
+export function createSessionUsageCollaborationProjector(session: OpenedUsageSession,
+    retained?: readonly UsageCollaborationFact[]): Readonly<{
+        appendPage: (page: SessionCollaborationPage) => void;
+        finish: () => UsageCollaborationFact[];
+    }> {
+    const fold = createDistinctCollaborationFold<CollaborationCandidate>();
+    const metadataFacts: UsageCollaborationFact[] = [];
     const make = (relation: UsageCollaborationRelation, targetId: string, observedAtMs: number | null,
         sourceSessionId: string | null, targetAgentId: string | null = null, evidenceId = targetId): UsageCollaborationFact => {
         const turn = turnAt(session, observedAtMs);
@@ -190,58 +239,83 @@ export function projectSessionUsageCollaboration(input: Readonly<{
     if (!source && (session.origin?.kind === 'session' || session.origin?.kind === 'execution_run')) {
         // The admitted origin projection exposes kind, not the immutable parent Session id.
         // Current manager membership must never substitute that missing birth provenance.
-        facts.push(make('spawn', `session:${session.id}`, timestamp(session.createdAt), null));
+        metadataFacts.push(make('spawn', `session:${session.id}`, timestamp(session.createdAt), null));
     }
-    if (session.manager?.sessionId) facts.push(make('report', `session:${session.manager.sessionId}`, null, session.id));
-    if (source) facts.push(make('replay', `session:${session.id}`, replayAt, source,
+    if (session.manager?.sessionId) metadataFacts.push(make('report', `session:${session.manager.sessionId}`, null, session.id));
+    if (source) metadataFacts.push(make('replay', `session:${session.id}`, replayAt, source,
         turnAt(session, replayAt)?.agentId ?? null));
-    if (handoff) facts.push({ ...make('handoff', `session:${session.id}`, timestamp(handoff.completedAtMs), session.id,
+    if (handoff) metadataFacts.push({ ...make('handoff', `session:${session.id}`, timestamp(handoff.completedAtMs), session.id,
         handoff.agentId, JSON.stringify([session.id, handoff.sourceMachineId, handoff.targetMachineId, handoff.completedAtMs])),
         sourceAgentId: handoff.agentId });
 
-    const merged = new Map<string, UsageCollaborationToolEvidence>();
-    for (const tool of input.tools) {
-        const previous = merged.get(tool.id);
-        merged.set(tool.id, { ...previous, ...tool, name: tool.name || previous?.name || '',
-            input: tool.input ?? previous?.input, result: tool.result ?? previous?.result,
-            observedAtMs: previous?.observedAtMs ?? tool.observedAtMs,
-            nativeAgentId: previous?.nativeAgentId ?? tool.nativeAgentId });
-    }
-    const runs: UsageCollaborationFact[] = [];
-    const native: UsageCollaborationFact[] = [];
-    for (const tool of merged.values()) {
-        if (tool.name !== 'SubAgentRun' && !isGenericSubAgentToolName(tool.name)) continue;
-        const toolInput = projectUsageCollaborationToolPayload(tool.input);
-        const toolResult = projectUsageCollaborationToolPayload(tool.result);
-        const structuredTool = { id: tool.id, input: toolInput, result: toolResult };
-        const sidechainId = readSubAgentToolSidechainId(structuredTool, tool.name);
-        const runId = readSubAgentToolRunId(structuredTool);
-        if (tool.name === 'SubAgentRun' && runId) {
-            const origin = launchOriginReadSchema.safeParse(toolInput?.launchOrigin ?? toolResult?.launchOrigin);
-            const target = targetReadSchema.safeParse(toolInput?.backendTarget ?? toolResult?.backendTarget);
-            let targetAgentId: string | null = null;
-            if (target.success) {
-                try {
-                    const resolved = readBackendTargetRefV2(target.data);
-                    // A configured definition id is not an Agent identity.
-                    targetAgentId = resolved.configuredBackendId ? null : resolved.backendId;
-                } catch { /* An unresolvable contributed identity remains Unknown. */ }
-            }
-            const intent = toolInput?.intent ?? toolResult?.intent;
-            const relation = intent === 'review' || intent === 'plan' ? intent : 'run';
-            const observedAtMs = timestamp(toolInput?.startedAtMs ?? toolResult?.startedAtMs) ?? tool.observedAtMs;
-            runs.push({ ...make(relation, `run:${runId}`, observedAtMs,
-                origin.success && origin.data.kind === 'session' ? origin.data.sessionId : null, targetAgentId, tool.id),
-                ...(sidechainId ? { nativeTargetId: `sidechain:${session.id}:${sidechainId}` } : {}) });
-        } else if (sidechainId && (id(toolInput?.sidechainId) || id(toolResult?.sidechainId) || input.observedSidechainIds.has(sidechainId))) {
-            native.push(make('native', `sidechain:${session.id}:${sidechainId}`, tool.observedAtMs,
-                session.id, tool.nativeAgentId, tool.id));
+    // A dropped candidate can still suppress a sibling on the first page.
+    // Admit the retained seed and that page together before keeping only winners.
+    let firstPage: readonly UsageCollaborationFact[] | undefined = [
+        ...metadataFacts, ...(retained ?? []).filter(fact => ['run', 'native', 'review', 'plan'].includes(fact.relation)),
+    ];
+    const appendFacts = (facts: readonly UsageCollaborationFact[]) => {
+        fold.append(facts.map(fact => ({ fact, identity: collaborationIdentity(fact) })));
+    };
+    function appendPage(input: SessionCollaborationPage) {
+        const merged = new Map<string, UsageCollaborationToolEvidence>();
+        for (const tool of input.tools) {
+            const previous = merged.get(tool.id);
+            merged.set(tool.id, { ...previous, ...tool, name: tool.name || previous?.name || '',
+                input: tool.input ?? previous?.input, result: tool.result ?? previous?.result,
+                observedAtMs: previous?.observedAtMs ?? tool.observedAtMs,
+                nativeAgentId: previous?.nativeAgentId ?? tool.nativeAgentId });
         }
+        const runs: UsageCollaborationFact[] = [];
+        const native: UsageCollaborationFact[] = [];
+        for (const tool of merged.values()) {
+            if (tool.name !== 'SubAgentRun' && !isGenericSubAgentToolName(tool.name)) continue;
+            const toolInput = projectUsageCollaborationToolPayload(tool.input);
+            const toolResult = projectUsageCollaborationToolPayload(tool.result);
+            const structuredTool = { id: tool.id, input: toolInput, result: toolResult };
+            const sidechainId = readSubAgentToolSidechainId(structuredTool, tool.name);
+            const runId = readSubAgentToolRunId(structuredTool);
+            if (tool.name === 'SubAgentRun' && runId) {
+                const origin = launchOriginReadSchema.safeParse(toolInput?.launchOrigin ?? toolResult?.launchOrigin);
+                const target = targetReadSchema.safeParse(toolInput?.backendTarget ?? toolResult?.backendTarget);
+                let targetAgentId: string | null = null;
+                if (target.success) {
+                    try {
+                        const resolved = readBackendTargetRefV2(target.data);
+                        // A configured definition id is not an Agent identity.
+                        targetAgentId = resolved.configuredBackendId ? null : resolved.backendId;
+                    } catch { /* An unresolvable contributed identity remains Unknown. */ }
+                }
+                const intent = toolInput?.intent ?? toolResult?.intent;
+                const relation = intent === 'review' || intent === 'plan' ? intent : 'run';
+                const observedAtMs = timestamp(toolInput?.startedAtMs ?? toolResult?.startedAtMs) ?? tool.observedAtMs;
+                runs.push({ ...make(relation, `run:${runId}`, observedAtMs,
+                    origin.success && origin.data.kind === 'session' ? origin.data.sessionId : null, targetAgentId, tool.id),
+                    ...(sidechainId ? { nativeTargetId: `sidechain:${session.id}:${sidechainId}` } : {}) });
+            } else if (sidechainId && (id(toolInput?.sidechainId) || id(toolResult?.sidechainId) || input.observedSidechainIds.has(sidechainId))) {
+                native.push(make('native', `sidechain:${session.id}:${sidechainId}`, tool.observedAtMs,
+                    session.id, tool.nativeAgentId, tool.id));
+            }
+        }
+        appendFacts([...(firstPage ?? []), ...runs, ...native]);
+        firstPage = undefined;
     }
-    // Retained message evidence cannot preserve replaced current metadata relationships.
-    const retained = (input.retained ?? []).filter(fact => ['run', 'native', 'review', 'plan'].includes(fact.relation));
-    const all = [...facts, ...retained, ...runs, ...native];
-    // Multiple child turns share one native child identity; run/native representations
-    // sharing a witnessed sidechain resolve to the host's run, as in the Session roster.
-    return distinctCollaborationFacts(all.map(fact => ({ fact, identity: collaborationIdentity(fact) }))).map(row => row.fact);
+    return {
+        appendPage,
+        finish() {
+            if (firstPage) {
+                appendFacts(firstPage);
+                firstPage = undefined;
+            }
+            return Array.from(fold.values(), row => row.fact);
+        },
+    };
+}
+
+/** Projects only already-opened metadata and typed native/tool witnesses. */
+export function projectSessionUsageCollaboration(input: SessionCollaborationPage & Readonly<{
+    session: OpenedUsageSession; retained?: readonly UsageCollaborationFact[];
+}>): UsageCollaborationFact[] {
+    const projector = createSessionUsageCollaborationProjector(input.session, input.retained);
+    projector.appendPage(input);
+    return projector.finish();
 }

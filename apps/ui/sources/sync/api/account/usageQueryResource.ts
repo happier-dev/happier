@@ -48,6 +48,7 @@ import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/c
 import { isConnectedPresentationCatalogUsableV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership, usageQueryNeedsSessionCandidates, projectSessionUsageWorkEvidence,
+    createSessionUsageWorkEvidenceProjector,
     type UsageSessionMessageEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema,
     createUsageSessionEvidenceStreamDecoder,
@@ -1090,6 +1091,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                             }, readAccountCurrentness: accountCurrentnessSource.read });
                         let allPagesOpened = true;
                         let beforeSeq: number | undefined;
+                        let projector: ReturnType<typeof createSessionUsageWorkEvidenceProjector> | undefined;
                         while (true) {
                             const decryptedMessages = encryption ? await encryption.decryptMessages(page.messages, { signal }) : null;
                             const messages = await Promise.all(page.messages.map((message, index) => readStoredSessionMessage({ message,
@@ -1102,10 +1104,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                             // Fold only small witnesses across pages. Decrypted
                             // prose/tool bodies do not become the accumulated input.
                             if (page.messages.length === 0 || readableMessages.length > 0) {
-                                detail = projectSessionUsageWorkEvidence(session, readableMessages,
-                                    { messagesComplete: completeMessageCoverage, messageEvidence });
-                                messageEvidence = { acceptedInputs: detail.acceptedInputs, phaseEvents: detail.phaseEvents, coach: detail.coach,
-                                    collaboration: detail.collaboration };
+                                projector ??= createSessionUsageWorkEvidenceProjector(session);
+                                projector.appendPage(readableMessages);
                             }
                             if (page.hasMore !== true) break;
                             const nextBeforeSeq = page.nextBeforeSeq;
@@ -1123,6 +1123,11 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                                     }
                                     return body;
                                 } });
+                        }
+                        if (projector) {
+                            detail = projector.finish(completeMessageCoverage);
+                            messageEvidence = { acceptedInputs: detail.acceptedInputs, phaseEvents: detail.phaseEvents, coach: detail.coach,
+                                collaboration: detail.collaboration };
                         }
                     }
                     }

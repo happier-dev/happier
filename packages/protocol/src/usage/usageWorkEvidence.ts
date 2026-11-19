@@ -24,7 +24,7 @@ import type { SessionMessageAcceptedDeliveryFactsV1 } from '../sessions/messages
 import { SessionAwarenessOriginV1Schema, type SessionAwarenessOriginV1 } from '../sessions/awareness/projectionV1.js';
 import { SessionTurnLifecycleStatusV1Schema } from '../sessions/turns/sessionTurnLifecycleStatusV1.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
-import { projectSessionUsageCollaboration, projectUsageCollaborationToolPayload, readUsageCollaborationMetadata,
+import { createSessionUsageCollaborationProjector, projectUsageCollaborationToolPayload, readUsageCollaborationMetadata,
     type UsageCollaborationToolEvidence } from './usageCollaboration.js';
 export { USAGE_COLLABORATION_TOOL_LEAF_KEYS, projectUsageCollaborationToolPayload } from './usageCollaboration.js';
 import type { UsageSessionTimingV1, UsageTimingBoundsV1 } from './usageTimingV1.js';
@@ -639,6 +639,140 @@ function indexUnambiguousWitnesses<T, Key>(witnesses: Iterable<T>, readKey: (wit
     return index;
 }
 
+function createSessionUsageWorkEvidenceFold(session: OpenedUsageSession, retained?: UsageSessionMessageEvidence) {
+    const workId = (turnId: string | null) => JSON.stringify([session.id, turnId]);
+    const acceptedInputs = [...(retained?.acceptedInputs ?? [])];
+    const composition = new Map<string, UsagePromptComposition>(retained?.coach?.composition?.map(row => [row.evidenceId, row]));
+    const compactions = new Map<string, UsageCoachCompactionFact>(retained?.coach?.detail?.compactions?.map(row => [row.evidenceId, row]));
+    const mcpUsage = new Map<string, UsageMcpBindingUsage>(retained?.coach?.detail?.mcpUsage?.map(row => [row.evidenceId, row]));
+    const phaseEvents = new Map<string, NonNullable<UsageHowYouWorkDetailInput['phaseEvents']>[number]>(retained?.phaseEvents?.map(row => [row.evidenceId, row]));
+    let hasMessages = retained !== undefined;
+    let hasAcceptedInputs = retained?.acceptedInputs !== undefined;
+    let collaborationProjector: ReturnType<typeof createSessionUsageCollaborationProjector> | undefined;
+    const getCollaboration = () => (collaborationProjector ??= createSessionUsageCollaborationProjector(session, retained?.collaboration));
+
+    function appendProjections(messageProjections: readonly UsageSessionMessageProjection[]) {
+        hasMessages = true;
+        const seenInputs = new Set<string>();
+        const collaborationTools: UsageCollaborationToolEvidence[] = [];
+        const observedSidechainIds = new Set<string>();
+        for (const message of messageProjections) {
+            for (const sidechainId of message.sidechainIds) observedSidechainIds.add(sidechainId);
+            const observedAtMs = timestamp(message.createdAt);
+            for (const tool of message.tools) {
+                collaborationTools.push({ id: tool.id, name: tool.name, input: tool.input, result: tool.result,
+                    observedAtMs, nativeAgentId: message.nativeAgentId });
+                if (tool.kind !== 'call' || observedAtMs === null) continue;
+                const classification = resolveToolMutationClassification(tool.name);
+                const kind = classification === 'read_only' ? 'read' : classification === 'opaque_executor' ? 'execute'
+                    : classification === 'container' ? 'delegate' : classification === null || classification === 'mutating_unknown'
+                        ? 'unknown' : 'change';
+                phaseEvents.set(tool.id, { evidenceId: tool.id, sessionId: session.id, turnId: null, observedAtMs,
+                    kind, method: 'tool_classification' });
+            }
+            const event = message.event;
+            if (event?.type === 'mcp-binding-usage' && event.usage.sessionId === session.id) {
+                const usage = event.usage;
+                mcpUsage.set(usage.evidenceId, usage);
+            }
+            if (event?.type === 'prompt-composition' && event.composition.sessionId === session.id) {
+                const evidence = event.composition;
+                composition.set(evidence.evidenceId, evidence);
+            }
+            if (event?.type === 'context-compaction') {
+                const compaction = event;
+                if (compaction.phase === 'completed' && observedAtMs !== null
+                    && compaction.source !== undefined && compaction.source !== 'transcript-inference' && compaction.source !== 'user-command') {
+                    const evidenceId = JSON.stringify([session.id, compaction.lifecycleId ?? compaction.agentEventId
+                        ?? message.eventId ?? message.localId ?? message.id]);
+                    compactions.set(evidenceId, { evidenceId, observedAtMs, sessionId: session.id,
+                        turnId: compaction.turnId ?? null });
+                }
+            }
+            const accepted = message.acceptedDelivery;
+            if (!accepted || !message.localId || seenInputs.has(message.localId)) continue;
+            seenInputs.add(message.localId);
+            acceptedInputs.push({ inputId: message.localId, workId: workId(accepted.delivery.turnId),
+                turnId: accepted.delivery.turnId, acceptedAtMs: accepted.acceptedAtMs, deliveryKind: accepted.delivery.kind });
+        }
+        hasAcceptedInputs ||= messageProjections.length === 0 || acceptedInputs.length > 0;
+        getCollaboration().appendPage({ tools: collaborationTools, observedSidechainIds });
+    }
+
+    function finish(messagesComplete?: boolean): UsageHowYouWorkDetailInput {
+        const turns = session.sessionTurns?.sessionId === session.id ? session.sessionTurns.turns : [];
+        // failTurn can publish a failed host carrier without ever starting a native run.
+        // Keep its lifecycle facts, but it contributes no Run length observation.
+        const closedTurns = turns.filter(turn => turn.status !== 'failed' || turn.agentTurnId !== undefined)
+            .map(turn => ({ workId: workId(turn.turnId), agentId: turn.agentId ?? null,
+                startMs: turn.startedAt, endMs: timestamp(turn.terminalAt), status: turn.status }));
+        if (!hasMessages) {
+            const saved = readCurrentUsageSessionWorkFactsV1(session);
+            // Older saved facts lack native turn provenance; use the current turn reader
+            // for this population while retaining the other derived private evidence.
+            if (saved) return session.sessionTurns?.sessionId === session.id ? { ...saved.evidence, closedTurns } : saved.evidence;
+        }
+        const facts: NonNullable<UsageHowYouWorkDetailInput['facts']>[number][] = [];
+        const permissions: NonNullable<UsageHowYouWorkDetailInput['permissions']>[number][] = [];
+        const machineId = session.metadata?.machineId ?? null;
+        for (const turn of turns) {
+            facts.push({ workId: workId(turn.turnId), evidenceId: turn.turnId, agentId: turn.agentId ?? null,
+                machineId, kind: 'busy', startMs: turn.startedAt, endMs: timestamp(turn.terminalAt) });
+        }
+        const state = session.stateEvidence === undefined ? readUsageSessionStateEvidence(session)
+            : { known: true, evidence: session.stateEvidence };
+        permissions.push(...state.evidence.permissions);
+        facts.push(...state.evidence.waits.map(fact => ({ ...fact, machineId })));
+        const modelRequests: UsageCoachModelRequest[] = [];
+        // A complete opened user/event page is necessary to exclude changed workloads.
+        // Terminal completion measures response completion, not quality or native context equivalence.
+        if (messagesComplete === true) {
+            const acceptedByTurn = indexUnambiguousWitnesses(acceptedInputs, row => row.turnId);
+            const compositionByInput = indexUnambiguousWitnesses(composition.values(), row => row.inputId);
+            for (const turn of turns) {
+                const terminalAt = timestamp(turn.terminalAt);
+                if (turn.status !== 'completed' || terminalAt === null) continue;
+                const accepted = acceptedByTurn.get(turn.turnId);
+                if (accepted?.deliveryKind !== 'newTurn') continue;
+                const record = compositionByInput.get(accepted.inputId);
+                if (!record?.requestIdentity || record.boundary !== 'host_pre_dispatch' || record.deliveryKind !== 'newTurn'
+                    || record.turnId !== null && record.turnId !== turn.turnId || record.observedAtMs > terminalAt) continue;
+                const projected = UsageCoachModelRequestSchema.safeParse({ evidenceId: record.evidenceId,
+                    observedAtMs: terminalAt, startedAtMs: turn.startedAt, sessionId: session.id,
+                    turnId: turn.turnId, requestIdentity: record.requestIdentity });
+                if (projected.success) modelRequests.push(projected.data);
+            }
+        }
+        // The current retained snapshot/page is not proof of complete historical coverage.
+        const hasFacts = session.sessionTurns?.sessionId === session.id || facts.length > 0;
+        const hasPermissions = state.known;
+        const collaboration = getCollaboration().finish();
+        return { status: hasFacts || hasPermissions || hasMessages || collaboration.length > 0 ? 'partial' : 'unknown',
+            ...(hasFacts ? { facts } : {}), ...(hasPermissions ? { permissions } : {}),
+            ...(hasFacts ? { closedTurns } : {}),
+            ...(hasMessages || collaboration.length > 0 ? { collaboration } : {}),
+            ...(hasAcceptedInputs ? { acceptedInputs: acceptedInputs.slice() } : {}),
+            ...(hasMessages ? { phaseEvents: [...phaseEvents.values()] } : {}),
+            ...(hasMessages ? { coach: { composition: [...composition.values()], compositionCoverage: 'partial' as const,
+                detail: { coverage: 'partial' as const, compactions: [...compactions.values()], mcpUsage: [...mcpUsage.values()], modelRequests } } } : {}),
+            activityAtMs: [...turns.map(turn => turn.startedAt), ...acceptedInputs.map(input => input.acceptedAtMs)] };
+    }
+
+    return { appendProjections, finish };
+}
+
+/** Fold opened transcript pages into content-free evidence, with page-local witness pairing. */
+export function createSessionUsageWorkEvidenceProjector(session: OpenedUsageSession): Readonly<{
+    appendPage: (messages: readonly OpenedUsageMessage[]) => void;
+    finish: (messagesComplete: boolean) => UsageHowYouWorkDetailInput;
+}> {
+    const fold = createSessionUsageWorkEvidenceFold(session);
+    return {
+        appendPage: messages => fold.appendProjections(messages.map(projectUsageSessionMessageProjection)),
+        finish: fold.finish,
+    };
+}
+
 /** A bounded projection of opened canonical facts, never a Session lifecycle owner. */
 export function projectSessionUsageWorkEvidence(
     session: OpenedUsageSession,
@@ -646,112 +780,8 @@ export function projectSessionUsageWorkEvidence(
     coverage: Readonly<{ messagesComplete?: boolean; messageEvidence?: UsageSessionMessageEvidence;
         messageProjections?: readonly UsageSessionMessageProjection[] }> = {},
 ): UsageHowYouWorkDetailInput {
-    const turns = session.sessionTurns?.sessionId === session.id ? session.sessionTurns.turns : [];
-    const workId = (turnId: string | null) => JSON.stringify([session.id, turnId]);
-    // failTurn can publish a failed host carrier without ever starting a native run.
-    // Keep its lifecycle facts, but it contributes no Run length observation.
-    const closedTurns = turns.filter(turn => turn.status !== 'failed' || turn.agentTurnId !== undefined)
-        .map(turn => ({ workId: workId(turn.turnId), agentId: turn.agentId ?? null,
-            startMs: turn.startedAt, endMs: timestamp(turn.terminalAt), status: turn.status }));
-    if (messages === undefined && coverage.messageProjections === undefined && coverage.messageEvidence === undefined) {
-        const saved = readCurrentUsageSessionWorkFactsV1(session);
-        // Older saved facts lack native turn provenance; use the current turn reader
-        // for this population while retaining the other derived private evidence.
-        if (saved) return session.sessionTurns?.sessionId === session.id ? { ...saved.evidence, closedTurns } : saved.evidence;
-    }
-    const facts: NonNullable<UsageHowYouWorkDetailInput['facts']>[number][] = [];
-    const permissions: NonNullable<UsageHowYouWorkDetailInput['permissions']>[number][] = [];
-    const machineId = session.metadata?.machineId ?? null;
-    for (const turn of turns) {
-        facts.push({ workId: workId(turn.turnId), evidenceId: turn.turnId, agentId: turn.agentId ?? null,
-            machineId, kind: 'busy', startMs: turn.startedAt, endMs: timestamp(turn.terminalAt) });
-    }
-    const state = session.stateEvidence === undefined ? readUsageSessionStateEvidence(session)
-        : { known: true, evidence: session.stateEvidence };
-    permissions.push(...state.evidence.permissions);
-    facts.push(...state.evidence.waits.map(fact => ({ ...fact, machineId })));
-    const retained = coverage.messageEvidence;
-    const messageProjections = coverage.messageProjections ?? messages?.map(projectUsageSessionMessageProjection);
-    const hasMessages = messageProjections !== undefined || retained !== undefined;
-    const acceptedInputs = [...(retained?.acceptedInputs ?? [])];
-    const seenInputs = new Set<string>();
-    const composition = new Map<string, UsagePromptComposition>(retained?.coach?.composition?.map(row => [row.evidenceId, row]));
-    const compactions = new Map<string, UsageCoachCompactionFact>(retained?.coach?.detail?.compactions?.map(row => [row.evidenceId, row]));
-    const mcpUsage = new Map<string, UsageMcpBindingUsage>(retained?.coach?.detail?.mcpUsage?.map(row => [row.evidenceId, row]));
-    const phaseEvents = new Map<string, NonNullable<UsageHowYouWorkDetailInput['phaseEvents']>[number]>(retained?.phaseEvents?.map(row => [row.evidenceId, row]));
-    const collaborationTools: UsageCollaborationToolEvidence[] = [];
-    const observedSidechainIds = new Set<string>();
-    for (const message of messageProjections ?? []) {
-        for (const sidechainId of message.sidechainIds) observedSidechainIds.add(sidechainId);
-        const observedAtMs = timestamp(message.createdAt);
-        for (const tool of message.tools) {
-            collaborationTools.push({ id: tool.id, name: tool.name, input: tool.input, result: tool.result,
-                observedAtMs, nativeAgentId: message.nativeAgentId });
-            if (tool.kind !== 'call' || observedAtMs === null) continue;
-            const classification = resolveToolMutationClassification(tool.name);
-            const kind = classification === 'read_only' ? 'read' : classification === 'opaque_executor' ? 'execute'
-                : classification === 'container' ? 'delegate' : classification === null || classification === 'mutating_unknown'
-                    ? 'unknown' : 'change';
-            phaseEvents.set(tool.id, { evidenceId: tool.id, sessionId: session.id, turnId: null, observedAtMs,
-                kind, method: 'tool_classification' });
-        }
-        const event = message.event;
-        if (event?.type === 'mcp-binding-usage' && event.usage.sessionId === session.id) {
-            const usage = event.usage;
-            mcpUsage.set(usage.evidenceId, usage);
-        }
-        if (event?.type === 'prompt-composition' && event.composition.sessionId === session.id) {
-            const evidence = event.composition;
-            composition.set(evidence.evidenceId, evidence);
-        }
-        if (event?.type === 'context-compaction') {
-            const compaction = event;
-            if (compaction.phase === 'completed' && observedAtMs !== null
-                && compaction.source !== undefined && compaction.source !== 'transcript-inference' && compaction.source !== 'user-command') {
-                const evidenceId = JSON.stringify([session.id, compaction.lifecycleId ?? compaction.agentEventId
-                    ?? message.eventId ?? message.localId ?? message.id]);
-                compactions.set(evidenceId, { evidenceId, observedAtMs, sessionId: session.id,
-                    turnId: compaction.turnId ?? null });
-            }
-        }
-        const accepted = message.acceptedDelivery;
-        if (!accepted || !message.localId || seenInputs.has(message.localId)) continue;
-        seenInputs.add(message.localId);
-        acceptedInputs.push({ inputId: message.localId, workId: workId(accepted.delivery.turnId),
-            turnId: accepted.delivery.turnId, acceptedAtMs: accepted.acceptedAtMs, deliveryKind: accepted.delivery.kind });
-    }
-    const modelRequests: UsageCoachModelRequest[] = [];
-    // A complete opened user/event page is necessary to exclude changed workloads.
-    // Terminal completion measures response completion, not quality or native context equivalence.
-    if (coverage.messagesComplete === true) {
-        const acceptedByTurn = indexUnambiguousWitnesses(acceptedInputs, row => row.turnId);
-        const compositionByInput = indexUnambiguousWitnesses(composition.values(), row => row.inputId);
-        for (const turn of turns) {
-            const terminalAt = timestamp(turn.terminalAt);
-            if (turn.status !== 'completed' || terminalAt === null) continue;
-            const accepted = acceptedByTurn.get(turn.turnId);
-            if (accepted?.deliveryKind !== 'newTurn') continue;
-            const record = compositionByInput.get(accepted.inputId);
-            if (!record?.requestIdentity || record.boundary !== 'host_pre_dispatch' || record.deliveryKind !== 'newTurn'
-                || record.turnId !== null && record.turnId !== turn.turnId || record.observedAtMs > terminalAt) continue;
-            const projected = UsageCoachModelRequestSchema.safeParse({ evidenceId: record.evidenceId,
-                observedAtMs: terminalAt, startedAtMs: turn.startedAt, sessionId: session.id,
-                turnId: turn.turnId, requestIdentity: record.requestIdentity });
-            if (projected.success) modelRequests.push(projected.data);
-        }
-    }
-    // The current retained snapshot/page is not proof of complete historical coverage.
-    const hasFacts = session.sessionTurns?.sessionId === session.id || facts.length > 0;
-    const hasPermissions = state.known;
-    const hasAcceptedInputs = retained?.acceptedInputs !== undefined || messageProjections !== undefined && (messageProjections.length === 0 || acceptedInputs.length > 0);
-    const collaboration = projectSessionUsageCollaboration({ session, tools: collaborationTools, observedSidechainIds, retained: retained?.collaboration });
-    return { status: hasFacts || hasPermissions || hasMessages || collaboration.length > 0 ? 'partial' : 'unknown',
-        ...(hasFacts ? { facts } : {}), ...(hasPermissions ? { permissions } : {}),
-        ...(hasFacts ? { closedTurns } : {}),
-        ...(hasMessages || collaboration.length > 0 ? { collaboration } : {}),
-        ...(hasAcceptedInputs ? { acceptedInputs } : {}),
-        ...(hasMessages ? { phaseEvents: [...phaseEvents.values()] } : {}),
-        ...(hasMessages ? { coach: { composition: [...composition.values()], compositionCoverage: 'partial' as const,
-            detail: { coverage: 'partial' as const, compactions: [...compactions.values()], mcpUsage: [...mcpUsage.values()], modelRequests } } } : {}),
-        activityAtMs: [...turns.map(turn => turn.startedAt), ...acceptedInputs.map(input => input.acceptedAtMs)] };
+    const fold = createSessionUsageWorkEvidenceFold(session, coverage.messageEvidence);
+    const projections = coverage.messageProjections ?? messages?.map(projectUsageSessionMessageProjection);
+    if (projections !== undefined) fold.appendProjections(projections);
+    return fold.finish(coverage.messagesComplete);
 }

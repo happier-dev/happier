@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds,
     usageQueryNeedsSessionCandidates, type UsageSessionMessageProjection } from './usageWorkEvidence.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
-import { resolveUsageCollaboration } from './usageCollaboration.js';
+import { createSessionUsageCollaborationProjector, resolveUsageCollaboration } from './usageCollaboration.js';
 import { SessionAwarenessOriginV1Schema } from '../sessions/awareness/projectionV1.js';
 import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 import { UsagePromptCompositionSchema } from './coach/usagePromptComposition.js';
@@ -309,6 +309,60 @@ describe('Usage shared work evidence', () => {
         expect(JSON.stringify(projected)).not.toMatch(/private instructions|private tool output|private user text|private\/path/);
         const retained = projectSessionUsageWorkEvidence(session, undefined, { messagesComplete: true, messageEvidence: projected });
         expect(retained).toEqual(projected);
+
+        const mcp = TranscriptRawAgentEventV1Schema.parse({ type: 'mcp-binding-usage', usage: {
+            v: 1, evidenceId: 'mcp-window', sessionId: session.id, turnId: 'old', observedAtMs: 400,
+            window: { startMs: 100, endMs: 400 }, coverage: 'complete', bindings: [],
+        } });
+        const firstPage = [raw[0]!, raw[2]!, { ...raw[2]!, id: 'within-page-repeat' }, raw[4]!];
+        const secondPage = [raw[1]!, { ...raw[2]!, id: 'next-page-repeat' }, raw[3]!, raw[5]!, raw[6]!,
+            { id: 'mcp-message', createdAt: 400, content: { role: 'agent', content: { type: 'event', id: 'mcp-event', data: mcp } } }];
+        const pageOneEvidence = projectSessionUsageWorkEvidence(session, firstPage);
+        const explicitPages = projectSessionUsageWorkEvidence(session, secondPage, {
+            messagesComplete: true, messageEvidence: pageOneEvidence,
+        });
+        const fold = workEvidence.createSessionUsageWorkEvidenceProjector(session);
+        fold.appendPage(firstPage);
+        fold.appendPage(secondPage);
+        const acrossPages = fold.finish(true);
+        expect(acrossPages).toEqual(explicitPages);
+        // Delivery ids deduplicate within a page. Split calls/results do not pair across pages.
+        expect(acrossPages.acceptedInputs?.map(row => row.inputId)).toEqual(['accepted', 'accepted']);
+        expect(acrossPages.collaboration).toEqual([]);
+        expect(acrossPages.phaseEvents?.map(row => row.evidenceId)).toEqual(['call', 'read', 'unnamed']);
+        expect(acrossPages.coach?.composition).toEqual([composition]);
+        expect(acrossPages.coach?.detail?.compactions).toEqual(projected.coach?.detail?.compactions);
+        expect(acrossPages.coach?.detail?.mcpUsage?.map(row => row.evidenceId)).toEqual(['mcp-window']);
+        expect(acrossPages.coach?.detail?.modelRequests).toEqual([]);
+
+        const emptyThenReadable = workEvidence.createSessionUsageWorkEvidenceProjector(session);
+        emptyThenReadable.appendPage([]);
+        emptyThenReadable.appendPage([raw[5]!]);
+        expect(emptyThenReadable.finish(false).acceptedInputs).toEqual([]);
+    });
+
+    it('keeps Run precedence and native relationship order across opened pages', () => {
+        const run = (id: string, sidechainId: string, observedAtMs: number) => ({
+            id, name: 'SubAgentRun', input: { runId: 'shared-run', sidechainId }, observedAtMs, nativeAgentId: 'codex',
+        });
+        const native = (id: string, sidechainId: string) => ({
+            id, name: 'Task', input: { sidechainId }, observedAtMs: 220, nativeAgentId: 'codex',
+        });
+        const fold = createSessionUsageCollaborationProjector(session);
+        const appendPage = (...tools: Parameters<typeof fold.appendPage>[0]['tools']) =>
+            fold.appendPage({ tools, observedSidechainIds: new Set<string>() });
+        const selected = () => fold.finish().map(fact => fact.evidenceId);
+
+        appendPage(run('first-run', 'old-target', 200), native('first-losing', 'losing-target'), native('keep', 'keep-target'));
+        expect(selected()).toEqual(['first-run', 'first-losing', 'keep']);
+
+        // Both the displaced retained Run and a losing new candidate suppress native witnesses for this page.
+        appendPage(run('earlier-run', 'new-target', 150), run('losing-run', 'losing-target', 250), native('second-old', 'old-target'));
+        expect(selected()).toEqual(['earlier-run', 'keep']);
+
+        // Only the selected Run can suppress newly observed native witnesses on later pages.
+        appendPage(native('third-old', 'old-target'), native('third-losing', 'losing-target'), native('third-new', 'new-target'));
+        expect(selected()).toEqual(['earlier-run', 'keep', 'third-old', 'third-losing']);
     });
 
     it('joins retained model-request witnesses with work proportional to turns', () => {

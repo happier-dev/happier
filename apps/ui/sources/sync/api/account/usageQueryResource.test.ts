@@ -1057,6 +1057,7 @@ describe('usage query captured Resource adapter', () => {
   ] as const).map(row => ({ ...row, writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: true })),
     { transport: 'json', compact: false, range: 'all', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: true, paginated: true },
     { transport: 'stream', compact: false, range: 'all', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: true, paginated: true },
+    { transport: 'stream', compact: false, range: 'explicit', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: true, comparePagePartitions: true },
     { transport: 'json', compact: false, range: 'all', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: true, paginated: true, unopenedFirstPage: true },
     { transport: 'json', compact: false, range: 'all', writeFailure: true, contextAdvance: false, active: false, includeTranscriptEvidence: true },
     { transport: 'json', compact: false, range: 'all', writeFailure: true, contextAdvance: true, active: false, includeTranscriptEvidence: true },
@@ -1064,10 +1065,11 @@ describe('usage query captured Resource adapter', () => {
     { transport: 'json', compact: false, range: '90days', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: false },
     { transport: 'json', compact: false, range: '7days', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: false },
     { transport: 'json', compact: true, range: '7days', writeFailure: false, contextAdvance: false, active: false, includeTranscriptEvidence: false },
-  ] as const)('opens E2EE evidence and reuses compact Session facts without transcript reads ($transport, compact=$compact, range=$range, writeFailure=$writeFailure, contextAdvance=$contextAdvance, active=$active, transcript=$includeTranscriptEvidence, paginated=$paginated, unopenedFirstPage=$unopenedFirstPage)', async (testCase) => {
+  ] as const)('opens E2EE evidence and reuses compact Session facts without transcript reads ($transport, compact=$compact, range=$range, writeFailure=$writeFailure, contextAdvance=$contextAdvance, active=$active, transcript=$includeTranscriptEvidence, paginated=$paginated, unopenedFirstPage=$unopenedFirstPage, comparePagePartitions=$comparePagePartitions)', async (testCase) => {
     const { transport, compact, range, writeFailure, contextAdvance, active, includeTranscriptEvidence } = testCase;
     const paginated = 'paginated' in testCase && testCase.paginated;
     const unopenedFirstPage = 'unopenedFirstPage' in testCase && testCase.unopenedFirstPage;
+    const comparePagePartitions = 'comparePagePartitions' in testCase && testCase.comparePagePartitions;
     const nowMs = Date.UTC(2026, 10, 6);
     const baseMs = nowMs - 1000;
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
@@ -1104,15 +1106,44 @@ describe('usage query captured Resource adapter', () => {
     ]);
     const [delivery] = await new AES256Encryption(sessionKey).encrypt([{ v: 1, acceptedAtMs: baseMs + 200,
       delivery: { kind: 'steer', turnId: 'turn' } }]);
+    const runId = 'partition-fixture-run';
+    const runTargetId = `run:${runId}`;
+    const runCiphertext = comparePagePartitions ? await sessionEncryption.encryptRawRecord({
+      role: 'agent', content: { type: 'codex', data: { type: 'tool-call', callId: 'partition-fixture-call',
+        name: 'SubAgentRun', input: { runId, launchOrigin: { kind: 'session', sessionId: id }, startedAtMs: baseMs + 200 } } },
+    }) : ciphertext;
+    const comparisonMessages = comparePagePartitions ? Array.from({ length: 8 }, (_, index) => ({
+      id: `comparison-message-${index}`, localId: index === 7 ? 'accepted' : `unaccepted-${index}`, seq: 8 - index,
+      createdAt: baseMs + 200, updatedAt: baseMs + 200,
+      content: { t: 'encrypted' as const, c: index === 0 ? runCiphertext : ciphertext },
+      ...(index === 7 ? { deliveryResolution: { v: 1 as const, kind: 'provider_accepted' as const,
+        content: { t: 'encrypted' as const, c: encodeBase64(delivery!, 'base64') } } } : {}),
+    })) : [];
+    const sentinelTurnId = 'lifecycle-only-turn';
+    const sessionTurns = [
+      { turnId: 'turn', agentId: 'codex', status: 'completed' as const, startedAt: baseMs + 100, terminalAt: baseMs + 400, updatedAt: baseMs + 900 },
+      ...(comparePagePartitions ? [{ turnId: sentinelTurnId, agentId: 'codex', status: 'completed' as const,
+        startedAt: baseMs + 500, terminalAt: baseMs + 800, updatedAt: baseMs + 900 }] : []),
+    ];
+    let comparedPaging: { pageSize: number; observePage: () => void } | undefined;
+    const comparisonPage = (beforeSeq: number, paging: NonNullable<typeof comparedPaging>) => {
+      paging.observePage();
+      const remaining = comparisonMessages.filter(message => message.seq < beforeSeq);
+      const messages = remaining.slice(0, paging.pageSize);
+      const hasMore = messages.length < remaining.length;
+      return { messages, hasMore, ...(hasMore ? { nextBeforeSeq: messages.at(-1)!.seq } : {}) };
+    };
     const { ownerMetadata: _owner, displayProjectionV1: _display, ...base } = createPlainSessionCurrentProjectionRecordFixture({
-      id, seq: paginated ? 2 : 1, createdAt: baseMs, updatedAt: baseMs + 900, active });
+      id, seq: comparePagePartitions ? comparisonMessages.length : paginated ? 2 : 1,
+      createdAt: baseMs, updatedAt: baseMs + 900, active });
     let record = { ...base, metadataLayoutVersion: 0, encryptionMode: 'e2ee' as const, dataEncryptionKey, metadata, agentState: null };
     const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
     const factWrites: unknown[] = [];
     let transcriptAttempts = 0;
-    const captured = await context(request => {
+    const captureFixture = () => context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
       if (request.path === `/v1/sessions/${id}/messages`) {
+        if (comparedPaging) return Response.json(comparisonPage(Number(request.url.searchParams.get('beforeSeq')), comparedPaging));
         expect(request.url.searchParams.get('beforeSeq')).toBe('2');
         return Response.json({ messages: [{ id: 'older-opaque', localId: 'accepted', seq: 1,
           createdAt: baseMs + 200, updatedAt: baseMs + 200, content: { t: 'encrypted', c: ciphertext },
@@ -1138,8 +1169,9 @@ describe('usage query captured Resource adapter', () => {
             content: compact ? { t: 'encrypted' as const, c: factCiphertexts.get(kind)! } : null })) } }
           : { detail: { status: 200, body: { session: record } } }),
         ...(input.readWorkFacts && compact ? {} : { turns: { status: 200 as const, body: { v: 1 as const, sessionId: id, updatedAt: baseMs + 900,
-          turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed' as const, startedAt: baseMs + 100, terminalAt: baseMs + 400, updatedAt: baseMs + 900 }] } } }),
-        ...(input.requests[0]!.query.includeTranscriptEvidence ? { messages: { status: 200, body: { messages: [
+          turns: sessionTurns } } }),
+        ...(input.requests[0]!.query.includeTranscriptEvidence ? { messages: { status: 200,
+          body: comparedPaging ? comparisonPage(record.seq + 1, comparedPaging) : { messages: [
           { id: 'opaque', localId: paginated ? 'unaccepted' : 'accepted', seq: record.seq, createdAt: baseMs + 200, updatedAt: baseMs + 200,
             content: { t: 'encrypted', c: unopenedFirstPage && transcriptAttempts === 1 ? encodeBase64(unopenedContent!, 'base64') : ciphertext },
             ...(!paginated ? { deliveryResolution: { v: 1 as const, kind: 'provider_accepted' as const,
@@ -1151,6 +1183,69 @@ describe('usage query captured Resource adapter', () => {
       ].join('\n'), { headers: { 'Content-Type': 'application/x-ndjson' } });
     }, undefined, undefined, { credentials, accountMode: 'e2ee',
       encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+    const query = normalizeUsageQuery({ session: id,
+      period: range === 'explicit' ? { startMs: baseMs, endMs: nowMs } : { relative: range },
+      includeWorkEvidence: false, includeTranscriptEvidence });
+    if (comparePagePartitions) {
+      const readPartition = async (pageSize: number) => {
+        let summaryPublished = false;
+        const beforePages: { summaryPublished: boolean; writes: number }[] = [];
+        comparedPaging = { pageSize, observePage: () => { beforePages.push({ summaryPublished, writes: factWrites.length }); } };
+        const captured = await captureFixture();
+        const stringify = JSON.stringify;
+        let lifecycleKeys = 0;
+        let collaborationKeys = 0;
+        // Count only the two fixture keys, without retaining any stringify arguments.
+        JSON.stringify = new Proxy(stringify, {
+          apply(target, receiver, args) {
+            const key = args[0];
+            if (Array.isArray(key)) {
+              if (key.length === 2 && key[0] === id && key[1] === sentinelTurnId) lifecycleKeys++;
+              if (key.length === 4 && key[0] === 'run' && key[1] === null && key[2] === runTargetId && key[3] === null) collaborationKeys++;
+            }
+            return Reflect.apply(target, receiver, args);
+          },
+        });
+        let batch: Awaited<ReturnType<typeof readUiUsageQueryBatch>>;
+        try {
+          batch = await readUiUsageQueryBatch(captured, { queries: [query] }, undefined, undefined, {
+            onProgress: project => {
+              summaryPublished ||= project().results[0]?.howYouWork?.intervals?.agentTimeMs === 600;
+            },
+          });
+        } finally {
+          JSON.stringify = stringify;
+        }
+        expect(beforePages).toEqual(Array.from({ length: comparisonMessages.length / pageSize },
+          () => ({ summaryPublished: true, writes: 0 })));
+        const result = batch.results[0]!;
+        expect(result.howYouWork).toMatchObject({ intervals: { agentTimeMs: 600 },
+          inputs: { acceptedCount: 1, steeringCount: 1 }, sessionCoverage: { selected: 1, admitted: 1, notRead: 0 } });
+        expect(result.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work:transcripts', status: 'available' }));
+        const facts = await Promise.all(factWrites.map(async body => {
+          const stored = SessionSystemRecordStoredUpsertRequestSchema.parse(body);
+          if (stored.content.t !== 'encrypted') throw new Error('Expected encrypted Usage Session fact');
+          return usageWorkEvidence.UsageSessionFactRecordV1Schema.parse(await sessionEncryption.decryptRaw(stored.content.c));
+        }));
+        expect(facts.map(fact => fact.kind)).toEqual(['coach', 'work']);
+        expect(facts.find(fact => fact.kind === 'work')?.evidence.collaboration)
+          .toContainEqual(expect.objectContaining({ relation: 'run', targetId: runTargetId }));
+        return { howYouWork: result.howYouWork, facts, lifecycleKeys, collaborationKeys };
+      };
+
+      const singlePage = await readPartition(comparisonMessages.length);
+      retireActiveServerAccountScopeLifetime();
+      await home!.dispose();
+      home = undefined;
+      factWrites.length = 0;
+      const eightPages = await readPartition(1);
+      expect(eightPages.howYouWork).toEqual(singlePage.howYouWork);
+      expect(eightPages.facts).toEqual(singlePage.facts);
+      expect.soft(eightPages.lifecycleKeys, 'lifecycle key writes by page partition').toBe(singlePage.lifecycleKeys);
+      expect.soft(eightPages.collaborationKeys, 'collaboration key writes by page partition').toBe(singlePage.collaborationKeys);
+      return;
+    }
+    const captured = await captureFixture();
     const activeMarker = createSessionFixture({ id, seq: record.seq, updatedAt: record.updatedAt,
       metadataVersion: record.metadataVersion, agentStateVersion: record.agentStateVersion,
       metadataLayoutVersion: record.metadataLayoutVersion, encryptionMode: 'e2ee',
@@ -1158,8 +1253,7 @@ describe('usage query captured Resource adapter', () => {
     if (active) storage.setState({ profileScope: captured.accountLifetime.scope, sessions: { [id]: activeMarker } });
     const before = home!.requests.length;
     const beforeHttp = home!.httpRequests.length;
-    const batch = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({ session: id,
-      period: range === 'explicit' ? { startMs: baseMs, endMs: nowMs } : { relative: range }, includeWorkEvidence: false, includeTranscriptEvidence })] });
+    const batch = await readUiUsageQueryBatch(captured, { queries: [query] });
     const notRead = !compact && (range === '90days' || range === 'all');
     expect(batch.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
     if (notRead) {
