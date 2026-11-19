@@ -254,8 +254,8 @@ describe('QrCodeScannerView', () => {
                     testIDPrefix="test"
                 />);
 
-        const camera = screen.root.findByProps({ testID: 'test-camera' });
-        const rootStyle = flattenStyle(camera.parent?.props.style);
+        expect(screen.findByTestId('test-camera')).toBeTruthy();
+        const rootStyle = flattenStyle(screen.findByTestId('test-preview')?.props.style);
         expect(rootStyle.backgroundColor).toBe(lightTheme.colors.background.canvas);
     });
 

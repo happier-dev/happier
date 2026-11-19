@@ -1,14 +1,17 @@
 import { captureElementFlightRect } from '../rectFlight';
 import type { StepAnchor } from './stepMotionTypes';
 
-export function readWebStepAnchor(region: HTMLElement, target: EventTarget | null): StepAnchor | null {
-    if (!(target instanceof Element) || !region.contains(target)) return null;
-    const control = target.closest<HTMLElement>('[data-testid]');
-    if (control && control !== region && region.contains(control)) {
-        return { testID: control.dataset.testid, rect: captureElementFlightRect(control) };
-    }
-    const pressed = target.closest<HTMLElement>('button, a, input, [role="button"]');
-    return pressed && region.contains(pressed) ? { rect: captureElementFlightRect(pressed) } : null;
+const stepControls = 'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="radio"], [role="tab"], [role="option"]';
+
+export function findPressedWebControl(target: EventTarget | null): HTMLElement | null {
+    if (!(target instanceof Element)) return null;
+    return target.closest<HTMLElement>(stepControls) ?? target.closest<HTMLElement>('[data-testid]');
+}
+
+export function readWebStepAnchor(region: HTMLElement, control: HTMLElement | null): StepAnchor | null {
+    return control && control !== region && region.contains(control)
+        ? { testID: control.dataset.testid, rect: captureElementFlightRect(control) }
+        : null;
 }
 
 export function findWebStepAnchor(region: HTMLElement, testID: string): HTMLElement | null {

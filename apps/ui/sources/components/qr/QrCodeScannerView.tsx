@@ -288,6 +288,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
 
     return (
         <View
+            testID={`${props.testIDPrefix}-preview`}
             style={[
                 styles.root,
                 previewMinHeight != null

@@ -43,7 +43,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     const motionEnd = vi.fn();
     function Outgoing({ next }: Readonly<{ next: () => void }>) {
         React.useEffect(() => dispose, []);
-        return <button data-testid="approve" onClick={next}>Approve</button>;
+        return <button data-testid="approve" onClick={next}><span data-testid="approve-label">Approve</span></button>;
     }
     function Journey() {
         const [step, setStep] = React.useState('approve');
@@ -63,10 +63,10 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     try {
         await act(async () => root.render(<Journey />));
         await act(async () => {
-            pointerDown(find('approve'), 1);
+            pointerDown(find('approve-label'), 1);
             // A second pointer was already down when this one activated Approve.
-            pointerDown(find('approve'), 2);
-            click(find('approve'), 1);
+            pointerDown(find('approve-label'), 2);
+            click(find('approve-label'), 1);
         });
         expect(dispose).toHaveBeenCalledOnce();
         expect(find('approve')).toBeNull();

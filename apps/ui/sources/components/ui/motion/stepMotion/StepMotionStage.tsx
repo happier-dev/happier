@@ -8,7 +8,7 @@ import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferen
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 
 import { captureElementFlightRect } from '../rectFlight';
-import { readWebStepAnchor } from './capturePressedElement.web';
+import { findPressedWebControl, readWebStepAnchor } from './capturePressedElement.web';
 import type { StepGrammar } from './stepMotionChoreography';
 import type { StepAnimation } from './stepMotionScene';
 import { stepMotionTiming } from './stepMotionTiming';
@@ -84,12 +84,13 @@ function createStepMotionStage(
     let active: { layer: string; animation?: StepAnimation; stop: () => void } | null = null;
     let commitOrder = 0;
     let glyphReady = false;
+    let buildPrepared = false;
     let presentation: StepMotionPresentation | null = null;
     let stopObserving: (() => void) | undefined;
 
     function syncPresentation() {
         const firstRunMounted = Array.from(layers).some(layer => layer.warmOnMount);
-        if (!pending && !active?.animation && !firstRunMounted) {
+        if (!pending && !active?.animation && !firstRunMounted && !buildPrepared) {
             glyphReady = false;
             requestRenderer(false);
         }
@@ -287,17 +288,13 @@ function createStepMotionStage(
         return found;
     }
 
-    function isBackTarget(target: EventTarget | null) {
-        if (!(target instanceof Element)) return false;
-        const testID = target.closest<HTMLElement>('[data-testid]')?.dataset.testid;
-        return testID !== undefined && Array.from(layers).some(layer => layer.backTestID === testID);
-    }
-
     function webInput(target: EventTarget | null) {
-        if (isBackTarget(target)) return;
+        const control = findPressedWebControl(target);
+        const testID = control?.dataset.testid;
+        if (testID !== undefined && Array.from(layers).some(layer => layer.backTestID === testID)) return;
         settle();
         const element = layerFor(target)?.webElement();
-        pressed = element ? readWebStepAnchor(element, target) : null;
+        pressed = element ? readWebStepAnchor(element, control) : null;
     }
 
     function observeInput() {
@@ -399,6 +396,15 @@ function createStepMotionStage(
         loadPresentation(loaded: StepMotionPresentation) {
             presentation = loaded;
         },
+        prepareBuild() {
+            buildPrepared = true;
+            warm();
+            return () => {
+                buildPrepared = false;
+                syncPresentation();
+            };
+        },
+        isBuildReady: () => glyphReady,
         run<T>(move: StepMove<T>): T {
             const previous = active?.animation;
             const startProgress = move.kind === 'back' && previous?.to === 1 && active?.layer === move.layer
@@ -410,6 +416,7 @@ function createStepMotionStage(
             const anchor = outgoingFocal ? { rect: outgoingFocal } : pressed ?? undefined;
             pressed = null;
             settle();
+            if (move.kind === 'home') anchors.clear();
             if (!outgoing) {
                 const result = move.commit();
                 move.onSettled?.('skipped');
@@ -421,7 +428,6 @@ function createStepMotionStage(
                 stack.push(anchor);
                 anchors.set(move.layer, stack);
             }
-            if (move.kind === 'home') anchors.clear();
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
             const grammar = presentation?.resolveMoveGrammar({
@@ -539,6 +545,13 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
 
 export function useStepMotionStage() {
     return React.useContext(StageContext);
+}
+
+/** Warm the admitted opening without delaying its first layout. */
+export function usePrepareStepBuild(admitted: boolean): () => boolean {
+    const stage = useStepMotionStage();
+    React.useLayoutEffect(() => admitted ? stage?.prepareBuild() : undefined, [admitted, stage]);
+    return React.useCallback(() => stage?.isBuildReady() ?? false, [stage]);
 }
 
 export function runStepMove<T>(move: StepMove<T>): T {
