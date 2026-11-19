@@ -1,4 +1,4 @@
-import { applyManagedMachineEnrollmentRoles, ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedControllerContextOutputV1Schema,
@@ -6,7 +6,6 @@ import { ManagedControllerContextOutputV1Schema,
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { t } from '@/text';
 import { createUiManagedAccountHomeRequest, normalizeUiManagedAccountMachine, type UiManagedAccountMachineNormalizer } from './managedMachineAccountHome';
 
 /** Retained creation follows up through the invoking Account's existing child executor. */
@@ -19,32 +18,19 @@ export async function completeUiManagedAccountGuest(params: Readonly<{
     signal?: AbortSignal;
     normalizer?: UiManagedAccountMachineNormalizer;
 }>): Promise<ManagedMachineFullV1> {
-    const post = createUiManagedAccountHomeRequest(params);
-    const prepareGuest = async () => {
-        const retained = await post('context', {
-            homeId: params.machine.homeId, managedId: params.machine.id,
-            expectedIntentRevision: params.machine.intentRevision, requestId: params.requestId,
-        }, ManagedControllerContextOutputV1Schema);
-        const machine = normalizeUiManagedAccountMachine(params.normalizer, retained.machine);
-        const port = params.context.hostReviewedChild;
-        if (!machine.enrolledMachineId || !port) throw new ManagedMachineControllerError('enrollment_retired');
-        params.signal?.throwIfAborted();
-        return { machine, port, invocationServices: { managedMachine: machine, managedContinuation: {
-            managedId: machine.id, creationRequestId: retained.requestId, expectedIntentRevision: machine.intentRevision,
-        } } };
-    };
-    let preparedGuest: Awaited<ReturnType<typeof prepareGuest>> | undefined;
-    await applyManagedMachineEnrollmentRoles({ machine: params.machine, signal: params.signal,
-        warn: code => params.context.operationProgress?.update({ phase: 'machines.roles.set',
-            label: `${t('machineDetailPage.roles.saveFailed')} (${code})` }), dispatch: async input => {
-        preparedGuest = await prepareGuest();
-        const result = await preparedGuest.port.invoke({ action: 'machines.roles.set', role: 'machines.roles.set',
-            input: projectNativeJsonValueForTransport(input), invocationServices: preparedGuest.invocationServices });
-        if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, 'machines.roles.set');
-        return result.result;
-    } });
     if (!params.input.agentStart) return params.machine;
-    const { machine, port, invocationServices } = preparedGuest ?? await prepareGuest();
+    const post = createUiManagedAccountHomeRequest(params);
+    const retained = await post('context', {
+        homeId: params.machine.homeId, managedId: params.machine.id,
+        expectedIntentRevision: params.machine.intentRevision, requestId: params.requestId,
+    }, ManagedControllerContextOutputV1Schema);
+    const machine = normalizeUiManagedAccountMachine(params.normalizer, retained.machine);
+    const port = params.context.hostReviewedChild;
+    if (!machine.enrolledMachineId || !port) throw new ManagedMachineControllerError('enrollment_retired');
+    params.signal?.throwIfAborted();
+    const invocationServices = { managedMachine: machine, managedContinuation: {
+        managedId: machine.id, creationRequestId: retained.requestId, expectedIntentRevision: machine.intentRevision,
+    } };
     const result = await port.invoke({ action: 'session.spawn_new', role: 'session.spawn_new',
         input: projectNativeJsonValueForTransport({ ...params.input.agentStart,
             executionTarget: { serverId: params.context.serverId ?? machine.homeId, machineId: machine.enrolledMachineId },

@@ -2,7 +2,7 @@ import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machin
 import { createHash, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
-import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1, type ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -101,6 +101,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
   target: ResolvedHomeTarget;
   managedEnrollment?: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  initialMachineMetadata?: ManagedEnrollmentMachineMetadataV1;
   deploymentAppBinding?: DeploymentAppMachineBindingV1;
   signal?: AbortSignal;
   timeoutMs: number;
@@ -246,7 +247,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
       if (managedEnrollment) {
         completion = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
           runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment,
-          machineDisplayName: params.machineDisplayName, deploymentAppBinding: params.deploymentAppBinding,
+          machineDisplayName: params.machineDisplayName, initialMachineMetadata: params.initialMachineMetadata, deploymentAppBinding: params.deploymentAppBinding,
           homeRetry,
           assertCurrent: () => throwIfStopped(params.signal, deadlineMs) });
       } else {

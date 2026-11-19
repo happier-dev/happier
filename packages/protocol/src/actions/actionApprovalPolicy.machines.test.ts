@@ -149,7 +149,7 @@ describe('Corridor C approval defaults', () => {
   });
 });
 
-it('acquire admits the enrollment roles child even without an Agent start', () => {
+it('acquire needs no requester-side guest effect for a preset without an Agent start', () => {
   const input = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 } };
-  expect(getActionSpec('machines.managed.acquire').hostReviewedChildren?.(input)).toContainEqual({ action: 'machines.roles.set', role: 'machines.roles.set' });
+  expect(getActionSpec('machines.managed.acquire').hostReviewedChildren?.(input)).toEqual([]);
 });

@@ -4,7 +4,7 @@ import tweetnacl from 'tweetnacl';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
-import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachineEnrollmentCorrelationV1Schema, ManagedEnrollmentMachineMetadataV1Schema, type MachineEnrollmentCorrelationV1, type ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { MachinePublishedMetadataV1Schema, DeploymentAppMachineBindingV1Schema, type DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { decodeBase64 } from '@/api/encryption';
@@ -48,6 +48,7 @@ type PendingAuthState = Readonly<{
   homeConnectionDescriptor?: HomeConnectionDescriptorV1;
   managedEnrollment?: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  initialMachineMetadata?: ManagedEnrollmentMachineMetadataV1;
   deploymentAppBinding?: DeploymentAppMachineBindingV1;
   remoteProfileId?: string;
   createdAt: string;
@@ -193,6 +194,7 @@ function parsePendingAuthState(raw: string): PendingAuthState {
     ...(parsedDescriptor?.success ? { homeConnectionDescriptor: parsedDescriptor.data } : {}),
     ...(managedEnrollment ? { managedEnrollment } : {}),
     ...(parsed.deploymentAppBinding !== undefined ? { deploymentAppBinding: DeploymentAppMachineBindingV1Schema.parse(parsed.deploymentAppBinding) } : {}),
+    ...(parsed.initialMachineMetadata !== undefined ? { initialMachineMetadata: ManagedEnrollmentMachineMetadataV1Schema.parse(parsed.initialMachineMetadata) } : {}),
     ...(parsed.machineDisplayName !== undefined ? {
       machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(parsed.machineDisplayName),
     } : {}),
@@ -364,7 +366,7 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
         await removeProtectedLocalStateFile(statePath, PENDING_AUTH_STATE_PROTECTION);
         ({ machineId } = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
           runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment: state.managedEnrollment,
-          machineDisplayName: state.machineDisplayName, deploymentAppBinding: state.deploymentAppBinding,
+          machineDisplayName: state.machineDisplayName, initialMachineMetadata: state.initialMachineMetadata, deploymentAppBinding: state.deploymentAppBinding,
           homeRetry,
           assertCurrent: () => signal?.throwIfAborted() }));
       } else {

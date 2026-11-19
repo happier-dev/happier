@@ -6,7 +6,7 @@ import {
 import type { HappierJsonExecutor, HappierTextResult } from '../executors/happierJsonExecutor.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1, type ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { formatGuestAuthCarrierFailure, formatRemoteEnrollmentCommandFailure, formatHomeAuthorityMismatchFacts, readGuestCliFailure, readGuestCliFailureOutput,
   type GuestCliFailureFacts } from '@happier-dev/protocol/ssh/commandFailure';
@@ -190,6 +190,7 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
   homeTargetInput: HomeTargetInput;
   managedEnrollment?: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  initialMachineMetadata?: ManagedEnrollmentMachineMetadataV1;
   deploymentAppBinding?: DeploymentAppMachineBindingV1;
   /** Native exec requires only buffered process results, never output observers. */
   processIO?: 'streaming' | 'buffered';
@@ -241,6 +242,10 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
   const homeTargetInput = parseHomeTargetInput(params.homeTargetInput);
   const managedEnrollment = params.managedEnrollment === undefined ? undefined
     : MachineEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
+  const enrollmentInput = JSON.stringify(managedEnrollment ? {
+    homeTarget: homeTargetInput, managedEnrollment, machineDisplayName: params.machineDisplayName,
+    initialMachineMetadata: params.initialMachineMetadata, deploymentAppBinding: params.deploymentAppBinding,
+  } : homeTargetInput);
   if (managedEnrollment && (homeTargetInput.kind !== 'descriptor'
     || homeTargetInput.descriptor.homeServerIdentityId !== managedEnrollment.homeId)) {
     throw new SystemTaskExecutionError('home_identity_mismatch', 'Managed enrollment requires its exact admitted Home.');
@@ -331,7 +336,7 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
         : [];
     const response = await capture(
       ['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin', ...serverArgs, ...(managedEnrollment ? ['--managed-enrollment-stdin'] : [])],
-      JSON.stringify(managedEnrollment ? { homeTarget: homeTargetInput, managedEnrollment, machineDisplayName: params.machineDisplayName, deploymentAppBinding: params.deploymentAppBinding } : homeTargetInput),
+      enrollmentInput,
     );
     const olderAuthRequestError = readOlderEnrollmentError(response);
     if (olderAuthRequestError) throw olderAuthRequestError;
@@ -465,7 +470,7 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
       commandResult = await params.executor.runHappierText(
         ['auth', 'enroll-remote', '--json-lines', '--home-target-stdin', ...(managedEnrollment ? ['--managed-enrollment-stdin'] : [])],
         {
-          input: JSON.stringify(managedEnrollment ? { homeTarget: homeTargetInput, managedEnrollment, machineDisplayName: params.machineDisplayName, deploymentAppBinding: params.deploymentAppBinding } : homeTargetInput),
+          input: enrollmentInput,
           signal: linked.controller.signal,
           // This process spans request creation and consent. The flow owns a
           // re-armable deadline because the pairing expiry is learned on stdout.

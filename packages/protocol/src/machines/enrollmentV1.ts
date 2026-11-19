@@ -1,6 +1,13 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ManagedEnrollmentCorrelationV1Schema } from './managed/actionsV1.js';
+import { MachinePublishedMetadataV1Schema } from './machinePublishedContentV1.js';
+
+/** Guest-only enrollment input. Home receives these fields in the Machine content envelope. */
+export const ManagedEnrollmentMachineMetadataV1Schema = lazyZodSchema(() => z.pick(MachinePublishedMetadataV1Schema, {
+  rolesV1: true, isolationV1: true,
+}));
+export type ManagedEnrollmentMachineMetadataV1 = z.infer<typeof ManagedEnrollmentMachineMetadataV1Schema>;
 
 const id = () => z.string().check(z.minLength(1));
 

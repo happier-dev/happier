@@ -223,7 +223,7 @@ import { createMachineVitalsReader } from './vitals/createMachineVitalsReader';
 import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
 import { createMachineResourceSummary, type MachineResourceSummary } from './resources/machineResourceSummary';
 import { createMachineResourcesPolicyRuntime, type MachineResourcesPolicyRuntime } from './resources/machineResourcesPolicy';
-import { createMachineRolesRuntime, type MachineRolesRuntime } from './roles/machineRolesRuntime';
+import { createMachineRolesRuntime, writeAppliedMachineRoles, type MachineRolesRuntime } from './roles/machineRolesRuntime';
 import { machineRoleCatalogFromPluginsV1, projectPublishedMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { bindMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
 import { createPersistedTakeoverAdmissionWaiter } from './spawn/persistedTakeoverAdmission';
@@ -731,7 +731,7 @@ export async function startDaemon(
     const machineRolesScope: { serverId: string; machineId: string | null | undefined } = { serverId: configuration.activeServerId, machineId };
     const bootMachineRoles = await (async () => {
       const roleScope = machineRolesScope;
-      const { readSettings, updateSettings } = await import('@/persistence');
+      const { readSettings } = await import('@/persistence');
       const initialStoredRoles = machineId
         ? (await readSettings()).machineRolesByServerIdByMachineId?.[roleScope.serverId]?.[machineId] ?? null : null;
       return createMachineRolesRuntime({ initialStoredRoles,
@@ -744,12 +744,7 @@ export async function startDaemon(
         },
         persistApplied: async active => {
           if (!roleScope.machineId) return;
-          const scopedMachineId = roleScope.machineId;
-          await updateSettings(current => {
-            const byMachine = { ...current.machineRolesByServerIdByMachineId?.[roleScope.serverId] };
-            if (active) byMachine[scopedMachineId] = [...active]; else delete byMachine[scopedMachineId];
-            return { ...current, machineRolesByServerIdByMachineId: { ...current.machineRolesByServerIdByMachineId, [roleScope.serverId]: byMachine } };
-          });
+          await writeAppliedMachineRoles(roleScope.serverId, roleScope.machineId, active);
         } });
     })();
     machineRoles = bootMachineRoles;

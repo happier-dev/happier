@@ -1,12 +1,14 @@
 import type { DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import tweetnacl from 'tweetnacl';
-import type { MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import type { MachineEnrollmentCorrelationV1, ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { readMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 
 import { ApiClient } from '@/api/api';
 import { configuration } from '@/configuration';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
+import { writeAppliedMachineRoles } from '@/daemon/roles/machineRolesRuntime';
 import {
   prepareCredentialsTokenOnlyForServerId,
   readSettings,
@@ -68,6 +70,7 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
   runtimeOrigin: string;
   managedEnrollment: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  initialMachineMetadata?: ManagedEnrollmentMachineMetadataV1;
   deploymentAppBinding?: DeploymentAppMachineBindingV1;
   homeRetry: HomeOperationRetry;
   assertCurrent(): void;
@@ -82,7 +85,7 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
     ? await prepareCredentialsTokenOnlyForServerId(configuration.activeServerId, { token: params.token }, { previousAccountId })
     : prepared.credentials;
   params.assertCurrent();
-  const machineId = await registerTerminalEnrollmentMachine(credentials, params.runtimeOrigin, params.managedEnrollment, params.homeRetry, params.machineDisplayName, params.deploymentAppBinding);
+  const machineId = await registerTerminalEnrollmentMachine(credentials, params.runtimeOrigin, params.managedEnrollment, params.homeRetry, params.machineDisplayName, params.deploymentAppBinding, params.initialMachineMetadata);
   params.assertCurrent();
   await persistTerminalEnrollmentCredential({ ...params, previousAccountId });
   return { machineId, encryptionType: prepared.encryptionType };
@@ -95,6 +98,7 @@ export async function registerTerminalEnrollmentMachine(
   homeRetry?: HomeOperationRetry,
   machineDisplayName?: string,
   deploymentAppBinding?: DeploymentAppMachineBindingV1,
+  enrollmentMetadata?: ManagedEnrollmentMachineMetadataV1,
 ): Promise<string> {
   const register = async () => await runWithServerHttpBaseUrl(runtimeOrigin, async () => {
     const { machineId } = await ensureMachineIdForCredentials(credentials);
@@ -102,13 +106,20 @@ export async function registerTerminalEnrollmentMachine(
     const registered = await ensureMachineRegistered({
       api,
       machineId,
-      metadata: { ...initialMachineMetadata,
+      metadata: { ...initialMachineMetadata, ...enrollmentMetadata,
         ...(machineDisplayName === undefined ? {} : { displayName: machineDisplayName }),
         ...(deploymentAppBinding === undefined ? {} : { deploymentApp: deploymentAppBinding }),
       },
       caller: 'auth.wait',
       ...(managedEnrollment ? { managedEnrollment } : {}),
     });
+    if (enrollmentMetadata?.rolesV1) {
+      // Startup applies this snapshot before the Machine can read Home or activate roles.
+      // Registration is create-only: an existing Machine's explicit policy wins.
+      const roles = readMachineRolesV1(registered.machine.metadata);
+      if (roles.status !== 'ready' || roles.source !== 'stored') throw new Error('Machine roles unavailable at enrollment');
+      await writeAppliedMachineRoles(configuration.activeServerId, registered.machineId, roles.policy.active);
+    }
     return registered.machineId;
   });
   return await (homeRetry ? retryHomeOperation(homeRetry, register) : register());

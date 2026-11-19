@@ -100,42 +100,11 @@ describe('Account managed admission boundary', () => {
 });
 
 
-it('foreground sandbox completion seeds its admitted roles without an Agent start', async () => {
+it.each([enrollmentIdentity, { kind: 'existingUser' as const, role: 'adopted' as const }])('returns an enrolled guest without a follow-up effect when there is no Agent start', async identity => {
     const { completeUiManagedAccountGuest } = await import('./managedMachineAccountGuest');
-    const requests: unknown[] = [];
-    const enrolled = { ...machine, enrollmentIdentity, enrolledMachineId: 'joined' };
-    await completeUiManagedAccountGuest({ account: accountResponding({ machine: enrolled, requestId: 'creation' }) as LazyActionAccountContext,
-        input: presetInput, machine: enrolled, requestId: 'creation', context: { surface: 'ui', hostReviewedChild: {
-            invoke: async request => {
-                requests.push(request);
-                return { ok: true, result: { status: 'applied', policy: { active: ['sessions'] }, metadataVersion: 1 } };
-            },
-        } } });
-    expect(requests).toMatchObject([{ action: 'machines.roles.set', input: { machineId: 'joined', policy: { active: ['sessions'] } },
-        invocationServices: { managedContinuation: { managedId: 'managed', creationRequestId: 'creation', expectedIntentRevision: 0 } } }]);
-});
-
-it('adopted completion without an Agent preserves roles without a guest effect', async () => {
-    const { completeUiManagedAccountGuest } = await import('./managedMachineAccountGuest');
-    const enrolled = { ...machine, enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const }, enrolledMachineId: 'joined' };
+    const enrolled = { ...machine, enrollmentIdentity: identity, enrolledMachineId: 'joined' };
     await expect(completeUiManagedAccountGuest({
         account: accountResponding({ machine: enrolled, requestId: 'creation' }) as LazyActionAccountContext,
         input: {}, machine: enrolled, requestId: 'creation', context: { surface: 'ui' },
     })).resolves.toEqual(enrolled);
-});
-
-it('keeps a delegated Account creation successful when Home refuses its optional roles seed', async () => {
-    const { completeUiManagedAccountGuest } = await import('./managedMachineAccountGuest');
-    const enrolled = { ...machine, enrollmentIdentity, enrolledMachineId: 'joined',
-        custodianAccountId: 'company', enrollmentAccountId: 'member' };
-    const progress: unknown[] = [];
-    await expect(completeUiManagedAccountGuest({
-        account: accountResponding({ machine: enrolled, requestId: 'creation' }) as LazyActionAccountContext,
-        input: {}, machine: enrolled, requestId: 'creation', context: { surface: 'ui', runtimeAccountId: 'member',
-            operationProgress: { update: value => { progress.push(value); } }, hostReviewedChild: {
-                invoke: async () => ({ ok: false, errorCode: 'permission_denied', error: 'PRIVATE_REMOTE_MESSAGE' }),
-            } },
-    })).resolves.toEqual(enrolled);
-    expect(progress).toEqual([expect.objectContaining({ phase: 'machines.roles.set', label: expect.stringContaining('permission_denied') })]);
-    expect(JSON.stringify(progress)).not.toContain('PRIVATE_REMOTE_MESSAGE');
 });

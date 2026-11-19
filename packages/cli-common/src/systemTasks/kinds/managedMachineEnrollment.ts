@@ -13,6 +13,8 @@ import type { PrepareManagedDedicatedBootstrap } from '../ssh/installRemoteCli.j
 import { installRemoteDaemonLifecycle } from './remoteDaemonLifecycle.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
+import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -178,10 +180,17 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   const nativeGuestHome = carrier.kind === 'native' && !dedicatedIdentity ? carrier.guestHome : undefined;
   let nativeProcess = carrier.kind === 'native' && !dedicatedIdentity
     && (nativeGuestHome !== undefined || row.enrollmentIdentity?.kind === 'guestProcess');
+  const roles = resolveManagedMachineEnrollmentRolesV1(row.enrollmentIdentity, row.resource?.origin);
+  const initialMachineMetadata = {
+    ...(roles ? { rolesV1: roles } : {}),
+    ...(row.resource?.origin === 'created' ? { isolationV1: {
+      environment: 'managed-guest' as const, provisionerId: buildQualifiedPluginContributionKey(row.resource.contributionRef),
+    } } : {}),
+  };
   const configuration = {
     relay: { relayUrl: input.target.canonicalAuthUrl, webappUrl: input.target.webappUrl },
     homeTarget: input.target, managedEnrollment: input.homeCorrelation,
-    machineDisplayName: row.launch.name,
+    machineDisplayName: row.launch.name, initialMachineMetadata,
     enrollmentIdentity: row.enrollmentIdentity,
     requireLocalApproval: true,
     channel: input.channel,

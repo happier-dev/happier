@@ -85,7 +85,6 @@ describe('Account managed power role preparation', () => {
                 { action: { pluginId: 'acme.compute', localId: 'acquire' }, role: 'acquire' },
                 { action: { pluginId: 'acme.compute', localId: 'bootstrap' }, role: 'bootstrap' },
                 { action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' },
-                { action: 'machines.roles.set', role: 'machines.roles.set' },
             ] });
     });
     it('does not demand a roles seed when retrying an adopted Machine', async () => {

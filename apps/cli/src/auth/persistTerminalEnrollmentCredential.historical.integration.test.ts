@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import predecessor from '@/api/machine/machineLegacyContent.predecessor.fixture.json';
+import { CORE_MACHINE_ROLE_IDS_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 // Load this large real CLI graph during collection; each case reloads its
 // environment-bound configuration after setting its isolated Home.
 import './persistTerminalEnrollmentCredential';
@@ -12,6 +13,62 @@ const token = (n: string) => `header.${Buffer.from(JSON.stringify({ sub: 'owner'
 afterEach(() => { env.restore(); vi.restoreAllMocks(); vi.resetModules(); });
 
 describe('managed enrollment historical custody', () => {
+  it.each([false, true])('activates the registered guest roles at first boot (Home retained an explicit enable: %s)', async explicit => {
+    await withTempDir('managed-enrollment-roles-', async home => {
+      env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://managed-home.test', HAPPIER_API_TOKEN: undefined });
+      vi.resetModules();
+      const { default: axios } = await import('axios');
+      const persistence = await import('@/persistence');
+      const { configuration } = await import('@/configuration');
+      const { registerAndPersistManagedTerminalEnrollmentCredential } = await import('./persistTerminalEnrollmentCredential');
+      const { createMachineRolesRuntime } = await import('@/daemon/roles/machineRolesRuntime');
+      const { createMachineRoleActivationRuntime } = await import('@/daemon/roles/machineRoleActivation');
+      const { decodePlainMachineStoredContent, encodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
+      const initialMachineRoles = { active: CORE_MACHINE_ROLE_IDS_V1.filter(role => role !== 'broker') };
+      const retainedRoles = { active: [...CORE_MACHINE_ROLE_IDS_V1] };
+      let registeredMetadata: unknown;
+      vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+        if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        if (url.includes('/v1/machines/')) throw new axios.AxiosError('No Machine yet', 'ERR_BAD_REQUEST', undefined, undefined,
+          { status: 404, statusText: 'Not Found', data: {}, headers: {}, config: { headers: new axios.AxiosHeaders() } });
+        throw new Error('Unexpected Home read');
+      });
+      vi.spyOn(axios, 'post').mockImplementation(async (url: string, body: unknown) => {
+        if (!url.endsWith('/v1/machines') || !body || typeof body !== 'object' || !('metadata' in body)
+          || typeof body.metadata !== 'string') throw new Error('Unexpected Home registration');
+        registeredMetadata = decodePlainMachineStoredContent(body.metadata);
+        expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toBeNull();
+        return { status: 200, data: { machine: { ...predecessor.rows[0]!.machine, ...body,
+          ...(explicit ? { metadata: encodePlainMachineStoredContent({ ...registeredMetadata as object, rolesV1: retainedRoles }) } : {}),
+          storageMode: 'plain', metadataVersion: 1, daemonState: null, daemonStateVersion: 0 } } };
+      });
+      const params = { token: token('guest'), opened: { type: 'tokenOnly' as const, authenticated: true as const },
+        runtimeOrigin: 'https://managed-home.test', initialMachineMetadata: { rolesV1: initialMachineRoles },
+        managedEnrollment: { homeId: 'srv_managed_home', managedId: 'managed-child', expectedIntentRevision: 2,
+          requestId: 'approved-create', controller: { machineId: 'physical-controller', installationId: 'host-installation' } },
+        homeRetry: { deadlineMs: Date.now() + 5_000, pollIntervalMs: 1 }, assertCurrent() {} };
+      const { machineId } = await registerAndPersistManagedTerminalEnrollmentCredential(params);
+      expect((await persistence.readStoredCredentialsForServerId(configuration.activeServerId))?.token).toBe(params.token);
+      const initialStoredRoles = (await persistence.readSettings()).machineRolesByServerIdByMachineId?.[configuration.activeServerId]?.[machineId];
+      const roles = createMachineRolesRuntime({ initialStoredRoles, port: {
+        read: async () => ({ status: 'unavailable' }), compareAndSwap: async () => ({ status: 'unavailable' }),
+      } });
+      const ingress: boolean[] = [];
+      const activation = createMachineRoleActivationRuntime({ roles, contexts: { broker: {
+        startApplication: async () => ({ close: async () => {} }),
+        setIngressLive: async live => { ingress.push(live); },
+      } } });
+      try {
+        // Startup can run without a readable Home snapshot. No controller-side
+        // post-enrollment action has run when the registered guest starts.
+        await activation.start();
+        expect(ingress).toEqual(explicit ? [true] : []);
+        expect([...roles.activeRoles()].sort()).toEqual([...(explicit ? retainedRoles : initialMachineRoles).active].sort());
+        expect(registeredMetadata).toMatchObject({ rolesV1: initialMachineRoles });
+      } finally { await activation.stop(); roles.stop(); }
+    });
+  });
+
   it.each([false, true])('prepares historical Machine material before admission, then persists only on success (denied=%s)', async denied => {
     await withTempDir('managed-enrollment-custody-', async home => {
       env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://managed-home.test', HAPPIER_API_TOKEN: undefined });

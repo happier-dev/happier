@@ -1,9 +1,7 @@
 import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { applyManagedMachineEnrollmentRoles } from '@happier-dev/cli-common/machines/managed';
-import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineRoles, dispatchLocalManagedMachineRoles } from '@/api/externalActionExecutionAuthorization';
-import { logger } from '@/ui/logger';
+import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess } from '@/api/externalActionExecutionAuthorization';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { resolveManagedCreationChildMaterial } from './creationChildMaterial';
@@ -61,25 +59,8 @@ async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisit
     }
 }
 
-/** Seeds the owner-approved role set for this install type over the missing field (OWNER-RULINGS 2026-11-12). */
-async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
-    await applyManagedMachineEnrollmentRoles({ machine, signal: options.signal,
-        // Report only the public code, never a remote message or input.
-        warn: code => logger.warn('[MANAGED MACHINE] Enrollment roles seed failed', {
-            managedId: machine.id, machineId: machine.enrolledMachineId, code,
-        }), dispatch: async request => {
-        options.context?.operationProgress?.update({ phase: 'machines.roles.set', label: 'Choosing machine roles' });
-        const execution = await dispatchEnrollmentPolicyChild(input, machine, options, request,
-            { remote: dispatchManagedMachineRoles, local: dispatchLocalManagedMachineRoles });
-        if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.roles.set');
-        return execution.result;
-    } });
-}
-
-/** Creation policy effects retain their own outcomes; the shared roles seed owns its optional warning. */
 export async function initializeManagedMachineEnrollmentPolicies(input: ManagedMachineAcquisitionDriverInput,
     machine: ManagedMachineFullV1, options: ManagedMachineExecutionOptions): Promise<void> {
     await recordEnrollmentAdministratorAccess(input, machine, options);
-    await recordEnrollmentRoles(input, machine, options);
     await initializeManagedMachineEnrollmentIsolation(machine, input, options);
 }

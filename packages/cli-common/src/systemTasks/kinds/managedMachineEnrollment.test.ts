@@ -3,6 +3,7 @@ import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/manag
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import { runManagedMachineEnrollment, type ManagedNativeBootstrapIO } from './managedMachineEnrollment.js';
 import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
+import { CORE_MACHINE_ROLE_IDS_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 
 const resource = { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained-1' } };
 const correlation = { homeId: 'srv_managed_home', managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1,
@@ -78,6 +79,7 @@ describe('portable managed enrollment', () => {
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
+    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, personalGuest: true },
     { requesterEnrollment: true, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const },
@@ -98,11 +100,17 @@ describe('portable managed enrollment', () => {
     const completion = { kind: 'remote_home_enrollment_result', protocolVersion: 1, success: true,
       homeServerIdentityId: target.homeServerIdentityId, machineId: 'joined', encryptionType: 'tokenOnly',
       pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
-    const enrollment = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', operationId: 'admitted-operation',
+    const personalGuest = 'personalGuest' in availability && availability.personalGuest === true;
+    const carrierCaptured = new Error('Enrollment arrived at the guest');
+    const nativeCorrelation = personalGuest ? { ...correlation, resource: { ...resource, origin: 'created' as const } } : correlation;
+    const { resource: _sealedResource, ...structuralCorrelation } = nativeCorrelation;
+    const enrollment = runManagedMachineEnrollment({ correlation: nativeCorrelation,
+      homeCorrelation: personalGuest ? structuralCorrelation : nativeCorrelation, target, channel: 'stable', operationId: 'admitted-operation',
       onInstalled: async () => { phases.push('installed'); },
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 },
         ...('bridge' in availability && availability.bridge ? { homeNetworkHint: 'authored_network' } : {}) } }, {
       readCurrentManagedRow: async () => { rowReads++; return { ...machine, enrolledMachineId: retainedEnrollment ? 'joined' : undefined,
+        ...(personalGuest ? { resource: nativeCorrelation.resource, enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const } } : {}),
         ...(dedicatedRetry ? { bootstrapInstalled: true as const, enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const,
           username: 'happier' as const, serviceMode: 'user' as const, role: 'server' as const,
           adminAccessAtCreation, ...(adminAccessAtCreation === 'ask' ? { administrator: { username: 'operator' } } : {}) } } : {}),
@@ -110,7 +118,7 @@ describe('portable managed enrollment', () => {
       createPromptId: () => 'prompt',
       installNativePayload: async input => { phases.push('install'); expect(input).toMatchObject({ os: 'linux', arch: 'x64', home: '/home/guest', homeUrl: target.applicationUrl });
         return { binaryPath: '/home/guest/.happier/cli/current/happier' }; },
-      native: { putFile: async () => {}, exec: async ({ command }) => {
+      native: { putFile: async () => {}, exec: async ({ command, input }) => {
         commands.push(command);
         const invocation = command.replaceAll(/["']/gu, '');
         if (dedicatedRetry && (command.includes('useradd') || command.includes("'effect-internal'"))) {
@@ -119,6 +127,14 @@ describe('portable managed enrollment', () => {
         if (command === 'uname -s') return { status: 0, stdout: 'Linux\n', stderr: '' };
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
         if (invocation.includes('auth request')) {
+          if (personalGuest) {
+            const enrollmentInput = JSON.parse(input ?? '{}');
+            expect(enrollmentInput).toMatchObject({ managedEnrollment: structuralCorrelation,
+              initialMachineMetadata: { rolesV1: { active: CORE_MACHINE_ROLE_IDS_V1.filter(id => id !== 'broker') },
+                isolationV1: { environment: 'managed-guest', provisionerId: 'test.provisioner/vm' } } });
+            expect(enrollmentInput.managedEnrollment).not.toHaveProperty('resource');
+            throw carrierCaptured;
+          }
           if ('unreachable' in availability && availability.unreachable) return { status: 1, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_request',
             error: { code: 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE', category: 'network_error',
               carrierFailure: { attemptedCarrier: 'https', reason: 'home_unreachable' } } }), stderr: '' };
@@ -145,6 +161,10 @@ describe('portable managed enrollment', () => {
         return { machineId: result.machineId };
       },
     });
+    if (personalGuest) {
+      await expect(enrollment).rejects.toBe(carrierCaptured);
+      return;
+    }
     if (requesterEnrollment) {
       await expect(enrollment).rejects.toMatchObject({ code: 'admission_unavailable' });
       expect(phases).toEqual([]);

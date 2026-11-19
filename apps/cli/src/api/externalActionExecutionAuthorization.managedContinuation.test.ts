@@ -67,7 +67,7 @@ import { sealManagedMachinePresetContentV1, projectManagedMachinePresetForRecipi
     createManagedMachinePresetAcquireOverrideV1, openManagedMachinePresetContentV1,
     replaceManagedMachinePresetLaunchNameV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { hydrateManagedOpaquePresetMachineV1, applyManagedMachineEnrollmentRoles, prepareManagedMachineSetupApplyInput, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
+import { hydrateManagedOpaquePresetMachineV1, prepareManagedMachineSetupApplyInput, projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 
@@ -694,15 +694,8 @@ describe('managed continuation through the ordinary public Action transport', ()
             authorization: root, material: { type: 'dataKey', machineKey: accountKey }, installationId: 'installation',
             privateKey, serverHttpBaseUrl: 'https://home.example',
             invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
-        // Use the same hydrated enrollment producer as controller creation.
-        const seedWarnings: string[] = [];
-        await applyManagedMachineEnrollmentRoles({ machine: hydrated, warn: code => seedWarnings.push(code), dispatch: async value => {
-            const result = await invoke(keyPair.secretKey, value);
-            expect(result.ok, JSON.stringify({ result, managedReads, mutations })).toBe(true);
-            if (!result.ok) throw new Error(result.errorCode);
-            return result.result;
-        } });
-        expect(seedWarnings).toEqual([]);
+        const execution = await invoke();
+        expect(execution.ok, JSON.stringify({ execution, managedReads, mutations })).toBe(true);
         expect(mutations).toBe(1);
         expect(managedReads).toBe(0);
         // Home admits the unchanged creation child target once; the effect reuses it.

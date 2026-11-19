@@ -23,4 +23,3 @@ export * from './setupSources.js';
 export * from './presetSavedSecretPromotion.js';
 export * from './enrollmentIsolation.js';
 export { waitForChangeOrDeadline, type WaitForChangeOutcome } from '../../lifecycle/waitForChangeOrDeadline.js';
-export * from './enrollmentRoles.js';

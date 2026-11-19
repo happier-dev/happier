@@ -4,7 +4,17 @@ import {
 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import type { MachineMetadataFieldPortV1, MachineMetadataFieldReadV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 
+import { updateSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
+
+export async function writeAppliedMachineRoles(serverId: string, machineId: string, active: readonly string[] | null): Promise<void> {
+  await updateSettings(current => {
+    const byMachine = { ...current.machineRolesByServerIdByMachineId?.[serverId] };
+    if (active) byMachine[machineId] = [...active];
+    else delete byMachine[machineId];
+    return { ...current, machineRolesByServerIdByMachineId: { ...current.machineRolesByServerIdByMachineId, [serverId]: byMachine } };
+  });
+}
 
 /**
  * The daemon's one view of its Machine's role set. The Machine-metadata change

@@ -2,7 +2,7 @@ import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/pro
 import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachineEnrollmentCorrelationV1Schema, ManagedEnrollmentMachineMetadataV1Schema, type MachineEnrollmentCorrelationV1, type ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { MachinePublishedMetadataV1Schema, DeploymentAppMachineBindingV1Schema, type DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { ManagedMachineEnrollmentIdentityV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
@@ -276,6 +276,7 @@ export interface RemoteBootstrapMachineParams {
   managedEnrollment?: MachineEnrollmentCorrelationV1;
   /** Initial managed-guest presentation, not an update to an incumbent Machine name. */
   machineDisplayName?: string;
+  initialMachineMetadata?: ManagedEnrollmentMachineMetadataV1;
   deploymentAppBinding?: DeploymentAppMachineBindingV1;
   enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
   requireLocalApproval?: boolean;
@@ -629,6 +630,7 @@ export function parseRemoteBootstrapMachineParams(params: unknown): RemoteBootst
     ...(value.guestCli !== undefined ? { guestCli: GuestCliIdentityV1Schema.parse(value.guestCli) } : {}),
     ...(value.deploymentAppBinding !== undefined ? { deploymentAppBinding: DeploymentAppMachineBindingV1Schema.parse(value.deploymentAppBinding) } : {}),
     ...(value.managedEnrollment !== undefined ? { managedEnrollment: MachineEnrollmentCorrelationV1Schema.parse(value.managedEnrollment) } : {}),
+    ...(value.initialMachineMetadata !== undefined ? { initialMachineMetadata: ManagedEnrollmentMachineMetadataV1Schema.parse(value.initialMachineMetadata) } : {}),
     ...(value.machineDisplayName !== undefined ? { machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(value.machineDisplayName) } : {}),
     ...(value.enrollmentIdentity !== undefined ? { enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema.parse(value.enrollmentIdentity) } : {}),
     requireLocalApproval: value.requireLocalApproval === true,
@@ -963,7 +965,7 @@ async function runRemoteMachineBootstrapRecipe({
               : { kind: 'https_url', url: parsedRemote.relay.relayUrl },
             signal: ctx.signal,
             onEnrollmentDeadline: updateEnrollmentDeadline,
-            ...(parsedRemote.managedEnrollment ? { managedEnrollment: parsedRemote.managedEnrollment, machineDisplayName: parsedRemote.machineDisplayName, deploymentAppBinding: parsedRemote.deploymentAppBinding } : {}),
+            ...(parsedRemote.managedEnrollment ? { managedEnrollment: parsedRemote.managedEnrollment, machineDisplayName: parsedRemote.machineDisplayName, initialMachineMetadata: parsedRemote.initialMachineMetadata, deploymentAppBinding: parsedRemote.deploymentAppBinding } : {}),
             approvePairingRequest: async (request) => {
               publicKey = request.publicKey;
               if (!approvePairingRequest) {

@@ -556,14 +556,16 @@ epoch are separate; this addition introduces no new epoch or migration.
 
 Provider-authored bound acquire results carry optional `resource.origin: 'created'`
 through the existing retained resource, including opaque preset content. Creation
-enrollment seeds Machine metadata `isolationV1: { environment: 'managed-guest',
-provisionerId }` only while the field is absent, in the same metadata CAS as default
-roles. `provisionerId` is the qualified plugin contribution identity. Created Lume
+enrollment includes Machine metadata `isolationV1: { environment: 'managed-guest',
+provisionerId }` and default roles in the first Machine registration. The guest
+records the registered roles for first startup before it saves the bearer. `provisionerId` is the qualified plugin contribution identity. Created Lume
 VMs receive the fact even with personal/existing-user enrollment. Adopted hosts and
 Account-native or SSH enrollment of existing hosts carry no origin and gain no fact.
 The shared enrollment roles resolver excludes Credential broker from the initial
 role set for provider-created isolation guests and preserves saved role choices.
 The broker default follows creation provenance through the sealed preset path.
+The controller and guest binary must both carry the protected enrollment input
+on the unreleased 0.3 cut. Home correlation stays structural for a sealed preset.
 
 `readMachineIsolationV1` in Protocol `machines/metadataUpdate` reads opened Machine
 metadata and returns the fact or `null` for missing/unreadable provenance. Missing

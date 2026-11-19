@@ -10,8 +10,7 @@ import type { ActionExecutorDeps, HostReviewedChildrenPlanV1 } from '@happier-de
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { isManagedResizeActionIdV1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
@@ -137,8 +136,6 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
             : role === 'acquire' || role === 'bootstrap' || role === 'inspect' || role === 'reconcile'
                 || role === 'exec' || role === 'putFile')
         .map(({ action, role }) => ({ action: { pluginId: machine.launch.provider.pluginId, localId: action }, role })),
-        ...(actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity, machine.resource?.origin)
-            ? [{ action: 'machines.roles.set' as const, role: 'machines.roles.set' }] : []),
     ] };
 }
 

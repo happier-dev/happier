@@ -3,7 +3,7 @@ import {
   createTransferableHomeTargetInput,
   type HomeTargetInput,
 } from '@happier-dev/cli-common/homeTarget';
-import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { MachineEnrollmentCorrelationV1Schema, ManagedEnrollmentMachineMetadataV1Schema, type MachineEnrollmentCorrelationV1, type ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { MachinePublishedMetadataV1Schema, DeploymentAppMachineBindingV1Schema, type DeploymentAppMachineBindingV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { runRemoteTerminalEnrollment } from '@/auth/remoteTerminalEnrollment';
@@ -59,11 +59,12 @@ export async function readManagedEnrollmentInputFromStdin(input?: Readable): Pro
   homeTarget: HomeTargetInput;
   managedEnrollment: MachineEnrollmentCorrelationV1;
   machineDisplayName?: string;
+  initialMachineMetadata?: ManagedEnrollmentMachineMetadataV1;
   deploymentAppBinding?: DeploymentAppMachineBindingV1;
 }>> {
   const value: unknown = JSON.parse(await readBoundedStdin(input));
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).some((key) => key !== 'homeTarget' && key !== 'managedEnrollment' && key !== 'machineDisplayName' && key !== 'deploymentAppBinding')) {
+    || Object.keys(value).some((key) => key !== 'homeTarget' && key !== 'managedEnrollment' && key !== 'machineDisplayName' && key !== 'initialMachineMetadata' && key !== 'deploymentAppBinding')) {
     throw new Error('Invalid managed enrollment input.');
   }
   const envelope = value as Record<string, unknown>;
@@ -71,6 +72,7 @@ export async function readManagedEnrollmentInputFromStdin(input?: Readable): Pro
     homeTarget: parseHomeTargetInput(envelope.homeTarget),
     ...(envelope.deploymentAppBinding !== undefined ? { deploymentAppBinding: DeploymentAppMachineBindingV1Schema.parse(envelope.deploymentAppBinding) } : {}),
     managedEnrollment: MachineEnrollmentCorrelationV1Schema.parse(envelope.managedEnrollment),
+    ...(envelope.initialMachineMetadata !== undefined ? { initialMachineMetadata: ManagedEnrollmentMachineMetadataV1Schema.parse(envelope.initialMachineMetadata) } : {}),
     ...(envelope.machineDisplayName !== undefined ? {
       machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(envelope.machineDisplayName),
     } : {}),
@@ -173,7 +175,7 @@ export async function handleAuthEnrollRemote(
       target: prepared.target,
       signal,
       timeoutMs,
-      ...(managed ? { managedEnrollment: managed.managedEnrollment, machineDisplayName: managed.machineDisplayName, deploymentAppBinding: managed.deploymentAppBinding } : {}),
+      ...(managed ? { managedEnrollment: managed.managedEnrollment, machineDisplayName: managed.machineDisplayName, initialMachineMetadata: managed.initialMachineMetadata, deploymentAppBinding: managed.deploymentAppBinding } : {}),
       onPairingRequest: async (request) => {
         await deps.writeOutput({
           kind: 'remote_home_enrollment_pairing_request',

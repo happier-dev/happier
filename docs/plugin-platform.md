@@ -4449,8 +4449,9 @@ Creation provenance is separate from enrollment identity. A provisioner that
 binds a resource it created returns `resource.origin: 'created'` on the canonical
 bound result; recovery of that acquisition retains it. Caller acquire inputs and
 adoption of existing hosts supply no origin. Enrollment carries this optional
-fact through retained resource content and seeds Machine `isolationV1` once with
-the default roles metadata write, including Lume's personal-user guests.
+fact through retained resource content. The first Machine registration includes
+`isolationV1` and the initial roles, including for Lume's personal-user guests.
+The guest records the registered roles before it saves the bearer and starts.
 Protocol `machines/metadataUpdate` owns `readMachineIsolationV1(openedMetadata)`;
 Session defaults consume that fact rather than inferring isolation from roles.
 
