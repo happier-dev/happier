@@ -49,9 +49,9 @@ export function canonicalReviewCommentListFilters(
     };
 }
 
-function actorIdentity(actor: ReviewCommentActorRefV1): string {
+export function reviewCommentActorIdentityV1(actor: ReviewCommentActorRefV1): string {
     if (actor.kind === "plugin") return actor.pluginId;
-    if (actor.kind === "agent") return actor.agentId;
+    if (actor.kind === "agent" || actor.kind === "executionRun") return actor.agentId;
     if (actor.kind === "workflow") return actor.runId;
     return actor.userId;
 }
@@ -121,7 +121,7 @@ export function matchesReviewCommentListFilters(
     if (normalized.states.length > 0 && !normalized.states.includes(comment.state)) return false;
     if (!normalized.includeHistory && isHistoryComment(comment)) return false;
     if (normalized.authorKind && comment.author.kind !== normalized.authorKind) return false;
-    if (normalized.authorId && actorIdentity(comment.author) !== normalized.authorId) return false;
+    if (normalized.authorId && reviewCommentActorIdentityV1(comment.author) !== normalized.authorId) return false;
     if (normalized.filePath) {
         const anchor = comment.anchor;
         if (!("filePath" in anchor) || anchor.filePath !== normalized.filePath) return false;

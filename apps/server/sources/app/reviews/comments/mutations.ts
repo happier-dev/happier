@@ -130,7 +130,7 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
     async function prepare(principal: ReviewCommentPrincipal, input: ReviewCommentPrepareMutationRequestV1) {
         if (principal.storageMode !== "e2ee" && !principal.reviewAccess) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Prepared mutations require admitted resource content or an E2EE Account");
         const request = ReviewCommentPrepareMutationRequestV1Schema.parse(input);
-        if (request.mutation.actionId === "reviews.comments.create" && principal.actor.kind !== "user" && (request.mutation.input.authorIntent === "open" || principal.actor.kind === "agent" || principal.actor.kind === "workflow")) {
+        if (request.mutation.actionId === "reviews.comments.create" && principal.actor.kind !== "user" && (request.mutation.input.authorIntent === "open" || principal.actor.kind === "agent" || principal.actor.kind === "workflow" || principal.actor.kind === "executionRun")) {
             assertReviewCommentCurrentIntent({ ...principal, input: request.mutation.input, contentCommitment: request.contentCommitment });
         }
         const now = runtime.now();

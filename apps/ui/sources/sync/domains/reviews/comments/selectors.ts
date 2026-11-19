@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import type { ReviewCommentsState } from './store';
+import { reviewCommentActorIdentityV1 } from '@happier-dev/protocol/reviews/comments/queries';
 
 export type ReviewCommentFilters = Readonly<{
     engineId?: string;
@@ -18,19 +19,12 @@ function commentFilePath(comment: ReviewCommentV1): string | null {
     return 'filePath' in comment.anchor ? comment.anchor.filePath : null;
 }
 
-function commentAuthorId(comment: ReviewCommentV1): string {
-    if (comment.author.kind === 'plugin') return comment.author.pluginId;
-    if (comment.author.kind === 'agent') return comment.author.agentId;
-    if (comment.author.kind === 'workflow') return comment.author.runId;
-    return comment.author.userId;
-}
-
 function matchesFilters(comment: ReviewCommentV1, filters: ReviewCommentFilters): boolean {
     if (filters.engineId && comment.engineId !== filters.engineId) return false;
     if (filters.runId && comment.runId !== filters.runId) return false;
     if (filters.states && filters.states.length > 0 && !filters.states.includes(comment.state)) return false;
     if (filters.authorKind && comment.author.kind !== filters.authorKind) return false;
-    if (filters.authorId && commentAuthorId(comment) !== filters.authorId) return false;
+    if (filters.authorId && reviewCommentActorIdentityV1(comment.author) !== filters.authorId) return false;
     if (filters.filePath && commentFilePath(comment) !== filters.filePath) return false;
     return true;
 }

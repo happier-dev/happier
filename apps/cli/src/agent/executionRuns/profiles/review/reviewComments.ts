@@ -197,7 +197,8 @@ export function createReviewRunCommentService(deps: Readonly<{
               ...(params.workflowScope ? { workflowScope: params.workflowScope } : {}),
               actor: workflowRunId
                 ? { kind: 'workflow', runId: workflowRunId }
-                : { kind: 'agent', agentId: engineId, sessionId: producingSessionId! },
+                : producingSessionId ? { kind: 'agent', agentId: engineId, sessionId: producingSessionId }
+                  : { kind: 'executionRun', agentId: engineId, runId: producingRunId },
               currentIntent: {
                 v: 1, kind: 'review_findings_materialization', actionId: 'reviews.comments.create',
                 ...scope, ...(producingSessionId ? { sessionId: producingSessionId } : {}),

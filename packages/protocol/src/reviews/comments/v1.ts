@@ -68,8 +68,16 @@ export const ReviewCommentActorRefV1Schema = lazyZodSchema(() => z.union([
     sessionId: z.string().check(z.minLength(1)),
   }),
   z.strictObject({ kind: z.literal('workflow'), runId: z.string().check(z.minLength(1)) }),
+  z.strictObject({
+    kind: z.literal('executionRun'),
+    agentId: z.string().check(z.minLength(1)),
+    runId: z.string().check(z.minLength(1)),
+  }),
 ]));
 export type ReviewCommentActorRefV1 = z.infer<typeof ReviewCommentActorRefV1Schema>;
+export const ReviewCommentActorKindV1Schema = lazyZodSchema(() => z.union(
+  ReviewCommentActorRefV1Schema._zod.def.options.map(actor => actor.shape.kind),
+));
 
 const ReviewCommentAnchorSideV1Schema = lazyZodSchema(() => z.enum(['before', 'after']));
 

@@ -146,7 +146,16 @@ export function reviewCommentActorsEqualV1(left: ReviewCommentActorRefV1, right:
   if (left.kind === 'plugin' && right.kind === 'plugin') return left.pluginId === right.pluginId;
   if (left.kind === 'agent' && right.kind === 'agent') return left.agentId === right.agentId && left.sessionId === right.sessionId;
   if (left.kind === 'workflow' && right.kind === 'workflow') return left.runId === right.runId;
+  if (left.kind === 'executionRun' && right.kind === 'executionRun') return left.agentId === right.agentId && left.runId === right.runId;
   return false;
+}
+
+function formatReviewCommentActorDispositionKey(actor: ReviewCommentActorRefV1): string {
+  if (actor.kind === 'plugin') return `plugin:${actor.pluginId}`;
+  if (actor.kind === 'agent') return `agent:${actor.agentId}:${actor.sessionId}`;
+  if (actor.kind === 'workflow') return `workflow:${actor.runId}`;
+  if (actor.kind === 'executionRun') return `executionRun:${actor.agentId}:${actor.runId}`;
+  return `user:${actor.userId}`;
 }
 
 export function reviewCommentTransitionTargetsV1(from: ReviewCommentStateV1): readonly ReviewCommentStateV1[] {
@@ -268,8 +277,7 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
           tombstone: { deletedAt: now, deletedBy: params.actor, redacted: true } };
         kind = 'redacted';
       } else if (mutation.actionId === 'reviews.comments.setDisposition') {
-        const actor = params.actor;
-        const actorKey = actor.kind === 'user' ? `user:${actor.userId}` : actor.kind === 'agent' ? `agent:${actor.agentId}:${actor.sessionId}` : actor.kind === 'workflow' ? `workflow:${actor.runId}` : `plugin:${actor.pluginId}`;
+        const actorKey = formatReviewCommentActorDispositionKey(params.actor);
         structural = { ...structural, dispositions: { ...current.dispositions, [actorKey]: mutation.input.disposition } };
         kind = 'disposition_set';
       } else { kind = 'evidence_attached'; }

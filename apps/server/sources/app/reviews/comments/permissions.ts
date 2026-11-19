@@ -132,10 +132,3 @@ export function assertReviewCommentRedactionActorAllowed(actor: ReviewCommentAct
         "Only user principals may redact review comments",
     );
 }
-
-export function formatReviewCommentActorDispositionKey(actor: ReviewCommentActorRefV1): string {
-    if (actor.kind === "plugin") return `plugin:${actor.pluginId}`;
-    if (actor.kind === "agent") return `agent:${actor.agentId}:${actor.sessionId}`;
-    if (actor.kind === "workflow") return `workflow:${actor.runId}`;
-    return `user:${actor.userId}`;
-}

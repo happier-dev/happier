@@ -21,6 +21,20 @@ const input = {
 const runtime = { now: () => 1000, createId: (prefix: string) => `${prefix}-1` };
 
 describe('canonical Review Comment structural mutations', () => {
+  it('retains independent dispositions from two detached Runs of the same engine', () => {
+    const create = projectReviewCommentStructuralMutationV1('reviews.comments.create', input);
+    let current = deriveReviewCommentStructuralMutationV1({ mutation: create, accountId: 'account-1', actor, current: [], runtime }).records[0]!.structural;
+    for (const runId of ['first-run', 'second-run']) {
+      const mutation = projectReviewCommentStructuralMutationV1('reviews.comments.setDisposition', {
+        projectId: input.projectId, commentId: current.id, expectedServerRevision: current.serverRevision,
+        disposition: 'working', clientMutationId: runId,
+      });
+      current = deriveReviewCommentStructuralMutationV1({ mutation, accountId: 'account-1',
+        actor: { kind: 'executionRun', agentId: 'coderabbit', runId }, current: [current], runtime }).records[0]!.structural;
+    }
+    expect(current.dispositions).toEqual({ 'executionRun:coderabbit:first-run': 'working', 'executionRun:coderabbit:second-run': 'working' });
+  });
+
   it('derives offered transitions from the same graph that admits mutations', () => {
     const create = projectReviewCommentStructuralMutationV1('reviews.comments.create', { ...input, authorIntent: 'propose' });
     const first = deriveReviewCommentStructuralMutationV1({ mutation: create, accountId: 'account-1', actor, current: [], runtime }).records[0]!;

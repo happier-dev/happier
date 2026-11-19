@@ -138,7 +138,9 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     machineId: string;
     installationId: string;
 }>> {
-    if (params.headerPrincipal.actor.kind === "user") {
+    if (params.headerPrincipal.actor.kind === "user"
+        || (params.headerPrincipal.actor.kind === "executionRun"
+            && params.headerPrincipal.currentIntent?.kind !== "review_findings_materialization")) {
         throw new ReviewCommentOperationError(
             "review_comment_permission_denied",
             "Review-comment principal header actor is not trusted",
@@ -296,7 +298,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
     }
     if (verifiedHeaderPrincipal?.currentIntent?.kind === "review_findings_materialization") {
         const body = canonicalRequest?.mutation.actionId === "reviews.comments.create" ? canonicalRequest.mutation.input : ReviewCommentCreateRequestV1Schema.parse(request.body);
-        if (body.workspace && body.workspace.machineId !== verifiedHeaderPrincipal.machineId) {
+        if ((actor.kind === "executionRun" || body.workspace) && body.workspace?.machineId !== verifiedHeaderPrincipal.machineId) {
             throw new ReviewCommentOperationError("review_comment_permission_denied", "Review findings must reference their signed host workspace");
         }
     }

@@ -20,6 +20,9 @@ import { prepareWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/wor
 import type { AvailableAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../cli/src/agent/reviews/comments/executor';
+import { createReviewRunCommentService } from '../../../../../cli/src/agent/executionRuns/profiles/review/reviewComments';
+import type { ExecutionRunState } from '../../../../../cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
+import { createReviewCommentPrincipalSigningInputV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { auth } from '@/app/auth/auth';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
@@ -29,6 +32,9 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { registerReviewCommentRoutes } from './routes';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
+import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 function unused(): Promise<never> {
     return Promise.reject(new Error('unexpected_action_dependency'));
@@ -59,6 +65,101 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-workflow-review-scope-', initAuth: true, initEncrypt: true });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['detached', 'session'] as const)('persists native findings through the signed host and durable Home owner: %s', async origin => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const outsiderToken = await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user' });
+        const machineId = randomUUID(), installationId = randomUUID();
+        const keyPair = tweetnacl.sign.keyPair();
+        await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+        const otherMachineId = randomUUID(), otherInstallationId = randomUUID();
+        await createTrustedMachineInstallation({ accountId: account.id, machineId: otherMachineId,
+            installationId: otherInstallationId, keyPair });
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId: account.id,
+            header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Native review' }), 'base64'),
+            body: Buffer.from(encodePlainArtifactStoredContent({ body: '' }), 'base64'),
+            dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'), reviewMetadata: { create: {
+                subjectKind: 'repository', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 1, startedAt: new Date(1),
+            } } } });
+        const sessionId = origin === 'session' ? randomUUID() : null;
+        if (sessionId) await db.session.create({ data: { id: sessionId, accountId: account.id,
+            tag: sessionId, metadata: '{}', encryptionMode: 'plain' } });
+        const run: ExecutionRunState = { runId: randomUUID(), callId: randomUUID(), sidechainId: randomUUID(), sessionId,
+            depth: 0, intent: 'review', backendId: 'coderabbit', backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+            instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+            ioMode: 'request_response', status: 'running', startedAtMs: 1,
+            intentInput: { reviewReviewerId: 'native-reviewer' } };
+        await withAuthenticatedTestApp(app => { registerReviewCommentRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app); }, async app => {
+            let attack: 'none' | 'machine' | 'account' | 'run' | 'engine' = 'none';
+            const requests: Array<{ path: string; status: number; body: unknown }> = [];
+            const previousAdapter = axios.defaults.adapter;
+            const adapter: AxiosAdapter = async config => {
+                const headers = AxiosHeaders.from(config.headers);
+                const path = new URL(config.url!, 'http://localhost').pathname;
+                if (attack === 'account' && path.startsWith('/v1/reviews/comments')) headers.set('Authorization', `Bearer ${outsiderToken}`);
+                if ((attack === 'run' || attack === 'engine') && path.startsWith('/v1/reviews/comments')) {
+                    const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(
+                        String(headers.get(REVIEW_COMMENT_PRINCIPAL_HEADER_V1)), 'base64url').toString('utf8')));
+                    if (principal.actor.kind !== 'executionRun' || !principal.proof) throw new Error('detached_run_principal_missing');
+                    if (attack === 'run') principal.actor.runId = 'another-run';
+                    else {
+                        if (!principal.currentIntent) throw new Error('run_current_intent_missing');
+                        principal.actor.agentId = 'another-engine';
+                        principal.currentIntent.agentId = 'another-engine';
+                    }
+                    const { signatureBase64Url: _signature, ...unsignedProof } = principal.proof;
+                    principal.proof.signatureBase64Url = Buffer.from(tweetnacl.sign.detached(
+                        createReviewCommentPrincipalSigningInputV1({ ...principal, proof: unsignedProof }),
+                        keyPair.secretKey)).toString('base64url');
+                    headers.set(REVIEW_COMMENT_PRINCIPAL_HEADER_V1, Buffer.from(JSON.stringify(principal)).toString('base64url'));
+                }
+                const response = await app.inject({ method: config.method?.toUpperCase() as 'GET' | 'POST' | 'PATCH',
+                    url: new URL(config.url!, 'http://localhost').pathname, headers: headers.toJSON() as Record<string, string>,
+                    ...(config.params ? { query: config.params } : {}),
+                    ...(config.data ? { payload: typeof config.data === 'string' ? JSON.parse(config.data) : config.data } : {}) });
+                requests.push({ path: new URL(config.url!, 'http://localhost').pathname, status: response.statusCode, body: response.json() });
+                return { data: response.json(), status: response.statusCode, statusText: response.statusMessage,
+                    headers: response.headers, config };
+            };
+            axios.defaults.adapter = adapter;
+            try {
+                const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null },
+                    resolveAccountId: () => account.id, resolveAccountEncryptionMode: async () => 'plain',
+                    resolvePrincipalSigningContext: async () => ({ machineId: attack === 'machine' ? otherMachineId : machineId,
+                        installationId: attack === 'machine' ? otherInstallationId : installationId,
+                        privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
+                const service = createReviewRunCommentService({ cwd: '/repo', scope: { workspace: { machineId, path: '/repo' } }, execute });
+                const materialize = (id: string) => service.materialize({ run, review: { reviewId, roundOrdinal: 1 },
+                    reviewedFingerprint: null, findings: [{ id, title: 'Rollback omitted', severity: 'high', category: 'correctness', summary: 'Restore the previous state when publication fails.' }] });
+                const result = await materialize('native-finding');
+                expect(result, JSON.stringify(requests)).toMatchObject({ status: 'materialized', failures: [] });
+                expect(result.commentIds).toHaveLength(1);
+                const stored = await db.reviewComment.findUniqueOrThrow({ where: { id: result.commentIds[0] } });
+                expect(stored).toMatchObject({ reviewId, runId: run.runId, sessionId, serverRevision: 1 });
+                expect(JSON.parse(stored.authorJson)).toEqual(sessionId
+                    ? { kind: 'agent', agentId: 'coderabbit', sessionId }
+                    : { kind: 'executionRun', agentId: 'coderabbit', runId: run.runId });
+                expect(await execute('reviews.comments.list', { reviewId, authorKind: sessionId ? 'agent' : 'executionRun',
+                    authorId: 'coderabbit', includeHistory: true })).toMatchObject({ items: [{ id: stored.id }] });
+                const read = ReviewCommentCreateResponseV1Schema.parse(await execute('reviews.comments.create', {
+                    reviewId, workspace: { machineId, path: '/repo' }, anchor: { kind: 'file', filePath: 'control.ts' },
+                    snapshot: { kind: 'none', capturedAt: 1 }, body: 'Person control', clientMutationId: randomUUID(),
+                }));
+                expect(read.comment.author).toEqual({ kind: 'user', userId: account.id });
+                if (origin === 'detached') {
+                    for (const kind of ['machine', 'account', 'run', 'engine'] as const) {
+                        attack = kind;
+                        expect(await materialize(`forged-${kind}`)).toMatchObject({ status: 'failed', commentIds: [],
+                            failures: [{ errorCode: 'review_comment_permission_denied' }] });
+                    }
+                    expect(await db.reviewComment.count({ where: { reviewId } })).toBe(2);
+                }
+            } finally { axios.defaults.adapter = previousAdapter; }
+        }, { authentication: 'real' });
+    });
 
     it.each(['origin', 'originless', 'nested', 'nested_e2ee'] as const)('reads the admitted reviewSession through the real signed Action transport: %s', async origin => {
         const mode = origin === 'nested_e2ee' ? 'e2ee' : 'plain';

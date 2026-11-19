@@ -125,12 +125,15 @@ export function assertReviewCommentCurrentIntent(params: Omit<ReviewCommentCreat
     if (
         !intent
         || !(actor.kind === "agent" ? intent.agentId === actor.agentId && intent.sessionId === actor.sessionId
+            : actor.kind === "executionRun" ? intent.kind === "review_findings_materialization"
+                && intent.runId === actor.runId && intent.agentId === actor.agentId
+                && intent.sessionId === undefined && intent.workflowRunId === undefined
             : actor.kind === "workflow" && intent.kind === "review_findings_materialization" && intent.workflowRunId === actor.runId)
         || intent.projectId !== input.projectId
         || (intent.kind === "execution_run_host_action" && intent.workspaceId !== input.workspaceId)
         || (intent.kind === "review_findings_materialization"
             && (intent.workspace?.machineId !== input.workspace?.machineId || intent.workspace?.path !== input.workspace?.path))
-        || (intent.kind === "review_findings_materialization" && (!input.findingIdentity || !input.engineId))
+        || (intent.kind === "review_findings_materialization" && (!input.findingIdentity || !input.engineId || intent.agentId !== input.engineId))
         || intent.sessionId !== input.sessionId
         || intent.runId !== input.runId
         || (intent.kind === "execution_run_host_action" && intent.pluginId !== input.engineId)
@@ -170,7 +173,7 @@ export function createReviewCommentOperations(
         },
         async create(params) {
             assertValidReviewCommentSnapshot(params.input.snapshot);
-            if (params.actor.kind !== "user" && (params.input.authorIntent === "open" || params.actor.kind === "agent" || params.actor.kind === "workflow")) assertReviewCommentCurrentIntent(params);
+            if (params.actor.kind !== "user" && (params.input.authorIntent === "open" || params.actor.kind === "agent" || params.actor.kind === "workflow" || params.actor.kind === "executionRun")) assertReviewCommentCurrentIntent(params);
             const result = await plain(params, "reviews.comments.create", reviewCommentCreateRequestFingerprint(params));
             return { comment: result.comments[0]!, replayed: result.replayed };
         },

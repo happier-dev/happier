@@ -6,6 +6,7 @@ import {
   ReviewCommentAttachEvidenceRequestV1Schema,
   ReviewCommentAnchorV1Schema,
   ReviewCommentActorRefV1Schema,
+  ReviewCommentActorKindV1Schema,
   ReviewCommentCreateRequestV1Schema,
   ReviewCommentEditRequestV1Schema,
   ReviewCommentEvidenceV1Schema,
@@ -75,11 +76,7 @@ const ReviewCommentMaterializationIntentV1Schema = lazyZodSchema(() => z.strictO
   callId: ReviewCommentCurrentIntentIdV1Schema,
   agentId: ReviewCommentCurrentIntentIdV1Schema,
   ...ReviewCommentScopeV1Schema.shape,
-}).check(z.superRefine(validateReviewCommentScopeV1), z.superRefine((value, ctx) => {
-  if (!value.sessionId && !value.workflowRunId) {
-    ctx.addIssue({ code: "custom", path: ['sessionId'], message: 'A Session or Workflow Run is required' });
-  }
-})));
+}).check(z.superRefine(validateReviewCommentScopeV1)));
 export const ReviewCommentCurrentIntentV1Schema = lazyZodSchema(() => z.union([
   ReviewCommentPluginCurrentIntentV1Schema,
   ReviewCommentMaterializationIntentV1Schema,
@@ -168,7 +165,7 @@ export const ReviewCommentListRequestV1Schema = lazyZodSchema(() => z.strictObje
   sessionId: z.optional(z.string().check(z.minLength(1))),
   runId: z.optional(z.string().check(z.minLength(1))),
   states: z._default(z.array(ReviewCommentStateV1Schema), []),
-  authorKind: z.optional(z.enum(['user', 'plugin', 'agent', 'workflow'])),
+  authorKind: z.optional(ReviewCommentActorKindV1Schema),
   authorId: z.optional(z.string().check(z.minLength(1))),
   engineId: z.optional(z.string().check(z.minLength(1))),
   filePath: z.optional(z.string().check(z.minLength(1))),
