@@ -457,7 +457,8 @@ describe('agent actions on a native subject page', () => {
 });
 
 describe('agent actions before the catalog answers', () => {
-  it('reads as pending until the catalog settles to its named refusal', async () => {
+  it.each(['machine_unreachable', 'contributed_action_unavailable'])(
+    'keeps the catalog refusal %s separate from the launch outcome and allows retry', async code => {
     let answer: (value: unknown) => void = () => {};
     // The contributed plugin invocation is the realm boundary; the front door and the Account owner stay real.
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
@@ -471,9 +472,21 @@ describe('agent actions before the catalog answers', () => {
       await act(async () => {});
       // A page reserves the control's place while this is pending, rather than drawing a stand-in it then replaces.
       expect(hook.getCurrent().actions).toBeUndefined();
-      await act(async () => { answer({ ok: false, errorCode: 'triage_catalog_unavailable', error: 'triage_catalog_unavailable' }); });
-      expect(hook.getCurrent()).toMatchObject({ actions: null, showOutcome: true,
-        outcome: { kind: 'unavailable', code: 'triage_catalog_unavailable' } });
+      await act(async () => { answer({ ok: false, errorCode: code, error: code }); });
+      // Nothing was pressed: the refusal is the controls' quiet availability, never a launch failure banner (PAGE-ACCEPT-176 R3-D1).
+      expect(hook.getCurrent()).toMatchObject({ actions: null, showOutcome: false, outcome: null,
+        catalogOutcome: { kind: 'unavailable', code } });
+      // Retry reads the catalog again; the next answer replaces the refusal.
+      await act(async () => { hook.getCurrent().retryCatalog(); });
+      expect(hook.getCurrent()).toMatchObject({ actions: undefined, catalogOutcome: null, outcome: null });
+      await act(async () => { answer({ ok: true, result: { v: 1, kind: 'choices', defaultActionId: null, actions: [] } }); });
+      expect(hook.getCurrent()).toMatchObject({ actions: [], catalogOutcome: null, outcome: null, showOutcome: false });
+      let launch: Promise<void> | undefined;
+      await act(async () => { launch = hook.getCurrent().investigate(); });
+      expect(hook.getCurrent()).toMatchObject({ pending: true, outcome: null });
+      await act(async () => { answer({ ok: false, errorCode: code, error: code }); await launch; });
+      expect(hook.getCurrent()).toMatchObject({ catalogOutcome: null, pending: false, showOutcome: true,
+        outcome: { kind: 'unavailable', code } });
     } finally { await hook.unmount(); }
   });
 });

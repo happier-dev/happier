@@ -114,10 +114,11 @@ export type InvestigationAgentAction = FailureAgentAction;
  */
 export function useInvestigationAgentActions(
   investigation: BoundHealthNoticeInvestigation | null,
-  options: Readonly<{ includeDefault: boolean }>,
+  options: Readonly<{ includeDefault: boolean; /** Bumped by the person's Retry: the same read again. */ attempt?: number }>,
 ): FailureAgentActionsReadResult | undefined {
   const [answer, setAnswer] = React.useState<FailureAgentActionsReadResult | undefined>(undefined);
   const includeDefault = options.includeDefault;
+  const attempt = options.attempt ?? 0;
   React.useEffect(() => {
     if (!investigation) {
       setAnswer(undefined);
@@ -132,6 +133,6 @@ export function useInvestigationAgentActions(
       if (!own.signal.aborted) setAnswer({ kind: 'unavailable', code: 'unknown_error' });
     });
     return () => own.abort();
-  }, [investigation, includeDefault]);
+  }, [investigation, includeDefault, attempt]);
   return answer;
 }

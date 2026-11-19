@@ -29,12 +29,17 @@ export function useInvestigateFailure(subject: FailureInvestigationSubject | nul
 /** Native failures and Inbox's already-bound notice share the same launch and recovery flow. */
 export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInvestigation | null, options?: InvestigateFailureOptions) {
     const intent = useHealthNoticeInvestigate(investigation, investigation);
+    const [catalogAttempt, setCatalogAttempt] = React.useState(0);
     const catalog = useInvestigationAgentActions(options?.agentActions ? investigation : null,
-        { includeDefault: options?.agentActions === 'withDefault' });
+        { includeDefault: options?.agentActions === 'withDefault', attempt: catalogAttempt });
     const catalogRefused = catalog != null && 'kind' in catalog;
     const actions = catalogRefused ? null : catalog;
+    // A refused catalog read is the controls' availability (InvestigationAgentActionButtons `unavailable`, or the
+    // page's default record standing pressable); only a launch the person pressed has an outcome banner
+    // (PAGE-ACCEPT-176 R3-D1: nothing was pressed, so nothing "failed").
     const catalogOutcome = catalogRefused ? catalog : null;
-    const outcome = intent.outcome ?? catalogOutcome;
+    const retryCatalog = React.useCallback(() => { setCatalogAttempt(value => value + 1); }, []);
+    const outcome = intent.outcome;
     const placementUnresolved = intent.outcome?.kind === 'placement_choice_required';
     const { launch } = intent;
     // Once only: if the composer itself still asks for a placement, its own chooser stays as the way forward.
@@ -47,5 +52,5 @@ export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInv
     }, [placementUnresolved, launch]);
     const showOutcome = outcome !== null
         && (!placementUnresolved || openedComposerForPlacement.current && !intent.pending);
-    return { ...intent, actions, catalogOutcome, outcome, showOutcome };
+    return { ...intent, actions, catalogOutcome, retryCatalog, outcome, showOutcome };
 }
