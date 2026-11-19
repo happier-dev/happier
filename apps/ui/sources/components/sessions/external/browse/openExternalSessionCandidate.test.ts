@@ -165,6 +165,16 @@ describe('openExternalSessionCandidate', () => {
         });
     });
 
+    it('reports a failed link, not a silent press, when the selected Machine cannot be resolved for the open', async () => {
+        // Browse's unscoped entry admits the row, then the fresh Administration target is gone (QA A, 2026-11-19).
+        const params = input();
+        expect(await openExternalSessionCandidate({ ...params, resolveCurrentTarget: () => null })).toBe('failed');
+        expect(boundary.alert).toHaveBeenCalledOnce();
+        expect(boundary.ensure).not.toHaveBeenCalled();
+        expect(params.openSession).not.toHaveBeenCalled();
+        expect(params.onLinkingChange).not.toHaveBeenCalled();
+    });
+
     it('retires navigation and alerts on an Account switch and rejects overlapping link requests', async () => {
         const pending = createDeferred<{ ok: true; sessionId: string; created: boolean }>();
         boundary.ensure.mockImplementation(() => pending.promise);

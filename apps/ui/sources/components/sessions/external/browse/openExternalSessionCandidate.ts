@@ -60,7 +60,13 @@ export async function openExternalSessionCandidate(params: Readonly<{
     if (isExternalSessionBrowseCandidateOfflineInert({ offline: params.offline, interaction, linkedSessionId: candidate.linkedSessionId })) return 'ignored';
     if (!agentId || !source) return 'ignored';
     const target = params.resolveCurrentTarget();
-    if (!target || state.linkingCandidateKey !== null) return 'ignored';
+    if (state.linkingCandidateKey !== null) return 'ignored';
+    if (!target) {
+        // The press was admitted above, so a missing target means its Machine can't take this open now
+        // (no longer reachable or no longer current in its Home): say so rather than doing nothing.
+        Modal.alert(t('common.error'), resolveExternalSessionBrowseRpcErrorMessage('internal_error', 'link'), undefined, { commandBridge: params.commandBridge });
+        return 'failed';
+    }
     const openTarget = { machineId: target.machineId, serverId: target.serverId };
     const find: ExternalSessionCandidateFindSeed | undefined = params.find ? resolveChatFindSeed({
         query: params.find.query,
