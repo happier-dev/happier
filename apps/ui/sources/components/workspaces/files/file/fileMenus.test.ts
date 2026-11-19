@@ -55,6 +55,30 @@ describe('one file menu inventory across page, phone and tree', () => {
             .find(item => item.id === 'openInDefaultApp')?.titleKey).toBe('files.pane.menu.openInDefaultApp');
     });
 
+    it.each(['page', 'phone', 'treeRow'] as const)('opens and reveals the local original from %s without a daemon transfer', async surface => {
+        const open = vi.fn();
+        const reveal = vi.fn();
+        const downloadThenOpen = vi.fn();
+        const context = { ...base, platform: 'tauri' as const, machineReachable: false,
+            openInDefaultApp: downloadThenOpen, originalFile: { open, reveal, revealTitleKey: 'files.pane.menu.showInFinder' as const } };
+        const items = resolveFileMenuItems(context, surface);
+        expect(items.find(item => item.id === 'openInDefaultApp')?.state).toBe('enabled');
+        expect(items.find(item => item.id === 'revealInFileManager')).toMatchObject({
+            state: 'enabled', titleKey: 'files.pane.menu.showInFinder',
+        });
+        await items.find(item => item.id === 'openInDefaultApp')?.run();
+        await items.find(item => item.id === 'revealInFileManager')?.run();
+        expect(open).toHaveBeenCalledOnce();
+        expect(reveal).toHaveBeenCalledOnce();
+        expect(downloadThenOpen).not.toHaveBeenCalled();
+
+        const remote = resolveFileMenuItems({ ...context, originalFile: undefined, machineReachable: true }, surface);
+        expect(remote.some(item => item.id === 'revealInFileManager')).toBe(false);
+        await remote.find(item => item.id === 'openInDefaultApp')?.run();
+        expect(downloadThenOpen).toHaveBeenCalledOnce();
+        expect(resolveFileMenuItems({ ...context, isDirectory: true }, surface)).toEqual([]);
+    });
+
     it('does not let partial content become a selection or directory become blame', () => {
         const context = { ...base, partial: true, selectLines: () => {}, readBlame: true, toggleBlame: () => {} };
         expect(resolveFileMenuItems(context, 'page').map(item => item.id)).toEqual(['blame']);

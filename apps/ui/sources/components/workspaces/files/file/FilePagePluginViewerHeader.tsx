@@ -98,6 +98,7 @@ export function FilePagePluginViewerHeader(
       download: () => share.download(),
       shareFile: share.shareFile,
       openInDefaultApp: share.openInDefaultApp,
+      originalFile: share.originalFile,
     },
     size === 'phone' ? 'phone' : 'page',
     { details: fileDetails, downloadBusy: share.busy },

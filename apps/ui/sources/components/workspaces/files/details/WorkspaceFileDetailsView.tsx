@@ -1339,6 +1339,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
             checkoutReachability.machineName ? t('files.pane.page.fromMachine', { machine: checkoutReachability.machineName }) : null,
         ].filter(Boolean).join(' · '),
     });
+    const openInDefaultApp = share.originalFile?.open ?? share.openInDefaultApp;
     const fileDetails = useFilePageDetailsActions({ path: filePath, kind: fileViewer.kind, kindLabel: t(fileViewer.labelKey as never) as string, language, content: fileContent });
     const effectiveWrapLines = fileView.wrap ?? wrapLinesInDiffs;
     const isBinaryContent = fileContent?.isBinary === true;
@@ -1440,6 +1441,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         download: fileEntry?.kind !== 'deleted' ? () => share.download() : undefined,
         shareFile: share.shareFile,
         openInDefaultApp: share.openInDefaultApp,
+        originalFile: share.originalFile,
         commands: codeIntelligence.menuCommands,
     };
     const menuActions = useRetainedMenuActions(buildFilePageMenuActions(menuContext, phonePage ? 'phone' : 'page',
@@ -1912,7 +1914,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
                         findSurfaceId={findSurfaceId}
                         onDownload={() => { void share.download(); }}
                         onOpenAsText={openAsText}
-                        {...(share.openInDefaultApp ? { onOpenInDefaultApp: share.openInDefaultApp } : {})}
+                        {...(openInDefaultApp ? { onOpenInDefaultApp: openInDefaultApp } : {})}
                         onImageInfo={onImageInfo}
                         onMediaInfo={onMediaInfo}
                         stageRef={viewerStageRef}

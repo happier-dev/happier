@@ -83,6 +83,15 @@ export function desktopHostKind(): DesktopHostKind | null {
     return userAgent.includes('tauri') ? 'tauri' : null;
 }
 
+/** OS of the desktop webview. Callers have already established the desktop host. */
+export function desktopHostPlatform(): 'macos' | 'windows' | 'linux' | null {
+    const userAgent = readUserAgent();
+    if (userAgent.includes('windows')) return 'windows';
+    if (userAgent.includes('macintosh')) return 'macos';
+    if (userAgent.includes('linux')) return 'linux';
+    return null;
+}
+
 /** Whether this renderer is hosted by a desktop shell at all, whichever one it is. */
 export function isDesktopHost(): boolean {
     return desktopHostKind() !== null;

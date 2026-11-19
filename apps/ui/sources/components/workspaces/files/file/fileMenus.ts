@@ -27,6 +27,12 @@ const CODE_MENU_GROUPS: readonly Readonly<{ group: FileMenuItem['group']; ids: r
     { group: 'check', ids: ['code.showProblems', 'code.checkProjectProblems', 'code.restart'] },
 ];
 
+export type OriginalFileActions = Readonly<{
+    open: FileMenuRun;
+    reveal: FileMenuRun;
+    revealTitleKey: TranslationKeyNoParams;
+}>;
+
 /** Behaviour is supplied by its owner; the File page owns this one shared item inventory. */
 export type FileMenuContext = Readonly<{
     machineReachable: boolean;
@@ -62,6 +68,7 @@ export type FileMenuContext = Readonly<{
     shareFile?: FileMenuRun;
     rename?: FileMenuRun;
     openInDefaultApp?: FileMenuRun;
+    originalFile?: OriginalFileActions;
 }>;
 
 export type FileMenuItem = Readonly<{
@@ -87,15 +94,18 @@ function item(input: Readonly<{
     titleKey: TranslationKeyNoParams;
     callback: FileMenuCallback;
     surfaces?: readonly FileMenuSurface[];
-    requiresMachine?: boolean;
+    requiresMachine?: boolean | ((context: FileMenuContext) => boolean);
     requiresContent?: boolean;
     destructive?: boolean;
     visible?: (context: FileMenuContext) => boolean;
 }>): FileMenuItem {
     const availability = (context: FileMenuContext): FileMenuAvailability => {
         if (!input.callback(context) || input.visible?.(context) === false) return 'hidden';
-        if (!context.machineReachable && (input.requiresMachine || (input.requiresContent && !context.hasCachedContent))) {
-            return { disabledReason: context.unavailableReason };
+        if (!context.machineReachable) {
+            const requiresMachine = typeof input.requiresMachine === 'function' ? input.requiresMachine(context) : input.requiresMachine;
+            if (requiresMachine || (input.requiresContent && !context.hasCachedContent)) {
+                return { disabledReason: context.unavailableReason };
+            }
         }
         return 'enabled';
     };
@@ -140,8 +150,11 @@ export const FILE_MENU_ITEMS: readonly FileMenuItem[] = [
         visible: c => c.platform === 'android', requiresContent: true }),
     item({ id: 'rename', group: 'share', titleKey: 'files.repositoryTree.actions.renameEllipsis', callback: c => c.rename, surfaces: ['treeRow'], requiresMachine: true }),
     // Offered when the open owner (`canOpenFileInDefaultApp`) supplied a callback; on web that is a PDF tab.
-    item({ id: 'openInDefaultApp', group: 'share', titleKey: 'files.pane.menu.openInDefaultApp', callback: c => c.openInDefaultApp,
-        requiresMachine: true }),
+    item({ id: 'openInDefaultApp', group: 'share', titleKey: 'files.pane.menu.openInDefaultApp',
+        callback: c => c.originalFile?.open ?? c.openInDefaultApp, visible: c => !c.isDirectory,
+        requiresMachine: c => !c.originalFile }),
+    item({ id: 'revealInFileManager', group: 'share', titleKey: 'files.pane.menu.showInFileManager',
+        callback: c => c.originalFile?.reveal, visible: c => !c.isDirectory }),
     item({ id: 'discardEdits', group: 'change', titleKey: 'files.pane.page.discardEdits', callback: c => c.discardEdits, surfaces: pageSurfaces }),
     item({ id: 'restoreBeforeTurn', group: 'change', titleKey: 'files.pane.menu.restoreBeforeTurnFallback', callback: c => c.changes?.restoreBeforeTurn, requiresMachine: true }),
     item({ id: 'discard', group: 'change', titleKey: 'files.pane.menu.discardAllChanges', callback: c => c.changes?.discardAll, requiresMachine: true, destructive: true }),
@@ -152,6 +165,7 @@ export function resolveFileMenuItems(context: FileMenuContext, surface: FileMenu
         const state = item.state(context);
         return state === 'hidden' ? [] : [{ ...item,
             titleKey: item.id === 'blame' && context.blame ? 'files.pane.menu.hideBlame' as const
+                : item.id === 'revealInFileManager' ? context.originalFile?.revealTitleKey ?? item.titleKey
                 : item.id === 'openInDefaultApp' && context.platform === 'web' ? 'files.viewer.openInNewTab' as const : item.titleKey,
             ...(item.id === 'restoreBeforeTurn' && context.changes?.restoreBeforeTurnTitle ? { title: context.changes.restoreBeforeTurnTitle } : {}),
             state, run: (intent?: FileMenuIntent) => item.run(context, intent) }];

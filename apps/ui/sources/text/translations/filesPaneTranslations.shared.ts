@@ -17,6 +17,9 @@ export type FilesPaneTranslations = Readonly<{
         attachToMessage: string;
         saveAsArtifact: string;
         openInDefaultApp: string;
+        showInFinder: string;
+        showInExplorer: string;
+        showInFileManager: string;
         restoreBeforeTurn: (params: Readonly<{ turn: number }>) => string;
         restoreBeforeTurnFallback: string;
         discardAllChanges: string;
@@ -233,6 +236,9 @@ export const filesPaneTranslationsEnglish = { en: {
             attachToMessage: "Attach to message",
             saveAsArtifact: "Save as Artifact…",
             openInDefaultApp: "Open in default app",
+            showInFinder: "Show in Finder",
+            showInExplorer: "Show in Explorer",
+            showInFileManager: "Show in file manager",
             restoreBeforeTurn: ({ turn }) => "Restore this file to before turn" + " " + turn,
             restoreBeforeTurnFallback: 'Restore file',
             discardAllChanges: "Discard all changes in this file",

@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { buildSessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { act } from 'react-test-renderer';
+import { createSessionFixture, renderScreen } from '@/dev/testkit';
 import type { RepositoryTreeRowActionMenuItemId } from './RepositoryTreeRowActionsMenu';
 import type { FileMenuContext } from '@/components/workspaces/files/file/fileMenus';
 
@@ -79,6 +81,64 @@ describe('canonical repository row menu', () => {
         expect(folder.screen.findByTestId('repository-tree-menuitem-copyLink')).toBeNull();
         expect(folder.screen.findByTestId('repository-tree-menuitem-mentionInComposer')).toBeTruthy();
     });
+    it('hands the row location and the Session workspace root to the native opener only for this computer', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
+        const { publishLocalDaemonStatus, readLocalDaemonSharedState } = await import(
+            '@/components/settings/machines/localControl/localDaemonSharedState'
+        );
+        const serverId = 'home-for-file-handoff';
+        const machineId = 'local-file-machine';
+        const session = createSessionFixture({
+            id: 'session-for-file-handoff',
+            serverId,
+            metadata: {
+                machineId,
+                host: 'local.test',
+                path: '/agent/workspace',
+                sessionWorkspaceLocationV1: buildSessionWorkspaceLocationV1({
+                    machineId,
+                    agentPath: '/agent/workspace',
+                    machinePath: '/machine/workspace',
+                }),
+            },
+        });
+        const invoke = vi.fn(async () => undefined);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' });
+        const runner = getSystemTasksRunner();
+        const priorStatus = readLocalDaemonSharedState(runner).status;
+        const priorSessions = storage.getState().sessions;
+        storage.setState({ sessions: { ...priorSessions, [session.id]: session } });
+        publishLocalDaemonStatus(runner, { machineId });
+        try {
+            const { screen } = await render({
+                kind: 'file', downloadActionsEnabled: false, disableWriteActions: true,
+                fileMenuContext: { platform: 'tauri', machineReachable: false, unavailableReason: 'offline', hasCachedContent: false },
+                share: {
+                    workspaceScope: { serverId, machineId, rootPath: '/machine/workspace/nested' },
+                    actionScope: null,
+                    linkTarget: { kind: 'session', serverId, sessionId: session.id },
+                },
+            });
+            await screen.pressByTestIdAsync('repository-tree-menuitem-openInDefaultApp');
+            await screen.pressByTestIdAsync('repository-tree-menuitem-revealInFileManager');
+            const target = { workspaceRoot: '/machine/workspace', filePath: '/machine/workspace/nested/folder.ts' };
+            expect(invoke.mock.calls).toEqual([
+                ['desktop_handoff_workspace_file', { ...target, action: 'open' }],
+                ['desktop_handoff_workspace_file', { ...target, action: 'reveal' }],
+            ]);
+
+            await act(async () => publishLocalDaemonStatus(runner, { machineId: 'different-machine' }));
+            expect(screen.findByTestId('repository-tree-menuitem-revealInFileManager')).toBeNull();
+            expect(screen.findByTestId('repository-tree-menuitem-openInDefaultApp')?.props.disabled).toBe(true);
+        } finally {
+            publishLocalDaemonStatus(runner, priorStatus);
+            storage.setState({ sessions: priorSessions });
+            vi.unstubAllGlobals();
+        }
+    });
+
     describe('Delete', () => {
         async function sections(kind: 'file' | 'directory') {
             const { screen } = await render({ kind, downloadActionsEnabled: true, folderCreation: { newFolder: true, upload: true } });

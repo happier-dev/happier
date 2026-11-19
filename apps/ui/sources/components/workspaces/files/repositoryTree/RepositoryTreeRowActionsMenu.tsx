@@ -7,6 +7,7 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { FilesystemBrowserRowActionsControl } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import { useWorkspaceOpenActions } from '@/components/appShell/workspace/useWorkspaceOpenActions';
@@ -54,6 +55,7 @@ const FILE_MENU_ITEM_ICONS: Readonly<Record<string, ItemAction['icon']>> = {
     shareFile: 'share-network',
     rename: 'pencil-simple',
     openInDefaultApp: 'arrow-square-out',
+    revealInFileManager: 'folder-open',
     restoreBeforeTurn: 'clock-counter-clockwise',
     discard: 'arrow-arc-left',
 };
@@ -118,13 +120,14 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
         machineReachable,
         unavailableReason,
         hasCachedContent: props.fileMenuContext?.hasCachedContent ?? false,
-        platform: props.fileMenuContext?.platform ?? (Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web'),
+        platform: props.fileMenuContext?.platform ?? (Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : desktopHostKind() === 'tauri' ? 'tauri' : 'web'),
         isDirectory: props.kind === 'directory',
         copyPath: props.fileMenuContext?.copyPath ?? (share.copyPath ? () => share.copyPath?.()
             : () => props.onSelect('repository-tree-menuitem-copy-path')),
         copyLink: props.fileMenuContext?.copyLink ?? share.copyLink,
         mentionInComposer: props.fileMenuContext?.mentionInComposer ?? share.mentionInComposer,
         openInDefaultApp: props.fileMenuContext?.openInDefaultApp ?? (file ? share.openInDefaultApp : undefined),
+        originalFile: share.originalFile,
         saveAsArtifact: props.fileMenuContext?.saveAsArtifact ?? saveFolderAsArtifact,
         shareFile: props.fileMenuContext?.shareFile ?? (file ? share.shareFile : undefined),
         rename: props.fileMenuContext?.rename ?? (() => props.onSelect('repository-tree-menuitem-rename')),
@@ -132,7 +135,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
         openBeside: props.fileMenuContext?.openBeside ?? (workspaceOpen.items.some(item => item.id === 'workspace.open.right')
             ? () => { workspaceOpen.open('splitRight'); } : undefined),
     }), [file, machineReachable, saveFolderAsArtifact, props.downloadActionsEnabled, props.fileMenuContext, props.kind, props.onSelect, share.mentionInComposer,
-        share.copyLink, share.copyPath, share.openInDefaultApp, share.shareFile, unavailableReason, workspaceOpen]);
+        share.copyLink, share.copyPath, share.openInDefaultApp, share.originalFile, share.shareFile, unavailableReason, workspaceOpen]);
     const sharedItems = React.useMemo(() => resolveFileMenuItems(sharedContext, 'treeRow'), [sharedContext]);
     const sharedActions = React.useMemo(() => sharedItems.map(item => ({
         id: `repository-tree-menuitem-${item.id === 'copyPath' ? 'copy-path' : item.id}`,
