@@ -99,7 +99,7 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
     <View ref={props.anchorRef} collapsable={false}
       // As labelled rows, an add chip on its own row ("or…", "Add a first step") hangs out by its unbordered
       // content inset, so its glyph stands on the label edge with the row labels (lab 1116c pop-v-*-390).
-      style={[styles.anchor, rows && !inRowControl && props.kind === 'add' ? styles.anchorOnLabelEdge : null]}>
+      style={rows && !inRowControl && props.kind === 'add' ? styles.anchorOnLabelEdge : styles.anchor}>
       <HappierComposerChip
         testID={props.testID}
         accessibilityLabel={
@@ -221,10 +221,12 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   // The chip's horizontal padding plus its (transparent) 1 px border.
+  // Its own row, so no 100% cap: the menu wrapper around it is sized to the chip's margin box, which the
+  // negative margin makes 11 px narrower than the chip, and a 100% cap clipped "or…" to "o." by exactly that.
   anchorOnLabelEdge: {
     marginLeft: -(theme.space.s10 + 1),
-    // Its own row: the negative margin must not let the row squeeze the chip below its words.
     flexShrink: 0,
+    minWidth: 0,
   },
   chip: {
     flexDirection: 'row',
