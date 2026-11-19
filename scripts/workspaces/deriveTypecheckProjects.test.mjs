@@ -683,6 +683,46 @@ test('server build scripts keep testkit imports out of the Server declaration pr
   await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
 });
 
+test('CLI build scripts do not make Server declarations depend on CLI source', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-cli-script-owner-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cli = join(root, 'apps/cli');
+  // Real acyclic imports: CLI testkit -> Server harness -> workspace resolver
+  // -> CLI bundled-plugin membership. The last file belongs to build tooling.
+  const files = {
+    'apps/cli/src/entry.ts': 'export { harness } from "../../server/sources/harness";',
+    'apps/cli/src/consumer.test.ts': 'export const consumer = true;',
+    'apps/server/sources/harness.ts': 'import { membership } from "../../../scripts/resolver"; export const harness = membership;',
+    'scripts/resolver.ts': 'export { membership } from "../apps/cli/scripts/build-owned/membership";',
+    'apps/cli/scripts/build-owned/membership.ts': 'export const membership = true;',
+    ...Object.fromEntries(['cli', 'server'].map(name => [`apps/${name}/tsconfig.json`,
+      JSON.stringify({ compilerOptions: { strict: true, declaration: name === 'cli', module: 'esnext', moduleResolution: 'bundler', types: [],
+        paths: { '@/*': [name === 'server' ? './sources/*' : './src/*'] } },
+        include: [name === 'server' ? 'sources/**/*.ts' : 'src/**/*.ts'] }),
+    ])),
+  };
+  const scriptsConfig = await readFile(new URL('../../apps/cli/scripts/tsconfig.json', import.meta.url), 'utf8')
+    .catch(error => { if (error.code !== 'ENOENT') throw error; });
+  if (scriptsConfig !== undefined) files['apps/cli/scripts/tsconfig.json'] = scriptsConfig;
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), text);
+  }
+  const names = ['foundation', 'services', 'core', 'source', 'test', 'test-ui'];
+  for (const [index, name] of names.entries()) {
+    await writeFile(join(cli, `tsconfig.${name}.json`), JSON.stringify({ extends: './tsconfig.json', files: [], include: [],
+      references: names.slice(0, Math.min(index, 4)).map(prior => ({ path: `./tsconfig.${prior}.json` })),
+    }));
+  }
+  const inventory = await deriveCliTypecheckProjects(cli);
+  const server = inventory.foreignProjects.find(project => project.configPath === join(root, 'apps/server/tsconfig.json'));
+  assert.ok(server);
+  assert.equal(server.references.some(reference => reference.configPath === join(cli, 'tsconfig.json')), false,
+    'Server tooling must not refer back to the CLI source declaration owner');
+  const projects = inventory.map(item => ({ project: item.configPath, authoredProject: join(cli, `tsconfig.${item.project}.json`) }));
+  await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
+});
+
 test('a project reference cycle names every member and its authored owner', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-reference-cycle-'));
   t.after(() => rm(root, { recursive: true, force: true }));
