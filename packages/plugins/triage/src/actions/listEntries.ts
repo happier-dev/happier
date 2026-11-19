@@ -269,6 +269,10 @@ export async function assembleTriageListPass(
     }));
     for (const row of configuredRows) {
         const contribution = admittedByQualifiedId.get(row.sourceQualifiedId);
+        const selectedKindIds = deps.taskOnly
+            ? contribution?.descriptor.kinds.filter((kind) => kind.task === true).map((kind) => kind.id)
+            : undefined;
+        if (selectedKindIds?.length === 0) continue;
         const source = {
             pluginId: row.configured.instance.source.pluginId,
             localId: row.configured.instance.source.localId,
@@ -309,10 +313,6 @@ export async function assembleTriageListPass(
         });
         if (input.limit === 0 || !walkAdmits(input, row.configured.instance.sourceInstanceId)
             || selectedSortSourceIds !== undefined && !selectedSortSourceIds.has(row.configured.instance.sourceInstanceId)) continue;
-        const selectedKindIds = deps.taskOnly
-            ? contribution?.descriptor.kinds.filter((kind) => kind.task === true).map((kind) => kind.id)
-            : undefined;
-        if (selectedKindIds?.length === 0) continue;
         // Selected, so this window is answering for it either way. A source that
         // cannot be invoked becomes an unfinished lane rather than a silent
         // absence, which is what keeps the coverage claim about what was asked.
