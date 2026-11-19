@@ -261,7 +261,7 @@ describe('WorkflowsColumn', () => {
             if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
                 const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
                 const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
-                return Response.json({ automations: query.scope === 'account_all' ? [detail] : [], nextCursor: null });
+                return Response.json({ automations: query.scope !== 'account_saved' ? [detail] : [], nextCursor: null });
             }
             return url.pathname === '/v3/automations' ? Response.json(list)
                 : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
@@ -991,7 +991,7 @@ describe('WorkflowsColumn', () => {
                 if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
                     const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
                     const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
-                    return Response.json({ automations: query.scope === 'account_all' ? details : [], nextCursor: null });
+                    return Response.json({ automations: query.scope !== 'account_saved' ? details : [], nextCursor: null });
                 }
                 const detail = details.find(candidate => url.pathname === `/v3/automations/${candidate.id}`);
                 return detail ? Response.json(detail) : undefined;

@@ -981,7 +981,7 @@ describe('workflow library page anatomy', () => {
             if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
                 const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
                 const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
-                if (query.scope !== 'account_inline') return Response.json({ automations: [], nextCursor: null });
+                if (query.scope === 'account_saved') return Response.json({ automations: [], nextCursor: null });
                 accountQueryAdmitted.resolve();
                 return accountQuery.promise;
             }
