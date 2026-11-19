@@ -8,6 +8,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 // The hook does not render Markdown; this patched native package is an external rendering boundary.
@@ -26,6 +27,9 @@ const { applyAcpCatalogSnapshot } = await import('@/sync/store/settings/acpCatal
 const { useDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/useDaemonMergedProjectionInputs');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { NewSessionEmbeddedHostProvider } = await import('../navigation/newSessionHost');
+const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
+const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+const { applyProfileCatalogSnapshot, beginProfileCatalogLoad } = await import('@/sync/store/settings/profileCatalogSnapshot');
 const { useNewSessionScreenModel } = await import('./useNewSessionScreenModel');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 const { rememberLastNewSessionAgentPickerView, rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
@@ -35,6 +39,62 @@ afterEach(async () => { standardCleanup(); clearDaemonMergedProjectionCacheForTe
 afterAll(() => network.dispose());
 
 describe('remembered launch profile through real New Session state', () => {
+    it('keeps the mounted issue draft’s seeded profile while its Home profile catalog loads', async () => {
+        const savedHome = await network.addHome('https://mounted-profile-seed.test', 'owner');
+        network.setHttpResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption'
+            ? Response.json({ mode: 'plain', updatedAt: 1 }) : null);
+        network.setRpcResponder(async request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+            ? { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+                claude: { id: 'claude', identity: { pluginId: 'happier.agent.claude', localId: 'claude' }, isBuiltIn: true,
+                    title: 'Claude', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+            } } } : {});
+        await upsertAndActivateServer({ serverUrl: savedHome.serverUrl });
+        await restoreConnectionToActiveServer({ token: savedHome.token });
+        const scope = { serverId: savedHome.id, accountId: 'owner' };
+        await vi.waitFor(() => expect(storage.getState().settingsScope).toEqual(scope));
+        storage.getState().applySettingsLocal({ useProfiles: false, useEnhancedSessionWizard: false });
+        const machine = createMachineFixture({ id: 'studio', active: true, activeAt: Date.now(), storageMode: 'plain' });
+        storage.getState().applyMachines([machine], false, { sourceServerId: savedHome.id });
+        observeMachinePresenceForTest(scope, ['studio']);
+        const projection = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'studio', serverId: savedHome.id }));
+        await act(async () => { await vi.waitFor(() => expect(projection.getCurrent().phase).toBe('ready')); });
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+        beginProfileCatalogLoad(scope);
+
+        const profileId = '2a78c879-4ecf-5323-9769-1007beb25305';
+        const host = { params: { machineId: 'studio', backendTargetKey: explicitTargetKey }, targetServerId: savedHome.id,
+            setParams: () => {}, openDraft: () => {}, onHandedOff: () => {}, demanded: false };
+        const outcome = seedAndOpenNewSession({
+            seed: { profileId, directoryIntent: { kind: 'path', path: '/home/owner' }, attachments: [{
+                attachmentLocalId: 'entry', value: { key: 'entry:56', value: { v: 1 }, presentation: { label: 'Issue #56' } },
+            }] }, pluginId: 'happier.triage', scope, isCurrent: () => true, navigateToNewSession: () => {},
+        });
+        if (outcome.kind !== 'opened') throw new Error(`Expected the seeded draft to open, got ${outcome.kind}`);
+        expect(readNewSessionDraftFromRepository({ scope, draftId: outcome.draftId })).toMatchObject({
+            selectedProfileId: profileId, selectedPath: '/home/owner', composerAttachmentSeeds: [expect.any(Object)],
+        });
+        const model = await renderHook(() => useNewSessionScreenModel({ draftId: outcome.draftId }), {
+            wrapper: ({ children }: React.PropsWithChildren) => <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>,
+        });
+        const launcher = () => {
+            const current = model.getCurrent();
+            if (current.variant !== 'simple') throw new Error('Expected simple New Session surface');
+            return current.simpleProps;
+        };
+        expect(launcher().selectedProfileId).toBe(profileId);
+
+        const record = ProfileRecordV1Schema.parse({ v: 1, id: profileId, enabled: true, promptStack: [], secretBindings: {},
+            definition: { kind: 'inline', profile: { v: 2, id: profileId, name: 'Issue review', createdAt: 1, updatedAt: 1 } } });
+        await act(async () => applyProfileCatalogSnapshot(scope, { status: 'ready', source: 'destination',
+            records: [{ record, revision: 1 }], diagnostics: [], referenceGuardRevision: 'absent', authority: 'inactive',
+            control: null, controlRevision: 'absent',
+        }, true));
+        expect(launcher().selectedProfileId).toBe(profileId);
+        await model.unmount();
+        await projection.unmount();
+        expect(readNewSessionDraftFromRepository({ scope, draftId: outcome.draftId })?.selectedProfileId).toBe(profileId);
+    });
+
     it('reports the enabled native sandbox preference from a pushed isolated Machine policy', async () => {
         const savedHome = await network.addHome('https://native-sandbox-policy.test', 'owner');
         const policy = { configuredSandboxes: {}, workKinds: {
@@ -128,9 +188,16 @@ describe('remembered launch profile through real New Session state', () => {
         expect(selectedProfileId()).toBe('deleted-profile');
         await model.rerender();
         expect(selectedProfileId()).toBe('deleted-profile');
-        // The canonical catalog becoming current is the point where the model can reject a missing profile.
-        await act(async () => applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1,
-            record: { v: 1, definitions: [] } }, true));
+        await act(async () => {
+            beginProfileCatalogLoad(scope);
+            applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+        });
+        expect(selectedProfileId()).toBe('deleted-profile');
+        // A complete Profile catalog can establish that the remembered selection is missing.
+        await act(async () => applyProfileCatalogSnapshot(scope, { status: 'ready', source: 'destination',
+            records: [], diagnostics: [], referenceGuardRevision: 'absent', authority: 'inactive',
+            control: null, controlRevision: 'absent',
+        }, true));
         await model.rerender();
         expect(selectedProfileId()).toBeNull();
         expect(storage.getState().authoringMemory.lastUsedProfile).toBe('deleted-profile');

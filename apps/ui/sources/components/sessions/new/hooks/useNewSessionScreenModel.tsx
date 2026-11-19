@@ -18,7 +18,7 @@ import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/n
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
-import { useAiLaunchProfiles, useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
+import { useHomeAiLaunchProfileCatalog } from '@/sync/store/useAiLaunchProfiles';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
@@ -899,8 +899,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const deleteAiLaunchProfile = useDeleteAiLaunchProfile();
-    const launchProfiles = useAiLaunchProfiles();
-    const profiles = useAiLaunchProfilesForLegacyUi();
+    const { profiles: launchProfiles, hasCompleteData, stale } = useHomeAiLaunchProfileCatalog(accountSettingsScope);
+    const profileCatalogCurrent = hasCompleteData && !stale;
+    const profiles = React.useMemo(() => launchProfiles.map(projectAiLaunchProfileForLegacyUi), [launchProfiles]);
     const lastUsedProfile = useAuthoringMemoryField('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
@@ -1554,12 +1555,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const candidate = authoredProfileId === undefined ? initialProfileAuthoringIntent.profileId : authoredProfileId;
         if (!candidate || !acpCatalogReady || !projectionCurrent) return candidate;
         const profile = profileMap.get(candidate);
-        return profile && isProfileEnabled(profile, profileEnabledById)
+        // Only a current, complete Profile catalog can establish that a draft's selection is missing.
+        if (!profile) return profileCatalogCurrent ? null : candidate;
+        return isProfileEnabled(profile, profileEnabledById)
             && resolvedBackendEntries.some((entry) => isProfileCompatibleWithResolvedBackendEntry(profile, entry))
             ? candidate
             : null;
     }, [acpCatalogReady, authoredProfileId, initialProfileAuthoringIntent.profileId, profileEnabledById,
-        profileMap, projectionCurrent, resolvedBackendEntries, useProfiles]);
+        profileCatalogCurrent, profileMap, projectionCurrent, resolvedBackendEntries, useProfiles]);
     const setSelectedProfileId = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
         setAuthoredProfileId(typeof next === 'function' ? next(selectedProfileId) : next);
     }, [selectedProfileId]);
