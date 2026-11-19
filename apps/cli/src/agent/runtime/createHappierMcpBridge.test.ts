@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge'
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers'
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer'
-import { buildCodexAppServerConfigOverrides } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides'
+import { buildCodexAppServerConfigOverrides, codexConfigOverridesToThreadConfig } from '@happier-dev/plugins-codex/agent/runtime/appServer/config/overrides'
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures'
 import { createEnvKeyScope } from '@/testkit/env/envScope'
 
@@ -138,10 +138,14 @@ describe('createHappierMcpBridge', () => {
       args: ['mcp-relay'],
       env: { HAPPIER_SESSION_MCP_CONTEXT_FILE: '/run/happier-mcp-x/session-mcp.json', HAPPIER_SESSION_MCP_BEARER: BEARER },
     })
-    const overrides = buildCodexAppServerConfigOverrides(mcpServers).join('\n')
-    expect(overrides).toContain('mcp-relay')
-    expect(overrides).not.toContain('PRIVATE_BRIDGE_ENV')
-    expect(overrides).toContain(BEARER)
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(mcpServers)
+    const threadConfig = codexConfigOverridesToThreadConfig(mcpOverrides)
+    expect(threadConfig['mcp_servers.happier.args']).toEqual(['mcp-relay'])
+    expect(threadConfig['mcp_servers.happier.env']).toEqual({
+      HAPPIER_SESSION_MCP_CONTEXT_FILE: '/run/happier-mcp-x/session-mcp.json',
+      HAPPIER_SESSION_MCP_BEARER: BEARER,
+    })
+    expect(processOverrides.join('\n')).not.toContain(BEARER)
   })
 
   it('gives the Windows loopback relay its bearer only in its MCP client config', async () => {
