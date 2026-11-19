@@ -118,19 +118,19 @@ describe('AE.P02.F4-shell-check: command input through the real Machine', () => 
       input: { command: { kind: 'literal', value: command } },
     }] } });
 
-    const result = await actor.execute(DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployInput, {
-      defaultSessionId: session.sessionId, presentUserConfirmation: { actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1 },
+    const refusal = await actor.executeWithApproval(DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployInput, async artifactId => {
+      const read = await actor.execute('approval.request.get', { artifactId });
+      expect(read.ok, JSON.stringify(read)).toBe(true);
+      if (!read.ok) throw new Error(read.errorCode);
+      const { request } = ApprovalRequestGetResultV1Schema.parse(read.result);
+      expect(request).toMatchObject({ actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, status: 'open',
+        automaticChecks: { humanApprovalRequired: true, runs: [] } });
+      const decision = await actor.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+      return decision;
+    }, {
+      defaultSessionId: session.sessionId,
     });
-    let refusal: unknown = result;
-    if (result.ok) {
-      const pending = ActionApprovalRequestCreatedResultSchema.parse(result.result);
-      await waitFor(async () => {
-        const request = ApprovalRequestGetResultV1Schema.parse(await invoke('approval.request.get', { artifactId: pending.artifactId })).request;
-        if (!request.execution) return false;
-        refusal = request.execution;
-        return true;
-      }, { failFast: true, context: 'Shell check settles the original deployment request' });
-    }
     expect(refusal).toMatchObject({ ok: false, errorCode: 'action_interception_rejected', details: { message: expect.any(String) } });
     if (!refusal || typeof refusal !== 'object' || !('errorCode' in refusal) || !('details' in refusal)) {
       throw new Error('Missing typed shell-check refusal');
