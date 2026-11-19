@@ -2318,12 +2318,12 @@ describe('installed deployment storage and target composition', () => {
                 providerSends++;
                 throw new Error('Refused deployment must not reach the provider');
             });
-            // Each independent receipt owns its real exclusive stage-log directory.
-            const receipt = createDeploymentReceiptHeaderV1({ id: receiptId, environmentId: environment.environment.id,
+            // The Home boundary evolves its own copy of the validated Receipt.
+            const receipt = { ...createDeploymentReceiptHeaderV1({ id: receiptId, environmentId: environment.environment.id,
                 targetLinkId: row.targetLink.id, state: scenario === 'uncertain receipt observe' ? 'outcome_unknown' : scenario === 'build logs' ? 'succeeded' : scenario === 'retained receipt observe' ? 'running' : 'queued', requestKey: candidate.input.requestKey,
                 actionOperationId: 'platform-operation', requestedByAccountId: 'owner',
                 startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: 'reserved-platform-content',
-                acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
+                acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } }) };
             const receiptContent = scenario === 'receipt source differs'
                 ? { ...candidate.content, sourceIntent: { ...sourceIntent, contentRevision: sourceIntent.contentRevision + 1 } }
                 : scenario === 'build logs' || runtimeLogs || scenario === 'retained receipt observe' || backgroundObservation ? { ...platformCandidate,
