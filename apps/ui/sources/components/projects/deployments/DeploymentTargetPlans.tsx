@@ -72,7 +72,7 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
   return (
     <View style={styles.body}>
       {yourPlan ? (
-        <Text testID={`${props.testID}:yourPlan`} variant="meta" emphasis="medium">
+        <Text testID={`${props.testID}:yourPlan`} variant="meta" emphasis="medium" style={{ color: theme.colors.text.primary }}>
           {`${t('newApp.deploy.plan.yourPlan')} · ${yourPlan.title}`}
         </Text>
       ) : null}
@@ -81,8 +81,8 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
           // jdF-where: the plan's name and price share its first line, then its facts (PAGE-ACCEPT-176 R3-D4).
           <View key={plan.id} style={[styles.plan, props.columns ? styles.planColumn : null]}>
             <View style={styles.planHead}>
-              <Text variant="meta" emphasis="medium" style={styles.planTitle}>{plan.title}</Text>
-              {plan.price ? <Text variant="meta" emphasis="medium" accessibilityLabel={
+              <Text variant="meta" emphasis="medium" style={[styles.planTitle, { color: theme.colors.text.primary }]}>{plan.title}</Text>
+              {plan.price ? <Text variant="meta" emphasis="medium" style={{ color: theme.colors.text.primary }} accessibilityLabel={
                 `${t('newApp.deploy.plan.price')} ${formatDeclaredPlanPrice(plan.price)}`}>{formatDeclaredPlanPrice(plan.price)}</Text> : null}
             </View>
             {plan.facts.length > 0 ? <PlanFacts facts={plan.facts} /> : null}
@@ -135,7 +135,7 @@ function PlanFacts(props: Readonly<{ facts: Plans[number]['facts'] }>) {
       {props.facts.map((fact, index) => (
         <View key={`${index}:${fact.label}`} style={styles.fact}>
           <Text variant="meta" style={[label, styles.factLabel, labelWidth === null ? null : { width: labelWidth }]}>{fact.label}</Text>
-          <Text variant="meta" style={styles.factValue}>{factValue(fact)}</Text>
+          <Text variant="meta" style={[styles.factValue, { color: theme.colors.text.primary }]}>{factValue(fact)}</Text>
         </View>
       ))}
     </View>
