@@ -47,6 +47,15 @@ async function selectOrderingMode(page: Page, mode: 'custom' | 'created' | 'upda
   await option.click();
 }
 
+async function openSessionListSearch(page: Page) {
+  const input = page.getByTestId('session-list-search-input').first();
+  if (!(await input.isVisible().catch(() => false))) {
+    await page.getByTestId('session-list-search-trigger').first().click();
+  }
+  await expect(input).toBeVisible();
+  return input;
+}
+
 async function waitForVisibleSessionOrder(page: Page, sessionIds: readonly string[]): Promise<string[]> {
   const expectedIds = new Set(sessionIds);
   await expect.poll(async () => {
@@ -239,8 +248,7 @@ test.describe('ui e2e: session list ordering mode', () => {
       for (const sessionId of sessionIds) {
         await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
       }
-      const input = page.getByTestId('session-list-search-input').first();
-      await expect(input).toBeVisible();
+      let input = await openSessionListSearch(page);
       const cases: ReadonlyArray<readonly [string, readonly number[]]> = [
         ['"continue with"', [0, 1]],
         ['"continue a with"', []],
@@ -252,7 +260,7 @@ test.describe('ui e2e: session list ordering mode', () => {
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: 900 });
         await expect(page.getByTestId('navigation-sidebar')).toHaveCount(width === 1440 ? 1 : 0);
-        await expect(input).toBeVisible();
+        input = await openSessionListSearch(page);
         for (const [query, expected] of cases) {
           const originalInput = await input.elementHandle();
           await input.fill(query);
@@ -303,11 +311,11 @@ test.describe('ui e2e: session list ordering mode', () => {
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
       await waitForInitialAppUi({ page, timeoutMs: 120_000 });
       for (const id of ids) await expect(page.getByTestId(`session-list-item-${id}`)).toHaveCount(1, { timeout: 120_000 });
-      const input = page.getByTestId('session-list-search-input').first();
+      let input = await openSessionListSearch(page);
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: 900 });
         await expect(page.getByTestId('navigation-sidebar')).toHaveCount(width === 1440 ? 1 : 0);
-        await expect(input).toBeVisible();
+        input = await openSessionListSearch(page);
         for (const query of ["Drag handles on project headings don't work.", '"Drag handles on project headings don\'t work."', '"project headings" -"umbrella pigs"']) {
           await input.fill(query);
           await expect(input, `saved-message query at width ${width}`).toHaveValue(query);
@@ -377,7 +385,7 @@ test.describe('ui e2e: session list ordering mode', () => {
       await waitForInitialAppUi({ page, timeoutMs: 120_000 });
       await expect(page.getByTestId(`session-list-item-${newest}`)).toHaveCount(1, { timeout: 120_000 });
       await expect(page.getByTestId(`session-list-item-${target}`)).toHaveCount(0);
-      const input = page.getByTestId('session-list-search-input').first();
+      const input = await openSessionListSearch(page);
       await input.fill('"older project heading search"');
       await expect(input).toHaveValue('"older project heading search"');
       await expect(page.getByTestId(`session-list-item-${target}`)).toHaveCount(1, { timeout: 30_000 });

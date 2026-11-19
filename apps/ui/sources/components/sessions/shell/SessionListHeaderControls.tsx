@@ -341,7 +341,7 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
                     <View
                         testID="session-list-search-trailing-accessory"
                         pointerEvents="auto"
-                        style={[styles.searchTrailingAccessory, searchTrailingAccessoryHasContent && showSearchClearButton ? styles.searchActions : null]}
+                        style={[styles.searchTrailingAccessory, styles.searchActions]}
                     >
                         {searchTrailingAccessoryHasContent ? searchTrailingAccessory : null}
                         {showSearchClearButton ? (

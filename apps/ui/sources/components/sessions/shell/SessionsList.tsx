@@ -211,7 +211,6 @@ const EMPTY_COLLAPSED_GROUP_KEYS: Readonly<Record<string, boolean>> = Object.fre
 const EMPTY_SESSION_LIST_VIEW_ITEMS: ReadonlyArray<SessionListViewItem> = Object.freeze([]);
 const EMPTY_SESSION_LIST_ROW_STORE_SCOPES: ReadonlyArray<{ sessionId: string; serverId?: string | null }> = Object.freeze([]);
 const EMPTY_SESSION_ROW_STORE_KEY_SET: ReadonlySet<string> = Object.freeze(new Set<string>());
-const EMPTY_MEMORY_MATCHED_SESSION_KEYS: ReadonlySet<string> = Object.freeze(new Set<string>());
 const EMPTY_REACHABLE_SESSION_DISPLAY_BY_KEY: Readonly<Record<string, never>> = Object.freeze({});
 const EMPTY_SESSION_TAGS_BY_KEY: Readonly<Record<string, readonly string[]>> = Object.freeze({});
 const SESSION_LIST_IDLE_MOVE_RESULT = Object.freeze({
@@ -274,20 +273,6 @@ function buildPrioritySessionRowReasonCounts(
         if (sessionItem.selected === true) incrementPriorityReasonCount(counts, 'selected');
     }
     return counts;
-}
-
-function buildSessionCandidateKeySet(items: ReadonlyArray<SessionListViewItem>): ReadonlySet<string> {
-    if (items.length === 0) return EMPTY_MEMORY_MATCHED_SESSION_KEYS;
-    const keys = new Set<string>();
-    for (const item of items) {
-        if (item.type !== 'session') continue;
-        const serverId = String(item.serverId ?? '').trim();
-        const sessionId = String(item.session?.id ?? '').trim();
-        if (serverId && sessionId) {
-            keys.add(sessionTagKey(serverId, sessionId));
-        }
-    }
-    return keys.size > 0 ? keys : EMPTY_MEMORY_MATCHED_SESSION_KEYS;
 }
 
 function buildStringRecordSignature(value: Readonly<Record<string, string>> | null | undefined): string {
