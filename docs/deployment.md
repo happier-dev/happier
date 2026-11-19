@@ -96,9 +96,13 @@ publisher read retains its typed code in the `forges` issue. The default `{}`
 input continues to compose the full catalog.
 
 The dialog uses a read-only `task` run on the first eligible Machine whose Agent
-can run the `deploy_suggestion` task. Its input contains the person's description,
+can run the `deploy_suggestion` task. The run's working folder is that Machine's
+home folder, which always exists; nothing is created on the Machine for it. Its
+input contains the person's description,
 the catalog snapshot, and, when variable metadata is supplied, names with secret
-flags rather than secret values.
+flags rather than secret values. When the catalog is read for a suggestion while
+the app shell still owes registry sources (`registrySourcesPending`), the read
+waits for that fact to settle, so starters supplied by a Machine are not dropped.
 The run can return typed questions in the existing transient question shape. The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.

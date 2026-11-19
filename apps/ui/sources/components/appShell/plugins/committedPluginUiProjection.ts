@@ -13,6 +13,7 @@ type CommittedProjectionBinding = Readonly<{
     readCandidates?: (pluginId: string, input?: AppShellPluginUiProjectionRead) => PluginUiExecutionOriginCandidateFacts | null;
     translationRuntime?: PluginUiTranslationRuntime;
     getVoiceProviderActivation?: (providerId: string) => Promise<void> | null;
+    readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean;
     disposeSource(): void;
 }>;
 let committed: CommittedProjectionBinding | null = null;
@@ -36,6 +37,29 @@ export function readCurrentAppShellPluginUiProjection(input?: AppShellPluginUiPr
     return committed?.read(input) ?? null;
 }
 
+/** The publication's fact that a registry source may still arrive; without a published app shell nothing will. */
+export function readCurrentAppShellRegistrySourcesPending(input?: AppShellPluginUiProjectionRead): boolean {
+    return committed?.readRegistrySourcesPending?.(input) ?? false;
+}
+
+/**
+ * Settles once no registry source may still arrive (the same fact the registry selection waits on), or on abort.
+ * No timer: a Machine that answers or fails its registry sources ends the wait.
+ */
+export function waitForAppShellRegistrySourcesSettled(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted || !readCurrentAppShellRegistrySourcesPending()) return Promise.resolve();
+    return new Promise(resolve => {
+        const settle = () => {
+            if (!signal?.aborted && readCurrentAppShellRegistrySourcesPending()) return;
+            unsubscribe();
+            signal?.removeEventListener('abort', settle);
+            resolve();
+        };
+        const unsubscribe = subscribeCommittedAppShellPluginUiProjection(settle);
+        signal?.addEventListener('abort', settle);
+    });
+}
+
 /** Imperative consumers borrow the current Account's copy owner; each runtime still checks its exact source. */
 export function readCurrentAppShellPluginUiTranslationRuntime(projection: PluginUiProjectionModel | null | undefined,
     input?: AppShellPluginUiProjectionRead): PluginUiTranslationRuntime | null {
@@ -54,6 +78,7 @@ export function publishCommittedAppShellPluginUiProjection(
     subscribe?: (listener: () => void) => () => void,
     translationRuntime?: PluginUiTranslationRuntime,
     getVoiceProviderActivation?: (providerId: string) => Promise<void> | null,
+    readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean,
 ): () => void {
     let unsubscribe: (() => void) | undefined;
     const binding: CommittedProjectionBinding = {
@@ -61,6 +86,7 @@ export function publishCommittedAppShellPluginUiProjection(
         readCandidates,
         translationRuntime,
         getVoiceProviderActivation,
+        readRegistrySourcesPending,
         disposeSource() { unsubscribe?.(); unsubscribe = undefined; },
     };
     committed?.disposeSource();

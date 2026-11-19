@@ -140,6 +140,26 @@ describe('AppShell projection source publication', () => {
             expect(owner.getSnapshot().registrySourcesPending).toBe(false);
         } finally { owner.dispose(); }
     });
+    it('tells committed readers when registry sources settle, so an imperative catalog read can wait on it', async () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        try {
+            owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
+                activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
+                onlineMachineIds: ['machine'], selectableMachineIds: ['machine'] });
+            const establishing = { ...currentness(EMPTY_PLUGIN_UI_PROJECTION), phase: 'establishing' as const, interactionEnabled: false };
+            owner.publishMachineCurrentness('machine', null, establishing);
+            expect(owner.getSnapshot().registrySourcesPending).toBe(true);
+            await Promise.resolve();
+            const committed = vi.fn();
+            const unsubscribe = owner.subscribe(committed, 'committed');
+            // Only the registry-source fact changes: the Machine answered its registry sources, the rest still establishes.
+            owner.publishMachineCurrentness('machine', null, { ...establishing, registrySourcesCurrent: true });
+            await Promise.resolve();
+            expect(owner.getSnapshot().registrySourcesPending).toBe(false);
+            expect(committed).toHaveBeenCalled();
+            unsubscribe();
+        } finally { owner.dispose(); }
+    });
     it('settles Account discovery while passive Machine descriptor observers have no answer', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const store = createPluginAccountAvailabilityReaderStore();

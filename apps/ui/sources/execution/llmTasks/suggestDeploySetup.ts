@@ -16,7 +16,7 @@ import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmT
 import type { LlmTaskRunnerResolutionV1, LlmTaskRunnerUnavailableAgentV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 import { normalizeInteractionTransientQuestionsV1, type InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
-import { projectCheckoutParentPath } from '@/components/projects/activation/projectOpenChoices';
+import { waitForAppShellRegistrySourcesSettled } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -77,6 +77,9 @@ export async function suggestDeploySetup(params: Readonly<{
         if (params.signal?.aborted) return { kind: 'stopped' };
         let catalog = params.catalog;
         if (!catalog) {
+            // A Machine still owing its registry sources may carry the only starters: read once they settle.
+            await waitForAppShellRegistrySourcesSettled(params.signal);
+            if (params.signal?.aborted) return { kind: 'stopped' };
             const listed = await readDeploySuggestionCatalog(params);
             if (params.signal?.aborted) return { kind: 'stopped' };
             if (listed.kind === 'failed') return listed;
@@ -96,9 +99,9 @@ export async function suggestDeploySetup(params: Readonly<{
                     reason: machine.online ? 'home_directory_unavailable' : 'offline', unavailableAgents: [] });
                 continue;
             }
-            // The Machine's new-project parent is also the starter-create parent's canonical owner.
+            // A no-tools task needs no project folder: the Machine's home always exists (its new-project parent may not).
             const host: LlmTaskHostV1 = { kind: 'workspace', workspace: { serverId: params.serverId,
-                machineId: machine.machineId, rootPath: projectCheckoutParentPath(machine.homeDir) } };
+                machineId: machine.machineId, rootPath: machine.homeDir } };
             const resolved = await resolveWorkspaceLlmTaskRunner(host, params.choice ?? null, 'deploy_suggestion');
             if (params.signal?.aborted) return { kind: 'stopped' };
             if (!resolved.ok) {

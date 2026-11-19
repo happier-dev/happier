@@ -247,7 +247,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             || previous.candidateFactsByPluginId !== snapshot.candidateFactsByPluginId
             || previous.projectionUnion.phase !== snapshot.projectionUnion.phase
             || previous.projectionUnion.interactionEnabled !== snapshot.projectionUnion.interactionEnabled
-            || (previous.accountUiProjection === null) !== (snapshot.accountUiProjection === null);
+            || (previous.accountUiProjection === null) !== (snapshot.accountUiProjection === null)
+            || previous.registrySourcesPending !== snapshot.registrySourcesPending;
         for (const [listener, scope] of listeners) if (scope !== 'committed' || committedChanged) listener();
     };
 

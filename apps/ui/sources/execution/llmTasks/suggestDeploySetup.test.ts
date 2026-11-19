@@ -8,6 +8,7 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 // The UI transport adapter delegates into the real Action executor; only its host ports are fixtures.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
 import { suggestDeploySetup } from './suggestDeploySetup';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 
 const catalog: DeploySuggestionCatalogV1 = {
     starters: [{ id: 'website', title: 'Website', deploy: { framework: 'html', output: 'static' } }],
@@ -55,7 +56,8 @@ it('uses the first ready online Machine once and checks model output against the
     expect(execute.mock.calls.map(row => row[0])).toEqual(['agents.models.list', 'agents.models.list', 'execution.run.start', 'deployments.suggestions.check']);
     expect(progress).toContainEqual(expect.objectContaining({ kind: 'run', runId: 'run_1', machineId: 'ready' }));
     const start = execute.mock.calls.find(row => row[0] === 'execution.run.start')!;
-    expect(start[1]).toMatchObject({ sessionId: null, cwd: '/home/alice/src', permissionMode: 'no_tools',
+    // A no-tools task runs in the Machine's home folder, which always exists (F-CWD: `<home>/src` may not).
+    expect(start[1]).toMatchObject({ sessionId: null, cwd: '/home/alice', permissionMode: 'no_tools',
         intentInput: { input: { description: '  Bakery\n', catalog } } });
 });
 
@@ -142,4 +144,45 @@ it.each([false, true])('stops the accepted run once without hiding Stop failure 
             ? { kind: 'failed', code: 'stop_refused' } : { kind: 'stopped' });
     expect(stops).toBe(1);
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
+});
+
+it.each([false, true])('reads the catalog only once registry sources settle, so starters are not silently missing (stopped: %s)', async (stopped) => {
+    // The app shell's publication says a Machine still owes its registry sources (F-STARTERS-RACE).
+    let pending = true;
+    const listeners = new Set<() => void>();
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => null, undefined,
+        listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, undefined, undefined, () => pending);
+    try {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            registryActionExecute: async ({ input }) => {
+                const kind = (input as { kind: string }).kind;
+                return { pages: [{ sourceId: kind, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null,
+                    items: kind === 'starter' && !pending ? [{ sourceId: kind, kind: 'starter', itemId: 'website', title: 'Website',
+                        starterDeploy: { framework: 'html', output: 'static' } }] : [] }] };
+            },
+            connectedServiceAction: async () => ({ accounts: [], pools: [], healthBasis: 'credentials',
+                source: { completeness: 'complete', observedAtMs: 1 } }),
+            machinesList: async () => ({ items: [] }),
+            deploymentSuggestionTargets: async () => ({ targets: catalog.targets, stores: [] }),
+            deploymentSuggestionForges: async () => catalog.forges,
+            machineSetupPlan: async () => ({ targets: [] }),
+        }));
+        execute.mockImplementation(executor.execute);
+        const abort = new AbortController();
+        const progress: unknown[] = [];
+        const result = suggestDeploySetup({ serverId: 'home', description: 'Bakery', signal: abort.signal,
+            onProgress: event => progress.push(event) });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.catalog')).toHaveLength(0);
+        if (stopped) {
+            abort.abort();
+            expect(await result).toEqual({ kind: 'stopped' });
+            expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.catalog')).toHaveLength(0);
+            return;
+        }
+        pending = false;
+        for (const listener of listeners) listener();
+        expect(await result).toMatchObject({ kind: 'noAgent' });
+        expect(progress[0]).toMatchObject({ kind: 'catalog', counts: { starters: 1 } });
+    } finally { unpublish(); }
 });

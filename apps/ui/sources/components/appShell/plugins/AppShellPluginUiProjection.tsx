@@ -382,12 +382,19 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
             return snapshot.accountLifetime === lifetime
                 ? snapshot.candidateFactsByPluginId.get(pluginId) ?? null : null;
         };
+        // Until the publication serves this Account, its registry sources are still owed.
+        const readRegistrySourcesPending = (input?: AppShellPluginUiProjectionRead) => {
+            if (!lifetime?.isCurrent() || (input && !areServerAccountScopesEqual(input.scope, lifetime.scope))) return false;
+            if (!props.publication) return false;
+            const snapshot = props.publication.getSnapshot();
+            return snapshot.accountLifetime !== lifetime || snapshot.registrySourcesPending;
+        };
         // The publication owner replaces the incumbent binding atomically.
         // Withdrawing it before replacement would notify readers twice.
         const publication = props.publication;
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
             publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime,
-            providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null);
+            providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null, readRegistrySourcesPending);
     }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();

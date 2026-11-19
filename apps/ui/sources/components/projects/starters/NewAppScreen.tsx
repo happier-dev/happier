@@ -1177,9 +1177,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       const width = Math.round(event.nativeEvent.layout.width);
       setBodyWidth((current) => current === width ? current : width);
     }}>
-      {/* Starters need each installation's registry sources, not every plugin's UI (cold open: ~75 serial frames). */}
+      {/* Starters need each installation's registry sources, not every plugin's UI (cold open: ~75 serial frames).
+          The auto step's catalog read waits on the same sources, so it keeps them read. */}
       <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" sections={REGISTRY_SOURCE_PROJECTION_SECTIONS}
-        enabled={step === 'start'} />
+        enabled={step === 'start' || step === 'auto'} />
       <ItemList testID="newApp.body" style={styles.list}>
         {body}
       </ItemList>
