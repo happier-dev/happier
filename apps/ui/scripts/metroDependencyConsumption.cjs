@@ -15,14 +15,23 @@ exports.processMetroDependencyChanges = (projectRoot, processChanges, signal) =>
 // installer's existing reader/writer boundary.
 exports.protectMetroDependencyConsumption = (metroServer, projectRoot) => {
   const controller = new AbortController();
+  let localeReader;
   const deltaBundler = metroServer.getBundler().getDeltaBundler();
   // DeltaCalculator owns the current-build wait. Its callback runs only for
   // the graph read that is executing, so queued HMR requests retain no lock.
   deltaBundler.unstable_setDependencyConsumption(read =>
-    consumeDependencies(projectRoot, controller.signal, read));
+    consumeDependencies(projectRoot, controller.signal, async () => {
+      localeReader ??= import('./prepareLocaleAssets.mjs').then(({ openLocaleMapReader }) => openLocaleMapReader(projectRoot));
+      await localeReader;
+      return read();
+    }));
   const end = metroServer.end.bind(metroServer);
   metroServer.end = async () => {
     controller.abort();
-    await end();
+    try {
+      await end();
+    } finally {
+      await localeReader?.then(reader => reader.close());
+    }
   };
 };

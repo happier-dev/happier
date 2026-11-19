@@ -1,15 +1,16 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, readdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, readFile, symlink, writeFile, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
 import { openLocalePreparation, prepareLocaleAssets } from './prepareLocaleAssets.mjs';
-import { publishSourceUiAssets } from './prepareSourceUiAssets.mjs';
+import { prepareSourceUiAssets, publishSourceUiAssets } from './prepareSourceUiAssets.mjs';
 
 test('locale preparation reuses identical content and defers publication until admission', async t => {
     const { root } = await createTempFixture(t, { prefix: 'happier-locale-publication-' });
@@ -166,4 +167,78 @@ test('a preparation under another storage root keeps the bundles a first root\'s
     await publish('deux');
     assert.deepEqual(await bundles(), current.assetPaths.map(path => basename(path)).sort(),
         'once the record is gone its bundles retire, so the store stays bounded');
+});
+
+test('locale publication retains each serving Metro map until its reader ends', async t => {
+    const { uiPackageDir, fixture, put, publish, bundles } = await localeFixture(t, 'happier-locale-readers-');
+    const { protectMetroDependencyConsumption } = createRequire(import.meta.url)('./metroDependencyConsumption.cjs');
+    const serve = () => {
+        let readGraph;
+        // Metro supplies this callback for its actual graph read and ends it at shutdown.
+        const metro = {
+            getBundler: () => ({ getDeltaBundler: () => ({
+                unstable_setDependencyConsumption(read) { readGraph = read; },
+            }) }),
+            end: async () => {},
+        };
+        protectMetroDependencyConsumption(metro, uiPackageDir);
+        t.after(() => metro.end());
+        return { read: callback => readGraph(callback), end: () => metro.end() };
+    };
+
+    const first = await publish('un');
+    const readerA = serve();
+    const mapA = await readerA.read(() => readFile(first.outputPath, 'utf8'));
+    assert.ok(mapA.includes(basename(first.assetPaths[0])));
+
+    const translation = join(uiPackageDir, 'sources/text/translations/fr.ts');
+    await put(translation, "export const fr = { greeting: 'deux' };");
+    const recordPath = fixture.path('source-assets.json');
+    const candidatePath = fixture.path('candidate.js');
+    const second = await prepareLocaleAssets({ uiPackageDir, outputPath: candidatePath, publicationPath: first.outputPath });
+    await put(recordPath, JSON.stringify({ assetPaths: second.assetPaths,
+        publications: [{ candidatePath, outputPath: first.outputPath }] }));
+    await publishSourceUiAssets({ recordPath });
+    const readerB = serve();
+    const mapB = await readerB.read(() => readFile(first.outputPath, 'utf8'));
+    assert.ok(mapB.includes(basename(second.assetPaths[0])));
+
+    const third = await publish('trois');
+    const name = generation => basename(generation.assetPaths[0]);
+    assert.deepEqual(await bundles(), [name(first), name(second), name(third)].sort());
+    assert.match(await readFile(first.assetPaths[0], 'utf8'), /un/);
+
+    await readerA.end();
+    await rm(recordPath);
+    await publish('trois');
+    assert.deepEqual(await bundles(), [name(second), name(third)].sort());
+
+    await readerB.end();
+    await publish('trois');
+    assert.deepEqual(await bundles(), [name(third)]);
+});
+
+test('reusing source assets never pairs another publisher’s locale map with an older record', async t => {
+    const { fixture, uiPackageDir, publish, put } = await localeFixture(t, 'happier-locale-reuse-');
+    const previousTasks = process.env.HAPPIER_UI_POSTINSTALL_TASKS;
+    process.env.HAPPIER_UI_POSTINSTALL_TASKS = '[]';
+    t.after(() => {
+        if (previousTasks === undefined) delete process.env.HAPPIER_UI_POSTINSTALL_TASKS;
+        else process.env.HAPPIER_UI_POSTINSTALL_TASKS = previousTasks;
+    });
+    await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), fixture.path('node_modules'), 'junction');
+    const translation = join(uiPackageDir, 'sources/text/translations/fr.ts');
+    await put(translation, 'export const fr = { greeting: "un" };');
+    const recordPath = join(uiPackageDir, '.expo/hstack/consumer-a/source-assets.json');
+    const first = await prepareSourceUiAssets({ uiPackageDir, recordPath, outputDir: fixture.path('stage-a') });
+    const locale = first.groups.find(group => group.outputPath.endsWith('localeAssets.generated.js'));
+    const firstMap = await readFile(locale.outputPath, 'utf8');
+    const other = await publish('deux');
+    assert.notEqual(await readFile(other.outputPath, 'utf8'), firstMap);
+    // Restoring the source lets A legitimately reuse its own recorded bytes.
+    // The mutable map still names B's bundles until A republishes.
+    await put(translation, 'export const fr = { greeting: "un" };');
+    await prepareSourceUiAssets({ uiPackageDir, recordPath, outputDir: fixture.path('stage-a-refresh') });
+    assert.equal(await readFile(locale.outputPath, 'utf8'), firstMap);
+    await readFile(locale.assetPaths[0]);
 });

@@ -1946,8 +1946,11 @@ behavior. Native translation loading keeps its synchronous adapter.
 The source UI preparation child builds both asset inventories for the live or
 captured UI project. Its existing Metro watcher refreshes changed inputs through
 one queue, reuses unchanged producer inputs, and publishes source references only
-after Metro indexes their asset files. Startup admission requires the inventories
-and consumed files; finite exports prepare them in the captured project before
+after Metro indexes their asset files. The locale publisher keeps outgoing bundle
+references for each running Metro that can still serve them. Retirement reclaims
+a bundle on a later publication once Metro readers, the current map, and source
+asset records and preparations have released it. Startup admission requires the
+inventories and consumed files. Finite exports prepare them in the captured project before
 Expo collects assets. Executable translation assets use the app's ordinary script
 evaluation policy; a custom deployment CSP that prohibits evaluation requires
 separate deployment validation.

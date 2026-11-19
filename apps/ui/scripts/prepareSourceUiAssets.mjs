@@ -41,15 +41,15 @@ async function writeSourceUiAssetsRecord(path, record) {
 export async function publishSourceUiAssets({ recordPath, outputPath = recordPath }) {
     const prepared = readSourceUiAssetsRecord(recordPath);
     if (!prepared) throw new Error(`Missing prepared UI assets: ${recordPath}`);
-    let localeMap;
     for (const { candidatePath, outputPath: publicationPath } of prepared.publications) {
         const contents = await readFile(candidatePath, 'utf8');
-        await writeChanged(publicationPath, contents);
-        if (publicationPath.endsWith(normalize(SOURCE_UI_ASSET_OUTPUT_PATHS.locales))) localeMap = publicationPath;
-    }
-    if (localeMap) {
-        const { retireLocaleBundles } = await import('./prepareLocaleAssets.mjs');
-        await retireLocaleBundles({ uiPackageDir: resolve(dirname(localeMap), '../..') });
+        if (publicationPath.endsWith(normalize(SOURCE_UI_ASSET_OUTPUT_PATHS.locales))) {
+            const { publishLocaleMap } = await import('./prepareLocaleAssets.mjs');
+            await publishLocaleMap({ uiPackageDir: resolve(dirname(publicationPath), '../..'),
+                outputPath: publicationPath, contents });
+        } else {
+            await writeChanged(publicationPath, contents);
+        }
     }
     // A published record has no pending candidates. Keep the record shape
     // readable after in-place publication without retaining compiler scratch.
@@ -131,13 +131,21 @@ async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, 
         let result;
         let reused = false;
         const exists = path => access(path).then(() => true, () => false);
+        const locale = source === SOURCE_UI_ASSET_OUTPUT_PATHS.locales;
         // A finite export recaptures its project each time; its retained candidate
         // is the same verified output when the publication is not there yet.
         const reusable = previous && previous.fingerprint === previousIdentity
-            && await Promise.all(previous.assetPaths.map(exists)).then(present => present.every(Boolean))
+            && (locale || await Promise.all(previous.assetPaths.map(exists)).then(present => present.every(Boolean)))
             ? (await exists(publicationPath) ? publicationPath : await exists(candidatePath) ? candidatePath : null) : null;
-        if (reusable) {
-            if (reusable !== candidatePath) await writeChanged(candidatePath, await readFile(reusable, 'utf8'));
+        const contents = reusable ? await readFile(reusable, 'utf8').catch(error => {
+            if (error.code !== 'ENOENT') throw error;
+        }) : undefined;
+        // Another publisher can replace the shared map independently of this
+        // record. Keep only the matching snapshot and hold its files until
+        // the new record is visible to retirement.
+        if (contents !== undefined && (!locale
+            || await preparation.retainReusedMap(publicationPath, contents, previous.assetPaths))) {
+            if (reusable !== candidatePath) await writeChanged(candidatePath, contents);
             result = { ...previous, outputPath: candidatePath };
             reused = true;
         } else {
