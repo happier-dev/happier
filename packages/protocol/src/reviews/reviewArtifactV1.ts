@@ -4,6 +4,9 @@ import { projectReviewRoundOutcomeV1, type ReviewReviewerOutcomeV1 } from './rev
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
+import type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
+export { ReviewRoundBindingV1Schema } from './reviewRoundBindingV1.js';
+export type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
 export { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 
 export const ReviewSubjectKindV1Schema = z.enum(['comparison', 'pull_request', 'repository']);
@@ -12,8 +15,6 @@ export const ReviewRoundStateV1Schema = z.enum(['running', 'completed', 'partial
 export type ReviewSubjectKindV1 = z.infer<typeof ReviewSubjectKindV1Schema>;
 export type ReviewSourceKindV1 = z.infer<typeof ReviewSourceKindV1Schema>;
 export type ReviewRoundStateV1 = z.infer<typeof ReviewRoundStateV1Schema>;
-export const ReviewRoundBindingV1Schema = z.strictObject({ reviewId: z.string(), roundOrdinal: z.number().check(z.int(), z.minimum(1)) });
-export type ReviewRoundBindingV1 = z.infer<typeof ReviewRoundBindingV1Schema>;
 /** The original SCM address, sealed with the round; opening it never captures current code. */
 export const ReviewRoundComparisonCaptureV1Schema = lazyZodSchema(() => z.strictObject({
   target: ExternalActionTargetV1Schema._zod.def.options[0],
