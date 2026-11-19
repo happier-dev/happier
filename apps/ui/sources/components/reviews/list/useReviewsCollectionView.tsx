@@ -8,6 +8,7 @@ import type {
   EntityDropOutcomeV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import {
   DEFAULT_REVIEW_LIST_FILTER_V1,
@@ -141,7 +142,7 @@ export function useReviewsCollectionView(focused: boolean) {
     title: t('common.search'),
     description: 'reviews.query — Search the loaded Review rows with {value: string}.',
     invoke: input => {
-      if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+      if (!isJsonObject(input) || typeof input.value !== 'string') return false;
       setSearchQuery(input.value);
     },
   }, {

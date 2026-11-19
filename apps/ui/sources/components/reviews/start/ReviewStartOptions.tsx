@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -56,7 +57,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
     title: t('reviewWalkthrough.start.then'),
     description: 'review.start.then — Choose what follows the Review with {value: "report" | "fix"}.',
     invoke: input => {
-      if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+      if (!isJsonObject(input)) return false;
       const option = thenOptions.find(option => option.id === input.value);
       if (!option) return false;
       props.onThenChange(option.id);
@@ -66,7 +67,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
     title: t('reviewWalkthrough.start.walkMeThrough'),
     description: 'review.start.walkthrough — Request a walkthrough with {value: boolean}.',
     invoke: input => {
-      if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'boolean') return false;
+      if (!isJsonObject(input) || typeof input.value !== 'boolean') return false;
       props.onWalkthroughChange(input.value);
     },
   }], { unbound: 'local' });

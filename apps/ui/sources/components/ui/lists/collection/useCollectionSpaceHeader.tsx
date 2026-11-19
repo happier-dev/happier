@@ -14,6 +14,7 @@ import type {
 import type { EntityFilterRegistryV1 } from '@happier-dev/protocol/collections/filter/fieldRegistryV1';
 import {
   sameStrictJsonValue,
+  isJsonObject,
   type JsonValue,
 } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -175,7 +176,7 @@ export function useCollectionSpaceHeader<
     title: t('sessionsList.spacesTitle'),
     description: `collection.${input.entityKind}.space.select — Select a visible space with {spaceId: string}.`,
     invoke: value => {
-      if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.spaceId !== 'string') return false;
+      if (!isJsonObject(value) || typeof value.spaceId !== 'string') return false;
       const space = view.spaces.find(space => space.id === value.spaceId);
       return space !== undefined && select(space.id);
     },
