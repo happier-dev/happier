@@ -61,6 +61,17 @@ export function readBuiltInSettingDeclarationV1(anchor: unknown): PortableSettin
   return typeof anchor === 'string' ? declarationsByAnchor.get(anchor) ?? null : null;
 }
 
+/** Keyed owners dispatch separately. An exact scalar Voice anchor already selects the written field. */
+export function acceptsSettingsFallbackKeyV1(
+  actionId: SettingsDeclarationActionIdV1,
+  declaration: PortableSettingDeclarationV1 | null,
+): boolean {
+  if (actionId === 'settings.reset') return Boolean(readPortableAccountSettingBindingV1(declaration ?? {})?.reset);
+  const storage = declaration?.storage;
+  return actionId === 'settings.set' && storage?.owner === 'voiceSettingBinding'
+    && storage.access === 'read_write' && storage.allowedValues !== undefined;
+}
+
 /** A declared Settings operation's approval facts, as authored by its (built-in or installed) declaration. */
 export type SettingsDeclarationOperationV1 = Readonly<{
   kind: 'interaction' | 'invoke'; requiresApproval?: boolean; uiConfirmation?: 'direct' | 'policy';

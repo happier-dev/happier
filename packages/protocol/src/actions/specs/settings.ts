@@ -55,7 +55,7 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonl
     description: id === 'settings.list'
       ? 'In the app, find a preference by its displayed title, keywords or description. Use query for a short label, for example {"query":"waiting sound"} for the Voice waiting cue. Optionally narrow by pageId. Use the returned anchor with settings.get or settings.set.'
       : id === 'settings.set'
-        ? 'Change the requested app or Voice preference directly using an anchor returned by settings.list. Settings retain their existing approval. Local preferences belong to the answering client.'
+        ? 'Change the requested app or Voice preference directly using an anchor returned by settings.list. For a scalar preference, send the anchor and value and omit key. Use key only when the setting owner requires one. Settings retain their existing approval. Local preferences belong to the answering client.'
         : 'Read or reset a setting, or request a settings operation through its owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.',
     safety: id === 'settings.set' || id === 'settings.reset' ? 'danger' : 'safe',
     sideEffectClass: id === 'settings.set' || id === 'settings.reset' || id === 'settings.invoke' ? 'write' : 'read',

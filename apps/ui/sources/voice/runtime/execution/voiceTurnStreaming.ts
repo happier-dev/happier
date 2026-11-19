@@ -1,5 +1,7 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import {
     attachVoiceAgentActionEffectId,
@@ -14,6 +16,7 @@ import { isVoiceAgentNotFoundError, isVoiceAgentRpcMethodUnavailable } from '@/v
 import { clearStaleDaemonRunState } from '@/voice/agent/voiceAgentRunState';
 import { streamVoiceAgentTurn } from '@/voice/agent/streamVoiceAgentTurn';
 import { buildVoiceAgentTurnPayload } from '@/voice/agent/buildVoiceAgentTurnPayload';
+import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
@@ -78,6 +81,10 @@ export function createVoiceTurnStreaming(args: Readonly<{
             preparedAttemptContext = args.voiceAttemptExplicitContextBySessionId.get(sessionId) ?? [];
             const deferredTargetSessionContext = args.deferredTargetSessionContextBySessionId.get(sessionId)?.();
             const latestAutomaticUiContext = args.latestAutomaticUiContextBySessionId.get(sessionId);
+            const binding = resolveVoiceBindingBySessionId({ sessionId });
+            const boundTargetContext = binding?.targetSessionAddress
+                ? `A coding Session is already bound. To continue in it, use the Happier Session message tool (${getActionSpec(SESSION_MESSAGE_SEND_ACTION_ID_V1).bindings!.mcpToolName} in MCP) and omit sessionId. Use the creation tool (${getActionSpec(SESSION_SPAWN_NEW_ACTION_ID_V1).bindings!.mcpToolName} in MCP) only when the person requests a separate Session.`
+                : null;
             const automaticUiContext =
                 latestAutomaticUiContext
                 && readVoicePrivacySettings(storage.getState().settings).currentUiContextMode === 'automatic'
@@ -88,6 +95,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
                 ...(deferredTargetSessionContext ? [deferredTargetSessionContext] : []),
                 ...preparedAttemptContext,
                 ...(automaticUiContext ? [automaticUiContext] : []),
+                ...(boundTargetContext ? [boundTargetContext] : []),
             ];
             const nextPayloadText = userText;
             if (deferredTargetSessionContext) {

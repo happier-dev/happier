@@ -1340,6 +1340,32 @@ describe('VoiceExecutionTransport (streaming)', () => {
     );
   });
 
+  it('tells the native Voice carrier where a same-session follow-up goes after binding a coding child', async () => {
+    const controller = createVoiceExecutionTransport();
+    const controlSessionId = VOICE_AGENT_GLOBAL_SESSION_ID;
+    const conversationSessionAddress = { serverId: connection.serverId, sessionId: 'sys_voice' };
+    const binding = {
+      adapterId: 'local_conversation',
+      controlSessionId,
+      conversationSessionId: conversationSessionAddress.sessionId,
+      conversationSessionAddress,
+      transcriptMode: 'native_session',
+    } as const;
+    voiceSessionBindingStore.getState().bind({ ...binding, targetSessionAddress: null, updatedAt: 1 });
+    await controller.sendTurn(controlSessionId, 'Start a separate coding Session');
+    voiceSessionBindingStore.getState().bind({
+      ...binding, targetSessionAddress: { serverId: connection.serverId, sessionId: 's1' }, updatedAt: 2,
+    });
+
+    await controller.sendTurn(controlSessionId, 'Continue in that same Session');
+
+    expect(daemonStreamStart).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: conversationSessionAddress.sessionId,
+      displayMessage: 'Continue in that same Session',
+      message: expect.stringMatching(/A coding Session is already bound\.[^\n]*session_message_send[^\n]*omit sessionId/),
+    }));
+  });
+
   it.each(['approved', 'denied', 'pending'] as const)('projects the settled target request state before the first model turn (native %s)', async (decision) => {
     const settings = storage.getState().settings;
     storage.setState({ settings: settingsParse({ ...settings, voice: { ...settings.voice,

@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { buildVoiceAgentBootstrapPrompt, buildVoiceAgentSeededUserTurnPrompt, buildVoiceAgentUserTurnPrompt } from './voiceAgentPrompts';
 
 describe('voiceAgentPrompts', () => {
+  it('asks a native MCP carrier to acknowledge accepted input and end its reply until there is a child outcome', () => {
+    const prompt = buildVoiceAgentSeededUserTurnPrompt({ actionTransport: 'mcp', verbosity: 'short',
+      initialContext: '', userText: 'Start a coding Session' });
+
+    expect(prompt).toMatch(/If the coding Session reports a terminal failure, use that failure as the outcome\./);
+    expect(prompt).not.toContain('say only that you are waiting for the coding assistant update');
+  });
+
   it.each(['native', 'mcp'] as const)('captures %s prompt cost without multiplying context or conversation history', actionTransport => {
     const options = { actionTransport, verbosity: 'short' as const, initialContext: '' };
     const empty = buildVoiceAgentSeededUserTurnPrompt({ ...options, userText: 'list sessions' });

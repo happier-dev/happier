@@ -42,8 +42,8 @@ import { MachineInstallablePolicyKeySchema, MachineInstallablePolicyChangeSchema
 import { MachineOfflineAlertSettingKeySchema, MachineOfflineAlertSettingChangeSchema,
     readMachineOfflineAlertSetting, buildMachineOfflineAlertSettingMutation } from '@happier-dev/protocol/actions/settings/machineOfflineAlertSetting';
 import { ComputerUseSettingsV1Schema, readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
-import { machineDirectConnectionStorage, readPortableAccountSettingBindingV1 } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
-import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, resolveBuiltInAccountSettingResetValueV1, resolveSettingsDeclarationOperationApprovalPolicyV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
+import { machineDirectConnectionStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+import { acceptsSettingsFallbackKeyV1, BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, resolveBuiltInAccountSettingResetValueV1, resolveSettingsDeclarationOperationApprovalPolicyV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { ProjectAtmosphereSchema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { normalizeProjectAtmosphere, readAtmospherePresentationSetting, editAtmospherePresentationSetting } from '@/components/atmosphere/atmosphereSettings';
@@ -485,8 +485,8 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             }
             return { anchor: parsed.anchor, value: change.data };
         }
-        if ('key' in parsed && parsed.key !== undefined && !(actionId === 'settings.reset'
-            && readPortableAccountSettingBindingV1(readBuiltInSettingDeclarationV1(parsed.anchor) ?? {})?.reset)) return refuse('setting_key_unsupported');
+        if ('key' in parsed && parsed.key !== undefined
+            && !acceptsSettingsFallbackKeyV1(actionId, readBuiltInSettingDeclarationV1(parsed.anchor))) return refuse('setting_key_unsupported');
         const declared = findSettingDeclaration(declarations, parsed.anchor);
         // A mounted compound editor is an invocation, not a searchable scalar control.
         // Its private binding is acquired only for the captured host intent after admission.

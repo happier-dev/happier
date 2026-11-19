@@ -286,7 +286,7 @@ describe('Voice Action reference catalog', () => {
         finish(); controller.abort(); await pending.catch(() => {}); resetVoiceSessionStoreForTests();
       }
     });
-  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent', 'admitted-on', 'admitted-off', 'mcp-on', 'mcp-off', 'mcp-synthetic',
+  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent', 'admitted-on', 'admitted-off', 'mcp-on', 'mcp-off', 'mcp-scalar-setting', 'mcp-synthetic',
     'mcp-rejected', 'mcp-brief-rejected', 'mcp-dismissed', 'mcp-canceled', 'mcp-ended', 'mcp-retired', 'native-approved'] as const)(
     'uses the live person Voice request and keeps other requesters inline (%s)', async source => {
       const serverId = await home.addHome({ name: 'Spoken settings', serverUrl: 'https://spoken-settings.test',
@@ -295,7 +295,8 @@ describe('Voice Action reference catalog', () => {
       expect(tryWriteServerEnabledBitInPlace(features, 'voice', true)).toBe(true);
       home.answer(serverId, '/v1/features', { body: features });
       let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
-        t: 'plain', v: { voice: { ...settingsDefaults.voice,
+        t: 'plain', v: { voiceSettingsV1: { ...settingsDefaults.voice,
+          audibleWaitingCue: source === 'mcp-scalar-setting',
           canApproveRequests: source !== 'voice-off' && source !== 'admitted-on' && source !== 'mcp-on'
             && source !== 'mcp-synthetic' && source !== 'mcp-brief-rejected' } },
       };
@@ -332,7 +333,9 @@ describe('Voice Action reference catalog', () => {
       const approvalCreated = new Promise<void>(resolve => { noteApproval = resolve; });
       home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
       const controller = new AbortController();
-      const input = { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
+      const input = source === 'mcp-scalar-setting'
+        ? { anchor: 'voiceConversations.audibleWaitingCue', value: false }
+        : { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
       const { Modal } = await import('@/modal');
       let review: Parameters<Parameters<typeof Modal.registerProvider>[0]['showModal']>[0] | undefined;
       const hiddenReviews: string[] = [];
@@ -346,6 +349,11 @@ describe('Voice Action reference catalog', () => {
         createVoiceRunActionReverseHandler(admittedHandle, 'live-person-call')({ v: 1, actionId, input: actionInput,
           voiceRun: { runId: 'admitted-run', sessionId: 'voice-carrier', occurrenceId: 'run-occurrence', turnId: 'turn',
             actionRequestId } }, { signal: controller.signal }).then(value => value.execution);
+      if (source === 'mcp-scalar-setting') {
+        expect(await dispatch('settings.list', { query: 'Waiting sound' }, 'discover-waiting-sound')).toMatchObject({
+          ok: true, result: { items: [{ anchor: input.anchor, writable: true }] },
+        });
+      }
       const voice = source === 'native-approved'
         ? await (await import('@/dev/testkit/harness/nativeVoiceActionHarness')).createNativeVoiceActionHarness(dispatch) : null;
       const nativeStart = voice ? await voice.manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -358,7 +366,8 @@ describe('Voice Action reference catalog', () => {
         { callId: 'native-reviewed-settings' })
         : nativeRequest
         ? dispatch(source === 'mcp-brief-rejected' ? 'ui.voice_global.brief.request' : 'settings.set',
-          source === 'mcp-brief-rejected' ? {} : input, 'live-person-request')
+          source === 'mcp-brief-rejected' ? {} : source === 'mcp-scalar-setting' ? { ...input, key: 'label-word' } : input,
+          'live-person-request')
         : source === 'coding-agent'
         ? createDefaultActionExecutor().execute('settings.set', input, {
           surface: 'agent', serverId, actionRequestId: 'coding-session-request', signal: controller.signal,
@@ -434,6 +443,7 @@ describe('Voice Action reference catalog', () => {
               artifactId: asks[0]!.id, actionId: 'settings.set' } });
           }
           expect(version).toBe(source === 'mcp-rejected' || source === 'mcp-brief-rejected' ? 1 : 2);
+          if (source === 'mcp-scalar-setting') expect(content.v.voiceSettingsV1).toMatchObject({ audibleWaitingCue: false });
           expect(home.artifacts(serverId).list()).toHaveLength(1);
         }
         if (voice) voice.native.complete('The reviewed setting was updated.');

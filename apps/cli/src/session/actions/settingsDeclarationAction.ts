@@ -9,7 +9,7 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { refreshActiveApprovalProfileCatalog, publishApprovalProfileArtifactChange } from '@/settings/profiles/hydrateProfileCatalog';
 import { readPortableDomainSettingBindingV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
-  hasBuiltInAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1,
+  acceptsSettingsFallbackKeyV1, hasBuiltInAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1,
 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { AccountSettingMutationV1Schema } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationValueV1Schema,
@@ -208,8 +208,8 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     }
     // Device preference keys belong to the answering App's declared owner, including on recovery.
     if (declaration.storage?.scope === 'local') return clientActionUnavailable(actionId);
-    if ('key' in parsed && parsed.key !== undefined && !(actionId === 'settings.reset'
-      && readPortableAccountSettingBindingV1(declaration)?.reset)) return refuse('setting_key_unsupported');
+    if ('key' in parsed && parsed.key !== undefined
+      && !acceptsSettingsFallbackKeyV1(actionId, declaration)) return refuse('setting_key_unsupported');
     // Contribution mutations retain their activated App callbacks (endpoint consent,
     // provider opt-ins and catalog operations). Native discovery and reads use the same catalog.
     if (declaration.contribution && actionId !== 'settings.get') return clientActionUnavailable(actionId);

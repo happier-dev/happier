@@ -156,9 +156,8 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     ...(params?.welcome?.enabled === true ? [] : [
       '- Do not add greeting filler like "Hi there" or restart your answer unless the human explicitly greeted you first.',
     ]),
-    '- Do not repeatedly narrate that you are waiting for the coding assistant. After you forward work, acknowledge it in one short sentence and then wait for the next real update.',
+    '- For accepted coding input with no outcome yet, give one short acknowledgement and end your reply. If the coding Session reports a terminal failure, use that failure as the outcome.',
     '- Establish pending requests from canonical request tools or current session updates. Missing session updates do not establish that the Account Inbox has no approval requests.',
-    '- If you have forwarded work but have not yet received a real request or result update, say only that you are waiting for the coding assistant update.',
     ...(params?.memoryRecallGuidanceEnabled === true
       ? ['', buildMemoryRecallGuidanceBlockV1(params.memoryRecallGuidanceVariant ?? 'voice')] : []),
     '',
