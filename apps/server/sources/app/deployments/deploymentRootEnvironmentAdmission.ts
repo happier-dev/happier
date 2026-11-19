@@ -217,6 +217,7 @@ export type DeploymentRootBindingAdmission =
   | Readonly<{
       ok: true;
       deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
+      deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
     }>
   | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code']; placement?: ActionExecuteFailure;
       /** Private refusing branch for the mint's server diagnostic; never a public code. */
@@ -225,8 +226,8 @@ export type DeploymentRootBindingAdmission =
 /**
  * The one admission of a parsed root binding's deployment facts: Link,
  * preparation, registry update and read. Mint runs it once and records the
- * Link admission it produces; a person-presented relay runs the same function
- * again, so it re-decides exactly what mint decided.
+ * Link and database editor decisions it produces. A new root relay runs the
+ * same admission. Signed finite effects consume the recorded decisions.
  */
 export async function admitDeploymentRootBindingInTx(
   tx: Tx,
@@ -263,15 +264,18 @@ export async function admitDeploymentRootBindingInTx(
   if (binding.registryAppUpdateAdmission && !await readRegistryAppUpdateAuthorizationInTx(tx, binding, authentication)) {
     return { ok: false, phase: 'registry_app_update' };
   }
-  const managedDataRead = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
+  const databaseAction = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
     && binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
-  if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || managedDataRead) {
+  let deploymentDatabaseEditor: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
+  if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || databaseAction) {
     if (!binding.deploymentReadAdmission) return { ok: false, phase: 'read_admission_missing' };
     const selected = await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication);
     if (!selected) return { ok: false, phase: 'read_admission' };
     if (!selected.ok) return { ...selected, phase: 'read_authorization' };
+    deploymentDatabaseEditor = selected.deploymentDatabaseEditor;
   }
-  return deploymentLinkAdmission ? { ok: true, deploymentLinkAdmission } : { ok: true };
+  return { ok: true, ...(deploymentLinkAdmission ? { deploymentLinkAdmission } : {}),
+    ...(deploymentDatabaseEditor ? { deploymentDatabaseEditor } : {}) };
 }
 
 /**
@@ -297,5 +301,7 @@ export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
     linkAuthenticationEvidence: authenticationEvidence,
   });
   if (!admitted.ok) return admitted;
-  return admitted.deploymentLinkAdmission?.environmentId === recordedLink?.environmentId ? admitted : { ok: false, phase: 'link_environment_changed' };
+  if (admitted.deploymentLinkAdmission?.environmentId !== recordedLink?.environmentId) return { ok: false, phase: 'link_environment_changed' };
+  if (admitted.deploymentDatabaseEditor !== root.deploymentDatabaseEditor) return { ok: false, phase: 'database_editor_changed' };
+  return admitted;
 }

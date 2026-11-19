@@ -2736,6 +2736,13 @@ older servers refuse this new carrier. There is no unsigned or legacy retry.
 HTTP 431 is a typed `request_headers_too_large` transport refusal, not a
 deployment output schema failure; no server header limit is raised.
 
+For an exact semantic database write, Home records its Source editor verdict
+in the signed `deploymentDatabaseEditor` field. The receiving CLI consumes the
+verdict for that write, and private data-role delivery requires an allowed
+verdict. A new request goes through current Source admission. An in-flight
+write keeps its signed decision. Older bindings lacking the field convey no
+write authority. Deploy the unreleased 0.3 reader and writer together.
+
 ## Local private service reference routes (unreleased 0.3)
 
 The private service reference resolver selects the native publication

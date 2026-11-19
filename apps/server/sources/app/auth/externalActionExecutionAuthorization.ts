@@ -2977,7 +2977,8 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             && (!('databaseTarget' in admission) || admission.access !== 'write')) return false;
         if ('databaseTarget' in admission) {
             const target = admission.databaseTarget;
-            if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
+            if (admission.access === 'write' && verified.binding.deploymentDatabaseEditor !== 'allowed'
+                || body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
                 || body.targetLinkId !== admission.targetLinkId || body.machineId !== verified.binding.machineId
                 || body.installationId !== verified.binding.installationId
                 || proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, body)) return false;

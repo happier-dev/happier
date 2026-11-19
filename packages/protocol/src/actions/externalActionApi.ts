@@ -1434,6 +1434,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     pendingResetStartAdmission: z.optional(ExternalActionPendingResetStartAdmissionV1Schema),
     approvalDecisionAdmission: z.optional(ExternalActionApprovalDecisionAdmissionV1Schema),
     deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
+    /** Home's editor decision for the exact database target of an admitted write. */
+    deploymentDatabaseEditor: z.optional(z.enum(['allowed', 'editing_off', 'not_an_editor'])),
     presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
@@ -1539,6 +1541,10 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     : qualifiedManagedQueryRead ? value.target.kind !== 'machine' || value.target.machineId !== value.machineId
       : value.deploymentReadAdmission !== undefined) {
     context.addIssue({ code: 'custom', path: ['deploymentReadAdmission'], message: 'Deployment reads bind their exact authenticated receiver and operation.' });
+  }
+  if (value.deploymentDatabaseEditor !== undefined && (value.actionId !== ACTION_INVOKE_ACTION_ID_V1
+    || value.deploymentReadAdmission?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || value.deploymentReadAdmission.access !== 'write')) {
+    context.addIssue({ code: 'custom', path: ['deploymentDatabaseEditor'], message: 'A database editor decision belongs to an exact write.' });
   }
   if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {
     context.addIssue({ code: 'custom', path: ['approvalDecisionAdmission'], message: 'Approval admission binds only its decision Action' });

@@ -12,14 +12,15 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { loadDeploymentTargetRowsInTx, readCurrentManagedDataTargetLinksInTx } from './deploymentTargetLinkService';
 import { resolveProjectSourceAccessInTx } from '@/app/projects/sources/projectSourceService';
-import type { DeploymentAuthentication } from './deploymentAdmission';
+import { canEditDeploymentEnvironmentData, type DeploymentAuthentication } from './deploymentAdmission';
 import type { DeploymentContentReference } from './deploymentStoredContent';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
-type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[] }>
+type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[];
+    deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'] }>
     | Readonly<{ ok: false; code: 'source_changed' }> | null;
 
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
@@ -96,22 +97,30 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.environmentId, authentication);
         if (!loaded.ok || loaded.row.deletedAt) return null;
+        const deploymentDatabaseEditor = admission.access === 'write'
+            ? loaded.row.dataEditorMode === 'off' ? 'editing_off' as const
+                : canEditDeploymentEnvironmentData(loaded.admission, loaded.row) ? 'allowed' as const : 'not_an_editor' as const
+            : undefined;
+        const editor = deploymentDatabaseEditor ? { deploymentDatabaseEditor } : {};
         if ('databaseTarget' in admission) {
             const target = admission.databaseTarget;
             if (target.environment.serverId !== binding.serverIdentityId || target.environment.projectSourceId !== loaded.row.projectSourceId
                 || target.environment.environmentId !== admission.environmentId || target.targetLinkId !== admission.targetLinkId) return null;
-            if (target.kind === 'deployment_service') return readDeploymentTargetAuthorizationInTx(tx, loaded.row, {
-                actionId: ACTION_INVOKE_ACTION_ID_V1, environmentId: admission.environmentId,
-                deploymentId: target.deploymentId, targetLinkId: target.targetLinkId,
-                machineId: binding.machineId, installationId: binding.installationId,
-            });
+            if (target.kind === 'deployment_service') {
+                const selected = await readDeploymentTargetAuthorizationInTx(tx, loaded.row, {
+                    actionId: ACTION_INVOKE_ACTION_ID_V1, environmentId: admission.environmentId,
+                    deploymentId: target.deploymentId, targetLinkId: target.targetLinkId,
+                    machineId: binding.machineId, installationId: binding.installationId,
+                });
+                return selected?.ok ? { ...selected, ...editor } : selected;
+            }
         }
         if (loaded.row.controllerMachineId !== binding.machineId) return null;
         const controller = await tx.machine.findFirst({ where: { id: binding.machineId,
             installationId: binding.installationId, revokedAt: null, replacedByMachineId: null }, select: { id: true } });
         if (!controller) return null;
         const scope = await readAdmittedDeploymentReadScopeInTx(tx, admission);
-        return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId) } : null;
+        return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId), ...editor } : null;
     }
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId
