@@ -1,4 +1,4 @@
-import { showDeploymentMoveSheet } from './DeploymentMoveSheet';
+import { readDeploymentMoveEligibility, showDeploymentMoveSheet, type DeploymentMoveEligibility } from './DeploymentMoveSheet';
 import * as React from 'react';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
 import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
@@ -769,14 +769,13 @@ export const DeploymentEnvironmentDetail = React.memo(
         onApproval: review.request,
       });
     } : null;
+    const moveEligibility = readDeploymentMoveEligibility(detail, runtime, activeReceipt, lifetime);
     const environmentMenu = (
       <EnvironmentMenu
         onDuplicate={props.onDuplicate ? () => props.onDuplicate?.(detail) : undefined}
-        onMove={lifetime && runtime?.targetKind === 'ownServer' && activeReceipt
-          && detail.environment.capabilities.manageTargets && detail.environment.capabilities.manageBindings
-          && detail.environment.capabilities.deploy ? () => showDeploymentMoveSheet({
-            lifetime, detail, sourceLink: runtime, receipt: activeReceipt,
-          }) : undefined}
+        move={moveEligibility.kind === 'ready' ? {
+          kind: 'ready', open: () => showDeploymentMoveSheet({ detail, move: moveEligibility }),
+        } : moveEligibility}
         onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && receipt.state === 'succeeded')
           ? () => selectPage('history') : undefined}
         onOpenSettings={() => selectPage('settings')}
@@ -1951,7 +1950,7 @@ function EnvironmentMenu(
     onOpenHistory?: () => void;
     onOpenSettings: () => void;
     onDuplicate?: () => void;
-    onMove?: () => void;
+    move: Readonly<{ kind: 'ready'; open: () => void }> | Extract<DeploymentMoveEligibility, { kind: 'unavailable' }>;
     /** The Logs companion beside the page: checked while it shows, and pressing again closes it. */
     logs?: Readonly<{ open: boolean; toggle: () => void }>;
     /** "Delete Staging…", last and destructive; null where this viewer cannot delete it. */
@@ -1980,7 +1979,7 @@ function EnvironmentMenu(
       ...(props.onDuplicate ? [{ id: 'duplicate', testID: 'project-deployments.environment.menu.duplicate',
         title: t('projects.deployments.copy.menu'),
         icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} /> }] : []),
-      ...(props.onMove ? [{ id: 'move', testID: 'project-deployments.environment.menu.move',
+      ...(props.move?.kind === 'ready' ? [{ id: 'move', testID: 'project-deployments.environment.menu.move',
         title: t('projects.deployments.move.menu'),
         icon: <Icon name="arrow-right" size={16} color={theme.colors.text.secondary} /> }] : []),
       ...(props.logs ? [{ id: 'logs', testID: 'project-deployments.environment.menu.logs',
@@ -2021,7 +2020,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [Boolean(props.deployProduction), props.deleteTitle, props.onDuplicate, props.onMove, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [Boolean(props.deployProduction), props.deleteTitle, props.onDuplicate, props.move?.kind, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -2036,7 +2035,7 @@ function EnvironmentMenu(
         else if (id === 'pin') props.pin?.toggle();
         else if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();
-        else if (id === 'move') props.onMove?.();
+        else if (id === 'move' && props.move?.kind === 'ready') props.move.open();
         else if (id === 'logs') props.logs?.toggle();
         else if (id === 'settings') props.onOpenSettings();
         else if (id === 'delete') props.onDelete();

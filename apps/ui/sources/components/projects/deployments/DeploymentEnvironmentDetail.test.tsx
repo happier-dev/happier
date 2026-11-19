@@ -732,7 +732,7 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it.each(['explicit primary', 'wizard repository', 'wizard multiple services', 'wizard missing services'] as const)('opens Move from the serving %s Environment and requires an explicit stateless choice before admission', async origin => {
+  it.each(['explicit primary', 'wizard repository', 'wizard multiple services', 'wizard missing services', 'stored definition'] as const)('offers Move only for a supported serving source and requires an explicit stateless choice (%s)', async origin => {
     const { ModalProvider } = await import('@/modal');
     const { storage } = await import('@/sync/domains/state/storage');
     const { createMachineFixture } = await import('@/dev/testkit');
@@ -745,7 +745,10 @@ describe('Project deployments page', () => {
       sourceRevision: 1, sha: 'a'.repeat(40), compose: { path: 'compose.yaml', profiles: [], services: [],
         ...(origin === 'explicit primary' ? { primaryService: 'web' } : {}) } };
     const wizardDetail = { ...environment, content: { ...environment.content,
-      definition: { kind: 'repository' as const, ref: 'main', compose: sourceIntent.compose } } };
+      definition: origin === 'stored definition'
+        ? { kind: 'stored' as const, document: 'services: {web: {image: nginx:1}}',
+          contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['web'] }
+        : { kind: 'repository' as const, ref: 'main', compose: sourceIntent.compose } } };
     const wizardReceipt = createDeploymentReceiptDetailV1({ deployment: { ...original.deployment,
       id: environment.targetLinks[0]!.targetLink.activeDeploymentId! }, content: { ...original.content, sourceIntent,
       ownServer: origin === 'wizard missing services' ? undefined : { approvedInputBasis: { v: 1, environmentId: environment.environment.id, environmentRevision: 1,
@@ -763,8 +766,16 @@ describe('Project deployments page', () => {
       screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
         review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
-      await waitForContent(screen, 'project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.serving');
       await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.settings');
+      if (origin === 'stored definition' || origin === 'wizard missing services') {
+        expect(screen.findByTestId('project-deployments.environment.menu.move')).toBeNull();
+        const { readDeploymentMoveEligibility } = await import('./DeploymentMoveSheet');
+        expect(readDeploymentMoveEligibility(detail, detail.targetLinks[0]!.targetLink, wizardReceipt, lifetime))
+          .toEqual({ kind: 'unavailable', reason: origin === 'stored definition' ? 'needsRepository' : 'needsServiceManifest' });
+        return;
+      }
       await waitForContent(screen, 'project-deployments.environment.menu.move');
       await screen.pressByTestIdAsync('project-deployments.environment.menu.move');
       await waitForContent(screen, 'project-deployments.move');
@@ -772,11 +783,6 @@ describe('Project deployments page', () => {
       expect(confirm().props.disabled).toBe(true);
       const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
       const picker = screen.findAllByType(SessionMachineField).find(field => field.props.testID === 'project-deployments.move.destination')!;
-      if (origin === 'wizard missing services') {
-        expect(picker).toBeUndefined();
-        expect(screen.findByTestId('project-deployments.move.scope')).not.toBeNull();
-        return;
-      }
       expect(picker, 'the deployed service set makes a wizard repository movable').toBeDefined();
       await act(async () => { picker.props.onSelectMachine(picker.props.machines.find((machine: { id: string }) => machine.id === 'destination')); });
       expect(confirm().props.disabled).toBe(true);
