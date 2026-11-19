@@ -273,6 +273,26 @@ it('retains a Gemini provider-refused attempt through the CLI host for corrected
     } finally { await registry?.dispose(); await fixture.close(); }
 });
 
+it.each(['neon', 'supabase'] as const)('begins bundled %s token sign-in on a fresh Account without a Machine', async provider => {
+    const origin = `http://${provider}-account-authentication.test`;
+    const service = { pluginId: `happier.deploy.${provider}`, localId: provider };
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, {
+        accountId: `${provider}-account-authentication`, includeBundledPluginIds: [service.pluginId],
+    });
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            await ensureCliActionPolicySettings(fixture.credentials, origin);
+            const executor = createCliActionExecutorFromCredentials({ credentials: fixture.credentials,
+                pluginActionExecutionOwner: 'current_process' });
+            const begun = await executor.execute('connectedServices.authentication.beginConnect', { service, modeId: 'token' },
+                { surface: 'cli', actionRequestId: randomUUID() });
+            expect(begun).toMatchObject({ ok: true, result: { status: 'configurationRequired',
+                target: { kind: 'attempt' }, attemptId: expect.any(String) } });
+            expect(fixture.machineRequests).toBe(0);
+        });
+    } finally { await fixture.close(); }
+});
+
 it('reports missing Account artifact availability on first and repeated lookup instead of requiring a restart', async () => {
     const origin = 'http://missing-account-authentication-artifact.test';
     const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
@@ -299,10 +319,9 @@ it('reports missing Account artifact availability on first and repeated lookup i
         expect(registry.pluginDiagnosticsByPluginId[service.pluginId]).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'plugin_account_execution_artifact_unavailable', message: 'plugin_account_execution_artifact_unavailable' }),
         ]));
-        // The activation owner's cause reaches the caller instead of a bare code.
-        const unavailable = { status: 'unavailable', code: 'connected_account_service_unavailable',
-            diagnostic: expect.objectContaining({ code: 'connected_account_service_unavailable', severity: 'error',
-                message: expect.stringContaining('plugin_account_execution_artifact_unavailable') }) };
+        const unavailable = { status: 'unavailable', code: 'plugin_account_execution_artifact_unavailable',
+            diagnostic: expect.objectContaining({ code: 'plugin_account_execution_artifact_unavailable', severity: 'error',
+                message: expect.any(String), remediation: { kind: 'retry' } }) };
         expect(outcomes).toEqual([unavailable, unavailable]);
         expect(fixture.machineRequests).toBe(0);
         expect(fixture.promotedResourceCount).toBe(0);

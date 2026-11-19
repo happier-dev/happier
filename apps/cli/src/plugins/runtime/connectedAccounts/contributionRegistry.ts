@@ -128,8 +128,8 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
      * after on-demand activation. All are the same caller-visible fact: this
      * generation has no usable runtime for the service.
      *
-     * Throws `connected_account_service_unavailable` when the activation owner
-     * reports that the occurrence was fenced by an activation failure.
+     * Throws a typed PluginError when the activation owner reports that the
+     * occurrence was fenced by an activation failure.
      * Throws `ConnectedAccountRuntimeInvocationNotStartedError` when the
      * occurrence is retired or disposed. That is a currentness fact, not
      * unavailability: the caller must reload rather than conclude the service
@@ -203,6 +203,11 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         // supply missing executable artifacts. Keep the owner's availability fact and its cause.
         const activationFailure = disposed ? undefined : params.readPluginActivationFailure?.(pluginId);
         if (activationFailure) {
+            if (activationFailure.code === 'plugin_account_execution_artifact_unavailable') {
+                throw new PluginError({ code: activationFailure.code,
+                    message: 'The plugin’s Account runtime is missing. Update Happier if the plugin was bundled, or reinstall the plugin from Plugins.',
+                    remediation: { kind: 'retry' } });
+            }
             throw new PluginError({ code: 'connected_account_service_unavailable',
                 message: describePluginModuleFailure(activationFailure.message, activationFailure.details) ?? activationFailure.message });
         }

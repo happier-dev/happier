@@ -3312,6 +3312,13 @@ checks against its current enabled Account selection. Portable releases retain
 their exact selected archive identity. Byte digests still identify fetched
 artifacts and resources; they do not prompt for trust or replace Account policy.
 
+Account-hosted sign-in requires the selected declaration and its compiled
+Account runtime artifact on the invoking host. A fresh Account selects eligible
+bundled declarations by default. Neon and Supabase token sign-in can begin with
+an empty credential list and no connected Machine. If the artifact is missing,
+sign-in reports the artifact error and asks the person to repair the Happier or
+plugin installation before retrying.
+
 Availability validates and normalizes declarations at claim/release publication.
 Its stored-declaration readers check the identifying envelope rather than
 re-parsing the full server-written contribution graph on each admission. Fresh
