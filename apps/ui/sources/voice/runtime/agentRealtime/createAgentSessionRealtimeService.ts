@@ -16,6 +16,7 @@ import {
   AgentSessionRealtimeStopResultV1Schema,
   AgentSessionRealtimeWatchResultV1Schema,
 } from '@happier-dev/protocol/voice/realtime/agentSession';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
@@ -73,6 +74,7 @@ function diagnostic(input: Readonly<{
   fallbackCode: string;
   message: string;
   severity?: 'info' | 'warning' | 'error';
+  failureCause?: ActionFailureCauseV1;
 }>) {
   const normalizedCode = normalizeVoiceRuntimeFailureCode(input.code);
   return Object.freeze({
@@ -82,6 +84,7 @@ function diagnostic(input: Readonly<{
       : normalizedCode,
     severity: input.severity ?? 'error',
     message: input.message,
+    ...(input.failureCause === undefined ? {} : { details: { failureCause: input.failureCause } }),
   });
 }
 
@@ -93,11 +96,12 @@ function unavailableAvailability(
     AgentSessionRealtimeAvailability,
     Readonly<{ status: 'unavailable' }>
   >['reason'] = 'session_unavailable',
+  failureCause?: ActionFailureCauseV1,
 ): AgentSessionRealtimeAvailability {
   return Object.freeze({
     status: 'unavailable' as const,
     reason,
-    diagnostic: diagnostic({ code, fallbackCode, message }),
+    diagnostic: diagnostic({ code, fallbackCode, message, failureCause }),
   });
 }
 
@@ -242,6 +246,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
             status: 'unavailable' as const,
             diagnostic: diagnostic({
               code: parsed.data.code,
+              failureCause: parsed.data.failureCause,
               fallbackCode: 'agent_realtime_stop_failed',
               message: HOST_DIAGNOSTIC_MESSAGES.stopUnavailable,
             }),
@@ -419,6 +424,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
           reason: 'error',
           diagnostic: diagnostic({
             code: parsed.data.code,
+            failureCause: parsed.data.failureCause,
             fallbackCode: 'agent_realtime_watch_failed',
             message: HOST_DIAGNOSTIC_MESSAGES.watchFailed,
           }),
@@ -431,10 +437,9 @@ export function createAgentSessionRealtimeService(input: Readonly<{
         ...(parsed.data.event.diagnostic
           ? {
               diagnostic: diagnostic({
-                code: parsed.data.event.diagnostic.code,
+                ...parsed.data.event.diagnostic,
                 fallbackCode: 'agent_realtime_terminal_error',
                 message: HOST_DIAGNOSTIC_MESSAGES.terminal,
-                severity: parsed.data.event.diagnostic.severity,
               }),
             }
           : {}),
@@ -501,6 +506,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
             'agent_realtime_inspect_failed',
             HOST_DIAGNOSTIC_MESSAGES.unavailable,
             parsed.data.reason ?? 'session_unavailable',
+            parsed.data.failureCause,
           );
         }
         return Object.freeze({
@@ -588,6 +594,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
             status: parsed.data.status,
             diagnostic: diagnostic({
               code: parsed.data.code,
+              failureCause: parsed.data.failureCause,
               fallbackCode: 'agent_realtime_start_failed',
               message: HOST_DIAGNOSTIC_MESSAGES.startFailed,
             }),

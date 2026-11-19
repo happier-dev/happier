@@ -2,6 +2,8 @@ import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { AGENT_SESSION_REALTIME_SDP_MAX_BYTES } from '@happier-dev/protocol/voice/realtime/agentSession';
 import type { AgentSessionRealtimeHandle } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { RpcHandler } from '../../../../../cli/src/api/rpc/types';
+import { registerAgentSessionRealtimeVoiceRpc } from '../../../../../cli/src/agent/runtime/session/realtime/registerAgentSessionRealtimeVoiceRpc';
 
 import {
   cleanupBoundAgentSessionRealtimeService,
@@ -90,6 +92,86 @@ async function exerciseProviderFacingOperation(input: Readonly<{
 }
 
 describe('bound Agent-session realtime service', () => {
+  it('delivers a native start refusal through the real Session RPC and voice adapter', async () => {
+    const failureCause = {
+      phase: 'codex.realtime.start', errorClass: 'Error' as const,
+      errorCode: null, httpStatus: 429, nativeErrorCode: 'rate_limit_exceeded',
+    };
+    const handlers = new Map<string, (payload: unknown) => Promise<unknown>>();
+    const registration = registerAgentSessionRealtimeVoiceRpc({
+      rpc: { registerHandler: (method, handler: RpcHandler) => {
+        handlers.set(method, async (payload) => await handler(payload, {
+          signal: new AbortController().signal,
+          callerAuthority: 'present_user',
+          authorization: { kind: 'session.write', sessionId: 'session-1', authority: 'sessionOwner' },
+        }));
+      } },
+      runtime: undefined,
+      getHappierSessionId: () => 'session-1',
+      ownerId: 'owner-1',
+      agentGeneration: 'agent-generation-1',
+      isOccurrenceCurrent: () => true,
+      resolveProviderOccurrenceId: () => 'provider-generation-1',
+      resolveRetirementSignal: () => null,
+      resolveConversation: () => ({
+        retirementSignal: null,
+        conversation: {
+          inspect: async () => ({ status: 'available', transport: 'webrtc' }),
+          start: async () => ({
+            status: 'failed',
+            diagnostic: {
+              code: 'codex_realtime_upstream_error',
+              severity: 'error',
+              message: sentinels.start,
+              details: { failureCause, providerPrivate: sentinels.watch },
+            },
+          }),
+        },
+      }),
+    });
+    const service = createAgentSessionRealtimeService({
+      provider,
+      conversationSessionId: 'session-1',
+      applicationAttemptId: 'voice:start',
+      signal: new AbortController().signal,
+      sessionRpc: async ({ method, payload }) => {
+        const handler = handlers.get(method);
+        if (!handler) throw new Error(`Unexpected Session RPC: ${method}`);
+        return JSON.parse(JSON.stringify(await handler(payload))) as unknown;
+      },
+      onStarted: vi.fn(),
+    });
+    try {
+      const result = await service.start({ transport: { kind: 'webrtc', offerSdp: 'offer' } });
+      expect(result).toMatchObject({
+        status: 'failed',
+        diagnostic: { code: 'codex_realtime_upstream_error', details: { failureCause } },
+      });
+      expect(JSON.stringify(result)).not.toContain(sentinels.start);
+      expect(JSON.stringify(result)).not.toContain(sentinels.watch);
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it.each(['inspect', 'start', 'watch', 'stop'] as const)(
+    'preserves the typed upstream cause through %s while discarding private messages',
+    async (operation) => {
+      const failureCause = {
+        phase: 'codex.realtime.start', errorClass: 'Error' as const,
+        errorCode: null, httpStatus: 429, nativeErrorCode: 'rate_limit_exceeded',
+      };
+      const result = await exerciseProviderFacingOperation({ operation, result: async () => operation === 'watch'
+        ? { ok: true, status: 'terminal', event: { kind: 'terminal', reason: 'error',
+            diagnostic: { code: 'codex_realtime_upstream_error', severity: 'error', message: sentinels.watch, failureCause } } }
+        : { ok: false, status: operation === 'start' ? 'failed' : 'unavailable',
+            code: 'codex_realtime_upstream_error', message: sentinels[operation], failureCause },
+      });
+      expect(result).toMatchObject({ diagnostic: { code: 'codex_realtime_upstream_error', details: { failureCause } } });
+      for (const sentinel of Object.values(sentinels)) expect(JSON.stringify(result)).not.toContain(sentinel);
+    },
+  );
+
   it.each([
     { serverId: 'server-a', sessionId: 'session-1' },
     { serverId: 'server-a', sessionId: 'other-session' },

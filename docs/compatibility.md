@@ -9746,6 +9746,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Agent-session realtime RPC failures and terminal diagnostics
+can carry the existing closed Action `failureCause`. The daemon projects the
+provider's typed cause and the UI preserves it in the SDK diagnostic. Older
+daemons may omit the field. Earlier strict development UI readers reject it
+when present, so matching daemon and UI readers reload together under the
+unpublished direct cut. The inspected `../0.2` frontier at `73c533b470` has
+no Agent-session realtime RPC family.
+
 Unreleased 0.3 `usage.query` Work source results optionally report
 `unreadSessions`, a closed presentation object with positive Session counts by
 read failure category. A reader still accepts Work results without the field.

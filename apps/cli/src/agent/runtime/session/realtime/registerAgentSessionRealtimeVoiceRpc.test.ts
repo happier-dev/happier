@@ -199,6 +199,46 @@ function register(
 }
 
 describe('Agent-session realtime Voice session RPC', () => {
+  it.each(['inspect', 'start', 'watch', 'stop'] as const)(
+    'preserves the typed upstream cause through %s without private diagnostic content',
+    async (operation) => {
+      const fixture = runtimeFixture();
+      const failureCause = {
+        phase: 'codex.realtime.start', errorClass: 'Error' as const,
+        errorCode: null, httpStatus: 429, nativeErrorCode: 'rate_limit_exceeded',
+      };
+      const diagnostic = { code: 'codex_realtime_upstream_error', severity: 'error' as const,
+        message: 'private-provider-message', details: { failureCause, secret: 'private-provider-secret' } };
+      if (operation === 'inspect') fixture.inspect.mockResolvedValue({ status: 'unavailable', reason: 'session_unavailable', diagnostic });
+      if (operation === 'start') fixture.start.mockResolvedValue({ status: 'failed', diagnostic });
+      if (operation === 'stop') fixture.handle.stop = vi.fn(async () => ({ status: 'unavailable' as const, diagnostic }));
+      const handlers = register(fixture.runtime);
+      onTestFinished(() => handlers.dispose());
+      const request = { v: 1, provider: providerRef, applicationAttemptId: 'cause-attempt',
+        transport: { kind: 'webrtc', offerSdp: 'offer' } };
+      let result: unknown;
+      if (operation === 'inspect') result = await handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT)!({ v: 1, provider: providerRef });
+      else {
+        const started = await handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START)!(request);
+        if (operation === 'start') result = started;
+        else {
+          const selection = { v: 1, provider: providerRef, applicationAttemptId: request.applicationAttemptId };
+          if (operation === 'watch') {
+            fixture.publish({ kind: 'terminal', reason: 'error', diagnostic });
+            result = await handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH)!(selection);
+          } else {
+            const watching = handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH)!(selection);
+            result = await handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP)!(selection);
+            expect(await watching).toMatchObject({ event: { diagnostic: { failureCause } } });
+          }
+        }
+      }
+      expect(result).toMatchObject(operation === 'watch'
+        ? { event: { diagnostic: { failureCause } } } : { failureCause });
+      expect(JSON.stringify(result)).not.toContain('private-provider');
+    },
+  );
+
   const canonicalSdpMaxBytes = resolveCanonicalSdpMaxBytes();
   const exactSdp = 'é'.repeat(canonicalSdpMaxBytes / 2);
   const oversizedSdp = `${exactSdp}x`;

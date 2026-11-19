@@ -6,7 +6,15 @@ import {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import { randomUUID } from 'node:crypto';
-import { AgentSessionRealtimeInspectRequestV1Schema, AgentSessionRealtimeStartRequestV1Schema, AgentSessionRealtimeStartResultV1Schema, AgentSessionRealtimeStopRequestV1Schema, AgentSessionRealtimeWatchRequestV1Schema } from '@happier-dev/protocol/voice/realtime/agentSession';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import {
+  AgentSessionRealtimeInspectRequestV1Schema,
+  AgentSessionRealtimeStartRequestV1Schema,
+  AgentSessionRealtimeStartResultV1Schema,
+  AgentSessionRealtimeStopRequestV1Schema,
+  AgentSessionRealtimeWatchRequestV1Schema,
+  type AgentSessionRealtimeWatchResultV1,
+} from '@happier-dev/protocol/voice/realtime/agentSession';
 import type { PluginContributionIdentityV1, VoiceProviderContribution } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { HAPPIER_ACTION_DISCOVERY_GUIDANCE_V1 } from '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1';
@@ -26,13 +34,15 @@ type ResolveDeclaration = (
   ref: PluginContributionIdentityV1,
 ) => ConversationDeclaration | null;
 
+type TerminalEvent = Extract<AgentSessionRealtimeWatchResultV1, { ok: true }>['event'];
+
 type Attempt = {
   authorityKey: string;
   happierSessionId: string;
   handle: AgentSessionRealtimeHandle;
-  terminal: AgentSessionRealtimeLifecycleEvent | null;
+  terminal: TerminalEvent | null;
   terminalConsumed: boolean;
-  terminalWaiters: Set<(event: AgentSessionRealtimeLifecycleEvent) => void>;
+  terminalWaiters: Set<(event: TerminalEvent) => void>;
   watchSubscription: Readonly<{ dispose(): void }> | null;
   retirementSubscription: Readonly<{
     signal: AbortSignal;
@@ -111,8 +121,22 @@ function stableTerminalReason(
   }
 }
 
+function projectProviderDiagnostic(
+  diagnostic: NonNullable<AgentSessionRealtimeLifecycleEvent['diagnostic']>,
+  fallbackCode: string,
+) {
+  const { details } = diagnostic;
+  const cause = details && typeof details === 'object' && 'failureCause' in details
+    ? details.failureCause
+    : undefined;
+  return {
+    code: stableDiagnosticCode(diagnostic.code, fallbackCode),
+    ...(cause === undefined ? {} : { failureCause: readActionFailureCauseV1(cause) }),
+  };
+}
+
 function unavailable(
-  code: string,
+  diagnostic: string | ReturnType<typeof projectProviderDiagnostic>,
   message: string,
   status: 'unavailable' | 'failed' = 'unavailable',
   reason?:
@@ -125,7 +149,7 @@ function unavailable(
   return {
     ok: false as const,
     status,
-    code,
+    ...(typeof diagnostic === 'string' ? { code: diagnostic } : diagnostic),
     message,
     ...(reason ? { reason } : {}),
   };
@@ -133,7 +157,7 @@ function unavailable(
 
 function sanitizeTerminalEvent(
   event: AgentSessionRealtimeLifecycleEvent,
-): AgentSessionRealtimeLifecycleEvent {
+): TerminalEvent {
   const diagnostic = event.diagnostic;
   return Object.freeze({
     kind: 'terminal' as const,
@@ -141,10 +165,7 @@ function sanitizeTerminalEvent(
     ...(diagnostic
       ? {
           diagnostic: Object.freeze({
-            code: stableDiagnosticCode(
-              diagnostic.code,
-              'agent_realtime_terminal_error',
-            ),
+            ...projectProviderDiagnostic(diagnostic, 'agent_realtime_terminal_error'),
             severity:
               diagnostic.severity === 'info'
               || diagnostic.severity === 'warning'
@@ -321,7 +342,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
   };
   const finishAttempt = (
     attempt: Attempt,
-    event: AgentSessionRealtimeLifecycleEvent,
+    event: TerminalEvent,
     options: Readonly<{
       cleanupStop?: 'none' | 'best_effort';
     }> = {},
@@ -403,10 +424,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
       }
       if (inspected.status === 'unavailable') {
         return unavailable(
-          stableDiagnosticCode(
-            inspected.diagnostic.code,
-            'agent_realtime_inspect_failed',
-          ),
+          projectProviderDiagnostic(inspected.diagnostic, 'agent_realtime_inspect_failed'),
           'Agent realtime is unavailable.',
           'unavailable',
           stableUnavailableReason(inspected.reason),
@@ -532,10 +550,7 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
         if (started.status !== 'started') {
           if (started.status === 'unavailable' || started.status === 'failed') {
             return unavailable(
-              stableDiagnosticCode(
-                started.diagnostic.code,
-                'agent_realtime_start_failed',
-              ),
+              projectProviderDiagnostic(started.diagnostic, 'agent_realtime_start_failed'),
               'Agent realtime start failed.',
               started.status,
             );
@@ -676,10 +691,10 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
           'The Agent realtime attempt is unavailable.',
         );
       }
-      const event = attempt.terminal ?? await new Promise<AgentSessionRealtimeLifecycleEvent>(
+      const event = attempt.terminal ?? await new Promise<TerminalEvent>(
         (resolve, reject) => {
           const signal = context?.signal;
-          const settle = (terminal: AgentSessionRealtimeLifecycleEvent) => {
+          const settle = (terminal: TerminalEvent) => {
             signal?.removeEventListener('abort', onAbort);
             resolve(terminal);
           };
@@ -786,18 +801,14 @@ export function registerAgentSessionRealtimeVoiceRpc(input: Readonly<{
         );
       }
       if (stopped.status === 'unavailable') {
+        const diagnostic = projectProviderDiagnostic(stopped.diagnostic, 'agent_realtime_stop_unavailable');
         finishAttempt(attempt, {
           kind: 'terminal',
           reason: 'error',
+          ...(diagnostic.failureCause === undefined ? {} : { diagnostic: { ...diagnostic, severity: 'error' } }),
         });
         void consumeAttemptAfterCleanup(attempt);
-        return unavailable(
-          stableDiagnosticCode(
-            stopped.diagnostic.code,
-            'agent_realtime_stop_unavailable',
-          ),
-          'Agent realtime stop is unavailable.',
-        );
+        return unavailable(diagnostic, 'Agent realtime stop is unavailable.');
       }
       if (
         stopped.status !== 'stopped'

@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import {
   defineProtocolLiteral,
@@ -39,6 +40,7 @@ const AgentSessionRealtimeUnavailableV1Schema = lazyZodSchema(() => z.strictObje
   status: z.literal('unavailable'),
   code: z.string().check(z.minLength(1), z.maxLength(128)),
   message: z.string().check(z.minLength(1), z.maxLength(4096)),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
   reason: z.optional(z.enum([
     'authentication_required',
     'session_unavailable',
@@ -160,6 +162,7 @@ export const AgentSessionRealtimeWatchResultV1Schema = lazyZodSchema(() => z.uni
       diagnostic: z.optional(z.strictObject({
         code: z.string().check(z.minLength(1), z.maxLength(128)),
         severity: z.enum(['info', 'warning', 'error']),
+        failureCause: z.optional(ActionFailureCauseV1Schema),
         message: z.optional(z.string().check(z.minLength(1), z.maxLength(4096))),
       })),
     }),
