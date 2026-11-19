@@ -338,13 +338,7 @@ export function completeExecutionRunServiceActionResult(actionId: ActionId, resu
   if (record.ok === false && typeof record.code === 'string' && record.code.trim().length > 0) {
     const errorCode = record.code.trim();
     const message = typeof record.message === 'string' ? record.message.trim() : '';
-    const details = readFailureEnvelopeDetails(record);
-    return {
-      ok: false,
-      errorCode,
-      error: message || errorCode,
-      ...(details !== undefined ? { details } : {}),
-    };
+    return readActionFailureEnvelope({ ...record, errorCode, error: message || errorCode })!;
   }
 
   return completeActionResult(result);

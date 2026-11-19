@@ -206,7 +206,7 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
         errorCode: result.errorCode,
         error: result.error,
         ...(result.failureCause ? { failureCause: result.failureCause } : {}),
-        ...(reachability && typeof result.effectAttempted === 'boolean'
+        ...(typeof result.effectAttempted === 'boolean'
             ? { effectAttempted: result.effectAttempted } : {}),
         ...(details !== undefined ? { details } : {}),
     };

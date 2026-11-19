@@ -2,7 +2,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { automationSubjectKeyV1, automationSubjectKeyMatchesV1,
   type AutomationSubjectV1, type AutomationSubjectContextV1 } from '../../automations/automationSubjectV1.js';
 import type { ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
-import type { ActionExecutorContext } from './types.js';
+import type { ActionExecuteFailure, ActionExecutorContext } from './types.js';
 import type { ActionSettlementV1 } from './actionSettlement.js';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema,
   AutomationActionAdmitResultV1Schema, type AutomationActionAdmitResultV1,
@@ -67,6 +67,13 @@ export type ActionAutomationPrivateMatchingV1 = (evidence: AutomationActionOccur
   }>>;
 export type ActionAutomationPrepareMatchingV1 = (selection: ActionAutomationSelectionV1,
   context: ActionExecutorContext) => Promise<ActionAutomationPrivateMatchingV1>;
+
+/** Admission has not dispatched an effect when its canonical owner cannot select checks. */
+export function actionAutomationAdmissionUnavailableV1(reason: 'owner_unavailable' | 'selection_unavailable'): ActionExecuteFailure {
+  return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', effectAttempted: false,
+    failureCause: { phase: 'action.automations.admission', errorClass: 'Error', errorCode: 'target_unavailable',
+      httpStatus: null, nativeErrorReason: `action_automation_${reason}` } };
+}
 
 /** A missing private owner is visible; a structural tuple never proves an empty filter. */
 export function unavailableActionAutomationMatchingV1(reason: string): ActionAutomationPrivateMatchingV1 {

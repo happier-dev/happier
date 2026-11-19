@@ -1013,6 +1013,51 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     );
   });
 
+  it('identifies the missing Action Automation owner before an external detached start dispatches', async () => {
+    const starts: unknown[] = [];
+    const executor = createActionExecutor(createDeps({ executionRunStart: async (_sessionId, input) => {
+      starts.push(input);
+      return { runId: 'unexpected', callId: 'unexpected', sidechainId: 'unexpected' };
+    } }));
+    const result = await executor.execute('execution.run.start', { ...RUN_START_BASE, sessionId: null }, {
+      surface: 'api', authority: 'account_automation', executionRunTargetMachineId: 'm1',
+      externalActionTarget: { kind: 'machine', machineId: 'm1' },
+      externalActionCredential: { accountId: 'account', principalId: 'principal', credentialId: 'credential',
+        grant: { v: 1, actions: { families: [], ids: ['execution.run.start'] },
+          targets: { sessions: [], machines: ['m1'] }, approve: false, origins: [], models: null,
+          permissionModes: null, create: null } },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', effectAttempted: false,
+      failureCause: { phase: 'action.automations.admission', errorClass: 'Error', errorCode: 'target_unavailable',
+        httpStatus: null, nativeErrorReason: 'action_automation_owner_unavailable' },
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
+    expect(starts).toEqual([]);
+  });
+
+  it.each(['returned', 'serialized', 'wrapped'] as const)('retains the detached Run refusal cause and no-effect evidence from a %s RPC failure', async transport => {
+    const failureCause = {
+      phase: 'providers.team_credential.model_catalog', errorClass: 'Error',
+      errorCode: 'provider_model_not_found', httpStatus: null,
+    } as const;
+    const details = { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } as const;
+    const executor = createActionExecutor(createDeps({
+      // The Machine RPC reply is the boundary; admission and failure projection stay real.
+      executionRunStart: async () => {
+        const failure = { ok: false, code: 'target_unavailable', message: 'target_unavailable',
+          failureCause, effectAttempted: false, details, privateProviderBody: 'PRIVATE_PROVIDER_BODY' };
+        return transport === 'serialized'
+          ? { errorCode: 'target_unavailable', error: 'target_unavailable', failureCause, effectAttempted: false, details }
+          : transport === 'wrapped' ? { ok: true, data: failure } : failure;
+      },
+    }));
+    const result = await executor.execute('execution.run.start', { ...RUN_START_BASE, sessionId: null },
+      { ...UI_CALLER, executionRunTargetMachineId: 'm1' });
+    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+      failureCause, effectAttempted: false, details: { executionRunStart: { ...details.executionRunStart,
+        ...(transport === 'serialized' ? { errorClass: 'RpcError' } : {}) } } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_PROVIDER_BODY');
+  });
+
   it('projects the incumbent Session start service failure as a failed Action result', async () => {
     const executionRunStart = vi.fn(async () => ({
       ok: false as const,

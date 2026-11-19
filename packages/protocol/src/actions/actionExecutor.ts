@@ -6,6 +6,7 @@ import { isApprovalRequestExecutionApproved } from '../approvals/approvalAutomat
 import { isMachineManagedInstallationActionIdV1 } from './specs/machineConnectionActionIdsV1.js';
 import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { createActionAutomationInvocationV1 } from './executor/actionSettlement.js';
+import { actionAutomationAdmissionUnavailableV1 } from './executor/actionAutomationAdmission.js';
 import { isActionEffectHookableV1 } from './actionSpecs.js';
 import { prepareTeamGroupCreateActionInput, prepareTeamGroupUpdateActionInput, type TeamGroupCreateActionInputV1, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
 import { TEAM_GROUP_CREATE_ACTION_ID_V1, TEAM_GROUP_UPDATE_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
@@ -3436,7 +3437,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // reaching the host. Missing the canonical port is an unavailable target,
     // never an implicit empty selection that can run the effect.
     if (requiresExternalActionAutomationAdmission && !deps.actionAutomations) {
-      return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      return actionAutomationAdmissionUnavailableV1('owner_unavailable');
     }
     if (deps.actionAutomations) {
       ctx = { ...ctx, actionAutomationPort: deps.actionAutomations };
@@ -3475,7 +3476,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if (selection.status === 'unavailable' && ctx.authority === 'account_automation'
           && (ctx.externalActionExecutionAuthorization !== undefined || ctx.externalActionCredential !== undefined)) {
-          return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+          return actionAutomationAdmissionUnavailableV1('selection_unavailable');
         }
         ctx = withInvocationRequestId(ctx);
         ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({

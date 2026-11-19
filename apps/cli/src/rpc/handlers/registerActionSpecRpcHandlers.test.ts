@@ -66,6 +66,19 @@ describe('ActionSpec-derived RPC registrar', () => {
         });
     });
 
+    it.each([false, true, undefined])('retains the Run-start producer cause and effect evidence (%s) without private details', effectAttempted => {
+        const failureCause = { phase: 'action.automations.admission', errorClass: 'Error',
+            errorCode: 'target_unavailable', httpStatus: null, nativeErrorReason: 'action_automation_owner_unavailable' } as const;
+        const details = { executionRunStart: { v: 1, runCreation: 'noRunCreated' } };
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'target_unavailable',
+            error: 'target_unavailable', failureCause, ...(effectAttempted === undefined ? {} : { effectAttempted }),
+            details: { ...details, credential: 'PRIVATE_CREDENTIAL' } });
+        expect(module.unwrapActionResultForRpc('execution.run.start', failure)).toEqual({
+            ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', failureCause,
+            ...(effectAttempted === undefined ? {} : { effectAttempted }), details,
+        });
+    });
+
     it('keeps only the declared reachability facts at the Action RPC failure sink', () => {
         const busy = { ok: false as const, errorCode: 'effect_in_progress', error: 'effect_in_progress',
             effectAttempted: false, details: { actionOperationId: 'held-owner-compose' } };

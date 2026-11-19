@@ -153,22 +153,23 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
           }
           let rawStartResult: unknown;
           if (ctx.agentStartWorkDepth !== undefined) dispatchOpts = { ...dispatchOpts, workDepth: ctx.agentStartWorkDepth, agentStartContext: ctx.agentStartContext, workspaceWrites: ctx.agentStartWorkspaceWrites, sessionAgentSpawnPolicyV1: ctx.sessionAgentSpawnPolicyV1 };
+          let startResult: ActionExecuteResult;
           try {
             dispatchFacts.executionRunStartDispatched = true;
             rawStartResult = await startExecutionRunWithSelection(sessionId, request, dispatchOpts, ctx);
+            const returnedIdentity = readCompleteExecutionRunStartIdentity(rawStartResult);
+            startResult = returnedIdentity
+              ? { ok: true, result: returnedIdentity }
+              : completeExecutionRunServiceActionResult(actionId, rawStartResult);
           } catch (error) {
-            const failure = normalizeActionExecutorThrownError(error);
+            const failure = normalizeActionExecutorThrownError(error, 'execution.run.start');
             const details = readFailureEnvelopeDetails(readRecord(error));
             return classifyExecutionRunStartFailure(
-              { ok: false, errorCode: failure.errorCode, error: failure.error, failureCause: failure.failureCause, ...(details !== undefined ? { details } : {}) },
+              { ok: false, ...failure, ...(details !== undefined ? { details } : {}) },
               readExecutionRunStartRunCreation(details),
               error,
             );
           }
-          const returnedIdentity = readCompleteExecutionRunStartIdentity(rawStartResult);
-          const startResult: ActionExecuteResult = returnedIdentity
-            ? { ok: true, result: returnedIdentity }
-            : completeExecutionRunServiceActionResult(actionId, rawStartResult);
           if (!startResult.ok) {
             return classifyExecutionRunStartFailure(
               startResult,
@@ -180,6 +181,10 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
           const res = startResult.result;
           const serviceFailure = readRecord(res);
           if (serviceFailure.ok === false) {
+            const projectedFailure = completeExecutionRunServiceActionResult(actionId, res);
+            if (!projectedFailure.ok) return classifyExecutionRunStartFailure(projectedFailure,
+              hasExecutionRunStartIdentityEvidence(rawStartResult)
+                ? 'outcomeUnknown' : readExecutionRunStartRunCreation(projectedFailure.details));
             const failure = readFanoutStartError(res);
             const details = readFailureEnvelopeDetails(serviceFailure);
             return {
