@@ -34,4 +34,24 @@ describe('public condition tokens', () => {
       mounted.unmount();
     }
   });
+
+  // TRIAGE-W1-BROWSER-A r239 (UI refinements 11-18): under My work a stored condition with no words drew a chip
+  // holding only its ×. A token with no label is not a chip; its neighbours and Save stay.
+  it('draws no chip for a condition that has no words', async () => {
+    const environment = projectHappierUiEnvironment(createSurfaceContextFixture());
+    const mounted = mountThroughReactNativeWeb(<HappierUiEnvironmentProvider environment={environment}>
+      <CollectionConditionTokens testIDPrefix="conditions" tokens={[
+        { id: 'unavailableFields', label: 'unavailableFields', valueLabel: '' },
+        { id: 'status', label: 'Status', valueLabel: 'Failed' },
+        { id: 'blank', label: 'Branch', valueLabel: '  ' },
+      ]} labels={{ remove: (field) => `Remove ${field}`, save: 'Save as space…' }} onRemove={() => {}} onSave={() => {}} />
+    </HappierUiEnvironmentProvider>);
+    try {
+      const chips = [...mounted.container.querySelectorAll('[data-testid^="conditions-token:"]')].map((chip) => chip.getAttribute('data-testid'));
+      expect(chips).toEqual(['conditions-token:status']);
+      expect(mounted.container.querySelector('[data-testid="conditions-tokens-save"]')).not.toBeNull();
+    } finally {
+      mounted.unmount();
+    }
+  });
 });

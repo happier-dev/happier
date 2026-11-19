@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 
 import { HappierPressable } from '../interaction/Pressable.js';
@@ -28,9 +28,17 @@ export type HappierCollectionConditionTokensProps = Readonly<{
   labels: Readonly<{ remove: (field: string) => string; save: string }>;
 }>;
 
-/** Every condition stays visible by wrapping; Save yields its words to an icon when they crowd the tokens. */
+/**
+ * Every condition with words stays visible by wrapping; Save yields its words to an icon when they crowd the tokens.
+ * A condition with no words (a stored selection no field can describe) is no chip: a lone × names nothing
+ * (TRIAGE-W1-BROWSER-A r239). The list's Filtered state and Clear still carry it.
+ */
 export const HappierCollectionConditionTokens = memo(function HappierCollectionConditionTokens(props: HappierCollectionConditionTokensProps) {
-  const { host, tokens, testIDPrefix, onRemove, labels } = props;
+  const { host, testIDPrefix, onRemove, labels } = props;
+  const tokens = useMemo(() => {
+    const worded = props.tokens.filter((token) => token.valueLabel.trim() !== '');
+    return worded.length === props.tokens.length ? props.tokens : worded;
+  }, [props.tokens]);
   const appearance = host.useAppearance();
   const tokenCount = tokens.length;
   // Hold the width/count at which words wrapped, so room freed by the icon cannot oscillate the label.
