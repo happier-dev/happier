@@ -1473,6 +1473,12 @@ binding uses its own credential transport rather than requiring native CLI login
 
 #### Claude plugin runtime contracts (development)
 
+For an isolated Claude Session, Happier publishes the native resume ID and transcript
+path together after Claude's owned stdio submit hook and a matching new row in that
+file. The Session runtime captures the baseline before acknowledging the hook.
+The native filesystem process reads the one granted file as the member, inside the
+member's native home. A turn without a persisted row leaves the identity provisional.
+
 Claude session retention is owned by the Claude plugin's Account settings declaration,
 settings contribution and runtime account-settings hook. The generic daemon controller
 reads the existing scoped Account settings service, inventories native and materialized

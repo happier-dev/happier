@@ -750,7 +750,13 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
             });
         },
     });
+    const followOwnedPrompt = params.owners.transcripts.fileFollow.followOwnedPrompt;
     const fileFollow: AgentSessionHostServices['transcripts']['fileFollow'] = Object.freeze({
+        ...(followOwnedPrompt ? {
+            followOwnedPrompt: (input: Parameters<typeof followOwnedPrompt>[0]) => followOwnedPrompt({
+                ...input, signal: combineSessionOperationSignal(params.signal, input.signal),
+            }),
+        } : {}),
         async follow(
             input: AgentTranscriptFileFollowInput,
         ) {

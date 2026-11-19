@@ -30,7 +30,7 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createDefaultPluginTerminalHostService } from '@/plugins/runtime/context/terminalHost';
 import { createPluginTranscriptFileFollowService } from '@/plugins/runtime/context/transcripts/fileFollow';
-import { createTranscriptFileFollowPathGrantRegistry } from '@/plugins/runtime/context/transcripts/fileFollowGrants';
+import { createTranscriptFileFollowPathGrantRegistry, type MemberTranscriptFilesystem } from '@/plugins/runtime/context/transcripts/fileFollowGrants';
 import {
     createSessionHooksService,
     type HostSessionHooksOwner,
@@ -436,6 +436,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     signal: AbortSignal;
     happyHomeDir?: string;
     currentTerminalMetadata?: Readonly<Pick<Metadata, 'terminal' | 'startedBy'>>;
+    memberTranscriptFilesystem?: MemberTranscriptFilesystem;
 }>): NativeAgentSessionHostServiceOwners {
     const runtimeId = `native-agent-session:${params.identity.pluginId}:${params.identity.agentId}:${randomUUID()}`;
     const storePaths = resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir });
@@ -467,7 +468,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         happyHomeDir: storePaths.happyHomeDir,
         hasCapability,
         addDisposable,
-        grantTranscriptFileFollowPath: async (request) => {
+        grantTranscriptFileFollowPath: params.memberTranscriptFilesystem ? undefined : async (request) => {
             await fileFollowPathGrants.grant({
                 pluginId: params.identity.pluginId,
                 runtimeId,
@@ -484,6 +485,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         runtimeId,
         readSessionId: () => params.sessionId,
         fileFollowPathGrants,
+        memberFilesystem: params.memberTranscriptFilesystem,
     });
     const features = createNativeAgentFeatureService(params.runtimeRegistry);
     const happierTools = Object.freeze({

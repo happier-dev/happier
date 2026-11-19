@@ -957,6 +957,7 @@ export function createClaudeAgentSdkTurnOperations(
     // `activity/workflow_run.v1` records (record-FIRST via the private host-owned System Records port)
     // plus the compact typed workflow headline.
     const workflowFileFollow = sessionContext?.agentRuntime.transcripts.fileFollow;
+    const memberTranscriptProof = Boolean(workflowFileFollow?.followOwnedPrompt);
     if (sessionWorkStateEnabled && (!sessionContext || !workflowFileFollow)) {
         throw new Error('Claude Session work-state requires Session-owned services.');
     }
@@ -1097,6 +1098,8 @@ export function createClaudeAgentSdkTurnOperations(
     // publication still requires its separate accepted-prompt proof: /goal is
     // persisted as command markup and cannot supply an exact person-prompt match.
     function ensureGoalStatusTail(candidatePath?: string): void {
+        // The member proof opens only the one accepted-prompt file through native execution.
+        if (memberTranscriptProof) return;
         if (!goalRuntime) return;
         const transcriptPath = candidatePath ?? promotedTranscriptPath ?? (
             params.enableSessionResumability !== true && providerSessionId
@@ -1141,7 +1144,11 @@ export function createClaudeAgentSdkTurnOperations(
                 ensureGoalStatusTail(transcriptPath);
             },
             onTranscriptPromoted: async ({ providerSessionId: provenProviderSessionId, transcriptPath, isCurrent }) => {
-                if (!isCurrent() || providerSessionId !== provenProviderSessionId) return;
+                if (!isCurrent()) return;
+                if (memberTranscriptProof && providerSessionId !== provenProviderSessionId) {
+                    observeProviderSessionId(provenProviderSessionId);
+                }
+                if (providerSessionId !== provenProviderSessionId) return;
                 if (params.enableSessionResumability === true && promotedTranscriptPath !== transcriptPath) {
                     ensureGoalStatusTail(transcriptPath);
                 }
@@ -1180,7 +1187,7 @@ export function createClaudeAgentSdkTurnOperations(
         payload: Readonly<Record<string, unknown>>,
         transcriptMaterialized = false,
     ): Promise<void> {
-        if (!workflowRuntime || runtimeDisposed) return;
+        if (!workflowRuntime || runtimeDisposed || memberTranscriptProof) return;
         let binding = orderedSourceBinding;
         if (binding?.providerSessionId !== nativeSessionId) {
             if (binding) {
@@ -1236,11 +1243,16 @@ export function createClaudeAgentSdkTurnOperations(
         finally { currentBinding.acquisition = null; }
     }
 
-    async function observeSessionHook(providerSessionId: string, payload: Readonly<Record<string, unknown>>, ownerScope?: object): Promise<void> {
+    async function observeSessionHook(
+        providerSessionId: string,
+        payload: Readonly<Record<string, unknown>>,
+        ownerScope?: object,
+        ownedSubmitSignal?: AbortSignal,
+    ): Promise<void> {
         if (runtimeDisposed) return;
         const observedAt = Date.now();
         const lifecycle = readClaudeTaskLifecycleEnvelope(payload);
-        const bufferedNativeStart = lifecycle?.knownOnly === true && lifecycle.resumed === true
+        const bufferedNativeStart = !memberTranscriptProof && lifecycle?.knownOnly === true && lifecycle.resumed === true
             && (orderedSourceBinding?.providerSessionId !== providerSessionId || !orderedSourceBinding.handle);
         if (bufferedNativeStart) {
             pendingNativeStarts.push({ providerSessionId, payload, observedAt });
@@ -1248,7 +1260,8 @@ export function createClaudeAgentSdkTurnOperations(
             observeNativeWorkflowHook(providerSessionId, payload, observedAt);
         }
         if (!bufferedNativeStart || ownerScope) observeProviderTaskActivity(payload, providerSessionId, ownerScope);
-        await resumeIdentityOwner?.observeSessionHook(providerSessionId, payload, ownerScope ? 'local_terminal' : 'sdk');
+        await resumeIdentityOwner?.observeSessionHook(providerSessionId, payload,
+            ownedSubmitSignal ? { ownedSubmitSignal } : ownerScope ? 'local_terminal' : 'sdk');
         if (readString(payload.hook_event_name ?? payload.hookEventName ?? payload.eventName) === 'SessionStart') {
             // The native process must be able to continue while its ordered source
             // baseline is acquired. The binding owns acquisition and its disposal.
@@ -1478,12 +1491,14 @@ export function createClaudeAgentSdkTurnOperations(
                     const turnId = readTurnId?.();
                     if (turnId) await sessionContext?.agentRuntime.awaitTurnPublication?.(turnId, signal);
                 },
-                onSessionHook: async payload => {
+                onSessionHook: async (payload, { signal }) => {
                     const nativeSessionId = readClaudeProviderIdentityValue(payload.session_id);
                     if (!nativeSessionId) return;
                     const hooks = sessionContext?.agentRuntime.sessionHooks ?? params.ctx.agentRuntime.hooks;
                     await hooks?.observeSessionHook({ providerSessionId: nativeSessionId, payload });
-                    await observeSessionHook(nativeSessionId, payload);
+                    const ownedSubmitSignal = payload.hook_event_name === 'UserPromptSubmit'
+                        && readTurnId && (activeQuery === turnQuery || retainedIdleQuery?.query === turnQuery) ? signal : undefined;
+                    await observeSessionHook(nativeSessionId, payload, undefined, ownedSubmitSignal);
                 },
             },
             onMessageReceived(message) {
@@ -1696,6 +1711,7 @@ export function createClaudeAgentSdkTurnOperations(
         const nativeSessionLogPath = providerSessionId === nextSessionId
             ? promotedTranscriptPath
             : null;
+        if (memberTranscriptProof && !nativeSessionLogPath) return;
         if (!canPublishSessionResumeIdentity({
             isExistingResume: isExistingResume
                 || pendingResumeProviderSessionId === nextSessionId

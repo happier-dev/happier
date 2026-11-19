@@ -595,6 +595,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
     nativeIdentity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'>;
   }>;
   bindMcpExecService?(service: ExecService): () => void;
+  memberTranscriptFilesystem?: import('@/plugins/runtime/context/transcripts/fileFollowGrants').MemberTranscriptFilesystem;
   agentEnvironment?: Readonly<Record<string, string>>;
   resolveMcpToolNaming?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionMcpService['resolveToolNaming'];
   mcpServersStrictMode?: boolean;
@@ -3200,6 +3201,9 @@ async function runHostedSessionRuntime(
     mcpServers,
     get sessionMcpContext() { return mcpPrepared.value.sessionMcpContext; },
     get mcpLaunchMaterial() { return nativeMcpLaunchMaterial; },
+    ...(nativeMcpRuntime && nativeMcpLaunchMaterial?.memberIdentity ? {
+      memberTranscriptFilesystem: { home: nativeMcpLaunchMaterial.memberIdentity.home, open: nativeMcpRuntime.prepareFilesystemEffect },
+    } : {}),
     ...(nativeMcpRuntime ? { bindMcpExecService: (service: ExecService) => {
       const native = nativeMcpRuntime!;
       const releaseExec = native.bindExec(service);

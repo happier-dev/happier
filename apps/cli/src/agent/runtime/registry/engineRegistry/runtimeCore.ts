@@ -361,6 +361,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 ...(hostRuntimeParams.currentTerminalMetadata
                                     ? { currentTerminalMetadata: hostRuntimeParams.currentTerminalMetadata }
                                     : {}),
+                                ...(params.agent.id === 'claude' && hostRuntimeParams.memberTranscriptFilesystem
+                                    ? { memberTranscriptFilesystem: hostRuntimeParams.memberTranscriptFilesystem }
+                                    : {}),
                                 sessionId,
                                 directory,
                                 signal,

@@ -162,6 +162,9 @@ export type AgentTranscriptFileFollowHandle = Readonly<{
 
 export interface AgentTranscriptFileFollowService {
   follow(input: AgentTranscriptFileFollowInput): Promise<AgentTranscriptFileFollowHandle>;
+  /** Available on member Sessions. Acquire the baseline before acknowledging an owned native submit hook. */
+  followOwnedPrompt?(input: Pick<AgentTranscriptFileFollowInput, 'path' | 'onLine' | 'onReset'>
+    & Readonly<{ signal: AbortSignal }>): Promise<AgentTranscriptFileFollowHandle>;
 }
 
 export type AgentTranscriptSessionEventPublicationResult = Readonly<{

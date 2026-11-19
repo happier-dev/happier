@@ -22,7 +22,7 @@ type TranscriptEvidence = Readonly<{
     text: string;
 }>;
 
-type SessionHookOrigin = 'sdk' | 'local_terminal';
+type SessionHookOrigin = 'sdk' | 'local_terminal' | Readonly<{ ownedSubmitSignal: AbortSignal }>;
 
 type ActiveTranscriptCandidate = {
     providerSessionId: string;
@@ -155,6 +155,8 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
     let explicitResumeFailure: ClaudeAgentSdkResumeIdentityMismatchError | null = null;
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
+    const fileFollow = params.ctx.agentRuntime.transcripts.fileFollow;
+    const followOwnedPrompt = fileFollow.followOwnedPrompt?.bind(fileFollow);
 
     function failExplicitResume(
         observedProviderSessionId: string | null,
@@ -172,6 +174,19 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
 
     function candidateKey(providerSessionId: string, transcriptPath: string): string {
         return `${providerSessionId}\u0000${transcriptPath}`;
+    }
+
+    function createCandidate(providerSessionId: string, transcriptPath: string): ActiveTranscriptCandidate {
+        return {
+            providerSessionId, transcriptPath, evidence: [], invalidated: false, promoted: false,
+            promotionInFlight: null, promotionRefused: false, promotionRetryRequested: false,
+            followHandle: null, proofReadFailure: null,
+        };
+    }
+
+    function invalidateCandidate(candidate: ActiveTranscriptCandidate): void {
+        candidate.invalidated = true;
+        candidate.evidence.length = 0;
     }
 
     function dropIntentsAcceptedFor(candidate: ActiveTranscriptCandidate): void {
@@ -284,10 +299,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
                 onLine: async ({ line }) => {
                     await observeTranscriptLine(candidate, line);
                 },
-                onReset: () => {
-                    candidate.invalidated = true;
-                    candidate.evidence.length = 0;
-                },
+                onReset: () => invalidateCandidate(candidate),
                 onError: (error) => {
                     recordProofReadFailure(candidate, error);
                 },
@@ -325,6 +337,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
             expectedInitialProviderSessionId = null;
         }
         if (!providerSessionId) return;
+        if (followOwnedPrompt) return;
         const transcriptPath = readTranscriptPath(payload);
         const existing = activeCandidate;
         if (
@@ -361,20 +374,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         // Fence the previous follower before any asynchronous close or identity publication. Keep
         // the new candidate active while the old close drains so an authenticated prompt hook that
         // overtakes that close is still correlated with the rotated transcript.
-        const candidate: ActiveTranscriptCandidate | null = transcriptPath
-            ? {
-                providerSessionId,
-                transcriptPath,
-                evidence: [],
-                invalidated: false,
-                promoted: false,
-                promotionInFlight: null,
-                promotionRefused: false,
-                promotionRetryRequested: false,
-                followHandle: null,
-                proofReadFailure: null,
-            }
-            : null;
+        const candidate = transcriptPath ? createCandidate(providerSessionId, transcriptPath) : null;
         if (existing) {
             retiredCandidateKeys.add(candidateKey(existing.providerSessionId, existing.transcriptPath));
             dropIntentsAcceptedFor(existing);
@@ -395,20 +395,28 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         await attachCandidate(candidate);
     }
 
+    function noteMemberProofUnavailable(error: unknown): void {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+        params.ctx.logger.debug('[ClaudeAgentSdk] member transcript identity proof unavailable', { code });
+    }
+
     async function observeAcceptedPrompt(
         reportedProviderSessionId: string,
         payload: Readonly<Record<string, unknown>>,
         origin: SessionHookOrigin,
     ): Promise<void> {
         if (isSidechainSessionHook(payload)) return;
-        const candidate = activeCandidate;
-        if (!candidate) return;
+        let candidate = activeCandidate;
         const providerSessionId = readProviderSessionId(reportedProviderSessionId, payload);
-        if (providerSessionId !== candidate.providerSessionId) return;
+        if (!providerSessionId) return;
+        if (followOwnedPrompt) {
+            if (typeof origin !== 'object'
+                || (expectedInitialProviderSessionId && providerSessionId !== expectedInitialProviderSessionId)) return;
+        } else if (providerSessionId !== candidate?.providerSessionId) return;
         const prompt = typeof payload.prompt === 'string' ? payload.prompt : null;
         if (prompt === null) return;
         let index = promptIntents.findIndex((item) => item.acceptedCandidate === null && item.text === prompt);
-        if (index < 0 && origin === 'local_terminal') {
+        if (index < 0 && !followOwnedPrompt && origin === 'local_terminal') {
             // An owned terminal's authenticated submit hook is the person's input boundary;
             // no host-injected prompt precedes it. The matching transcript row still proves persistence.
             promptIntents.push({ text: prompt, acceptedCandidate: null });
@@ -420,6 +428,42 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
             if (promptIntents[earlier]?.acceptedCandidate === null) promptIntents.splice(earlier, 1);
         }
+        if (followOwnedPrompt && typeof origin === 'object') {
+            const transcriptPath = readTranscriptPath(payload);
+            if (!transcriptPath) {
+                promptIntents.splice(promptIntents.indexOf(intent), 1);
+                return;
+            }
+            if (!candidate?.promoted || candidate.providerSessionId !== providerSessionId || candidate.transcriptPath !== transcriptPath) {
+                const previous = candidate;
+                const next = createCandidate(providerSessionId, transcriptPath);
+                activeCandidate = next;
+                intent.acceptedCandidate = next;
+                if (previous) {
+                    dropIntentsAcceptedFor(previous);
+                    await previous.followHandle?.close().catch(noteMemberProofUnavailable);
+                }
+                try {
+                    const handle = await followOwnedPrompt({
+                        path: transcriptPath, signal: origin.ownedSubmitSignal,
+                        onLine: ({ line }) => observeTranscriptLine(next, line),
+                        onReset: () => invalidateCandidate(next),
+                    });
+                    if (disposed || activeCandidate !== next) {
+                        await handle.close().catch(noteMemberProofUnavailable);
+                        return;
+                    }
+                    next.followHandle = handle;
+                } catch (error) {
+                    invalidateCandidate(next);
+                    dropIntentsAcceptedFor(next);
+                    noteMemberProofUnavailable(error);
+                    return;
+                }
+                candidate = next;
+            }
+        }
+        if (!candidate) return;
         if (candidate.promoted) {
             // This candidate's resume proof is already durable; nothing left to prove.
             promptIntents.splice(promptIntents.indexOf(intent), 1);
@@ -440,6 +484,21 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
                 await Promise.allSettled(Array.from(inFlightHookOperations));
                 const candidate = activeCandidate;
                 if (!candidate || candidate.invalidated || candidate.promoted) return;
+                if (followOwnedPrompt) {
+                    try {
+                        await candidate.followHandle?.drainNow();
+                    } catch (error) {
+                        noteMemberProofUnavailable(error);
+                    } finally {
+                        await candidate.followHandle?.close().catch(noteMemberProofUnavailable);
+                        candidate.followHandle = null;
+                        if (activeCandidate === candidate && !candidate.promoted) {
+                            dropIntentsAcceptedFor(candidate);
+                            activeCandidate = null;
+                        }
+                    }
+                    return;
+                }
                 await candidate.followHandle?.drainNow().catch((error) => {
                     recordProofReadFailure(candidate, error);
                 });

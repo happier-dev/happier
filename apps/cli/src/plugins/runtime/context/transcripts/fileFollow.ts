@@ -14,7 +14,7 @@ import type {
 } from '@/api/session/fileBackedTranscripts/jsonl';
 
 import { PluginContextServiceError } from '../errors';
-import type { TranscriptFileFollowPathGrantRegistry } from './fileFollowGrants';
+import type { MemberTranscriptFilesystem, TranscriptFileFollowPathGrantRegistry } from './fileFollowGrants';
 import {
     isTranscriptFileFollowPathInsideRoot,
     normalizeTranscriptFileFollowAbsolutePath,
@@ -52,6 +52,7 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
     allowedPathRoots?: readonly string[];
     canFollowPath?: PluginTranscriptFileFollowAccessPolicy;
     fileFollowPathGrants?: TranscriptFileFollowPathGrantRegistry;
+    memberFilesystem?: MemberTranscriptFilesystem;
     policy?: JsonlFollowPolicyInputV1;
     watchFile?: WatchFile;
     addDisposable?: (disposable: Readonly<{ dispose: () => void | Promise<void> }>) => unknown;
@@ -65,7 +66,18 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
         return normalized ? [normalized] : [];
     });
 
+    const { memberFilesystem, fileFollowPathGrants, pluginId, runtimeId, readScope, readSessionId } = params ?? {};
+    const getScope = (): PluginExecutionScopeV1 | null => {
+        const scope = readScope?.();
+        if (scope) return scope;
+        const sessionId = readSessionId?.();
+        return sessionId ? { kind: 'session', sessionId } : null;
+    };
     const service: AgentTranscriptFileFollowService = Object.freeze({
+        ...(memberFilesystem && fileFollowPathGrants && pluginId && runtimeId
+            ? { followOwnedPrompt: (input: Parameters<NonNullable<AgentTranscriptFileFollowService['followOwnedPrompt']>>[0]) =>
+                fileFollowPathGrants.grantOwnedPrompt({ pluginId, runtimeId, scope: getScope() }, memberFilesystem, input) }
+            : {}),
         async follow(input: AgentTranscriptFileFollowInput): Promise<AgentTranscriptFileFollowHandle> {
             const filePath = normalizeTranscriptFileFollowAbsolutePath(input.path);
             if (!filePath) {
@@ -100,17 +112,13 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
             }
             const authorizedPath = await resolveFollowFilePath({
                 filePath,
-                pluginId: params?.pluginId,
-                runtimeId: params?.runtimeId,
-                scope: params?.readScope?.()
-                    ?? (() => {
-                        const sessionId = params?.readSessionId?.() ?? null;
-                        return sessionId ? Object.freeze({ kind: 'session' as const, sessionId }) : null;
-                    })(),
+                pluginId,
+                runtimeId,
+                scope: getScope(),
                 allowedPaths,
                 allowedPathRoots,
                 canFollowPath: params?.canFollowPath,
-                fileFollowPathGrants: params?.fileFollowPathGrants,
+                fileFollowPathGrants,
             });
             if (!authorizedPath) {
                 throw new PluginContextServiceError(

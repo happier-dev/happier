@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { FILESYSTEM_EFFECT_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
-import { createReadFileRpcActionExecutor } from './readFileHandler';
+import { createReadFileRpcActionExecutor, readNativeMemberTranscript } from './readFileHandler';
 import { createWriteFileRpcActionExecutor } from './writeFileHandler';
 import { createDirectoryRpcActionExecutor } from './directoryHandlers';
 import { executeFilesystemMutationAction, registerPathMutationHandlers } from './pathMutationHandlers';
@@ -22,6 +22,7 @@ export const FilesystemEffectConfigurationSchema = z.strictObject({
   capabilityAgentInstallExecutionScope: z.optional(z.literal('member')),
   capabilityAgentSharedManagedToolsRoot: z.optional(absolutePath),
   sessionAttachment: z.optional(z.strictObject({ sessionId: z.string().check(z.minLength(1)) })),
+  memberTranscript: z.optional(z.strictObject({ home: absolutePath, path: absolutePath })),
   workingDirectory: absolutePath,
   accessPolicy: z.union([z.strictObject({ kind: z.literal('osUser') }),
     z.strictObject({ kind: z.literal('restrictedRoots'), roots: z.array(absolutePath) })]),
@@ -49,8 +50,32 @@ export async function executeFilesystemEffectOperation(request: unknown, signal?
   const { actionId, input, ...configurationInput } = request as Record<string, unknown>;
   const operation = actionSchema.safeParse({ actionId, input });
   const parsedConfiguration = FilesystemEffectConfigurationSchema.safeParse(configurationInput);
-  if (!operation.success || !parsedConfiguration.success) throw invalidOperation();
+  if (!operation.success || !parsedConfiguration.success || parsedConfiguration.data.memberTranscript) throw invalidOperation();
   return executeConfiguredFilesystemEffect(parsedConfiguration.data, operation.data, signal);
+}
+
+const memberTranscriptRequestSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('transcript.baseline') }),
+  z.strictObject({ kind: z.literal('transcript.read'), offset: z.number().check(z.int(), z.nonnegative()),
+    fileIdentity: z.nullable(z.string()) }),
+]);
+
+export function createMemberTranscriptFilesystemEffect(
+  target: NonNullable<FilesystemEffectConfiguration['memberTranscript']>, signal?: AbortSignal,
+): Readonly<{ execute(request: unknown): Promise<unknown> }> {
+  let admittedPath: string | undefined;
+  return { async execute(request) {
+    const result = memberTranscriptRequestSchema.safeParse(request);
+    if (!result.success) throw invalidOperation();
+    if (result.data.kind === 'transcript.baseline') {
+      if (admittedPath !== undefined) throw invalidOperation();
+      const snapshot = await readNativeMemberTranscript(target, undefined, signal);
+      admittedPath = snapshot.path;
+      return snapshot;
+    }
+    if (admittedPath === undefined) throw invalidOperation();
+    return await readNativeMemberTranscript(target, { ...result.data, path: admittedPath }, signal);
+  } };
 }
 
 export function invalidOperation(): Error & Readonly<{ code: string }> {

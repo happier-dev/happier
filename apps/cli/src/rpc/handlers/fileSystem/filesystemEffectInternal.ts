@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 
-import { FilesystemEffectConfigurationSchema, executeFilesystemEffectOperation, invalidOperation } from './filesystemEffectOperation';
+import { FilesystemEffectConfigurationSchema, createMemberTranscriptFilesystemEffect, executeFilesystemEffectOperation, invalidOperation } from './filesystemEffectOperation';
 import { createFilesystemEffectByteOwner } from './filesystemEffectBytes';
 import type { DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
@@ -17,7 +17,7 @@ async function writeResponse(output: Writable, response: unknown): Promise<void>
  * supported for the existing local-copy consumer. */
 export async function runFilesystemEffectInternal(input: Readable, output: Writable, signal?: AbortSignal): Promise<void> {
   const lines = createInterface({ input, crlfDelay: Infinity });
-  let owner: ReturnType<typeof createFilesystemEffectByteOwner> | undefined;
+  let owner: Readonly<{ execute(request: unknown): Promise<unknown>; dispose?(): Promise<void> }> | undefined;
   let directoryPreflightRefusal: DirectoryPreflightRefusal | undefined;
   const abort = () => { lines.close(); input.destroy(); };
   signal?.addEventListener('abort', abort, { once: true });
@@ -35,8 +35,10 @@ export async function runFilesystemEffectInternal(input: Readable, output: Writa
         }
         const { kind, ...configuration } = request;
         if (kind !== 'initialize') throw invalidOperation();
-        owner = createFilesystemEffectByteOwner(FilesystemEffectConfigurationSchema.parse(configuration), signal,
-          diagnostic => { directoryPreflightRefusal = diagnostic; });
+        const parsed = FilesystemEffectConfigurationSchema.parse(configuration);
+        owner = parsed.memberTranscript
+          ? createMemberTranscriptFilesystemEffect(parsed.memberTranscript, signal)
+          : createFilesystemEffectByteOwner(parsed, signal, diagnostic => { directoryPreflightRefusal = diagnostic; });
         await writeResponse(output, { ok: true, value: { ready: true } });
         continue;
       }
@@ -57,6 +59,6 @@ export async function runFilesystemEffectInternal(input: Readable, output: Writa
   } finally {
     signal?.removeEventListener('abort', abort);
     lines.close();
-    await owner?.dispose();
+    await owner?.dispose?.();
   }
 }

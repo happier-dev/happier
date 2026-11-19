@@ -1,9 +1,14 @@
+import { constants } from 'node:fs';
+import { open, realpath } from 'node:fs/promises';
+
 import { configuration } from '@/configuration';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
 
 import { validatePath } from '../pathSecurity';
-import { authorizeFilesystemPathWithinRoot } from './accessPolicy/filesystemPathAuthorization';
+import { authorizeFilesystemPathWithinRoot, resolveNativeFilesystemPathForAuthorization } from './accessPolicy/filesystemPathAuthorization';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { DEFAULT_JSONL_FOLLOW_POLICY } from '@/api/session/fileBackedTranscripts/jsonl/followPolicy';
 import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
 import { assertFilesystemEffectCurrent, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from './accessPolicy/filesystemEffectAdmission';
 import {
@@ -14,7 +19,62 @@ import { registerRootedFilesystemRpcHandlers } from './registerRootedFilesystemR
 import type { RpcActionExecutor, RpcActionExecutorContext } from '../_actionDispatchAdapter';
 import type { ActionId } from '@happier-dev/protocol';
 import { FilesystemReadFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { currentWorkspaceSource, type WorkspaceReadHandle } from '@/workspaces/source/workspaceSource';
+
+async function readFileRange(
+  file: Pick<WorkspaceReadHandle, 'read'>,
+  offset: number,
+  length: number,
+  beforeRead: () => void | Promise<void>,
+): Promise<Buffer> {
+  const buffer = Buffer.alloc(length);
+  let bytesRead = 0;
+  while (bytesRead < buffer.length) {
+    await beforeRead();
+    const chunk = await file.read(buffer, bytesRead, buffer.length - bytesRead, offset + bytesRead);
+    if (chunk.bytesRead === 0) break;
+    bytesRead += chunk.bytesRead;
+  }
+  return buffer.subarray(0, bytesRead);
+}
+
+/** One native member file. With no baseline, sample the end of the last existing row. */
+export async function readNativeMemberTranscript(
+  target: Readonly<{ home: string; path: string }>,
+  range: Readonly<{ path: string; offset: number; fileIdentity: string | null }> | undefined,
+  signal?: AbortSignal,
+) {
+  const refuse = () => Object.assign(new Error('Member transcript access denied'), { code: 'access_denied' });
+  if (process.platform !== 'linux') throw refuse();
+  const home = await realpath(target.home);
+  const path = resolveNativeFilesystemPathForAuthorization(target.path);
+  if (path === home || !isCanonicalAbsolutePathInsideRoot(home, path) || (range && range.path !== path)) throw refuse();
+  // Verify the opened descriptor before reading bytes. O_NOFOLLOW guards the leaf
+  // and the descriptor pathname catches a parent redirected during open.
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(error => {
+    if (error?.code === 'ENOENT') return null;
+    throw refuse();
+  });
+  if (!file) return { path, fileIdentity: null, sizeBytes: 0, contentBase64: '' };
+  try {
+    if (await realpath(`/proc/self/fd/${file.fd}`).catch(() => null) !== path) throw refuse();
+    const stats = await file.stat();
+    if (!stats.isFile()) throw refuse();
+    const fileIdentity = `${stats.dev}:${stats.ino}`;
+    if (range?.fileIdentity && range.fileIdentity !== fileIdentity) {
+      return { path, fileIdentity, sizeBytes: stats.size, contentBase64: '' };
+    }
+    const start = range?.offset ?? Math.max(0, stats.size - 1);
+    const length = Math.min(range ? DEFAULT_JSONL_FOLLOW_POLICY.maxDrainBytesPerTick : 1,
+      Math.max(0, stats.size - start));
+    const content = await readFileRange(file, start, length, () => signal?.throwIfAborted());
+    if (content.length !== length) throw refuse();
+    return { path, fileIdentity, sizeBytes: stats.size, contentBase64: content.toString('base64') };
+  } finally {
+    await file.close();
+  }
+}
 
 type ReadFileRequest = Readonly<{ rootPath?: string; path: string; offset?: number; length?: number }>;
 
@@ -78,20 +138,13 @@ async function readFileForRpc(data: ReadFileRequest | undefined, deps: ReadFileH
       try {
         const sizeBytes = (await file.stat()).size;
         const offset = parsed.data.offset ?? 0;
-        const buffer = Buffer.alloc(Math.min(length, Math.max(0, sizeBytes - offset)));
-        let bytesRead = 0;
-        while (bytesRead < buffer.length) {
-          await assertFilesystemEffectCurrent(context);
-          const chunk = await file.read(buffer, bytesRead, buffer.length - bytesRead, offset + bytesRead);
-          if (chunk.bytesRead === 0) break;
-          bytesRead += chunk.bytesRead;
-        }
-        if ((await file.stat()).size !== sizeBytes || bytesRead !== buffer.length) {
+        const requestedBytes = Math.min(length, Math.max(0, sizeBytes - offset));
+        const buffer = await readFileRange(file, offset, requestedBytes, () => assertFilesystemEffectCurrent(context));
+        if ((await file.stat()).size !== sizeBytes || buffer.length !== requestedBytes) {
           return { success: false, error: 'File changed during download. Try again' };
         }
         await assertFilesystemEffectCurrent(context);
-        return { success: true, content: buffer.subarray(0, bytesRead).toString('base64'), sizeBytes,
-          eof: offset + bytesRead >= sizeBytes };
+        return { success: true, content: buffer.toString('base64'), sizeBytes, eof: offset + buffer.length >= sizeBytes };
       } finally {
         await file.close();
       }
@@ -106,9 +159,10 @@ async function readFileForRpc(data: ReadFileRequest | undefined, deps: ReadFileH
     return { success: true, content: buffer.toString('base64') };
   } catch (error) {
     logger.debug('Failed to read file:', error);
+    const errorCode = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error
+      && error.code === 'filesystem_identity_custody_unavailable' ? error.code : undefined);
     return { success: false, error: error instanceof Error ? error.message : 'Failed to read file',
-      ...(error instanceof Error && 'code' in error && error.code === 'filesystem_identity_custody_unavailable'
-        ? { errorCode: error.code } : {}) };
+      ...(errorCode ? { errorCode } : {}) };
   }
 }
 

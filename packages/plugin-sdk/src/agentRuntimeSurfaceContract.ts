@@ -772,7 +772,7 @@ type _SessionWorkflowActivityPublicationMustAcceptOnlyTheCanonicalHeadline = Ass
 >;
 
 type _SessionFileFollowMustNotPromoteTranscriptWrites = AssertTrue<
-  Equal<keyof AgentTranscriptFileFollowService, 'follow'>
+  Equal<keyof AgentTranscriptFileFollowService, 'follow' | 'followOwnedPrompt'>
 >;
 
 type _SessionAccountUsageMustStayOnTheExistingOwner = AssertTrue<
