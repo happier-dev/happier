@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, createProviderBrokerRouteGrantSigningInputV1, createProviderBrokerRouteGrantSigningInputV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderBrokerRouteGrantPayloadV1, SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol';
-import { findRouteGrantTrustRoot, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
+import { findRouteGrantTrustRoot, isRouteGrantIssuedTooFarInFuture, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
 
 export type ProviderBrokerRouteGrantExpectedBindingV1 = Pick<ProviderBrokerRouteGrantPayloadV1,
     'teamId' | 'resourceId' | 'sourceRevision' | 'brokerPlacementFingerprint' | 'initiator' | 'target' | 'consumer' | 'application'>;
@@ -61,7 +61,7 @@ export function verifyProviderBrokerRouteGrantV1(input: Readonly<{
     if (input.enforceExpiry !== false && input.nowMs >= authority.payload.expiresAt) {
         return { valid: false, reasonCode: 'grant_expired' };
     }
-    if (input.nowMs < authority.payload.issuedAt) return { valid: false, reasonCode: 'grant_not_yet_valid' };
+    if (isRouteGrantIssuedTooFarInFuture(authority.payload.issuedAt, input.nowMs)) return { valid: false, reasonCode: 'grant_not_yet_valid' };
     const payload = authority.payload;
     const expected = input.expected;
     if (
@@ -121,7 +121,7 @@ export function verifyProviderBrokerRouteGrantV2(input: Readonly<{
         return { valid: false, reasonCode: 'grant_bad_signature' };
     }
     if (input.enforceExpiry !== false && input.nowMs >= authority.payload.expiresAt) return { valid: false, reasonCode: 'grant_expired' };
-    if (input.nowMs < authority.payload.issuedAt) return { valid: false, reasonCode: 'grant_not_yet_valid' };
+    if (isRouteGrantIssuedTooFarInFuture(authority.payload.issuedAt, input.nowMs)) return { valid: false, reasonCode: 'grant_not_yet_valid' };
     if (!isDeepStrictEqual(providerBrokerRouteGrantExpectedBindingV2(authority), input.expected)) return { valid: false, reasonCode: 'grant_binding_mismatch' };
     if (input.authenticatedRemoteEndpointId !== authority.payload.initiator.endpointId) return { valid: false, reasonCode: 'transport_identity_mismatch' };
     return { valid: true, authority };
@@ -150,7 +150,7 @@ export function verifyProviderBrokerActionRouteGrantV3(input: Readonly<{
     if (!verifyRouteGrantSignature({ signingInput: createProviderBrokerActionRouteGrantSigningInputV3(authority.payload),
         signatureBase64Url: authority.signature.valueBase64Url, publicKey })) return { valid: false, reasonCode: 'grant_bad_signature' };
     if (input.enforceExpiry !== false && input.nowMs >= authority.payload.expiresAt) return { valid: false, reasonCode: 'grant_expired' };
-    if (input.nowMs < authority.payload.issuedAt) return { valid: false, reasonCode: 'grant_not_yet_valid' };
+    if (isRouteGrantIssuedTooFarInFuture(authority.payload.issuedAt, input.nowMs)) return { valid: false, reasonCode: 'grant_not_yet_valid' };
     if (input.expected && !isDeepStrictEqual(providerBrokerActionRouteGrantExpectedBindingV3(authority), input.expected)) return { valid: false, reasonCode: 'grant_binding_mismatch' };
     if (input.authenticatedRemoteEndpointId !== authority.payload.initiator.endpointId) return { valid: false, reasonCode: 'transport_identity_mismatch' };
     return { valid: true, authority };

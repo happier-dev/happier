@@ -2,7 +2,7 @@ import { SignedDirectRouteGrantV2Schema, createDirectRouteGrantSigningInputV2 } 
 import { verifyPeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import type { AuthorizedPeerEndpointRouteKindV1, IrohPeerRouteBindingV2, PeerFlowKindV1, SignedDirectRouteGrantV2 } from '@happier-dev/protocol';
 
-import { findRouteGrantTrustRoot as findTrustRoot, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
+import { findRouteGrantTrustRoot as findTrustRoot, isRouteGrantIssuedTooFarInFuture, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
 
 export type DirectRouteGrantVerifyReasonCode =
     | 'grant_invalid'
@@ -96,7 +96,7 @@ export function verifyDirectRouteGrantV2(input: Readonly<{
     const publicKey = findTrustRoot(input.trustRoots, grant.signature.keyId, input.nowMs);
     if (!publicKey) return { valid: false, reasonCode: 'grant_unknown_key' };
     if (grant.payload.exp !== null && input.nowMs >= grant.payload.exp) return { valid: false, reasonCode: 'grant_expired' };
-    if (input.nowMs < grant.payload.iat) return { valid: false, reasonCode: 'grant_not_yet_valid' };
+    if (isRouteGrantIssuedTooFarInFuture(grant.payload.iat, input.nowMs)) return { valid: false, reasonCode: 'grant_not_yet_valid' };
 
     const bindingMismatch = matchesExpectedBinding(grant.payload, input.expected);
     if (bindingMismatch) return { valid: false, reasonCode: bindingMismatch };

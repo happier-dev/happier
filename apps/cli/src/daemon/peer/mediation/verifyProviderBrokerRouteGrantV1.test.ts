@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import {
+    ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS,
     createProviderBrokerRouteGrantSigningInputV1,
     type ProviderBrokerRouteGrantPayloadV1,
     type SignedProviderBrokerRouteGrantV1,
@@ -65,9 +66,20 @@ describe('verifyProviderBrokerRouteGrantV1', () => {
     it('requires the current Home signing root, valid signature and admission time', () => {
         expect(verifyProviderBrokerRouteGrantV1({ ...input, authority: { ...input.authority, signature: { ...input.authority.signature, valueBase64Url: 'A'.repeat(86) } } }).valid).toBe(false);
         expect(verifyProviderBrokerRouteGrantV1({ ...input, trustRoots: [] }).valid).toBe(false);
-        expect(verifyProviderBrokerRouteGrantV1({ ...input, nowMs: 200 }).valid).toBe(false);
-        expect(verifyProviderBrokerRouteGrantV1({ ...input, nowMs: 99 }).valid).toBe(false);
+        expect(verifyProviderBrokerRouteGrantV1({ ...input, nowMs: 200 })).toEqual({ valid: false, reasonCode: 'grant_expired' });
         expect(verifyProviderBrokerRouteGrantV1({ ...input, trustRoots: [{ ...input.trustRoots[0]!, expiresAt: 150 }] }).valid).toBe(false);
+    });
+
+    it('admits a fresh Home grant within the signed clock-skew tolerance', () => {
+        const issuedAt = 60_000;
+        const authority = sign({ ...payload, issuedAt, expiresAt: issuedAt + 60_000 });
+        const slowClock = issuedAt - ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS;
+        expect(verifyProviderBrokerRouteGrantV1({ ...input, authority, nowMs: issuedAt })).toEqual({ valid: true, authority });
+        expect(verifyProviderBrokerRouteGrantV1({ ...input, authority, nowMs: slowClock - 1 })).toEqual({
+            valid: false, reasonCode: 'grant_not_yet_valid',
+        });
+        expect(verifyProviderBrokerRouteGrantV1({ ...input, authority, nowMs: issuedAt - 750 })).toEqual({ valid: true, authority });
+        expect(verifyProviderBrokerRouteGrantV1({ ...input, authority, nowMs: slowClock })).toEqual({ valid: true, authority });
     });
 
     it('retains signature and exact binding checks after a carrier admitted the stream', () => {

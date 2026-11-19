@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import {
+    ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS,
     createDirectRouteGrantSigningInputV2,
     createEphemeralPeerRouteProofHandleV2,
     type DirectRouteGrantPayloadV2,
@@ -71,6 +72,31 @@ describe('verifyDirectRouteGrantV2', () => {
                 endpointFingerprint: 'endpoint_1',
             },
         })).toEqual(expect.objectContaining({ valid: true }));
+    });
+
+    it('admits a fresh direct grant within the signed clock-skew tolerance and keeps its expiry strict', () => {
+        const iat = 60_000;
+        const exp = iat + 60_000;
+        const { grant, proof } = createV2GrantAndProof({ iat, exp });
+        const verifyAt = (nowMs: number) => verifyDirectRouteGrantV2({
+            grant,
+            proof,
+            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            nowMs,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                flowKind: 'machine_rpc',
+                routeKind: 'loopback_direct',
+                endpointFingerprint: 'endpoint_1',
+            },
+        });
+        const slowClock = iat - ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS;
+        expect(verifyAt(iat).valid).toBe(true);
+        expect(verifyAt(slowClock - 1)).toEqual({ valid: false, reasonCode: 'grant_not_yet_valid' });
+        expect(verifyAt(exp)).toEqual({ valid: false, reasonCode: 'grant_expired' });
+        expect(verifyAt(iat - 750).valid).toBe(true);
+        expect(verifyAt(slowClock).valid).toBe(true);
     });
 
     it('requires the full signed Iroh relationship when V2 admits machine/1', () => {

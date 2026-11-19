@@ -569,6 +569,12 @@ Account signing seed at daemon startup. Current native-machine handshakes,
 server-relay envelopes and tunnel response/frame formats retain their own
 purpose-specific versions; they are not old-component negotiation adapters.
 
+In 0.3 development source, daemon verifiers for direct and Provider-broker
+route grants accept an issue timestamp up to 30 seconds ahead of their local
+clock, using Protocol's signed Account Directory assertion skew budget.
+Grant expiry and signing-root expiry are still enforced at their existing
+boundaries.
+
 ### 1.1 Machine-RPC route policy, and the restricted Runner's authority
 
 The `machine_rpc` flow has one extra classifier, because "may this method leave the server

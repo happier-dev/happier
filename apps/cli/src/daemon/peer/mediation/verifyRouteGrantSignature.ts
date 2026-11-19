@@ -1,3 +1,4 @@
+import { ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 
 export type DirectRouteGrantTrustRoot = Readonly<{
@@ -5,6 +6,10 @@ export type DirectRouteGrantTrustRoot = Readonly<{
     publicKey: string;
     expiresAt?: number | null;
 }>;
+
+export function isRouteGrantIssuedTooFarInFuture(issuedAtMs: number, nowMs: number): boolean {
+    return issuedAtMs > nowMs + ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS;
+}
 
 export function decodeRouteGrantBase64Url(value: string): Uint8Array | null {
     try {
