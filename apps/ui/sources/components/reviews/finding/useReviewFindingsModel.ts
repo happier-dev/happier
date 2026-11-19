@@ -141,7 +141,6 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
     const acceptedCount = record ? sealedRows.filter(row => readReviewFindingDecision(pending[row.rowId] ?? row.comment.reviewTriageStatus) === 'accept').length
         : acceptedRows.length;
     const hasPendingDecisions = Object.keys(pending).length > 0;
-    const followUp = React.useMemo(() => followUpOf(members), [members]);
 
     const [pendingQuestionByRowId, setPendingQuestionByRowId] = React.useState<Readonly<Record<string, string>>>({});
     const [replyToQuestion, setReplyToQuestion] = React.useState<Readonly<{ member: Member; question: ReviewQuestion }> | null>(null);
@@ -333,6 +332,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
     const assumptions = React.useMemo(() => members.flatMap(member => member.assumptions
         .map(assumption => ({ member, assumption }))), [members]);
     const dockMembers = React.useMemo(() => replyToQuestion ? [replyToQuestion.member] : members, [members, replyToQuestion]);
+    const followUp = React.useMemo(() => followUpOf(dockMembers), [dockMembers]);
     const dockRecipient = React.useMemo(() => recipientOf(dockMembers), [dockMembers]);
     const rowViews = React.useMemo(() => record ? sealedRows.map(row => {
         const appearances = row.comment.appearances?.filter(appearance => appearance.roundOrdinal === record.round.roundOrdinal) ?? [];

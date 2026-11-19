@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -6,6 +7,7 @@ import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import { useReviewFindingsModel } from './useReviewFindingsModel';
+import type { ReviewFindingsMember } from './useReviewFindingsModel';
 import { ReviewFindingBody } from './ReviewFindingBody';
 import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 
@@ -112,6 +114,26 @@ it('shows an edited current comment body beside its original finding evidence an
         expect(screen.findHostByTestId(`review-finding-body:${comment.id}`)).toBeNull();
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Current explanation after review.');
     } finally { await screen.unmount(); }
+});
+
+it('answers the selected reviewer question even when another reviewer cannot take follow-ups', async () => {
+    const question = { id: 'session-question', text: 'Which Account?', status: 'open' as const, findingIds: [] };
+    const available: ReviewFindingsMember = { runId: 'session-run', backendId: 'claude', reviewerLabel: 'Claude',
+        sessionId: 'retained-session', followUp: { available: true }, questions: [question], assumptions: [],
+        findings: [], commentByFindingId: new Map(), originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {} };
+    const unavailable: ReviewFindingsMember = { ...available, runId: 'detached-run', sessionId: null, reviewerLabel: 'Detached reviewer',
+        followUp: { available: false, reason: 'No retained Session' }, questions: [] };
+    const hook = await renderHook(() => useReviewFindingsModel({ members: [available, unavailable], reviewerCount: 2,
+        scope: null, accountLifetime: null, serverId: null, sessionId: null, canAct: true, pending: {},
+        onDecideComment: async () => false }));
+    try {
+        expect(hook.getCurrent().followUp.available).toBe(false);
+        await act(async () => { hook.getCurrent().setReplyToQuestion({ member: available, question }); });
+        expect(hook.getCurrent().dockRecipient.label).toBe('Claude');
+        expect(hook.getCurrent().followUp.available).toBe(true);
+        await act(async () => { hook.getCurrent().setReplyToQuestion(null); });
+        expect(hook.getCurrent().followUp.available).toBe(false);
+    } finally { await hook.unmount(); }
 });
 
 it('keeps native finding replies readable from the shared comment window without a Session follow-up target', async () => {
