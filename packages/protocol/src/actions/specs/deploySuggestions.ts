@@ -16,11 +16,10 @@ export const DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1 = lazyActionSpecArray(() => [
     inputHints: { fields: [] }, cli: { acceptsServerId: true, commands: [{ path: ['deployments', 'suggestions', 'catalog'], visibility: 'canonical' }] },
 }, {
     ...common, id: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, title: 'Check app setup suggestions',
-    description: 'Validate suggested setups against the exact catalog snapshot already read. Returns surviving recommendations and drop reasons without any fresh reads. Present actionable setup cards from this result.',
+    description: 'Validate suggested setups against the current app setup catalog, which this Action reads itself; pass only the suggestion and the person\u2019s words. Returns surviving recommendations, drop reasons and the catalog rows the cards need. Present actionable setup cards from this result.',
     bindings: { mcpToolName: 'deployments_suggestions_check' },
     inputSchema: inputs[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1], outputSchema: outputs[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1],
-    inputHints: { fields: [{ path: 'catalog', title: 'Held catalog snapshot', widget: 'json', required: true },
-        { path: 'suggestion', title: 'Suggested setups', widget: 'json', required: true },
+    inputHints: { fields: [{ path: 'suggestion', title: 'Suggested setups', widget: 'json', required: true },
         { path: 'description', title: 'The person\u2019s description, unchanged', widget: 'textarea', required: false }] },
     cli: { acceptsServerId: true, commands: [{ path: ['deployments', 'suggestions', 'check'], visibility: 'canonical' }] },
 }] as const satisfies readonly PreNormalizedActionSpec[]);

@@ -5,7 +5,7 @@ import { DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol
 import { DeploymentSuggestionActionInputSchemasV1 } from '@happier-dev/protocol/deployments/suggestions/actionsV1';
 import {
   DeploySuggestionCatalogV1Schema,
-  validateDeploySuggestionV1,
+  checkDeploySuggestionV1,
   type DeploySuggestionRecommendationV1,
 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 
@@ -86,9 +86,12 @@ const invented = {
   whatToBuild: 'An invented host',
 };
 
-/** The check call's input exactly as the real Action schema admits it: a fixture field the schema rejects fails here. */
+/**
+ * The check call's input exactly as the real Action schema admits it: a fixture field the schema rejects fails here.
+ * The agent passes no catalog (F-S8-SNAPSHOT); the Action reads it and answers with the rows the cards need.
+ */
 function checkInput(input: Readonly<{ description?: string; suggestion: unknown }>) {
-  return DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ catalog, ...input });
+  return DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse(input);
 }
 
 function checkCall(suggestion: unknown, description?: string) {
@@ -101,7 +104,7 @@ function checkCall(suggestion: unknown, description?: string) {
     },
     result: {
       ok: true,
-      result: validateDeploySuggestionV1(suggestion, catalog),
+      result: checkDeploySuggestionV1(suggestion, catalog),
     },
   });
 }
@@ -122,6 +125,7 @@ describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F
     const read = readTranscriptDeploySuggestionCheck(tool);
     expect(read?.recommendations.map((row) => row.whatToBuild)).toEqual(['A bakery landing page', 'Self-hosted analytics']);
     expect(read?.catalog.targets.map((row) => row.id)).toEqual(['pages', 'own']);
+    expect(read?.catalog.apps.map((row) => row.id), 'the catalog comes from the check result').toEqual(['umami']);
     expect(read?.description).toBe('  Make me a bakery landing page  ');
   });
 
@@ -192,7 +196,7 @@ describe('Use this setup from a transcript card (deploy auto-mode U10, F4/F7)', 
 });
 
 describe('a card\u2019s platform plan facts (deploy auto-mode U3, review D1)', () => {
-  it('never shows plan prices copied into the agent\u2019s call input: plans come only from the Account\u2019s declared targets', async () => {
+  it('never shows plan prices from the check\u2019s catalog: plans come only from the Account\u2019s declared targets', async () => {
     const forged = DeploySuggestionCatalogV1Schema.parse({
       ...catalog,
       targets: catalog.targets.map((target) => target.id !== 'pages' ? target : { ...target, plans: [{
@@ -205,8 +209,8 @@ describe('a card\u2019s platform plan facts (deploy auto-mode U3, review D1)', (
     const suggestion = { recommendations: [site, analytics], questions: null };
     const call = makeToolCall({ name: 'mcp__happier__action_execute', state: 'completed',
       input: { actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
-        input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ catalog: forged, suggestion }) },
-      result: { ok: true, result: validateDeploySuggestionV1(suggestion, forged) } });
+        input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ suggestion }) },
+      result: { ok: true, result: checkDeploySuggestionV1(suggestion, forged) } });
     const screen = await renderScreen(<MCPToolView {...makeToolViewProps(call, { detailLevel: 'summary' })} />);
     try {
       expect(screen.findByTestId('deploy-suggestion-check'), screen.getTextContent()).not.toBeNull();

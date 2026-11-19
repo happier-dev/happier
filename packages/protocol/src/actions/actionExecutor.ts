@@ -506,7 +506,7 @@ import { executeFileSave } from './executor/fileSave.js';
 import { executeDeploymentAction } from './executor/deploymentAction.js';
 import { readDeploySuggestionCatalogV1 } from './executor/deploySuggestions.js';
 import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
-import { validateDeploySuggestionV1 } from '../deployments/suggestions/deploySuggestionsV1.js';
+import { checkDeploySuggestionV1 } from '../deployments/suggestions/deploySuggestionsV1.js';
 import { isInternalActionId } from './pluginActionSurface.js';
 import {
   PluginSessionHookInstallActionInputV1Schema,
@@ -6645,7 +6645,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if (actionId === DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1) {
           const input = parsed.data as AdmittedActionInputById[typeof DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1];
-          return { ok: true, result: validateDeploySuggestionV1(input.suggestion, input.catalog) };
+          // The same catalog composition the catalog Action answers with, read at the point of the check.
+          const catalog = await readDeploySuggestionCatalogV1(ctx, deps, (childId, childInput) => executeHostChild(childId, childInput, ctx));
+          return { ok: true, result: checkDeploySuggestionV1(input.suggestion, catalog) };
         }
         if (isDeploymentActionIdV1(actionId)) {
           return executeDeploymentAction(actionId, data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>,

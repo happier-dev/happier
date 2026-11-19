@@ -390,10 +390,9 @@ function presentMachine(
 
 /**
  * Why the suggestion failed, said for where it failed: a Run's cause in the run card's words (a usage limit is the
- * limit), an answer the check refused as unusable, anything earlier as Happier not reaching an agent.
+ * limit), anything earlier as Happier not reaching an agent.
  */
 function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>): string {
-    if (outcome.stage === 'answer') return t('newApp.auto.failedBody');
     if (outcome.stage === 'setup') return t('newApp.auto.failedSetupBody');
     const run = presentExecutionRunFailureSummary(outcome.runError ?? { code: outcome.code });
     return [run.summary, run.reset].filter(Boolean).join(' · ');

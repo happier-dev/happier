@@ -115,19 +115,43 @@ describe('deploy suggestion read Actions', () => {
     expect(catalog.issues).toContainEqual({ section: 'starters', code: 'needs_machine' });
   });
 
-  it('checks the held snapshot without rereading owners and is available only with deployments', async () => {
-    const catalog = DeploySuggestionCatalogV1Schema.parse({ starters: [{ id: 'website', title: 'Website', deploy }],
-      apps: [], targets, machines: [], stores: [], forges });
-    const recommendation = { source: { kind: 'starter', starterId: 'website' }, targetId: 'own-server',
-      whatToBuild: 'Bakery website', stack: deploy, data: { kind: 'none' }, variables: [] };
-    const result = await createActionExecutor({}).execute('deployments.suggestions.check', {
-      catalog, suggestion: { recommendations: [recommendation, { ...recommendation, targetId: 'invented' }] },
+  // F-S8-SNAPSHOT: a Session agent cannot echo the whole catalog (131 KB measured live, 957 catalog apps) back as
+  // tool input, so the check reads the current catalog itself through the same composition as the catalog Action.
+  it('checks a suggestion against the current catalog it reads itself, and returns the catalog rows its cards need', async () => {
+    const executor = createActionExecutor({
+      registryActionExecute: async ({ input }) => {
+        const value = input as { kind: string };
+        return { pages: [{ sourceId: value.kind === 'starter' ? 'starters' : 'apps', status: { state: 'ok', fetchedAt: 1 }, nextCursor: null,
+          items: value.kind === 'starter'
+            ? [{ sourceId: 'starters', kind: 'starter', itemId: 'website', title: 'Website', starterDeploy: deploy }]
+            : [{ sourceId: 'apps', kind: 'app', itemId: 'database', title: 'Database' }, { sourceId: 'apps', kind: 'app', itemId: 'wiki', title: 'Wiki' }] }] };
+      },
+      machinesList: async () => ({ items: [] }),
+      deploymentSuggestionTargets: async () => ({ targets: [...targets], stores: [] }),
+      deploymentSuggestionForges: async () => forges,
+    });
+    const starterId = JSON.stringify(['starters', 'website']);
+    const databaseId = JSON.stringify(['apps', 'database']);
+    const recommendation = { source: { kind: 'starter', starterId }, targetId: 'own-server',
+      whatToBuild: 'Bakery website', stack: deploy, data: { kind: 'catalogApp', appId: databaseId }, variables: [] };
+    const result = await executor.execute('deployments.suggestions.check', {
+      suggestion: { recommendations: [recommendation, { ...recommendation, targetId: 'invented' }] }, description: 'A bakery site',
     }, context);
-    expect(result, JSON.stringify(result)).toEqual({ ok: true, result: { recommendations: [recommendation],
-      dropped: [{ index: 1, reason: 'unknown_id' }], questions: null } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { recommendations: [recommendation],
+      dropped: [{ index: 1, reason: 'unknown_id' }], questions: null,
+      // Only the catalog apps a surviving card names travel back; the small sections stay whole for the cards and Adjust.
+      catalog: { starters: [{ id: starterId }], apps: [{ id: databaseId, title: 'Database' }], targets, forges } } });
+    if (!result.ok) throw new Error('unreachable');
+    expect((result.result as { catalog: { apps: unknown[] } }).catalog.apps).toHaveLength(1);
     expect(getActionSpec('deployments.suggestions.check').sideEffectClass).toBe('read');
     expect(getActionRequiredServerFeatureId('deployments.suggestions.check')).toBe('deployments');
     expect(getActionRequiredServerFeatureId('deployments.suggestions.catalog')).toBe('deployments');
+  });
+
+  it('refuses a held catalog in the check input: the check reads its own', async () => {
+    const catalog = DeploySuggestionCatalogV1Schema.parse({ starters: [], apps: [], targets, machines: [], stores: [], forges });
+    const result = await createActionExecutor({}).execute('deployments.suggestions.check', { catalog, suggestion: { recommendations: [] } }, context);
+    expect(result.ok).toBe(false);
   });
 
   it('withdraws only forge suggestions when the hosting owner refuses the read', async () => {

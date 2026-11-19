@@ -12,8 +12,8 @@ name: deploy
 description: Prepare and publish deployments, verify receipts and health, or diagnose a failed deployment in Happier
 ---
 
-For a new app idea, read \`references/create-app.md\` on demand with \`skills_read\`.
-It covers setup suggestions and the build → preview → health loop in a Session.
+To create a new app, first read \`references/create-app.md\` with \`skills_read\` and
+follow it: setup suggestions come before any code, and the build runs in a Session.
 
 Use Happier's Action discovery tools to read the current input schema before
 executing an Action. Search results are choices, not a deployment recipe. Follow
@@ -98,10 +98,10 @@ forges; never invent identifiers or prices. Ask necessary clarifying questions
 through the agent's native ask-user-question tool. Variable and secret names
 are enough: never put their values in the suggestion or conversation.
 
-Call \`deployments.suggestions.check\` with the proposed setup, the catalog
-snapshot and \`description\`: the person's own words exactly as they wrote them,
-never your summary. Its accepted typed result renders the same setup cards as
-the dialog.
+Call \`deployments.suggestions.check\` with only \`suggestion\` (the proposed setup)
+and \`description\`: the person's own words exactly as they wrote them, never
+your summary. Do not pass the catalog; the check reads the current one itself.
+Its accepted typed result renders the same setup cards as the dialog.
 Let the person choose Use this setup. Starter and scratch setups create the
 repository, Project and Source through \`projects.starters.create\`, then open
 the ordinary Session with the person's description and reviewed plan. A catalog

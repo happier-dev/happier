@@ -53,7 +53,8 @@ it('uses the first ready online Machine once and checks model output against the
         dropped: [{ index: 1, reason: 'unknown_id' }], catalog });
     expect(machines).toEqual(['signed-out', 'ready']);
     expect(starts).toBe(1);
-    expect(execute.mock.calls.map(row => row[0])).toEqual(['agents.models.list', 'agents.models.list', 'execution.run.start', 'deployments.suggestions.check']);
+    // The dialog validates against the catalog it gave the model, through the check's own validator: no check call.
+    expect(execute.mock.calls.map(row => row[0])).toEqual(['agents.models.list', 'agents.models.list', 'execution.run.start']);
     expect(progress).toContainEqual(expect.objectContaining({ kind: 'run', runId: 'run_1', machineId: 'ready' }));
     const start = execute.mock.calls.find(row => row[0] === 'execution.run.start')!;
     // A no-tools task runs in the Machine's home folder, which always exists (F-CWD: `<home>/src` may not).
@@ -100,27 +101,9 @@ it('reads one catalog for a question round and reuses it for the answered run', 
         .toMatchObject({ kind: 'recommendations', recommendations: [catalogRecommendation] });
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.catalog')).toHaveLength(1);
     expect(execute.mock.calls.filter(row => row[0] === 'execution.run.start')).toHaveLength(2);
-    expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(2);
+    expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
     expect(execute.mock.calls.filter(row => row[0] === 'execution.run.start')[1]![1])
         .toMatchObject({ intentInput: { input: { answers, note: 'Keep it simple' } } });
-});
-
-// REVIEW-DELTA2 N3: the check Action admits any answer (`suggestion: unknown`), so its failure is the call failing,
-// never a refused answer: the outcome says the Run-side cause, not "the agent's answer couldn't be used".
-it('says a check call that failed in transport as a run failure, not as a refused answer', async () => {
-    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-        agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'auto', runner, title: 'Claude' } }),
-        executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'ready' }),
-        executionRunStart: async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }),
-        executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
-    }));
-    // The Home transport refuses the check call itself.
-    execute.mockImplementation(async (actionId: string, ...rest: unknown[]) => actionId === 'deployments.suggestions.check'
-        ? { ok: false, errorCode: 'server_unreachable', error: 'server_unreachable' }
-        : (executor.execute as (...args: unknown[]) => unknown)(actionId, ...rest));
-    expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery', choice: runner,
-        catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === 'ready') } }))
-        .toEqual({ kind: 'failed', code: 'server_unreachable', stage: 'run' });
 });
 
 it('returns per-Machine repair reasons without starting a run when no Agent is ready', async () => {

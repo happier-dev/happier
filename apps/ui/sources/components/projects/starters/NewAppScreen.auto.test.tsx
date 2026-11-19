@@ -238,7 +238,7 @@ it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine
       expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy(),
     );
     expect(calls('execution.run.start')).toHaveLength(1);
-    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
     expect(
       screen.findByTestId('newApp.auto.useSetup')?.props.disabled,
       'the recommended card starts chosen',
@@ -531,8 +531,6 @@ it('a failed suggestion says so and keeps the owner’s code under Details, neve
     expect(failed()!.props.kind).toBe('error');
     expect(typeof failed()!.props.diagnosticCode, 'the typed code a person can hand to support').toBe('string');
     expect(failed()!.props.diagnosticCode.length).toBeGreaterThan(0);
-    const { t } = await import('@/text');
-    expect(failed()!.props.reason, 'no agent ran, so there was no answer to blame').not.toBe(t('newApp.auto.failedBody'));
     await screen.unmount();
   } finally {
     await standardCleanup();
@@ -541,16 +539,8 @@ it('a failed suggestion says so and keeps the owner’s code under Details, neve
 });
 
 /** The failed suggestion card's reason after one Suggest against `overrides`. */
-async function failedSuggestionReason(name: string, overrides: Ports, refuseCheck = false) {
+async function failedSuggestionReason(name: string, overrides: Ports) {
   suggestionBoundary(overrides);
-  if (refuseCheck) {
-    // The check's answer can't be read as a checked suggestion (a well-formed but unusable one settles as 'nothing';
-    // a check call that fails is the run's failure, REVIEW-DELTA2 N3).
-    const real = execute.getMockImplementation()!;
-    execute.mockImplementation((async (actionId: string, ...rest: unknown[]) => actionId === 'deployments.suggestions.check'
-      ? { ok: true, result: { recommendations: 'unreadable' } }
-      : (real as (...args: unknown[]) => unknown)(actionId, ...rest)) as typeof real);
-  }
   const { fixture, screen } = await openDescribe(name);
   try {
     await screen.pressByTestIdAsync('newApp.describeApp');
@@ -583,16 +573,7 @@ it('a run that hit a usage limit says the limit, as a run card does, never that 
   });
   const { t } = await import('@/text');
   expect(diagnosticCode).toBe('usage_limit');
-  expect(reason).not.toBe(t('newApp.auto.failedBody'));
   expect(reason).toContain(t('session.usageLimitRecovery.banner.title'));
-});
-
-it('an answer that fails the check says the agent’s answer couldn’t be used', async () => {
-  const { reason } = await failedSuggestionReason('auto-invalid-answer', {
-    executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
-  }, true);
-  const { t } = await import('@/text');
-  expect(reason).toBe(t('newApp.auto.failedBody'));
 });
 
 it('when every suggestion is dropped it says it couldn’t suggest, and Try again runs once more (journey-deploy F3)', async () => {
@@ -822,7 +803,7 @@ it('F2: canonical answers and adjustment notes each start one checked run with z
     await waitForHomeGovernance(() => expect(current.chosen).toBeTruthy());
     expect(calls('deployments.suggestions.catalog')).toHaveLength(0);
     expect(calls('execution.run.start')).toHaveLength(1);
-    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
     expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { description: '  Bakery\n', answers } } });
     execute.mockClear();
     let adjusted = false;
@@ -843,14 +824,14 @@ it('F2: canonical answers and adjustment notes each start one checked run with z
     await waitForHomeGovernance(() => expect(current.view.kind).toBe('recommendations'));
     expect(calls('deployments.suggestions.catalog')).toHaveLength(0);
     expect(calls('execution.run.start')).toHaveLength(1);
-    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
     expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { catalog: snapshot, answers, note: 'Keep it free' } } });
     execute.mockClear();
     await act(async () => current.refreshSuggestions());
     await waitForHomeGovernance(() => expect(current.chosen).toBeTruthy());
     expect(calls('deployments.suggestions.catalog')).toHaveLength(1);
     expect(calls('execution.run.start')).toHaveLength(1);
-    expect(calls('deployments.suggestions.check')).toHaveLength(1);
+    expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
   } finally { await screen.unmount(); await fixture.dispose(); }
 });
 

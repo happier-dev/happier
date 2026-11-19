@@ -115,8 +115,15 @@ questions. The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.
 
-Both hosts send the model result to `deployments.suggestions.check`. The
-protocol owner `validateDeploySuggestionV1` parses the result once, drops unknown
+Both hosts admit the model result through one validator,
+`validateDeploySuggestionV1`. The dialog calls it directly against the snapshot
+it gave the run. A Session agent calls `deployments.suggestions.check` with only
+its `suggestion` and the person's `description`: the Action reads the current
+catalog itself through the same composition as `deployments.suggestions.catalog`,
+because an agent cannot echo the whole catalog back as tool input (a live catalog
+measured 131 KB, almost all of it catalog apps). Its result carries the catalog
+it checked against, with catalog apps kept only when a surviving card names them,
+for the transcript cards and the dialog they open. The validator parses the result once, drops unknown
 ids, invalid recommendations, price text, and incompatible source/target/forge
 pairs, then returns the validated recommendations, dropped reasons, and any
 questions. Model questions are external input: single-choice bounds that only
@@ -129,8 +136,7 @@ No model-written price is displayed.
 Target plugins declare dated plans with a public source URL. The catalog carries
 each target's declared `plans` for the model to read. Setup cards in both hosts
 take a target's plans from the Account's own deployment-target declarations, by
-the recommendation's target id, never from the catalog a Session agent passes back
-in its check call. Cards, Where it runs and Review render them through one plans
+the recommendation's target id, never from the catalog a check result carries. Cards, Where it runs and Review render them through one plans
 component: the shared cost presenter prints every structured price and the
 checked date, and the other facts print as declared. Review alone adds a `Your plan` line, because the connected account is
 chosen after Where it runs. When the selected Vercel or Cloudflare account exposes

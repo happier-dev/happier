@@ -78,6 +78,14 @@ export const DeploySuggestionCheckResultV1Schema = lazyZodSchema(() => z.strictO
         reason: z.enum(['invalid_question', 'invalid_questions']) }))),
 }));
 export type DeploySuggestionCheckResultV1 = z.infer<typeof DeploySuggestionCheckResultV1Schema>;
+/**
+ * The check Action's answer: the validator's result plus the catalog it checked against, for the cards and the dialog
+ * they open. The catalog apps (most of a live catalog: 957 of them, 129 of 131 KB) travel only when a surviving card names them.
+ */
+export const DeploySuggestionCheckActionResultV1Schema = lazyZodSchema(() => z.extend(DeploySuggestionCheckResultV1Schema, {
+    catalog: DeploySuggestionCatalogV1Schema,
+}));
+export type DeploySuggestionCheckActionResultV1 = z.infer<typeof DeploySuggestionCheckActionResultV1Schema>;
 
 /** Untrusted model output is admitted once, before either host presents an actionable card. */
 export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggestionCatalogV1): DeploySuggestionCheckResultV1 {
@@ -116,6 +124,14 @@ export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggesti
         result.recommendations.push(recommendation);
     });
     return result;
+}
+
+/** The check Action's one composition: validate against the catalog it read, then keep the catalog apps its cards name. */
+export function checkDeploySuggestionV1(raw: unknown, catalog: DeploySuggestionCatalogV1): DeploySuggestionCheckActionResultV1 {
+    const result = validateDeploySuggestionV1(raw, catalog);
+    const named = new Set(result.recommendations.flatMap(row => [
+        ...(row.source.kind === 'catalogApp' ? [row.source.appId] : []), ...(row.data.kind === 'catalogApp' ? [row.data.appId] : [])]));
+    return { ...result, catalog: { ...catalog, apps: catalog.apps.filter(app => named.has(app.id)) } };
 }
 
 /**

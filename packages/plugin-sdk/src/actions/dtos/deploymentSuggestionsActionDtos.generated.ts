@@ -8,96 +8,6 @@ export type DeploymentSuggestionsActionInputById = {
         projection?: 'forges' | undefined;
     };
     readonly "deployments.suggestions.check": {
-        catalog: {
-            starters: {
-                id: string;
-                title: string;
-                deploy?: undefined | {
-                    framework: string;
-                    output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
-                    data?: string[] | undefined;
-                    variables?: undefined | {
-                        key: string;
-                        secret: boolean;
-                        purpose?: string | undefined;
-                    }[];
-                };
-                sourceId?: string | undefined;
-                itemId?: string | undefined;
-            }[];
-            apps: {
-                id: string;
-                title: string;
-                sourceId?: string | undefined;
-                itemId?: string | undefined;
-            }[];
-            targets: {
-                id: string;
-                title: string;
-                targetClass: 'ownServer' | 'platform';
-                availability: 'available' | 'unavailable' | 'unknown';
-                plans?: undefined | {
-                    id: string;
-                    title: string;
-                    facts: ({
-                        label: string;
-                        price: {
-                            amount: string;
-                            currency: string;
-                            unit: string;
-                        };
-                    } | {
-                        label: string;
-                        value: string;
-                    })[];
-                    source: {
-                        url: string;
-                        checkedAt: string;
-                    };
-                    price?: undefined | {
-                        amount: string;
-                        currency: string;
-                        unit: string;
-                    };
-                    included?: string[] | undefined;
-                }[];
-                accepts?: ('compose' | 'container' | 'native' | 'server' | 'static' | 'workers')[] | undefined;
-                needs?: ('repository' | 'stateless' | 'volumes')[] | undefined;
-                sources?: undefined | {
-                    gitIntegration: string[];
-                    upload: boolean;
-                };
-            }[];
-            machines: {
-                machineId: string;
-                online: boolean;
-                readiness: 'needsSetup' | 'ready' | 'unknown';
-                label?: string | undefined;
-                homeDir?: string | undefined;
-            }[];
-            stores: {
-                id: string;
-                engine: string;
-            }[];
-            forges: {
-                providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
-                title: string;
-            }[];
-            connectedAccounts?: undefined | {
-                account: {
-                    service: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    accountId: string;
-                };
-                health: 'attention' | 'error' | 'healthy';
-            }[];
-            issues?: undefined | {
-                section: 'apps' | 'connectedAccounts' | 'forges' | 'machines' | 'starters' | 'targets';
-                code: string;
-            }[];
-        };
         suggestion: unknown;
         description?: string | undefined;
     };
@@ -240,21 +150,6 @@ export type DeploymentSuggestionsActionResultById = {
         questions: null | {
             kind: 'questions';
             questions: ({
-                choices: {
-                    id: string;
-                    label?: string | undefined;
-                    description?: string | undefined;
-                }[];
-                id: string;
-                prompt: string;
-                type: 'multipleChoice' | 'singleChoice';
-                minSelections?: number | undefined;
-                maxSelections?: number | undefined;
-                description?: string | undefined;
-                required?: boolean | undefined;
-                allowCustom?: boolean | undefined;
-                allowNote?: boolean | undefined;
-            } | {
                 id: string;
                 prompt: string;
                 type: 'text';
@@ -262,8 +157,113 @@ export type DeploymentSuggestionsActionResultById = {
                 initialValue?: string | undefined;
                 required?: boolean | undefined;
                 allowNote?: boolean | undefined;
+            } | {
+                type: 'multipleChoice' | 'singleChoice';
+                id: string;
+                prompt: string;
+                choices: {
+                    id: string;
+                    label?: string | undefined;
+                    description?: string | undefined;
+                }[];
+                minSelections?: number | undefined;
+                maxSelections?: number | undefined;
+                description?: string | undefined;
+                required?: boolean | undefined;
+                allowCustom?: boolean | undefined;
+                allowNote?: boolean | undefined;
             })[];
             title?: string | undefined;
+        };
+        catalog: {
+            starters: {
+                id: string;
+                title: string;
+                deploy?: undefined | {
+                    framework: string;
+                    output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
+                    data?: string[] | undefined;
+                    variables?: undefined | {
+                        key: string;
+                        secret: boolean;
+                        purpose?: string | undefined;
+                    }[];
+                };
+                sourceId?: string | undefined;
+                itemId?: string | undefined;
+            }[];
+            apps: {
+                id: string;
+                title: string;
+                sourceId?: string | undefined;
+                itemId?: string | undefined;
+            }[];
+            targets: {
+                id: string;
+                title: string;
+                targetClass: 'ownServer' | 'platform';
+                availability: 'available' | 'unavailable' | 'unknown';
+                plans?: undefined | {
+                    id: string;
+                    title: string;
+                    facts: ({
+                        label: string;
+                        price: {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                        };
+                    } | {
+                        label: string;
+                        value: string;
+                    })[];
+                    source: {
+                        url: string;
+                        checkedAt: string;
+                    };
+                    price?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                    };
+                    included?: string[] | undefined;
+                }[];
+                accepts?: ('compose' | 'container' | 'native' | 'server' | 'static' | 'workers')[] | undefined;
+                needs?: ('repository' | 'stateless' | 'volumes')[] | undefined;
+                sources?: undefined | {
+                    gitIntegration: string[];
+                    upload: boolean;
+                };
+            }[];
+            machines: {
+                machineId: string;
+                online: boolean;
+                readiness: 'needsSetup' | 'ready' | 'unknown';
+                label?: string | undefined;
+                homeDir?: string | undefined;
+            }[];
+            stores: {
+                id: string;
+                engine: string;
+            }[];
+            forges: {
+                providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                title: string;
+            }[];
+            connectedAccounts?: undefined | {
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+                health: 'attention' | 'error' | 'healthy';
+            }[];
+            issues?: undefined | {
+                section: 'apps' | 'connectedAccounts' | 'forges' | 'machines' | 'starters' | 'targets';
+                code: string;
+            }[];
         };
         droppedQuestions?: undefined | {
             reason: 'invalid_question' | 'invalid_questions';

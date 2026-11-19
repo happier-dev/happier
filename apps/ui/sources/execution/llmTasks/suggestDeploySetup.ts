@@ -1,15 +1,12 @@
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ExecutionRunError } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import {
-    DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1,
-    DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
-} from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
     DEPLOY_SUGGESTION_INSTRUCTIONS_V1,
     DeploySuggestionCatalogV1Schema,
-    DeploySuggestionCheckResultV1Schema,
     DeploySuggestionInputV1Schema,
     DeploySuggestionV1Schema,
+    validateDeploySuggestionV1,
     type DeploySuggestionCatalogV1,
     type DeploySuggestionCheckResultV1,
 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
@@ -51,11 +48,8 @@ export type DeploySuggestionOutcome =
     | Readonly<{ kind: 'nothing'; catalog: DeploySuggestionCatalogV1; dropped: DeploySuggestionCheckResultV1['dropped'];
         droppedQuestions: NonNullable<DeploySuggestionCheckResultV1['droppedQuestions']> }>
     | Readonly<{ kind: 'noAgent'; machines: readonly DeploySuggestionUnavailableMachine[] }>
-    /**
-     * Where it failed: before any agent ran (`setup`), in the agent's Run (`run`, with the Run's typed error when it
-     * settled), or on the agent's answer, which the check refused (`answer`).
-     */
-    | Readonly<{ kind: 'failed'; code: string; stage: 'setup' | 'answer' }>
+    /** Where it failed: before any agent ran (`setup`), or in the agent's Run (`run`, with the Run's typed error when it settled). */
+    | Readonly<{ kind: 'failed'; code: string; stage: 'setup' }>
     | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError }>
     | Readonly<{ kind: 'stopped' }>;
 
@@ -80,8 +74,6 @@ export async function suggestDeploySetup(params: Readonly<{
     onProgress?: (progress: DeploySuggestionProgress) => void;
     signal?: AbortSignal;
 }>): Promise<DeploySuggestionOutcome> {
-    const context = { surface: 'ui' as const, authority: 'present_user' as const,
-        actionCaller: { kind: 'host' as const }, serverId: params.serverId, ...(params.signal ? { signal: params.signal } : {}) };
     try {
         if (params.signal?.aborted) return { kind: 'stopped' };
         let catalog = params.catalog;
@@ -136,18 +128,13 @@ export async function suggestDeploySetup(params: Readonly<{
                 ? { kind: 'stopped' } : { kind: 'failed', code: run.errorCode ?? 'execution_run_failed', stage: 'run',
                     ...(run.runError ? { runError: run.runError } : {}) };
             if (params.signal?.aborted) return { kind: 'stopped' };
-            const checked = await executeAction(DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, { catalog,
-                suggestion: run.terminal.latestToolResult ?? run.terminal.structuredMeta?.payload }, context);
-            if (params.signal?.aborted) return { kind: 'stopped' };
-            // The check admits any answer (`suggestion: unknown`): its failure is the call failing, said as the run's cause.
-            if (!checked.ok) return { kind: 'failed', code: checked.errorCode, stage: 'run' };
-            const result = DeploySuggestionCheckResultV1Schema.safeParse(checked.result);
-            if (!result.success) return { kind: 'failed', code: 'invalid_action_output', stage: 'answer' };
-            const questions = result.data.questions ? normalizeInteractionTransientQuestionsV1(result.data.questions) : null;
-            if (result.data.recommendations.length) return { kind: 'recommendations', catalog,
-                recommendations: result.data.recommendations, dropped: result.data.dropped, ...(questions ? { questions } : {}) };
+            // The check's own validator, against the exact catalog this run was given (the check Action reads a fresh one).
+            const result = validateDeploySuggestionV1(run.terminal.latestToolResult ?? run.terminal.structuredMeta?.payload, catalog);
+            const questions = result.questions ? normalizeInteractionTransientQuestionsV1(result.questions) : null;
+            if (result.recommendations.length) return { kind: 'recommendations', catalog,
+                recommendations: result.recommendations, dropped: result.dropped, ...(questions ? { questions } : {}) };
             if (questions) return { kind: 'questions', catalog, questions };
-            return { kind: 'nothing', catalog, dropped: result.data.dropped, droppedQuestions: result.data.droppedQuestions ?? [] };
+            return { kind: 'nothing', catalog, dropped: result.dropped, droppedQuestions: result.droppedQuestions ?? [] };
         }
         return { kind: 'noAgent', machines: unavailable };
     } catch (error) {
