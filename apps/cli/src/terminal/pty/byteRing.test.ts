@@ -1,10 +1,36 @@
 import { Buffer } from 'node:buffer';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createTerminalByteRing } from './byteRing';
 
 describe('createTerminalByteRing', () => {
+  it('copies only the bytes retained by a write and owns them independently of its caller', () => {
+    const ring = createTerminalByteRing({ maxBytes: 4, maxChunks: 10 });
+    const input = new Uint8Array([1, 2, 3, 4, 5, 6]);
+
+    // Count bytes copied across Node's Buffer allocation boundary during the write.
+    const copy = vi.spyOn(Buffer, 'from');
+    const copiedBytes = (() => {
+      try {
+        ring.write(input);
+        return copy.mock.calls.reduce((total, [value]) => {
+          const input: unknown = value;
+          return total + (input instanceof Uint8Array ? input.byteLength : 0);
+        }, 0);
+      } finally {
+        copy.mockRestore();
+      }
+    })();
+    expect(copiedBytes).toBe(4);
+
+    input.fill(0);
+    const replay = ring.read({ byteOffset: 0, maxBytes: 4, maxChunks: 10 });
+    expect(replay.gap?.nextAvailableByteOffset).toBe(2);
+    expect(replay.nextByteOffset).toBe(6);
+    expect([...replay.chunks[0]!.bytes]).toEqual([3, 4, 5, 6]);
+  });
+
   it('does not let future byte-offset reads skip later output', () => {
     const ring = createTerminalByteRing({ maxBytes: 1024, maxChunks: 10 });
 

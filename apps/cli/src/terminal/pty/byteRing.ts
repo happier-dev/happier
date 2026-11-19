@@ -1,12 +1,13 @@
 import { Buffer } from 'node:buffer';
 
-export type TerminalByteRingChunk = Readonly<{
+type TerminalByteRingChunkMetadata = Readonly<{
   seq: number;
   byteOffset: number;
   byteLength: number;
   timestampMs: number;
-  bytes: Buffer;
 }>;
+
+export type TerminalByteRingChunk = TerminalByteRingChunkMetadata & Readonly<{ bytes: Buffer }>;
 
 export type TerminalByteRingGap = Readonly<{
   droppedBeforeByteOffset: number;
@@ -24,7 +25,7 @@ export type TerminalByteRingReadResult = Readonly<{
 }>;
 
 export type TerminalByteRing = Readonly<{
-  write: (bytes: Uint8Array | Buffer) => TerminalByteRingChunk | null;
+  write: (bytes: Uint8Array | Buffer) => TerminalByteRingChunkMetadata | null;
   read: (input: Readonly<{ byteOffset: number; maxBytes: number; maxChunks: number }>) => TerminalByteRingReadResult;
   clear: () => void;
   bounds: () => Readonly<{
@@ -72,15 +73,14 @@ export function createTerminalByteRing(params: Readonly<{
     }
   };
 
-  const write = (input: Uint8Array | Buffer): TerminalByteRingChunk | null => {
-    const original = Buffer.from(input);
-    if (!original.length) return null;
+  const write = (input: Uint8Array | Buffer): TerminalByteRingChunkMetadata | null => {
+    if (!input.length) return null;
 
     const writeOffset = nextByteOffset;
-    nextByteOffset += original.length;
+    nextByteOffset += input.length;
 
-    const dropFromChunk = Math.max(0, original.length - maxBytes);
-    const bytes = dropFromChunk > 0 ? original.subarray(dropFromChunk) : original;
+    const dropFromChunk = Math.max(0, input.length - maxBytes);
+    const bytes = Buffer.from(dropFromChunk > 0 ? input.subarray(dropFromChunk) : input);
     const byteOffset = writeOffset + dropFromChunk;
     if (dropFromChunk > 0) {
       droppedBeforeByteOffset = Math.max(droppedBeforeByteOffset, byteOffset);
@@ -90,7 +90,7 @@ export function createTerminalByteRing(params: Readonly<{
     const stored: StoredChunk = {
       seq: nextSeq,
       byteOffset,
-      bytes: Buffer.from(bytes),
+      bytes,
       timestampMs,
     };
     nextSeq += 1;
@@ -105,7 +105,6 @@ export function createTerminalByteRing(params: Readonly<{
       byteOffset: stored.byteOffset,
       byteLength: stored.bytes.length,
       timestampMs: stored.timestampMs,
-      bytes: Buffer.from(stored.bytes),
     };
   };
 
