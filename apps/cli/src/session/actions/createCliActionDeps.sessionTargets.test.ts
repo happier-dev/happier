@@ -368,8 +368,8 @@ describe('CLI Session target composition', () => {
         const { deps, session, credentials } = runWithServerHttpBaseUrl('https://construction-home.test', () => setup(null, mode === 'e2ee' ? {
           privateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23)).secretKey,
           installationId: 'installation', secret: new Uint8Array(32).fill(17),
-        } : undefined, support === 'advertised' ? null : home));
-        const invocationHome = support === 'advertised' ? home : 'https://unselected-ambient-home.test';
+        } : undefined, home));
+        const invocationHome = 'https://unselected-ambient-home.test';
         const ref = { id: 'checkout', serverId: context.serverId, machineId: 'machine-selected', rootPath: '/repo',
           projectKey: 'qa-project', createdAtMs: 1 };
         const key = { kind: 'workspace-ref' as const, serverId: context.serverId, id: ref.id };
@@ -430,7 +430,7 @@ describe('CLI Session target composition', () => {
         expect(hydratedIds).toHaveLength(support === 'advertised' ? 2 : rows.length);
         expect(queries).toHaveLength(support === 'advertised' ? 1 : Math.ceil(rows.length / SESSION_LIST_PAGE_MAX_LIMIT));
         if (support === 'advertised') {
-          expect(queries[0]?.projectKeys).toEqual({ include: [ref.projectKey], exclude: [] });
+          expect(queries[0]?.projectKeys).toEqual({ include: [ref.id, ref.projectKey], exclude: [] });
           expect(hydratedIds).toEqual(['matching-one', 'matching-two']);
         } else for (const query of queries) expect(query).not.toHaveProperty('projectKeys');
         expect(featureReads.length).toBeGreaterThan(0);
@@ -871,14 +871,14 @@ describe('CLI Session target composition', () => {
         nextCursor: next ? null : cursor, hasNext: !next, attentionNextCursor: null, attentionHasNext: false }) };
     });
     const executor = createActionExecutor(deps);
-    const direct = await executor.execute('session.status.get', { sessionId: { selector: 'workers' }, live: false },
-      { ...context, defaultSessionId: sessionId });
+    const direct = await runWithServerHttpBaseUrl(home, () => executor.execute('session.status.get',
+      { sessionId: { selector: 'workers' }, live: false }, { ...context, defaultSessionId: sessionId }));
     expect(direct, JSON.stringify(direct)).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
       { target: { sessionId: childId }, result: { ok: true, result: { session: { id: childId } } } },
       { target: { sessionId: archivedChildId }, result: { ok: true, result: { session: { id: archivedChildId } } } },
     ] } });
-    const recursive = await executor.execute('session.status.get', { sessionId: { selector: 'workers', recursive: true }, live: false },
-      { ...context, defaultSessionId: sessionId });
+    const recursive = await runWithServerHttpBaseUrl(home, () => executor.execute('session.status.get',
+      { sessionId: { selector: 'workers', recursive: true }, live: false }, { ...context, defaultSessionId: sessionId }));
     expect(recursive, JSON.stringify(recursive)).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
       { target: { sessionId: childId } }, { target: { sessionId: grandchildId } }, { target: { sessionId: archivedChildId } },
     ] } });
