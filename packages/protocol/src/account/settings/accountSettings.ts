@@ -862,6 +862,9 @@ export const DEFAULT_SESSION_HANDOFF_DEFAULTS_V1: SessionHandoffDefaultsV1 = Obj
 });
 
 export const SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES = ['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session'] as const;
+export const CollectionTableCardPresentationSchema = lazyZodSchema(() => z.enum(['table', 'grid']));
+export type CollectionTableCardPresentation = z.infer<typeof CollectionTableCardPresentationSchema>;
+
 const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     analyticsOptOut: accountPreference(z.boolean(), false, 'privacy'),
     crashReportsOptOut: accountPreference(z.boolean(), false, 'privacy'),
@@ -900,6 +903,9 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     collectionSpacesV1: accountPreference(CollectionSpacesV1Schema, { v: 1, spaces: [] }, 'collection saved filters', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     // Presentation host owns column policy; Account storage carries its keyed JSON preferences.
     collectionColumnPreferencesV1: accountPreference(z.record(z.string(), StrictJsonValueSchema), {}, 'collection column presentation', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
+    collectionDisplayPreferencesV1: accountPreference(z.looseObject({
+        workflow: z.optional(z.looseObject({ presentation: z.optional(CollectionTableCardPresentationSchema) })),
+    }), {}, 'collection display'),
     collectionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     reviewSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),

@@ -169,6 +169,52 @@ afterEach(async () => {
 });
 
 describe('workflow library page anatomy', () => {
+    it('switches the same workflow library from the table to cards without reading workflow bodies', async () => {
+        const previousWidth = windowSize.width;
+        windowSize.width = 1440;
+        const definitionId = '10000000-0000-4000-8000-000000000082';
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Release notes' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+            }] } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'Unexpected fixture request' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        try {
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            const library = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection')!;
+            await vi.waitFor(() => expect(library().props.model.keys).toEqual([definitionId]));
+            expect(library().props.presentation).toBe('table');
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const action = createDefaultActionExecutor();
+            const scope = storage.getState().profileScope!;
+            const context = { surface: 'agent' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
+            const workflowReads = () => execute.mock.calls.map(([id]) => id)
+                .filter(id => id === 'workflow.definition.list' || id === 'workflow.run.summaries' || id === 'workflow.definition.get');
+            await vi.waitFor(() => expect(workflowReads()).toContain('workflow.run.summaries'));
+            const initialReads = workflowReads();
+            expect(initialReads).not.toContain('workflow.definition.get');
+            await act(async () => {
+                expect(await action.execute('settings.set', {
+                    anchor: 'appearance.collectionDisplay', value: { kind: 'workflow', presentation: 'grid' },
+                }, context)).toMatchObject({ ok: true });
+            });
+            expect(library().props.presentation).toBe('grid');
+            expect(library().props.model.keys).toEqual([definitionId]);
+            await screen.pressByTestIdAsync('workflows-home:presentation:table');
+            await vi.waitFor(() => expect(library().props.presentation).toBe('table'));
+            expect(library().props.model.keys).toEqual([definitionId]);
+            expect(workflowReads()).toEqual(initialReads);
+        } finally {
+            windowSize.width = previousWidth;
+            await screen.unmount();
+        }
+    });
+
     it('returns focus to the moved New action after the last workflow is deleted on a wide page', async () => {
         const { WorkflowsColumn } = await import('../column/WorkflowsColumn');
         const definitionId = '10000000-0000-4000-8000-000000000081';

@@ -26,6 +26,8 @@ import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { CollectionViewSwitch } from '@/components/ui/lists/collection/CollectionViewSwitch';
+import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -188,6 +190,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         openKey: null,
         onOpenChange: openDefinition,
     });
+    const display = useCollectionDisplayOptions('workflow', phone);
     const anatomy = useLibraryAnatomy();
     const commands = useLibraryRowCommands(library.deletedDefinitionId);
     const deleted = library.deletedDefinitionId !== null;
@@ -266,6 +269,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             {phone ? <View style={styles.spaceStripInline}>{spaceHeader.strip}</View> : <View style={styles.controlLineGrow} />}
             {spaceHeader.filterButton}
             {phone ? null : search}
+            {phone ? null : <CollectionViewSwitch presentation={display.preferredPresentation}
+                onChange={display.setPresentation} testIDPrefix="workflows-home:presentation" />}
         </View>
         {phone ? <View style={styles.controlLine}>{search}</View> : <View style={styles.spaceStrip}>{spaceHeader.strip}</View>}
         {spaceHeader.conditionRow ? <View style={styles.spaceStrip}>{spaceHeader.conditionRow}</View> : null}
@@ -326,9 +331,9 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                                 model={model}
                                 anatomy={anatomy}
                                 accessibilityLabel={t('workflows.title')}
-                                presentation="list"
+                                presentation={display.presentation}
                                 detail="none"
-                                scroll="page-virtualized"
+                                scroll={display.presentation === 'grid' ? 'page' : 'page-virtualized'}
                                 minListWidth={LIBRARY_MIN_WIDTH_PX}
                                 minDetailWidth={LIBRARY_MIN_WIDTH_PX}
                                 preferredListRatio={1}

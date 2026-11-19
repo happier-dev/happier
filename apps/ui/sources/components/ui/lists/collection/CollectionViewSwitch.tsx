@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { t } from '@/text';
+import type { CollectionTableCardPresentation } from '@happier-dev/protocol/account/settings/accountSettings';
 
 export type CollectionView = 'all' | 'found';
 
@@ -21,8 +22,35 @@ export const CollectionViewSwitch = React.memo(function CollectionViewSwitch(
     foundLabel: string;
     onChange: (view: CollectionView) => void;
     testIDPrefix: string;
+  }> | Readonly<{
+    presentation: CollectionTableCardPresentation;
+    onChange: (view: CollectionTableCardPresentation) => void;
+    testIDPrefix: string;
   }>,
 ) {
+  if ('presentation' in props) {
+    return <SegmentedTabBar
+      tabs={[
+        { id: 'table', label: t('markdown.table.viewerTitle') },
+        { id: 'grid', label: t('settingsAppearance.surfaceFinish.card') },
+      ]}
+      activeTabId={props.presentation}
+      onSelectTab={props.onChange}
+      testIDPrefix={props.testIDPrefix}
+      accessibilityLabel={t('sessionsList.viewOptions')}
+      segmentSizing="content"
+    />;
+  }
+  return <CollectionDiscoverySwitch {...props} />;
+});
+
+function CollectionDiscoverySwitch(props: Readonly<{
+  view: CollectionView;
+  foundCount?: number | null;
+  foundLabel: string;
+  onChange: (view: CollectionView) => void;
+  testIDPrefix: string;
+}>) {
   const tabs = React.useMemo(
     () => [
       {
@@ -48,4 +76,4 @@ export const CollectionViewSwitch = React.memo(function CollectionViewSwitch(
       />
     </View>
   );
-});
+}

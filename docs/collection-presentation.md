@@ -65,6 +65,16 @@ only that collection's override. The Columns controller uses that same Action
 writer for visibility, reorder and Reset. This built-in preference seam does not
 introduce a plugin fact declaration or Resource acquisition.
 
+## Collection display (unreleased 0.3 development)
+
+Workflows uses `settings.get` and `settings.set` with
+`appearance.collectionDisplay`. Set `{ kind: 'workflow', presentation: 'table' }`
+or `{ kind: 'workflow', presentation: 'grid' }`. An unset preference starts at
+Table. Narrow views still render Workflows as rows and preserve the wide choice
+when the window expands. Switching presentation preserves the current search,
+space, and list window. Cards read the authored step preview in the list header.
+Opening a workflow loads its full definition for editing.
+
 ## Model and presentation
 
 Row secondary actions carry optional menu-selection context through Overlay,
