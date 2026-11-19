@@ -9,8 +9,8 @@ import { isAutomationCauseRow, retainedV2OriginKindForRun } from "@/app/automati
 import { resolveAutomationPendingInputSessionIdTx } from "@/app/automations/automationRunSessionTarget";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { readManagedWakePublicationAccountIdsInTx } from "@/app/machines/managed/managedWake";
+import { resolveArtifactAudienceInTx } from '@/app/artifacts/artifactAccessService';
 import type { AutomationDefinitionCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
-import { readSharedWorkflowTriggerSummaryRecipientsInTx, type SharedWorkflowSummaryDefinition } from '@/app/automations/automationSharedWorkflowSummaries';
 import {
     resolveWorkflowRunAdmissionRecipientAccountIdsInTx,
     resolveWorkflowRunAdmissionVisibilityInTx,
@@ -49,12 +49,12 @@ export interface WorkflowPublicationAudience {
 async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: readonly string[],
     definitionWrite?: WorkflowPublicationScope['automationDefinitionWrite']): Promise<WorkflowPublicationAudience> {
     if (automationIds.length === 0 && !definitionWrite) return { accountIds: [], sessionIds: [] };
-    const automations: (SharedWorkflowSummaryDefinition & { id: string; assignments: { machineId: string }[] })[] = [];
+    const automations: { id: string; accountId: string; workflowDefinitionId: string | null;
+        scopeSessionId: string | null; assignments: { machineId: string }[] }[] = [];
     // The enabled-assignment predicate and portable Prisma offset share the ID budget.
     for (const ids of portableQueryChunks({ values: [...new Set(automationIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
         const rows = await tx.automation.findMany({ where: { id: { in: [...ids] } }, select: {
-            id: true, accountId: true, workflowDefinitionId: true, scopeSessionId: true, templateCiphertext: true,
-            account: { select: { encryptionMode: true } },
+            id: true, accountId: true, workflowDefinitionId: true, scopeSessionId: true,
             assignments: { where: { enabled: true }, select: { machineId: true } },
         } });
         automations.push(...rows);
@@ -66,18 +66,13 @@ async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: read
         }))),
         sessionIds,
     });
-    const summaries: SharedWorkflowSummaryDefinition[] = automations.filter(row => row.id !== definitionWrite?.id);
-    if (definitionWrite) {
-        const stored = automations.find(row => row.id === definitionWrite.id);
-        const account = stored?.account ?? await tx.account.findUnique({ where: { id: definitionWrite.accountId }, select: { encryptionMode: true } });
-        if (account) summaries.push({ accountId: definitionWrite.accountId, account,
-            workflowDefinitionId: definitionWrite.workflowDefinitionId === undefined ? stored?.workflowDefinitionId ?? null : definitionWrite.workflowDefinitionId,
-            scopeSessionId: definitionWrite.scopeSessionId === undefined ? stored?.scopeSessionId ?? null : definitionWrite.scopeSessionId,
-            templateCiphertext: definitionWrite.executionRecipe === undefined ? stored?.templateCiphertext ?? '' : JSON.stringify(definitionWrite.executionRecipe),
-        });
-    }
-    const sharedAccounts = (await Promise.all(summaries.map(row => readSharedWorkflowTriggerSummaryRecipientsInTx(tx, row)))).flat();
-    return { accountIds: [...new Set([...automations.map(automation => automation.accountId), ...managedAccounts, ...sharedAccounts])].sort(), sessionIds };
+    // Use the Action-index publisher's Artifact audience owner, not the narrower
+    // selected-Team schedule audience. Replacements clear the old readers too.
+    const workflowIds = [...new Set([...automations.flatMap(row => row.workflowDefinitionId ? [row.workflowDefinitionId] : []),
+        ...(definitionWrite?.workflowDefinitionId ? [definitionWrite.workflowDefinitionId] : [])])];
+    const artifactAccounts = (await Promise.all(workflowIds.map(id => resolveArtifactAudienceInTx(tx, id)))).flat();
+    return { accountIds: [...new Set([...automations.map(automation => automation.accountId), ...managedAccounts,
+        ...artifactAccounts])].sort(), sessionIds };
 }
 
 /** Session fact writers collect lifecycle admission's review/wake audience before locking their source. */

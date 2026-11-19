@@ -54,13 +54,13 @@ function readSelectedTeam(row: Readonly<{ templateCiphertext: string; account: {
         : recipe.visibleTeamId) ?? null;
 }
 
-export type SharedWorkflowSummaryDefinition = Readonly<{
+type SharedWorkflowSummaryDefinition = Readonly<{
     accountId: string; workflowDefinitionId: string | null; scopeSessionId: string | null;
     templateCiphertext: string; account: { encryptionMode: unknown };
 }>;
 
-/** Publication admission and invalidation consume the same selected audience. */
-export async function readSharedWorkflowTriggerSummaryRecipientsInTx(tx: Tx, row: SharedWorkflowSummaryDefinition): Promise<string[]> {
+/** Team schedule invalidation is narrower than the Artifact Action-index publication audience. */
+async function readSharedWorkflowTriggerSummaryRecipientsInTx(tx: Tx, row: SharedWorkflowSummaryDefinition): Promise<string[]> {
     if (row.scopeSessionId !== null || row.workflowDefinitionId === null) return [];
     const visibleTeamId = readSelectedTeam(row);
     if (visibleTeamId === null) return [];
