@@ -167,6 +167,30 @@ afterEach(() => {
 });
 
 describe('TeamInvitationsScreen', () => {
+    it('keeps observed invitations visible on return until a Home refusal withdraws them', async () => {
+        const serverId = await addManagedHome();
+        const row = 'team-invitations-row:invitation-1';
+        harness.answer(serverId, INVITATIONS_LIST_PATH, {
+            body: { items: [teamInvitationRowFixture()], nextCursor: null, emailDelivery: 'available', linkDelivery: 'available' },
+        });
+        const initial = await renderInvitations(serverId);
+        await waitForTestId(initial, row);
+        await initial.unmount();
+
+        const observedRequests = harness.requestsFor(INVITATIONS_LIST_PATH).length;
+        const fresh = createDeferred<void>();
+        harness.answer(serverId, INVITATIONS_LIST_PATH, { status: 403, respondAfter: fresh.promise });
+        const returned = await renderInvitations(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(INVITATIONS_LIST_PATH).length).toBeGreaterThan(observedRequests));
+        const returningIds = collectRenderedTestIds(returned.tree.toJSON());
+        expect(returningIds).toContain(row);
+        expect(returningIds).not.toContain('team-invitations-loading');
+        await act(async () => fresh.resolve());
+        await waitForTestId(returned, 'team-invitations-unavailable');
+        expect(collectRenderedTestIds(returned.tree.toJSON())).not.toContain(row);
+        await returned.unmount();
+    });
+
     it('formats invitation expiry in the selected app language', async () => {
         languageMock.current = 'de';
         const expiresAt = Date.parse('2025-02-03T12:00:00Z');

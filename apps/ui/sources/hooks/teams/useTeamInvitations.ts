@@ -9,9 +9,11 @@ import type {
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { serverAccountScopedTeamResourceKey } from '@/sync/domains/teams/teamAddress';
-import { listTeamInvitations } from '@/sync/ops/teams/teamInvitationOperations';
+import { listTeamInvitations, TEAM_INVITATIONS_PAGE_LIMIT } from '@/sync/ops/teams/teamInvitationOperations';
+import { teamInvitationPages } from '@/sync/store/teams/teamsSnapshots';
 
-import { useTeamPagedList, type TeamPagedList } from './useTeamPagedList';
+import { useTeamObservedPagedList } from './useTeamObservedPagedList';
+import type { TeamPagedList } from './useTeamPagedList';
 
 const invitationRowKey = (row: TeamInvitationRowV1) => row.id;
 
@@ -49,12 +51,12 @@ export function useTeamInvitations(params: Readonly<{
     const accountId = params.scope?.accountId ?? '';
     const teamId = params.address?.teamId ?? '';
     const { state, limit } = params;
-    const sequenceKey = serverAccountScopedTeamResourceKey(
-        { serverId, accountId },
-        { serverId, teamId },
+    const sequenceKey = params.scope && params.address ? serverAccountScopedTeamResourceKey(
+        params.scope,
+        params.address,
         'invitations',
-        state ?? 'all',
-    );
+        JSON.stringify([state, limit ?? TEAM_INVITATIONS_PAGE_LIMIT]),
+    ) : '';
     const activeSequenceKeyRef = React.useRef(sequenceKey);
     activeSequenceKeyRef.current = sequenceKey;
     const [emailDelivery, setEmailDelivery] = React
@@ -89,9 +91,11 @@ export function useTeamInvitations(params: Readonly<{
         [serverId, accountId, teamId, state, limit, sequenceKey],
     );
 
-    const list = useTeamPagedList<TeamInvitationRowV1>({
-        key: params.scope && params.address ? sequenceKey : '',
-        enabled: params.enabled && serverId !== '' && accountId !== '' && teamId !== '',
+    const list = useTeamObservedPagedList<TeamInvitationRowV1>({
+        scope: params.scope,
+        observations: teamInvitationPages,
+        key: sequenceKey,
+        enabled: params.enabled && serverId !== '' && accountId !== '' && teamId !== '' && params.address?.serverId === serverId,
         loadPage,
         getRowKey: invitationRowKey,
         accountChange: { serverId, entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 },
