@@ -622,13 +622,25 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
             const before = await db.account.findUniqueOrThrow({ where: { id: account.id } });
             const keys = ["HAPPIER_COLLECTION_MAX_ACCOUNT_ROWS", "HAPPIER_COLLECTION_MAX_BATCH_ROWS"] as const;
             const previous = keys.map(key => process.env[key]);
+            const quotaPlans: unknown[] = [];
             try {
                 for (const key of keys) process.env[key] = "1";
-                const refused = await app.inject({ method: "POST", url: route, headers,
+                const refused = await observeTransactions(tx => {
+                    const query = tx.$queryRawUnsafe.bind(tx);
+                    return new Proxy(tx, { get(target, key, receiver) {
+                        if (key !== "$queryRawUnsafe") return Reflect.get(target, key, receiver);
+                        return async (sql: string, ...args: unknown[]) => {
+                            if (sql.includes('WITH "quotaRows"')) {
+                                quotaPlans.push(await query(`EXPLAIN (FORMAT JSON) ${sql}`, ...args));
+                            }
+                            return query(sql, ...args);
+                        };
+                    } });
+                }, () => app.inject({ method: "POST", url: route, headers,
                     payload: { manifest: { ...manifest, version: "2.0.0", contributes: { accountCollections: [
                         ...manifest.contributes.accountCollections,
                         { ...manifest.contributes.accountCollections[0]!, id: "new-items" },
-                    ] } } } });
+                    ] } } } }));
                 expect(refused.statusCode, refused.body).toBe(409);
                 expect(refused.json()).toEqual({ error: "collection_quota_incompatible", dimension: "maxRows", effectiveMaximum: 1 });
             } finally {
@@ -645,6 +657,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
             const current = await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId: account.id,
                 refs: [{ pluginId: manifest.id, version: manifest.version }, { pluginId: manifest.id, version: "2.0.0" }] }));
             expect([...current.values()].map(value => value.manifest.version)).toEqual([manifest.version]);
+            expect(quotaPlans).toHaveLength(1);
+            // A changed claim must not tokenize each stored JSON body while serializing the Account.
+            expect(JSON.stringify(quotaPlans).match(/"Function Name":"regexp_matches"/g) ?? []).toHaveLength(0);
         });
     });
 

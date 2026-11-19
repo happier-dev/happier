@@ -11,12 +11,12 @@ export interface PluginCollectionPostgresQuotaAggregate {
 }
 
 /**
- * PostgreSQL's jsonb text adds formatting whitespace and expands exponents.
- * Token lengths discard only whitespace outside strings. First-party content
- * writers admit JavaScript JSON values and stringify them before storage;
- * numeric tokens therefore have the finite-Number decimal digits admitted by
- * that storage boundary. Restore JSON.stringify's fixed/exponential thresholds without a
- * float8 round trip (PostgreSQL's shortest-float spelling is not ECMAScript's).
+ * Start from PostgreSQL's jsonb text byte count. In its output, each object
+ * member adds a space after its colon and each comma adds one space. Count
+ * those separators from the containers so string bodies need no tokenization.
+ * Restore JSON.stringify's fixed/exponential thresholds for admitted finite
+ * JavaScript numbers without a float8 round trip (PostgreSQL's shortest-float
+ * spelling differs from ECMAScript's).
  * Projection values are stored as JSON strings, so staged numeric projections
  * additionally undo jsonb's expanded spelling inside those quoted strings.
  * quota.ts's JavaScript measurement remains the reference metric.
@@ -26,7 +26,7 @@ export async function readPluginCollectionPostgresQuotaAggregateInTx(input: Read
     accountId: string;
     includeStages: boolean;
 }>): Promise<readonly PluginCollectionPostgresQuotaAggregate[]> {
-    return await input.tx.$queryRawUnsafe<PluginCollectionPostgresQuotaAggregate[]>(String.raw`
+    return await input.tx.$queryRawUnsafe<PluginCollectionPostgresQuotaAggregate[]>(`
         WITH "quotaRows" AS (
             SELECT "row"."pluginId", "row"."collectionId", "row"."contractId", false AS "staged",
                 jsonb_build_object(
@@ -62,9 +62,9 @@ export async function readPluginCollectionPostgresQuotaAggregateInTx(input: Read
             max("measured"."encodedBytes")::bigint AS "maximumRowEncodedBytes"
         FROM "quotaRows"
         CROSS JOIN LATERAL (
-            SELECT sum(CASE WHEN "token" ~ '^-?[0-9]' THEN
+            SELECT octet_length("quotaRows"."payload"::text) - sum("spaces") + COALESCE(sum(
                 CASE WHEN "significant" = '' THEN 1 ELSE
-                    (left("token", 1) = '-')::integer + CASE
+                    (left("numericText", 1) = '-')::integer + CASE
                         WHEN "exponent" < -6 OR "exponent" >= 21 THEN
                             length("significant") + (length("significant") > 1)::integer
                             + 2 + length(abs("exponent")::text)
@@ -72,16 +72,23 @@ export async function readPluginCollectionPostgresQuotaAggregateInTx(input: Read
                         ELSE greatest("exponent" + 1, length("significant"))
                             + (length("significant") > "exponent" + 1)::integer
                     END
-                END - CASE WHEN "adjustment" THEN octet_length("token") ELSE 0 END
-                ELSE octet_length("token") END) AS "encodedBytes"
+                END - octet_length("numericText")
+            ), 0) AS "encodedBytes"
             FROM (
-                SELECT "match"[1] AS "token", false AS "adjustment"
-                FROM regexp_matches("quotaRows"."payload"::text,
-                    '"(?:[^"\\]|\\.)*"|true|false|null|-?[0-9]+(?:\.[0-9]+)?|[][{},:]', 'g') AS "match"
+                SELECT CASE WHEN jsonb_typeof("value") = 'number' THEN "value"::text END AS "numericText",
+                    CASE jsonb_typeof("value")
+                        WHEN 'array' THEN greatest(jsonb_array_length("value") - 1, 0)
+                        WHEN 'object' THEN greatest(
+                            2 * jsonb_array_length(jsonb_path_query_array("value", 'strict $.keyvalue().key')) - 1, 0)
+                        ELSE 0
+                    END AS "spaces"
+                FROM jsonb_array_elements(jsonb_path_query_array("quotaRows"."payload",
+                    'strict $.** ? (@.type() == "object" || @.type() == "array" || @.type() == "number")')) AS "value"
                 UNION ALL
-                SELECT "token", true FROM jsonb_array_elements_text("quotaRows"."numericProjections") AS "token"
-            ) AS "tokens"
-            CROSS JOIN LATERAL (SELECT ltrim("token", '-') AS "absolute") AS "unsigned"
+                SELECT "numericText", 0
+                FROM jsonb_array_elements_text("quotaRows"."numericProjections") AS "numericText"
+            ) AS "adjustments"
+            CROSS JOIN LATERAL (SELECT ltrim("numericText", '-') AS "absolute") AS "unsigned"
             CROSS JOIN LATERAL (SELECT replace("absolute", '.', '') AS "digits") AS "decimal"
             CROSS JOIN LATERAL (SELECT btrim("digits", '0') AS "significant",
                 length(split_part("absolute", '.', 1)) - length("digits") + length(ltrim("digits", '0')) - 1 AS "exponent"

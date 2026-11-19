@@ -231,7 +231,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         const request = fixture.request(fixture.rowIds);
         for (const [index, rowId] of fixture.rowIds.entries()) {
             const value = values[index];
-            const content = { t: "plain", v: { text: 'spaces : , [1e21] " \\ \b\f\n\r\t é 😀 \u2028', nested: { values: [value, 0, -value] } } };
+            const nestedValues = index === 0 ? [] : index === 1 ? [value] : [value, 0, -value];
+            const content = { t: "plain", v: { text: 'spaces : , [1e21] " \\ \b\f\n\r\t é 😀 \u2028',
+                nested: { values: nestedValues } } };
             const projection = { id: rowId, value, label: content.v.text };
             // Same admitted finite JS values and JSON round trip as Collection's
             // first-party content writers; Prisma persists the actual jsonb.
