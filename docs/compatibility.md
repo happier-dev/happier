@@ -9773,6 +9773,13 @@ unpublished 0.3 direct cut changes no SDK wire epoch, authority or persistence.
 The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
+The Machine source slice projects Action input and admission declarations. It
+carries the IDs of Actions on that occurrence with a result contract. The Action
+grammar's optional result field may be absent. The closed source-declaration row
+adds the ID list, so its producer and readers load together in 0.3 development.
+The original Action manifest and executable validation retain the full result
+schema. No predecessor data or published SDK epoch changes.
+
 ## SDK protocol evolution
 
 Unreleased 0.3 Agent manifests and daemon Agent catalog projections can carry

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
-import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding } from '@happier-dev/cli-common/plugins/registration';
+import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding, resolveManifestTargetedContributions } from '@happier-dev/cli-common/plugins/registration';
 import { PLUGIN_MANIFEST as TRIAGE_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -69,6 +70,33 @@ describe('current Machine source declarations for an Account target', () => {
             expect(response.status).toBe('sourceDeclarations');
             if (response.status !== 'sourceDeclarations') throw new Error(`Source read refused: ${response.status}`);
             expect(response.pluginId).toBe('happier.triage');
+            const originalSource = fixture.registry.contributes.pluginDeclarations?.find(declaration => declaration.pluginId === sourceId);
+            if (!originalSource) throw new Error('Expected bundled GitHub source');
+            const originalActions = new Map(originalSource.manifest.contributes.actions.map(action => [action.id, action]));
+            const previousReply = {
+                ...response,
+                sourceDeclarations: response.sourceDeclarations.map(({ actionResultContractIds, manifest, ...row }) => {
+                    const declaredResultIds = [];
+                    const actions = manifest.contributes.actions.map(action => {
+                        expect(Object.hasOwn(action, 'resultSchema')).toBe(false);
+                        const original = originalActions.get(action.id);
+                        if (!original) throw new Error('Unexpected projected Action');
+                        expect(action.inputSchema).toEqual(original.inputSchema);
+                        // The existing Action declaration reader accepts the omitted optional field.
+                        expect(PluginActionContributionV2Schema.parse(action).inputSchema).toEqual(original.inputSchema);
+                        if (original.resultSchema === undefined) return action;
+                        declaredResultIds.push(action.id);
+                        return { ...action, resultSchema: original.resultSchema };
+                    });
+                    expect(actionResultContractIds).toEqual(declaredResultIds);
+                    return { ...row, manifest: { ...manifest, contributes: { ...manifest.contributes, actions } } };
+                }),
+            };
+            const before = Buffer.byteLength(JSON.stringify(previousReply));
+            const after = Buffer.byteLength(JSON.stringify(firstRaw));
+            expect(after).toBeLessThan(before);
+            console.info(`Source declaration reply UTF-8 bytes: ${before} → ${after}`);
+
             expect(response).toHaveProperty('sourceRevision', expect.any(String));
             const sourceRevision = Reflect.get(response, 'sourceRevision');
             expect(decode(await readRaw(observedRuntime, { knownSourceRevision: sourceRevision })))
@@ -93,6 +121,13 @@ describe('current Machine source declarations for an Account target', () => {
                 kind: 'account_release' as const, pluginId: 'happier.triage', version: parsedTarget.manifest.version,
                 archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
             } }, ...response.sourceDeclarations];
+            const withoutResultFacts = declarations.map(declaration => declaration.manifest.id === sourceId
+                ? { ...declaration, actionResultContractIds: [] } : declaration);
+            expect(resolveManifestTargetedContributions(withoutResultFacts).diagnosticsByPluginId[sourceId])
+                .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'action_schema_invalid' })]));
+            expect(DaemonPluginUiTargetedContributionsReadResponseSchema.safeParse({ ...response,
+                sourceDeclarations: response.sourceDeclarations.map(source => ({ ...source, actionResultContractIds: ['not-declared'] })),
+            }).success).toBe(false);
             const service = createManifestTargetedContributionsService({
                 readCurrentDeclarations: () => ({ declarations }),
                 subscribeToCatalogChanges: () => () => {},

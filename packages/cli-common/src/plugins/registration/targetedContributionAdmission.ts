@@ -1,5 +1,6 @@
 /** @moduleRealm any */
 import type { PluginContributionPointV1, PluginTargetedContributionV1, PluginActionContributionV2, PluginContributionIdentityV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import type { DaemonPluginTargetedSourceDeclarationV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { buildPluginUiRendererContributionKey, resolvePluginUiRendererChain } from './targetedContributionRendererChain.js';
 import type { AdmittedTargetedContribution, AdmittedTargetedContributionActionInputSelection, AdmittedTargetedContributionOperation, AdmittedTargetedContributionSurface, AdmittedTargetedContributionSnapshot } from './targetedContributionTypes.js';
@@ -33,6 +34,7 @@ export type TargetedContributionDeclaration = Readonly<{
 export type TargetedContributionActionDeclaration = Readonly<{
     pluginId?: string;
     occurrenceId?: string;
+    machineHoldsResultContract?: true;
     definition: Readonly<{
         id: string;
         inputSchema?: unknown;
@@ -58,7 +60,7 @@ export type TargetedContributionCompatibilityDiagnostic = Readonly<{
 }>;
 
 /** Current host-admitted release or Machine declarations; this grants no execution authority itself. */
-export type TargetedContributionManifestDeclaration = Readonly<{
+export type TargetedContributionManifestDeclaration = Readonly<Pick<DaemonPluginTargetedSourceDeclarationV1, 'actionResultContractIds'> & {
     manifest: Readonly<{
         id: ParsedPluginManifestV2['id'];
         contributes: Readonly<
@@ -223,13 +225,15 @@ export function resolveManifestTargetedContributions(
                     ? { operationSourcesByRole: operationSourcesByContributionId[definition.id] } : {}),
             }))
         )),
-        actions: declarations.flatMap(({ manifest, occurrenceId }) => (
-            manifest.contributes.actions.map((definition) => ({
+        actions: declarations.flatMap(({ manifest, occurrenceId, actionResultContractIds }) => {
+            const resultContracts = actionResultContractIds && new Set(actionResultContractIds);
+            return manifest.contributes.actions.map(definition => ({
                 pluginId: manifest.id,
                 occurrenceId,
+                ...(resultContracts?.has(definition.id) ? { machineHoldsResultContract: true as const } : {}),
                 definition: projectTargetedContributionActionDefinition(definition),
-            }))
-        )),
+            }));
+        }),
         uiRenderersV2: declarations.flatMap(({ manifest, occurrenceId }) => (
             manifest.contributes.ui.renderers.map((definition) => ({
                 pluginId: manifest.id,
@@ -439,7 +443,7 @@ function hasUsableSchema(action: TargetedContributionActionDeclaration): boolean
     // contributor-defined input. Normalization must not fabricate a schema.
     // Deferred bundled schemas are JSON objects by construction: checked unread.
     return (isDeclarationFieldJsonObject(definition, 'inputSchema') || definition.inputSchema === undefined)
-        && isDeclarationFieldJsonObject(definition, 'outputSchema');
+        && (action.machineHoldsResultContract === true || isDeclarationFieldJsonObject(definition, 'outputSchema'));
 }
 
 /**

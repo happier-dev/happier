@@ -3628,8 +3628,11 @@ target or vice versa.
 The Machine source-declaration response includes the requested target's current
 custody and native daemon Action declarations even when it contributes no operations
 to itself. An Account Action can therefore delegate to its own native helper without
-declaring that helper as a targeted operation. This projects declarations; the selected
-Machine's existing executable admission and handler registry still own execution.
+declaring that helper as a targeted operation. The declaration includes input and
+admission facts. It identifies which Actions have an authored result contract
+on that occurrence so the Account's targeted resolver can check eligibility.
+The selected Machine's executable admission and handler registry use the full
+Action declaration to validate execution results.
 The shared closed V1
 validator admits that target row; other source rows must contribute to the
 requested target, and duplicate plugin identities remain invalid. This lets

@@ -464,6 +464,8 @@ export type DaemonPluginTargetedSourceDeclarationV1 = {
   };
   occurrenceId: string;
   sourceCustody: PluginSourceCustodyV1;
+  /** Actions on this occurrence whose authored result contract the Machine holds. */
+  actionResultContractIds?: string[];
 };
 export const DaemonPluginTargetedSourceDeclarationV1Schema: z.ZodMiniType<DaemonPluginTargetedSourceDeclarationV1> = lazyZodSchema(() => z.strictObject({
   manifest: z.strictObject({
@@ -477,7 +479,14 @@ export const DaemonPluginTargetedSourceDeclarationV1Schema: z.ZodMiniType<Daemon
   }),
   occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   sourceCustody: PluginSourceCustodyV1Schema,
-}));
+  actionResultContractIds: z.optional(z.array(PluginContributionLocalIdSchema)),
+}).check(z.superRefine((row, context) => {
+  if (!row.actionResultContractIds) return;
+  const actionIds = new Set(row.manifest.contributes.actions.map(action => action.id));
+  if (row.actionResultContractIds.some(id => !actionIds.delete(id))) {
+    context.addIssue({ code: 'custom', path: ['actionResultContractIds'], message: 'Result contracts must uniquely name Actions from this declaration.' });
+  }
+})));
 
 export type DaemonPluginUiTargetedContributionsReadResponse =
   | { status: 'sourceDeclarationsUnchanged'; pluginId: string; sourceRevision: string }
