@@ -696,10 +696,6 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     }, [props.initialBrowserState, resetKey]);
 
     React.useEffect(() => {
-        surfaceStateRef.current = surfaceState;
-    }, [surfaceState]);
-
-    React.useEffect(() => {
         previousLifecycleSnapshotRef.current = lifecycleSnapshot;
         props.onLifecycleChange?.(lifecycleSnapshot);
     }, [lifecycleSnapshot, props.onLifecycleChange]);

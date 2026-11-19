@@ -2341,6 +2341,54 @@ describe('BrowserSurfaceHost', () => {
         expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('first.test');
     });
 
+    it('retains ready navigation when a later event arrives between commit effects', async () => {
+        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), {
+            kind: 'streamedBrowser', targetId: 'navigation-stream', streamId: 'navigation-stream',
+        }, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web', currentUrl: 'https://first.test/' });
+        let control: ReturnType<typeof readRegisteredBrowserRuntimeControlAdapter>;
+        let readyDelivered = false;
+        let controllerDelivered = false;
+        const navigation = { kind: 'navigationStateChanged' as const, browserSessionId: 'session_1', viewId: 'agent-view',
+            currentUrl: 'https://next.test/', canGoBack: true, canGoForward: false };
+        const renderHost = (width: number) => <BrowserSurfaceHost
+            browserSessionId="session_1" platform="web" initialBrowserState={initialBrowserState}
+            surfaceKey="navigation-race" presentationSlotId="details:navigation" visible active
+            measuredRect={{ x: 0, y: 0, width, height: 600 }}
+            pluginBrowserActionContext={{ sessionId: 'session_1' }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            productModels={{ browserProfile: { profile: sessionBrowserProfile } }}
+            browserFeatureDecision={enabledBrowserDecision}
+            onViewStateChange={view => {
+                if (readyDelivered || view.currentUrl !== navigation.currentUrl) return;
+                readyDelivered = true;
+                // Loaded trace: navigation 57/ready reaches the owner before its prior commit's effects finish.
+                void control?.applyDaemonEvents?.([{ ...navigation, eventId: 'ready-57', occurredAt: 57,
+                    navigationGeneration: 57, loadingState: 'ready' }]);
+            }}
+            onLifecycleChange={() => {
+                if (!readyDelivered || controllerDelivered) return;
+                controllerDelivered = true;
+                // The next received controller event must use the latest navigation projection.
+                void control?.applyDaemonEvents?.([{ kind: 'controllerChanged', eventId: 'controller-56', occurredAt: 58,
+                    browserSessionId: 'session_1', viewId: 'agent-view', navigationGeneration: 56,
+                    state: { browserSessionId: 'session_1', viewId: 'agent-view', controller: 'human', controlEpoch: 17,
+                        interruptionSettling: false, uncertain: false } }]);
+            }} testID="browser-surface" />;
+        const screen = await renderScreen(renderHost(800));
+        control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
+        expect(control).toBeDefined();
+        await act(async () => {
+            void control?.applyDaemonEvents?.([{ ...navigation, eventId: 'loading-56', occurredAt: 56,
+                navigationGeneration: 56, loadingState: 'loading' }]);
+            await screen.update(renderHost(801));
+        });
+        expect(readyDelivered && controllerDelivered).toBe(true);
+        expect(control?.readState()?.viewsById['agent-view']).toMatchObject({
+            navigationGeneration: 57, loadingState: 'ready', currentUrl: navigation.currentUrl,
+        });
+    });
+
     it('keeps the workspace tab when a profile switch closes and reopens its logical view in one receipt', async () => {
         const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
         const { BrowserShell } = await import('../BrowserShell');

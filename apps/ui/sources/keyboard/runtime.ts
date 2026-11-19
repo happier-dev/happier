@@ -99,8 +99,11 @@ function getCommandBindings(
                 : {}),
         }));
     }
-    if (command?.defaultBindings && command.defaultBindings.length > 0) return command.defaultBindings;
-    return command?.defaultBinding ? [command.defaultBinding] : [];
+    const defaults = command?.defaultBindings?.length ? command.defaultBindings
+        : command?.defaultBinding ? [command.defaultBinding] : [];
+    return defaults.map(rule => rule.allowInEditable == null && command?.allowInEditable != null
+        ? { ...rule, allowInEditable: command.allowInEditable }
+        : rule);
 }
 
 export function isKeybindingRuleAvailable(

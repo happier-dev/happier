@@ -553,6 +553,27 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(labels['code.showInfo']).toBeUndefined();
     });
 
+    it.each([
+        ['browser.back', '[', 'BracketLeft'],
+        ['browser.forward', ']', 'BracketRight'],
+        ['browser.reload', 'r', 'KeyR'],
+    ] as const)('dispatches %s from the editable Browser address with its default binding', (commandId, key, code) => {
+        const navigate = vi.fn();
+        const dispatcher = createKeyboardShortcutDispatcher({
+            enabled: true,
+            platform: 'linux',
+            surface: 'web',
+            singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [],
+            overrides: {},
+            handlers: { [commandId]: navigate },
+            getContext: () => ({ isEditableTarget: true, isComposing: false }),
+        });
+
+        expect(dispatcher(keyEvent({ key, code, altKey: true }))).toBe(true);
+        expect(navigate).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps editable-safe commands editable when their shortcut is overridden', () => {
         const sendImmediate = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
