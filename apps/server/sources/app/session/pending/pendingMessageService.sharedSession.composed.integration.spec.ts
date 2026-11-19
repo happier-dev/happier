@@ -84,7 +84,8 @@ import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ConversationObservationV1Schema } from '@happier-dev/channels-protocol/v1';
 import { readSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { UserMessageSchema } from '../../../../../cli/src/api/types';
+import { UpdateSchema, UserMessageSchema } from '../../../../../cli/src/api/types';
+import { handleSessionNewMessageUpdate } from '../../../../../cli/src/api/session/sessionNewMessageUpdate';
 
 type EnqueuePendingMessageParams = Parameters<typeof enqueuePendingMessageWithAction>[0];
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -3544,18 +3545,13 @@ describe("pendingMessageService (shared sessions)", () => {
             actorAccountId: author.id,
             sessionRelationship,
         };
-        const authority = settleSessionInputRequestV1({
-            request: admission.request,
-            currentSessionPermissionCeiling: "default",
-            inputAdmissionReceipt: receipt,
-        });
         const expectedProvenance = settleSessionMessageProvenanceV1({
             request: admission.request,
             requestedProvenance: admission.provenance,
             inputAdmissionReceipt: receipt,
         });
 
-        const settle = async (provenance: SessionMessageProvenanceV1) => {
+        const settle = async (provenance: SessionMessageProvenanceV1, observeAccountInput = false) => {
             const localId = `ui-provenance-settlement-${randomUUID()}`;
             const requestMeta = {
                 sentFrom: "ui",
@@ -3571,8 +3567,18 @@ describe("pendingMessageService (shared sessions)", () => {
                     v: { role: "user", content: { type: "text", text: "settle provenance" }, meta: requestMeta },
                 },
             })).resolves.toMatchObject({ ok: true, didWrite: true });
+            const pending = await db.sessionPendingMessage.findUniqueOrThrow({
+                where: { sessionId_localId: { sessionId: session.id, localId } },
+            });
+            const admittedReceipt = SessionInputAdmissionReceiptV1Schema.parse(pending.inputAdmissionReceipt);
+            expect(admittedReceipt).toMatchObject(receipt);
+            const authority = settleSessionInputRequestV1({
+                request: admission.request,
+                currentSessionPermissionCeiling: "default",
+                inputAdmissionReceipt: admittedReceipt,
+            });
             await markPendingProviderDeliveryClaimed({ sessionId: session.id, localId });
-            return settlePendingInputAdmission({
+            const settled = await settlePendingInputAdmission({
                 actorUserId: owner.id,
                 sessionId: session.id,
                 localId,
@@ -3592,9 +3598,42 @@ describe("pendingMessageService (shared sessions)", () => {
                     },
                 },
             });
+            if (observeAccountInput) {
+                const serverId = await getOrCreateServerIdentityId();
+                expect(() => settleSessionInputRequestV1({
+                    request: { ...admission.request, actionRequestAttributionV1: {
+                        requestRef: localId, requester: { serverId, accountId: owner.id },
+                        persona: { serverId, sessionId: session.id }, origin: null,
+                    } },
+                    currentSessionPermissionCeiling: "default",
+                    inputAdmissionReceipt: admittedReceipt,
+                })).toThrow(TypeError);
+                const stored = await db.sessionMessage.findUniqueOrThrow({
+                    where: { sessionId_localId: { sessionId: session.id, localId } },
+                });
+                const inputs: ReturnType<typeof UserMessageSchema.parse>[] = [];
+                handleSessionNewMessageUpdate({
+                    mode: 'plain', ctx: null, serverId, sessionId: session.id,
+                    update: UpdateSchema.parse({ id: stored.id, seq: stored.seq, createdAt: Number(stored.createdAt),
+                        body: { t: 'new-message', delivery: 'full', sid: session.id, message: {
+                            id: stored.id, seq: stored.seq, localId, messageRole: 'user',
+                            content: stored.content, inputAdmissionReceipt: stored.inputAdmissionReceipt,
+                            createdAt: Number(stored.createdAt), updatedAt: Number(stored.updatedAt),
+                        } } }),
+                    receivedMessageIds: new Set(), lastObservedMessageSeq: 0, lastObservedUserMessageSeq: 0,
+                    emit: (event, message) => { if (event === 'user-message') inputs.push(UserMessageSchema.parse(message)); },
+                    debug: () => {}, debugLargeJson: () => {},
+                });
+                expect(publisherAuthority.accountId).toBe(owner.id);
+                expect(inputs).toMatchObject([{ actionRequestAttributionV1: {
+                    requestRef: localId, requester: { serverId, accountId: author.id },
+                    persona: { serverId, sessionId: session.id },
+                } }]);
+            }
+            return settled;
         };
 
-        await expect(settle(expectedProvenance)).resolves.toMatchObject({
+        await expect(settle(expectedProvenance, sessionRelationship === "sharedEditor")).resolves.toMatchObject({
             ok: true,
             result: { status: "accepted" },
             message: {
