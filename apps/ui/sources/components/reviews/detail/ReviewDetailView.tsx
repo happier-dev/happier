@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierFactLine } from '@happier-dev/plugin-ui/presentation';
+import { HappierReviewGlanceLine, type HappierReviewGlance } from '@happier-dev/plugin-ui/presentation';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 
 import type { ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
@@ -65,12 +65,8 @@ export type ReviewDetailRound = Readonly<{
   groups: readonly ReviewDetailRoundGroup[];
 }>;
 
-export type ReviewDetailGlance = Readonly<{
-  sentence: string;
-  /** `attention` marks the sentence with the needs-you dot; healthy states stay quiet. */
-  tone: 'quiet' | 'attention' | 'failed';
-  facts: readonly string[];
-}>;
+/** One verdict sentence and its facts: the shared Review glance (`HappierReviewGlance`). */
+export type ReviewDetailGlance = HappierReviewGlance;
 
 export type ReviewDetailTab = Readonly<{
   id: ReviewDetailTabId;
@@ -189,28 +185,9 @@ export function ReviewDetailInset(props: Readonly<{ children: React.ReactNode }>
 export function ReviewGlanceLine(
   props: Readonly<{ glance: ReviewDetailGlance }>,
 ) {
-  const { theme } = useUnistyles();
   const workTheme = useWorkTheme();
-  const { glance } = props;
-  const dot =
-    glance.tone === 'attention'
-      ? theme.colors.state.warning.textForeground
-      : glance.tone === 'failed'
-        ? theme.colors.state.danger.textForeground
-        : null;
-  return (
-    <View testID="review-detail:glance" style={styles.glance}>
-      <View style={styles.glanceSentence}>
-        {dot ? (
-          <View style={[styles.glanceDot, { backgroundColor: dot }]} />
-        ) : null}
-        <Text variant="heading" style={styles.glanceText}>
-          {glance.sentence}
-        </Text>
-      </View>
-      <HappierFactLine facts={glance.facts} theme={workTheme} host={WORK_HOST} testID="review-detail:facts" />
-    </View>
-  );
+  return <HappierReviewGlanceLine glance={props.glance} testID="review-detail:glance" factsTestID="review-detail:facts"
+    theme={workTheme} host={WORK_HOST} />;
 }
 
 const GROUP_STATUS_ICON: Record<ReviewDetailRoundGroup['status'], IconName> = {
@@ -335,10 +312,6 @@ const styles = StyleSheet.create((theme) => ({
     column: { gap: theme.space.s16, paddingBottom: theme.space.s32 },
     lead: { gap: theme.space.s8, paddingHorizontal: CONTENT_INSET_PX, paddingTop: theme.space.s16 },
     inset: { paddingHorizontal: CONTENT_INSET_PX, alignItems: 'flex-start' },
-    glance: { gap: theme.space.s4 },
-    glanceSentence: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
-    glanceDot: { width: theme.space.s8, height: theme.space.s8, borderRadius: theme.space.s4 },
-    glanceText: { color: theme.colors.text.primary, flexShrink: 1 },
     groupDetail: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
     participants: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
     participant: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0 },

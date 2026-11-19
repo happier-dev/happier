@@ -53,6 +53,8 @@ export const HAPPIER_REVIEW_SEVERITY_METRICS = Object.freeze({
   labelDotPx: 6,
   railDotPx: 7,
   gapPx: 6,
+  /** A finding line's severity column: wide enough for "● Medium", so titles share one left edge. */
+  columnPx: 72,
 });
 
 export type HappierReviewSeveritySignProps = Readonly<{

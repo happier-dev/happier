@@ -1,22 +1,21 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { HappierReviewSummary, type HappierReviewSummaryRow } from '@happier-dev/plugin-ui/presentation';
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { ReviewFindingLine } from '@/components/sessions/reviews/findings/ReviewSeverity';
+import { reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
+import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
+import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import {
-  ReviewGlanceLine,
-  type ReviewDetailGlance,
-} from '../detail/ReviewDetailView';
+import type { ReviewDetailGlance } from '../detail/ReviewDetailView';
 
 export type ReviewSummaryRow = Readonly<{
   rowId: string;
@@ -60,129 +59,52 @@ export type ReviewSummaryProps = Readonly<{
  */
 export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
   const { theme } = useUnistyles();
-  const statusColor =
-    props.status?.tone === 'attention'
-      ? theme.colors.state.warning.textForeground
-      : props.status?.tone === 'failed'
-        ? theme.colors.state.danger.textForeground
-        : theme.colors.text.secondary;
-  const reviewerNames = props.reviewers
-    .map((reviewer) => reviewer.label)
-    .join(t('reviewWalkthrough.and'));
+  const workTheme = useWorkTheme();
+  const rows = React.useMemo((): readonly HappierReviewSummaryRow[] => props.rows.map((row) => {
+    const severityLabel = reviewSeverityLabel(row.severity);
+    const find = row.findBlockPrefix;
+    // In a transcript the Find owner names each run of text, so a search can land on it.
+    return find ? {
+      rowId: row.rowId, severity: row.severity, accessibilityLabel: `${severityLabel}: ${row.title}`,
+      severityLabel: <StructuredFindText blockId={`${find}:severity`} text={severityLabel} />,
+      title: <StructuredFindText blockId={`${find}:title`} text={row.title} numberOfLines={1} style={styles.rowTitle} />,
+      reviewer: <StructuredFindText blockId={`${find}:reviewer`} text={row.reviewer} numberOfLines={1} style={styles.rowReviewer} />,
+    } : { rowId: row.rowId, severity: row.severity, severityLabel, title: row.title, reviewer: row.reviewer,
+      accessibilityLabel: `${severityLabel}: ${row.title}` };
+  }), [props.rows]);
   return (
-    <View testID={props.testID ?? 'review-summary'} style={styles.root}>
-      <View style={styles.head}>
-        <Icon
-          name="list-checks"
-          size={ICON_SIZE.sm}
-          color={theme.colors.text.secondary}
-        />
-        <Text variant="label" emphasis="semiBold" style={styles.headTitle}>
-          {t('detailsSurface.review.title')}
-        </Text>
-        {props.subject ? (
-          <Text variant="label" style={styles.headSubject} numberOfLines={1}>
-            {props.subject}
-          </Text>
-        ) : null}
-        {props.status ? (
-          <Text
-            variant="meta"
-            style={[styles.headStatus, { color: statusColor }]}
-            numberOfLines={1}
-          >
-            {props.status.label}
-          </Text>
-        ) : null}
-      </View>
-      <ReviewGlanceLine glance={props.glance} />
-      {props.rows.length > 0 ? (
-        <View style={styles.rows}>
-          {props.rows.map((row) => (
-            <ReviewFindingLine
-              key={row.rowId}
-              testID={`review-summary:row:${row.rowId}`}
-              severity={row.severity}
-              title={row.title}
-              reviewer={row.reviewer}
-              findBlockPrefix={row.findBlockPrefix}
-              {...(props.onOpenRow
-                ? { onPress: () => props.onOpenRow?.(row.rowId) }
-                : {})}
-            />
-          ))}
-          {props.more ? (
-            <TextLinkButton
-              testID="review-summary:more"
-              size="meta"
-              label={props.more.label}
-              onPress={props.more.onPress}
-            />
-          ) : null}
-        </View>
+    <HappierReviewSummary
+      testID={props.testID ?? 'review-summary'}
+      theme={workTheme}
+      host={WORK_HOST}
+      heading={t('detailsSurface.review.title')}
+      headMark={<Icon name="list-checks" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+      subject={props.subject}
+      status={props.status ?? null}
+      glance={props.glance}
+      rows={rows}
+      {...(props.onOpenRow ? { onOpenRow: props.onOpenRow } : {})}
+      more={props.more ? (
+        <TextLinkButton testID="review-summary:more" size="meta" label={props.more.label} onPress={props.more.onPress} />
       ) : null}
-      <View style={styles.foot}>
-        <View style={styles.marks}>
-          {props.reviewers.map((reviewer) =>
-            hasAgentIconMark(reviewer.backendId, theme) ? (
-              <AgentIcon
-                key={reviewer.backendId}
-                agentId={reviewer.backendId}
-                size={ICON_SIZE.sm}
-              />
-            ) : null,
-          )}
-          <Text variant="meta" style={styles.reviewers} numberOfLines={1}>
-            {reviewerNames}
-          </Text>
-        </View>
-        {props.implement ? (
-          <RoundButton
-            testID="review-summary:implement"
-            size="small"
-            title={props.implement.label}
-            loading={props.implement.busy}
-            disabled={props.implement.busy}
-            onPress={props.implement.onPress}
-          />
-        ) : null}
-        <TextLinkButton
-          testID="review-summary:open"
-          size="row"
-          label={t('reviewWalkthrough.detail.openReview')}
-          onPress={props.onOpenReview}
-        />
-      </View>
-    </View>
+      reviewerMarks={props.reviewers.map((reviewer) => hasAgentIconMark(reviewer.backendId, theme)
+        ? <AgentIcon key={reviewer.backendId} agentId={reviewer.backendId} size={ICON_SIZE.sm} /> : null)}
+      reviewers={props.reviewers.map((reviewer) => reviewer.label).join(t('reviewWalkthrough.and'))}
+      actions={(
+        <>
+          {props.implement ? (
+            <RoundButton testID="review-summary:implement" size="small" title={props.implement.label}
+              loading={props.implement.busy} disabled={props.implement.busy} onPress={props.implement.onPress} />
+          ) : null}
+          <TextLinkButton testID="review-summary:open" size="row" label={t('reviewWalkthrough.detail.openReview')}
+            onPress={props.onOpenReview} />
+        </>
+      )}
+    />
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  root: { gap: theme.space.s8 },
-  head: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
-  headTitle: { color: theme.colors.text.primary },
-  headSubject: { color: theme.colors.text.secondary, flexShrink: 1 },
-  headStatus: { marginLeft: 'auto' },
-  rows: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border.default,
-    paddingTop: theme.space.s8,
-    gap: theme.space.s4,
-  },
-  foot: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border.default,
-    paddingTop: theme.space.s8,
-  },
-  marks: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s4,
-    flex: 1,
-    minWidth: 0,
-  },
-  reviewers: { color: theme.colors.text.secondary, flexShrink: 1 },
+  rowTitle: { ...Typography.variant('body'), color: theme.colors.text.primary },
+  rowReviewer: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
 }));

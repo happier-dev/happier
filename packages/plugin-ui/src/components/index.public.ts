@@ -1642,6 +1642,14 @@ export {
   type HappierWorkUpdateCardSurface,
 } from '../presentation/work/WorkUpdateCard.js';
 export {
+  HappierReviewGlanceLine,
+  HappierReviewSummary,
+  type HappierReviewGlance,
+  type HappierReviewSummaryProps,
+  type HappierReviewSummaryRow,
+  type HappierReviewTone,
+} from '../presentation/work/ReviewSummary.js';
+export {
   buildHappierWorkMap,
   formatHappierWorkMapNodeName,
   resolveHappierWorkMapNodePosition,

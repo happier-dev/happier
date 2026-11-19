@@ -710,6 +710,14 @@ export {
   type HappierReviewSeveritySignProps,
 } from './status/ReviewSeverity.js';
 export {
+  HappierReviewGlanceLine,
+  HappierReviewSummary,
+  type HappierReviewGlance,
+  type HappierReviewSummaryProps,
+  type HappierReviewSummaryRow,
+  type HappierReviewTone,
+} from './work/ReviewSummary.js';
+export {
   HappierRowActionDeferredIcon,
   HappierRowActionRevealSlot,
   type HappierRowActionRevealSlotProps,

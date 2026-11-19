@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HappierReviewSeveritySign } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_REVIEW_SEVERITY_METRICS, HappierPressable, HappierReviewSeveritySign } from '@happier-dev/plugin-ui/presentation';
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -165,8 +165,8 @@ export function ReviewFindingLine(
   );
 }
 
-/** The severity column of a finding line: wide enough for "● Medium", so titles share one left edge. */
-export const REVIEW_SEVERITY_COLUMN_WIDTH_PX = 72;
+/** The severity column of a finding line (the shared metric), so titles share one left edge. */
+export const REVIEW_SEVERITY_COLUMN_WIDTH_PX = HAPPIER_REVIEW_SEVERITY_METRICS.columnPx;
 
 const styles = StyleSheet.create((theme) => ({
   severityText: {  ...Typography.variant('body', 'semiBold') },
