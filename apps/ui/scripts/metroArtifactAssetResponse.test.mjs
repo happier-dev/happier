@@ -20,10 +20,12 @@ async function serve(run) {
             return;
         }
         res.setHeader('Content-Type', req.url.startsWith('/assets/') ? false : 'application/javascript');
-        res.setHeader('Cache-Control', 'no-store');
         res.end(body);
     }, ['bundle', 'map']);
-    const server = createServer((req, res) => compression(req, res, () => artifactResponse(req, res)));
+    const server = createServer((req, res) => {
+        res.setHeader('Cache-Control', 'no-store');
+        compression(req, res, () => artifactResponse(req, res));
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
         await run(`http://127.0.0.1:${server.address().port}`);
@@ -61,11 +63,19 @@ test('compresses exact packaged source assets once and preserves decoded bytes',
     });
 });
 
-test('preserves Expo bundle compression, ordinary assets and asset errors', async () => {
+test('serves web dev bundles directly and preserves other Metro responses', async () => {
     await serve(async origin => {
-        const bundle = await request(origin, '/index.bundle?platform=web');
-        assert.equal(bundle.headers['content-encoding'], 'br');
-        assert.deepEqual(brotliDecompressSync(bundle.bytes), body);
+        const bundle = await request(origin, '/index.bundle?platform=web&dev=true&hot=false');
+        assert.equal(bundle.status, 200);
+        assert.equal(bundle.headers['content-encoding'], undefined);
+        assert.deepEqual(bundle.bytes, body);
+        assert.match(bundle.headers['cache-control'], /\bno-store\b/);
+        for (const path of ['/index.bundle?platform=android&dev=true', '/index.bundle?platform=web&dev=false',
+            '/index.map?platform=web&dev=true']) {
+            const compressed = await request(origin, path);
+            assert.equal(compressed.headers['content-encoding'], 'br', path);
+            assert.deepEqual(brotliDecompressSync(compressed.bytes), body);
+        }
         const ordinary = await request(origin, '/assets/?unstable_path=./logo.png');
         assert.equal(ordinary.headers['content-encoding'], undefined);
         assert.equal(ordinary.headers['content-type'], 'false');

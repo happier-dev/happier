@@ -11,6 +11,13 @@ exports.createArtifactAssetResponse = (middleware, artifactExtensions) => (req, 
     try { url = new URL(req.url ?? '/', 'http://localhost'); } catch { return middleware(req, res, next); }
     const assetPath = url.searchParams.get('unstable_path')?.split('?')[0] ?? url.pathname;
     if (!/^\/assets(?:\/|$)/.test(url.pathname) || !artifactExtensions.includes(extname(assetPath).slice(1))) {
+        if (url.pathname.endsWith('.bundle') && url.searchParams.get('platform') === 'web'
+            && url.searchParams.get('dev') === 'true') {
+            // Expo's outer compression middleware honors no-transform at writeHead.
+            // A generated web dev bundle is faster to send than to compress on demand.
+            const cacheControl = res.getHeader('Cache-Control');
+            res.setHeader('Cache-Control', cacheControl ? `${cacheControl}, no-transform` : 'no-transform');
+        }
         return middleware(req, res, next);
     }
     const setHeader = res.setHeader;
