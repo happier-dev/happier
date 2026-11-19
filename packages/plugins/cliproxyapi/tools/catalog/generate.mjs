@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolveMuseModelCapabilities } from '../../../muse/src/modelFacts.ts';
+import { resolveMuseModelCapabilities, resolveMuseModelUpstreamRef } from '../../../muse/src/modelFacts.ts';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from '../../src/provider/managedContract.ts';
@@ -7,7 +7,9 @@ import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from '../../src/provider/managed
 if (process.argv.includes('--project-model-facts')) {
   const rows = JSON.parse(readFileSync(0, 'utf8'));
   if (rows.meta) rows.meta = rows.meta.map(model => ({
-    ...model, capabilities: resolveMuseModelCapabilities(model.id, model.modelOptions),
+    ...model,
+    capabilities: resolveMuseModelCapabilities(model.id, model.modelOptions),
+    upstreamRef: resolveMuseModelUpstreamRef(model.id),
   }));
   process.stdout.write(JSON.stringify(rows));
 } else {

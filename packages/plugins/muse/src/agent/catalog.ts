@@ -3,7 +3,7 @@ import { formatReasoningEffortTierLabel } from '@happier-dev/plugin-sdk/provider
 import type { AgentPreflightSessionControlsContributionV1, AgentSessionModel, AgentSessionModelsSnapshot, AgentSessionModelsSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginJsonRpcClient } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
-import { resolveMuseModelCapabilities } from '../modelFacts.js';
+import { resolveMuseModelCapabilities, resolveMuseModelUpstreamRef } from '../modelFacts.js';
 
 import { MUSE_LAUNCH_ENV_KEYS } from './cli.js';
 import { initializeMuseMsp, MUSE_MSP_LAUNCH } from './msp.js';
@@ -89,7 +89,12 @@ function parseCatalog(value: unknown): Readonly<{
       }] }),
     };
     return providerId === 'meta'
-      ? { ...model, capabilities: resolveMuseModelCapabilities(modelId, model.modelOptions) } : model;
+      ? {
+          ...model,
+          capabilities: resolveMuseModelCapabilities(modelId, model.modelOptions),
+          upstreamRef: resolveMuseModelUpstreamRef(modelId),
+        }
+      : model;
   });
   return { models, nativeModels, currentModelId };
 }

@@ -23,6 +23,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createMuseCatalog } from '../../../../../packages/plugins/muse/src/agent/catalog';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './bootstrapMachineSyncRuntime';
 
 it('reads custodian Muse models for a Team member without impersonating requester automation', async () => {
@@ -56,11 +57,13 @@ it('reads custodian Muse models for a Team member without impersonating requeste
     expect(request).toMatchObject({ method: 'probeModels', params: { connectedServices: {
       v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': { source: 'connected', profileId: 'custodian-muse' } },
     } } });
-    return nativeAvailable ? { ok: true, result: { agentId: 'muse', source: 'dynamic', supportsFreeform: false,
-      availableModels: [{ id: 'default', name: 'Default' },
-        { id: 'other/foreign-model', name: 'Other source' },
-        { id: 'meta/muse-spark-1.3-contributor', name: 'Muse Spark' }] } }
-      : { ok: false, error: { code: 'native_unavailable', message: 'Unavailable' } };
+    if (!nativeAvailable) return { ok: false, error: { code: 'native_unavailable', message: 'Unavailable' } };
+    const { models } = await createMuseCatalog({ request: async () => ({ models: [
+      { providerId: 'other', modelId: 'foreign-model' },
+      { providerId: 'meta', modelId: 'muse-spark-1.3-contributor', displayLabel: 'Muse Spark' },
+    ] }) }).refresh();
+    return { ok: true, result: { agentId: 'muse', source: 'dynamic', supportsFreeform: false,
+      availableModels: [{ id: 'default', name: 'Default' }, ...(models ?? [])] } };
   } }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] }, buildContext: async () => ({ cliSnapshot: null }) });
   const registeredHostCapabilities = registerCapabilitiesHandlers(rpc);
   const apiMachine = { ...createApiMachineTransportFixture(),
@@ -94,8 +97,11 @@ it('reads custodian Muse models for a Team member without impersonating requeste
     expect(result.status).toBe('success');
     if (result.status !== 'success') throw new Error('Expected current source');
     expect(result.catalogs).toHaveLength(3);
-    expect(result.catalogs.every(catalog => catalog.rows.length === 1
-      && catalog.rows[0]?.descriptor.id === 'muse-spark-1.3-contributor' && catalog.rows[0]?.confidence === 'probe')).toBe(true);
+    for (const catalog of result.catalogs) {
+      expect(catalog.rows).toMatchObject([{ confidence: 'probe', descriptor: {
+        id: 'muse-spark-1.3-contributor', upstreamRef: { vendor: 'meta', vendorModelId: 'muse-spark-1.3-contributor' },
+      } }]);
+    }
     expect(nativeReads).toBe(1);
     const catalog = result.catalogs.find(candidate => candidate.application.protocol === 'openai-responses')!;
     await expect(resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: 'pi',

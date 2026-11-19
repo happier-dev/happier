@@ -3301,6 +3301,12 @@ signed-out routes and routes that need a new key appear in the source menu and
 are excluded from the count. A connection's usage summary shows the measured
 window with the lowest remaining percentage when one is available.
 
+In 0.3 development, the Muse model catalog supplies the `meta` vendor and the
+exact Meta model ID for native Muse, the managed CLIProxyAPI Meta family, and
+OpenCode's Muse Account route through CLIProxyAPI. Team shares carry the source
+profile's reference. Contributor variants keep their own upstream IDs because
+the catalog does not establish equivalence to the plain IDs.
+
 New Session favorites use the existing Account preference. Starring a model can
 save its current Thinking level and restore it when the route still supports
 it. Changing Thinking changes the session. Updating the favorite saves the

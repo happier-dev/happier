@@ -45,6 +45,7 @@ function response(fingerprint: typeof source.connectionSecurityFingerprint = sou
                 descriptor: {
                     id: "gpt-5",
                     name: "GPT-5",
+                    upstreamRef: { vendor: 'openai', vendorModelId: 'gpt-5' },
                     capabilities: { reasoningControls: "supported" as const },
                     modelOptions: [{
                         id: "reasoning_effort",
@@ -126,7 +127,7 @@ describe("projectTeamCredentialProviderModels", () => {
         });
     });
 
-    it("preserves source catalog uncertainty independently of route availability", () => {
+    it("preserves source catalog identity and uncertainty independently of route availability", () => {
         const observed = response();
         Object.assign(observed.groups[0]!.rows[0]!, { confidence: 'account_unverified',
             confirmationSource: { connectionId: source.connectionId, catalogSourceKey: 's'.repeat(43) } });
@@ -137,6 +138,7 @@ describe("projectTeamCredentialProviderModels", () => {
         });
         expect(projected).toMatchObject({ status: 'success', models: [{
             confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
+            descriptor: { upstreamRef: { vendor: 'openai', vendorModelId: 'gpt-5' } },
             availability: 'available',
         }] });
         expect(projected.models[0]).not.toHaveProperty('confirmationSource');

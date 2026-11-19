@@ -1,7 +1,38 @@
 import { expect, it } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
+import { createMuseCatalog } from '../../../../../../packages/plugins/muse/src/agent/catalog';
+import { CLIPROXYAPI_STATIC_MODELS } from '../../../../../../packages/plugins/cliproxyapi/src/provider/staticModels.generated';
 import { selectSessionModelPickerSourceGroups } from './selectSessionModelPickerSourceGroups';
+
+it('groups each Muse model across its native catalog and two gateway connections', async () => {
+    const modelIds = ['muse-spark-1.3', 'muse-spark-1.3-contributor'];
+    const { models: native } = await createMuseCatalog({
+        request: async () => ({ models: modelIds.map(modelId => ({ providerId: 'meta', modelId })) }),
+    }).refresh();
+    const gateway = CLIPROXYAPI_STATIC_MODELS.meta.filter(model => modelIds.includes(model.id));
+    const agentTargetKey = 'agent:happier.agent.muse/muse';
+    const connections = ['pc_muse_primary', 'pc_muse_secondary'].map(id => ProviderConnectionIdSchema.parse(id));
+    const groups = selectSessionModelPickerSourceGroups([{ id: 'models', options: [
+        ...(native ?? []).map(model => ({
+            value: { agentTargetKey, providerConnectionId: null, modelId: model.id },
+            label: model.name,
+            upstreamRef: model.upstreamRef,
+        })),
+        ...connections.flatMap(providerConnectionId => gateway.map(model => ({
+            value: { agentTargetKey, providerConnectionId, modelId: model.id },
+            label: model.name,
+            upstreamRef: model.upstreamRef,
+        }))),
+    ] }]);
+    expect(groups.map(group => ({
+        upstreamRef: group.upstreamRef,
+        connections: group.sources.map(source => source.providerConnectionId),
+        sourceCount: group.sourceCount,
+    }))).toEqual(modelIds.map(vendorModelId => ({
+        upstreamRef: { vendor: 'meta', vendorModelId }, connections: [null, ...connections], sourceCount: 3,
+    })));
+});
 
 it('groups only explicit upstream matches and counts distinct routes', () => {
     const upstreamRef = { vendor: 'openai', vendorModelId: 'gpt-4' };

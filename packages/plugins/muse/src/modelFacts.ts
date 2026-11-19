@@ -17,3 +17,8 @@ export function resolveMuseModelCapabilities(
     ...(modelId === 'muse-spark-1.3-contributor' ? { structuredOutput: 'supported' } : {}),
   };
 }
+
+/** Both catalogs identify the exact Meta model, including any contributor suffix. */
+export function resolveMuseModelUpstreamRef(modelId: string): NonNullable<AgentSessionModel['upstreamRef']> {
+  return { vendor: 'meta', vendorModelId: modelId };
+}
