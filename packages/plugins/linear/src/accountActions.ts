@@ -93,7 +93,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
           title: 'Edit this Linear issue?',
           confirmLabel: 'Save changes',
           inputFields: [
-            { path: 'lastKnownLocator.routingToken', title: 'Location' },
+            { path: 'lastKnownLocator.displayPath', title: 'Issue' },
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'localRef.entryId', title: 'Item' },
             { path: 'fields.title', title: 'Title' },
@@ -120,7 +120,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
           title: 'Change this Linear issue’s state?',
           confirmLabel: 'Change state',
           inputFields: [
-            { path: 'lastKnownLocator.routingToken', title: 'Location' },
+            { path: 'lastKnownLocator.displayPath', title: 'Issue' },
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'localRef.entryId', title: 'Item' },
             { path: 'transitionId', title: 'New status' },
@@ -140,7 +140,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
           title: 'Publish this comment in Linear?',
           confirmLabel: 'Publish comment',
           inputFields: [
-            { path: 'lastKnownLocator.routingToken', title: 'Location' },
+            { path: 'lastKnownLocator.displayPath', title: 'Issue' },
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'localRef.entryId', title: 'Item' },
             { path: 'body', title: 'Comment' },

@@ -60,7 +60,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
           title: 'Edit Jira issue',
           body: 'Apply these changes to the selected Jira issue?',
           inputFields: [
-            { path: 'lastKnownLocator.routingToken', title: 'Location' },
+            { path: 'lastKnownLocator.displayPath', title: 'Issue' },
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'localRef.entryId', title: 'Item' },
             { path: 'fields.title', title: 'Title' },
@@ -84,7 +84,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
           title: 'Transition Jira issue',
           body: 'Apply this native workflow transition to the selected Jira issue?',
           inputFields: [
-            { path: 'lastKnownLocator.routingToken', title: 'Location' },
+            { path: 'lastKnownLocator.displayPath', title: 'Issue' },
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'localRef.entryId', title: 'Item' },
             { path: 'transitionId', title: 'New status' },
@@ -103,7 +103,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
           title: 'Comment on Jira issue',
           body: 'Publish this comment on the selected Jira issue?',
           inputFields: [
-            { path: 'entry.lastKnownLocator.routingToken', title: 'Location' },
+            { path: 'entry.lastKnownLocator.displayPath', title: 'Issue' },
             { path: 'entry.instance.locator.displayLabel', title: 'Source' },
             { path: 'entry.localRef.entryId', title: 'Item' },
             { path: 'body', title: 'Comment' },
