@@ -112,10 +112,12 @@ export function MachineSetupRunProgress(
   const operations = React.useMemo(() => (setup.operation ? [setup.operation] : []), [setup.operation]);
   const progressOperation = setup.progressOperation;
   const domainRef = progressOperation?.snapshot.domainRef;
+  const observation = progressOperation?.observation;
   // The operation's own reviewed steps, in place; their labels carry their own fallback words.
   const steps = React.useMemo(
-    () => (domainRef?.kind === 'machineSetup' ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label)) : null),
-    [domainRef, localize],
+    () => (domainRef?.kind === 'machineSetup'
+      ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label), null, observation) : null),
+    [domainRef, localize, observation],
   );
   const operationId = setup.operationId;
   if (!operationId) return null;
@@ -239,7 +241,7 @@ export function MachineSetupRunRegion(
               <ActionOperationRows
                 operations={operations}
                 showDivider={!positionText}
-                runCard={() => ({ line: positionText ?? finishedLine ?? props.machineName, title: finishedTitle })}
+                runCard={() => ({ line: steps.progressObservationLabel ?? positionText ?? finishedLine ?? props.machineName, title: finishedTitle })}
                 onOpenOperation={(operation) =>
                   openActionOperationDetail({
                     serverId: operation.serverId,

@@ -126,14 +126,13 @@ export function MachineSetupRunSpecimen(
     scope ? { serverId: scope.serverId, operationId: OPERATION } : null,
   );
   const domainRef = operation?.snapshot.domainRef;
+  const observation = operation?.observation;
   const steps = React.useMemo(
     () =>
       domainRef?.kind === 'machineSetup'
-        ? projectMachineSetupStepChecklist(domainRef, (value) =>
-            localize('', value),
-          )
+        ? projectMachineSetupStepChecklist(domainRef, (value) => localize('', value), null, observation)
         : null,
-    [domainRef, localize],
+    [domainRef, localize, observation],
   );
   return (
     <ItemList>

@@ -804,6 +804,19 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect(screen.tree.findAll((node) => node.props?.description === emptyIntro)).toHaveLength(0);
     await waitForHomeGovernance(() => expect(runLine(t('machinePresets.setup.tab.stepOf', { current: 1, total: 2, machine: 'devbox' })))
       .toBe(true));
+    if (outcome === 'succeeded') {
+      const { reconcileActionOperationsOnce } = await import('@/sync/domains/actionOperations/actionOperationRuntime');
+      const scope = { serverId, machineId: 'devbox', accountId: 'owner' };
+      const stepRow = () => screen.findByTestId('machine-setup-steps-row-0:script:0');
+      expect(stepRow()?.props.accessibilityState.busy).toBe(true);
+      await act(async () => {
+        await reconcileActionOperationsOnce({ scope, list: async () => ({ items: [] }) });
+      });
+      expect(hook.getCurrent().progressOperation).toMatchObject({ observation: 'unavailable' });
+      expect(stepRow()?.props.accessibilityState.busy).toBe(false);
+      expect(screen.getTextContent()).toContain(t('inbox.actionOperations.observation.unavailable'));
+      expect(screen.findByTestId('machine-setup-progress')).toBeNull();
+    }
     await act(async () => { finishNative!(); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().progressOperation?.snapshot.state).toBe(outcome));
     if (outcome === 'failed') {

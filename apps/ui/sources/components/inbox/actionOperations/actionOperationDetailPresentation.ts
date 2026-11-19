@@ -4,7 +4,7 @@ import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/w
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { isActionOperationTerminal, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
-import { canRequestActionOperationStop, readProjectCommandStepExitCode } from './actionOperationPresentation';
+import { canRequestActionOperationStop, describeActionOperationStatusLabel, readProjectCommandStepExitCode } from './actionOperationPresentation';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -433,6 +433,7 @@ export type MachineSetupStepChecklist = Readonly<{
     items: readonly MachineSetupStepChecklistItem[];
     selectedIds: readonly string[];
     executionById: Readonly<Record<string, PlanChecklistExecutionState>>;
+    progressObservationLabel: string | null;
 }>;
 
 const SETUP_STEP_STATUS = {
@@ -446,11 +447,13 @@ export function projectMachineSetupStepChecklist(
     attachment: MachineSetupOutputAttachment,
     localizeLabel: (label: MachineSetupStep['label']) => string,
     question: ActionOperationSudoPrompt | null = null,
+    observation: ActionOperationObservation = 'available',
 ): MachineSetupStepChecklist | null {
     const steps = attachment.steps;
     if (!steps || steps.length === 0) return null;
     const items: MachineSetupStepChecklistItem[] = [];
     const executionById: Record<string, PlanChecklistExecutionState> = {};
+    let progressObservationLabel: string | null = null;
     for (const step of steps) {
         const id = `${step.planIndex}:${step.stepId}`;
         const title = typeof step.label !== 'string' && step.label.key === 'machinePresets.setup.scriptNumbered'
@@ -458,13 +461,17 @@ export function projectMachineSetupStepChecklist(
             ? t('machinePresets.setup.scriptNumbered', { index: step.label.params.index }) : localizeLabel(step.label);
         const subtitle = step.state === 'failed' ? describeMachineSetupFailureCause(step.failureCause)
             : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
+        const unobserved = observation !== 'available' && (step.state === 'running' || step.state === 'pending');
+        if (unobserved && step.state === 'running') {
+            progressObservationLabel ??= describeActionOperationStatusLabel({ kind: 'host', value: observation });
+        }
         items.push({ id, title, satisfied: false, disabled: true, ...(subtitle ? { subtitle } : {}),
-            needsAttention: question !== null && step.state === 'running',
+            needsAttention: !unobserved && question !== null && step.state === 'running',
             output: step.terminalId ? { kind: 'open_output', serverId: attachment.serverId,
                 machineId: attachment.machineId, terminalId: step.terminalId } : null });
-        executionById[id] = { status: SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
+        executionById[id] = { status: unobserved ? 'idle' : SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
     }
-    return { items, selectedIds: items.map((item) => item.id), executionById };
+    return { items, selectedIds: items.map((item) => item.id), executionById, progressObservationLabel };
 }
 
 function projectMachineReboot(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {

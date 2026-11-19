@@ -29,7 +29,7 @@ export function MachineSetupStepsChecklist(props: Readonly<{
   const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
   const steps = React.useMemo(() => {
     const question = readActionOperationSudoPrompt(operation.snapshot);
-    const projected = projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question);
+    const projected = projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation.observation);
     if (!projected || !stepOutput) return projected;
     const items = projected.items.map((item): PlanChecklistItem => {
       const output = item.output;
