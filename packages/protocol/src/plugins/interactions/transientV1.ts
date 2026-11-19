@@ -285,16 +285,19 @@ const AuthorTextQuestionV1Schema = lazyZodSchema(() => z.strictObject({
   required: z.optional(z.boolean()),
   allowNote: z.optional(z.boolean()),
 }));
-const AuthorChoiceQuestionV1Schema = lazyZodSchema(() => z.strictObject({
+const authorChoiceQuestionFields = () => ({
   id: boundedIdentifier('Interaction question ids'),
   prompt: boundedPrompt('Interaction question prompts'),
   description: z.optional(boundedPrompt('Interaction question descriptions')),
-  type: z.union([z.literal('singleChoice'), z.literal('multipleChoice')]),
   required: z.optional(z.boolean()),
   allowCustom: z.optional(z.boolean()),
   allowNote: z.optional(z.boolean()),
-  ...StructuredQuestionSelectionConstraintsV1Schema.shape,
   choices: z.array(InteractionTransientAuthorChoiceV1Schema).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_CHOICES_V1)),
+});
+const AuthorChoiceQuestionV1Schema = lazyZodSchema(() => z.strictObject({
+  ...authorChoiceQuestionFields(),
+  type: z.union([z.literal('singleChoice'), z.literal('multipleChoice')]),
+  ...StructuredQuestionSelectionConstraintsV1Schema.shape,
 }).check(z.superRefine((question, context) => {
   issueForDuplicateIds(question.choices, context, ['choices'], 'Interaction choice');
   validateQuestionSelectionConstraints(question, context);
@@ -367,6 +370,20 @@ export const InteractionTransientQuestionsAuthorRequestV1Schema = lazyZodSchema(
 }).check(z.superRefine((request, context) => {
   issueForDuplicateIds(request.questions, context, ['questions'], 'Interaction question');
 })));
+/**
+ * The author questions request as a shape a model can be given as JSON Schema: selection bounds are offered on
+ * multiple choice only, and the cross-field refinements (duplicate ids, bounds) that JSON Schema can't carry are
+ * left out. It describes what to answer; admission still goes through InteractionTransientQuestionsAuthorRequestV1Schema.
+ */
+export const InteractionTransientQuestionsAuthorModelShapeV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('questions'),
+  title: z.optional(boundedTitleOrLabel('Interaction question titles')),
+  questions: z.array(z.union([
+    AuthorTextQuestionV1Schema,
+    z.strictObject({ ...authorChoiceQuestionFields(), type: z.literal('singleChoice') }),
+    z.strictObject({ ...authorChoiceQuestionFields(), type: z.literal('multipleChoice'), ...StructuredQuestionSelectionConstraintsV1Schema.shape }),
+  ])).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_QUESTIONS_V1)),
+}));
 const ApprovalAuthorRequestV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('approval'),
   title: boundedTitleOrLabel('Interaction approval titles'),

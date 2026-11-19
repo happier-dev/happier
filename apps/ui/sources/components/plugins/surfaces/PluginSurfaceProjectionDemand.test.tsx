@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
 
@@ -102,4 +102,56 @@ it('reads registry sources from each Machine the app union still waits on, besid
         .map(node => node.props.target as { serverIdentityId: string; machineId: string })
         .map(target => [target.serverIdentityId, target.machineId]).sort();
     expect(targets).toEqual([['home-demand', 'machine-1'], ['srv_retired', 'machine-1']]);
+});
+
+// AUTO-FIX-W6 (tab freeze candidate, REVIEW-DELTA2): New app keeps this registry demand mounted for the whole auto
+// step, while the step re-renders on each suggestion progress event and the app shell republishes. Measured: none of
+// that churn remounts a Machine demand (a remount would restart its acquisition) or redraws one.
+it('keeps the auto step\'s registry demand still through its re-renders and republications', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { REGISTRY_SOURCE_PROJECTION_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
+    const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+    const snapshot = (cursor: number) => ({ availabilityCursor: cursor, intentReads: [], snapshots: [],
+        materializations: machineIds.map(materialization) });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: snapshot(1) });
+    const value = (targets: readonly { machineId: string; serverId: string }[]) => ({ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
+        pluginBrowserProjection: null, phase: 'current' as const, hasEstablishingMembers: true, registrySourcesPending: targets.length > 0,
+        registrySourcesPendingTargets: targets, interactionEnabled: true, machineId: null, serverId: null, platform: 'web' as const,
+        accountLifetime: null, reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' as const },
+        reloadClientExecutables() {} });
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+    // The step's own state (a progress line) re-renders the screen that hosts the demand.
+    const tree = (progress: number, targets: readonly { machineId: string; serverId: string }[]) =>
+        <React.Profiler id="auto" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+            <AppShellPluginUiProjectionValueProvider value={value(targets)}>
+                {React.createElement('Progress', { step: progress })}
+                <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations"
+                    sections={REGISTRY_SOURCE_PROJECTION_SECTIONS} enabled />
+            </AppShellPluginUiProjectionValueProvider>
+        </React.Profiler>;
+    const owing = [{ machineId: 'machine-1', serverId: 'home-demand' }];
+    const screen = await renderScreen(tree(0, owing));
+    readRoot = readTestRendererRoot(screen.tree.root);
+    const SourceDemand = screen.root.findAll(node => typeof node.type === 'function' && node.type.name === 'SourceDemand')[0]!.type;
+    expect(screen.root.findAll(node => node.type === SourceDemand)).toHaveLength(machineIds.length + 1);
+    counts.start();
+    // 20 progress events, each with a fresh app shell value whose owing targets are equal in content.
+    for (let progress = 1; progress <= 20; progress += 1) await screen.update(tree(progress, owing.map(target => ({ ...target }))));
+    // 10 Availability republications with unchanged installations.
+    for (let cursor = 2; cursor <= 11; cursor += 1) {
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope, snapshot: snapshot(cursor) }); });
+    }
+    counts.stop();
+    const churn = counts.read();
+    expect(churn.mounts.get('SourceDemand') ?? 0, 'no Machine demand restarts while the step stays open').toBe(0);
+    // Unchanged targets keep their identity, so the held demands do not redraw (before: 5 per event, 150 in all).
+    expect(churn.rendersFor(SourceDemand)).toBe(0);
+    // The wait ends: the Machine no longer owed drops out, the installations stay held.
+    counts.start();
+    await screen.update(tree(21, []));
+    counts.stop();
+    expect(screen.root.findAll(node => node.type === SourceDemand)).toHaveLength(machineIds.length);
+    expect(counts.read().mounts.get('SourceDemand') ?? 0).toBe(0);
 });

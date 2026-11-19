@@ -57,6 +57,18 @@ describe('ExecutionRunRow', () => {
         standardCleanup();
     });
 
+    // REVIEW-DELTA2 N2: a runtime issue with no known cause still has the presenter's plain summary line, so the row
+    // says that line in place of its process facts, as it did before the shared run-failure line was extracted.
+    it('says the plain stopped-with-an-error line for a runtime issue with no known cause, never its process facts', async () => {
+        const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed', error: { code: 'unknown_failure', runtimeIssueV1: {
+            v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1, code: 'unknown_failure', source: 'agent_process_exit',
+            sanitizedPreview: '/home/alice/.codex/log: stack trace' } } }} subtitle="PID 123" />);
+        expect(screen.getTextContent()).toContain('errors.agentStoppedWithError');
+        expect(screen.getTextContent()).not.toContain('PID 123');
+        expect(screen.getTextContent()).not.toContain('stack trace');
+        standardCleanup();
+    });
+
     it('leads a failed Run\'s line with its cause, so a narrow row ellipsizes the metadata, never the cause', async () => {
         const { Item } = await import('@/components/ui/lists/Item');
         const screen = await renderScreen(<ExecutionRunRow run={{ ...run, status: 'failed',

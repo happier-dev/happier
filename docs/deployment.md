@@ -102,10 +102,13 @@ input contains the person's description,
 the catalog snapshot, and, when variable metadata is supplied, names with secret
 flags rather than secret values. When the catalog is read for a suggestion while
 the app shell still owes registry sources (`registrySourcesPending`) and no
-starter source is known yet, the read waits until one is known or that fact
-settles, so starters supplied by a Machine are not dropped. This is the registry
-selection's own rule: a Machine still owing its sources can only add more of a
-known kind, so it does not hold the read up.
+enabled starter source is known yet, the read waits until one is known or that
+fact settles, so starters supplied by a Machine are not dropped. The wait and the
+registry lists call the same selection predicate (`selectRegistrySources`): built-in,
+plugin and received user sources, enabled only. A Machine still owing its sources
+can only add more of a known kind, so it does not hold the read up. The wait reads
+the registry-sources record as received and never waits for that record itself;
+the catalog read fetches it.
 The run can return typed questions in the existing transient question shape. The
 result schema given to the model offers selection bounds only on multiple-choice
 questions. The

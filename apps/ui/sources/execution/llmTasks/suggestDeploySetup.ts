@@ -17,7 +17,7 @@ import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmT
 import type { LlmTaskRunnerResolutionV1, LlmTaskRunnerUnavailableAgentV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 import { normalizeInteractionTransientQuestionsV1, type InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
-import { waitForPluginRegistrySourcesOfKind } from '@/registries/pluginRegistrySources';
+import { waitForRegistrySourcesOfKind } from '@/registries/pluginRegistrySources';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -87,7 +87,7 @@ export async function suggestDeploySetup(params: Readonly<{
         let catalog = params.catalog;
         if (!catalog) {
             // A Machine still owing its registry sources may carry the only starters: read once one is known or they settle.
-            await waitForPluginRegistrySourcesOfKind('starter', params.signal);
+            await waitForRegistrySourcesOfKind('starter', params.signal);
             if (params.signal?.aborted) return { kind: 'stopped' };
             const listed = await readDeploySuggestionCatalog(params);
             if (params.signal?.aborted) return { kind: 'stopped' };
@@ -139,7 +139,8 @@ export async function suggestDeploySetup(params: Readonly<{
             const checked = await executeAction(DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, { catalog,
                 suggestion: run.terminal.latestToolResult ?? run.terminal.structuredMeta?.payload }, context);
             if (params.signal?.aborted) return { kind: 'stopped' };
-            if (!checked.ok) return { kind: 'failed', code: checked.errorCode, stage: 'answer' };
+            // The check admits any answer (`suggestion: unknown`): its failure is the call failing, said as the run's cause.
+            if (!checked.ok) return { kind: 'failed', code: checked.errorCode, stage: 'run' };
             const result = DeploySuggestionCheckResultV1Schema.safeParse(checked.result);
             if (!result.success) return { kind: 'failed', code: 'invalid_action_output', stage: 'answer' };
             const questions = result.data.questions ? normalizeInteractionTransientQuestionsV1(result.data.questions) : null;

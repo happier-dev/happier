@@ -3,6 +3,7 @@ import { projectPluginRegistrySourceDeclarationV1 } from '@happier-dev/protocol/
 import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
 import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { projectPluginRegistrySources } from './pluginRegistrySources';
+import type { StorageState } from '@/sync/store/types';
 
 const pluginId = 'com.acme.sources';
 const origin = (machineId: string) => ({ serverIdentityId: 'srv_registry_sources', materializationRef: {
@@ -70,4 +71,58 @@ it.each([false, true])('rebuilds only matching suppliers when an unselected reta
     const refreshed = { ...retained, projection: member('retained', 'https://github.com/acme/other').projection };
     expect(project(refreshed)).toMatchObject([{ url: 'https://github.com/acme/current',
         origin: { kind: 'plugin', suppliers: ['current'] } }]);
+});
+
+// REVIEW-DELTA2 N1: the registry wait answers by the registry selection's own rule (built-in, plugin and user sources,
+// enabled only), not by plugin declarations alone.
+it('the registry wait ends on a user starter source and keeps waiting past a disabled plugin one', async () => {
+    const applied = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const { applyPromptLibraryCatalogAcknowledgedRecord, resetPromptLibraryCatalogSnapshotsForTests } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    const { waitForRegistrySourcesOfKind } = await import('./pluginRegistrySources');
+    // The active Account, as the app shell holds it once a Home is applied.
+    const previousApplied = applied.getAppliedActiveServerSnapshot();
+    const previousAvailable = applied.isAppliedActiveServerRuntimeAvailable();
+    applied.publishAppliedActiveServerSnapshot({ serverId: 'home', serverUrl: 'https://home.test', generation: 1 });
+    // Only the registered Store's profile scope is read here; the full Store is not part of this owner.
+    registerStorageStateReader(() => ({ profileScope: { serverId: 'home', accountId: 'alice' } }) as unknown as StorageState);
+    const starters = projectPluginRegistrySourceDeclarationV1({ pluginId: 'happier.deployment.templates', pluginVersion: '1.0.0',
+        definition: { id: 'starters', title: 'Starters', format: 'happier-catalog', kinds: ['starter'], url: 'https://starters.test/catalog.json' } });
+    let projection = EMPTY_PLUGIN_UI_PROJECTION;
+    let pending = true;
+    const listeners = new Set<() => void>();
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => projection, undefined,
+        listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, undefined, undefined, () => pending);
+    const settledNow = async (wait: Promise<void>) => {
+        let done = false;
+        void wait.then(() => { done = true; });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return done;
+    };
+    try {
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected the active Account scope');
+        // A user-added starter source is known to the selection, so a Machine still owing its sources holds nothing up.
+        applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{
+            id: 'user-starters', title: 'My starters', format: 'happier-catalog', kinds: ['starter'],
+            url: 'https://mine.test/catalog.json', enabled: true, addedAt: 1 }] } }, 5, true);
+        expect(await settledNow(waitForRegistrySourcesOfKind('starter'))).toBe(true);
+        // The plugin's starter source is disabled, so the selection still has none: the wait holds for the Machine.
+        projection = { ...EMPTY_PLUGIN_UI_PROJECTION, registrySourcesById: { [starters.id]: starters } };
+        applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources', value: { v: 2, disabledSourceIds: projectPluginRegistrySources(projection).map(source => source.id),
+            sources: [] } }, 6, true);
+        const held = waitForRegistrySourcesOfKind('starter');
+        expect(await settledNow(held)).toBe(false);
+        pending = false;
+        for (const listener of listeners) listener();
+        await held;
+    } finally {
+        unpublish();
+        resetPromptLibraryCatalogSnapshotsForTests();
+        registerStorageStateReader(() => null as unknown as StorageState);
+        applied.publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    }
 });

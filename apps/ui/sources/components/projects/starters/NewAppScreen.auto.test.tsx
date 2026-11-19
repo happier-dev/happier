@@ -544,11 +544,11 @@ it('a failed suggestion says so and keeps the owner’s code under Details, neve
 async function failedSuggestionReason(name: string, overrides: Ports, refuseCheck = false) {
   suggestionBoundary(overrides);
   if (refuseCheck) {
-    // The check owner refuses the agent's answer (the only failure after an answer; a well-formed but unusable one
-    // settles as 'nothing').
+    // The check's answer can't be read as a checked suggestion (a well-formed but unusable one settles as 'nothing';
+    // a check call that fails is the run's failure, REVIEW-DELTA2 N3).
     const real = execute.getMockImplementation()!;
     execute.mockImplementation((async (actionId: string, ...rest: unknown[]) => actionId === 'deployments.suggestions.check'
-      ? { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' }
+      ? { ok: true, result: { recommendations: 'unreadable' } }
       : (real as (...args: unknown[]) => unknown)(actionId, ...rest)) as typeof real);
   }
   const { fixture, screen } = await openDescribe(name);

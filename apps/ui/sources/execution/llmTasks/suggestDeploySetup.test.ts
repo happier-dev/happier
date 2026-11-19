@@ -105,6 +105,24 @@ it('reads one catalog for a question round and reuses it for the answered run', 
         .toMatchObject({ intentInput: { input: { answers, note: 'Keep it simple' } } });
 });
 
+// REVIEW-DELTA2 N3: the check Action admits any answer (`suggestion: unknown`), so its failure is the call failing,
+// never a refused answer: the outcome says the Run-side cause, not "the agent's answer couldn't be used".
+it('says a check call that failed in transport as a run failure, not as a refused answer', async () => {
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'auto', runner, title: 'Claude' } }),
+        executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'ready' }),
+        executionRunStart: async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }),
+        executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
+    }));
+    // The Home transport refuses the check call itself.
+    execute.mockImplementation(async (actionId: string, ...rest: unknown[]) => actionId === 'deployments.suggestions.check'
+        ? { ok: false, errorCode: 'server_unreachable', error: 'server_unreachable' }
+        : (executor.execute as (...args: unknown[]) => unknown)(actionId, ...rest));
+    expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery', choice: runner,
+        catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === 'ready') } }))
+        .toEqual({ kind: 'failed', code: 'server_unreachable', stage: 'run' });
+});
+
 it('returns per-Machine repair reasons without starting a run when no Agent is ready', async () => {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ agentsModelsList: async () => ({ llmTaskRunner: {
         ok: false, errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE', reason: 'no_ready_agent', unavailableAgents: [

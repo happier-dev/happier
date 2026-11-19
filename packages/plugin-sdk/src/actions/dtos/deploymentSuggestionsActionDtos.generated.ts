@@ -80,7 +80,7 @@ export type DeploymentSuggestionsActionInputById = {
                 engine: string;
             }[];
             forges: {
-                providerKind: string;
+                providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                 title: string;
             }[];
             connectedAccounts?: undefined | {
@@ -175,7 +175,7 @@ export type DeploymentSuggestionsActionResultById = {
             engine: string;
         }[];
         forges: {
-            providerKind: string;
+            providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
             title: string;
         }[];
         connectedAccounts?: undefined | {
@@ -265,5 +265,9 @@ export type DeploymentSuggestionsActionResultById = {
             })[];
             title?: string | undefined;
         };
+        droppedQuestions?: undefined | {
+            reason: 'invalid_question' | 'invalid_questions';
+            index?: number | undefined;
+        }[];
     };
 };

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { listRegistrySourcesV1, registrySourceSupportsKindV1, type RegistryKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { listRegistrySourcesV1, type RegistryKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { selectRegistrySources } from './registrySourceSelection';
 import { usePromptLibraryCatalogSelection } from '@/sync/store/usePromptLibraryCatalog';
 import type { PromptLibraryCatalogValueSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -56,18 +57,13 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
     const priorIdsKey = lifetime.current?.sourceIdsKey;
     const priorIds = React.useMemo(() => priorIdsKey === undefined ? undefined : JSON.parse(priorIdsKey) as string[], [priorIdsKey]);
     const select = React.useCallback((snapshot: PromptLibraryCatalogValueSnapshot<'registry-sources'>) => {
-        const sources = listRegistrySourcesV1({ record: snapshot.value ?? { v: 2, sources: [], disabledSourceIds: [] }, pluginSources });
+        // Partial plugin membership cannot veto known catalogs; each admitted source reports its own failure.
+        const { sources, matching, resolving } = selectRegistrySources({ record: snapshot.value,
+            recordLoading: snapshot.value === null && snapshot.status === 'loading', pluginSources, pluginsResolving, kind, selectedIds });
         const fingerprint = (ids: readonly string[] | undefined) => ids === undefined
             ? JSON.stringify([snapshot.revision, pluginSources]) : registrySourceRevision(sources, ids);
-        const matching = sources.filter(source => source.enabled
-            && (kind === undefined || registrySourceSupportsKindV1(source, kind))
-            && (selectedIds === undefined || selectedIds.includes(source.id)));
         const matchingIds = matching.map(source => source.id);
         const consumedIds = kind === undefined ? selectedIds : matchingIds;
-        // Partial plugin membership cannot veto known catalogs. Only an unanswered
-        // selection waits for the first declarations; each admitted source reports its own failure.
-        const selectionKnown = selectedIds?.length === 0 || matchingIds.length > 0;
-        const resolving = snapshot.value === null && snapshot.status === 'loading' || pluginsResolving && !selectionKnown;
         const titles = kind === undefined ? [] : matching.map(source => [source.id, source.title]);
         return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving, titles]);
     }, [selectedIds, priorIds, pluginSources, kind, pluginsResolving]);

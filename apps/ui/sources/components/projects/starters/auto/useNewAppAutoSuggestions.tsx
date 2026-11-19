@@ -396,5 +396,5 @@ function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed'
     if (outcome.stage === 'answer') return t('newApp.auto.failedBody');
     if (outcome.stage === 'setup') return t('newApp.auto.failedSetupBody');
     const run = presentExecutionRunFailureSummary(outcome.runError ?? { code: outcome.code });
-    return run ? [run.summary, run.reset].filter(Boolean).join(' · ') : t('newApp.auto.failedSetupBody');
+    return [run.summary, run.reset].filter(Boolean).join(' · ');
 }

@@ -10,6 +10,7 @@ import { DeploymentCreationReviewFacts, type DeploymentCreationReviewPlan } from
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from './DeploymentProjectChoice';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
@@ -568,6 +569,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     // The platform answered 409 to the project it was asked to create: its name is taken (Vercel, Cloudflare Pages).
     const platformNameTaken = platformProvider?.kind === 'create' && platformCause !== undefined
       && (platformCause.httpStatus === 409 || platformCause.errorCode === 'conflict');
+    // The shared deployment failure presenter gives the reason (any refusal but a taken name) and the technical details.
+    const platformOutcome = platformRefusal?.failure ? presentActionFailureOutcome(platformRefusal.failure, 'deployment') : null;
     const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure && !platformRefusal
       ? <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} /> : null;
     // One notice per cause: a chosen Machine that stopped answering is said once, by its own notice, in place of the
@@ -595,8 +598,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               tone="danger"
               title={t('newApp.deploy.plan.platformRefusedTitle', { platform: platformTarget.title })}
               description={platformNameTaken ? t('newApp.deploy.plan.platformNameTaken', { platform: platformTarget.title })
-                : t('newApp.deploy.plan.platformRefused', { platform: platformTarget.title })}
-              details={[platformRefusal.code]}
+                : platformOutcome?.reason ?? t('newApp.deploy.plan.platformRefused', { platform: platformTarget.title })}
+              details={platformOutcome ? platformOutcome.technicalDetails.map(line => `${line.label}: ${line.value}`) : [platformRefusal.code]}
             />
           ) : refusal && refusal.kind === 'refused' ? (
             <AttentionBanner

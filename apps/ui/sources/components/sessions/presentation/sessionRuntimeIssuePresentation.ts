@@ -208,10 +208,11 @@ export function presentExecutionRunFailure(error: Readonly<{ code: string; runti
  * A failed Run's one line where it is listed (a run row, a failed task card): its runtime issue's summary when it
  * carries one, else the first line of its typed cause; with the limit's reset when it names one.
  */
-export function presentExecutionRunFailureSummary(error: Readonly<{ code: string; runtimeIssueV1?: SessionRuntimeIssueV1 }> | null | undefined): Readonly<{
-    summary: string;
-    reset: string | null;
-}> | null {
+type ExecutionRunFailureSummary = Readonly<{ summary: string; reset: string | null }>;
+type ExecutionRunFailureInput = Readonly<{ code: string; runtimeIssueV1?: SessionRuntimeIssueV1 }>;
+export function presentExecutionRunFailureSummary(error: ExecutionRunFailureInput): ExecutionRunFailureSummary;
+export function presentExecutionRunFailureSummary(error: ExecutionRunFailureInput | null | undefined): ExecutionRunFailureSummary | null;
+export function presentExecutionRunFailureSummary(error: ExecutionRunFailureInput | null | undefined): ExecutionRunFailureSummary | null {
     if (!error) return null;
     if (error.runtimeIssueV1) {
         const issue = presentSessionRuntimeIssue(error.runtimeIssueV1);

@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { PLUGIN_UI_SECTIONS, pluginUiSections, REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
@@ -41,6 +42,9 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const readsRegistrySources = props.sections?.some(section => REGISTRY_SOURCE_PROJECTION_SECTIONS.includes(section as never)) === true;
     const owingRegistrySources = useAppShellPluginUiProjection(value => value.registrySourcesPendingTargets ?? NO_TARGETS,
         presented && readsRegistrySources);
+    // Equal targets keep their identity (structural sharing), so a re-render or an equal republication of the
+    // installations or owed Machines does not redraw the held Machine demands.
+    const retainedTargets = React.useRef<readonly (readonly [string, MachineAdministrationTargetV1])[] | undefined>(undefined);
     const targets = React.useMemo(() => {
         const targets = new Map<string, MachineAdministrationTargetV1>();
         if (presented && !selectedOrigin && installed?.kind === 'available') {
@@ -61,7 +65,8 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
             const key = JSON.stringify([serverIdentityId, owing.machineId]);
             if (!targets.has(key)) targets.set(key, { serverIdentityId, machineId: owing.machineId });
         }
-        return [...targets.entries()];
+        retainedTargets.current = retainDeep(retainedTargets.current, [...targets.entries()]);
+        return retainedTargets.current;
     }, [installed, owingRegistrySources, presented, props.accountScope?.serverId, props.pluginId, props.presents, readsRegistrySources, selectedOrigin]);
     const sections = props.sections ?? (props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS);
     const hosted = useHostedDemands(targets, `presentation:${JSON.stringify(sections)}`);

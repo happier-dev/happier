@@ -5,6 +5,7 @@ import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../deploymentValidationV1.js';
 import { DeployShapeV1Schema, DeployVariableNameV1Schema, deploymentTargetFitFieldsV1 } from '../deployShapeV1.js';
 import {
     InteractionTransientAuthorQuestionV1Schema,
+    InteractionTransientQuestionsAuthorModelShapeV1Schema,
     InteractionTransientQuestionsAuthorRequestV1Schema,
     InteractionTransientQuestionAnswerV1Schema,
     type InteractionTransientQuestionsAuthorRequestV1,
@@ -53,24 +54,13 @@ export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.stri
 }));
 export type DeploySuggestionRecommendationV1 = z.infer<typeof DeploySuggestionRecommendationV1Schema>;
 /**
- * The answer shape the model is asked for: the shared author questions, with selection bounds offered only on
- * multiple choice. JSON Schema can't carry the shared schema's bounds refinement, so the arms are split here from
- * that schema's own shape; the check below still admits the answer through the shared schema itself.
+ * The answer shape the model is asked for: the shared author questions in their model shape (selection bounds only
+ * on multiple choice); the check below still admits the answer through the shared schema itself.
  */
-export const DeploySuggestionV1Schema = lazyZodSchema(() => {
-    const request = InteractionTransientQuestionsAuthorRequestV1Schema;
-    const [text, choice] = InteractionTransientAuthorQuestionV1Schema._zod.def.options;
-    const { minSelections, maxSelections, ...common } = choice.shape;
-    const question = z.union([text, z.strictObject({ ...common, type: z.literal('singleChoice') }),
-        z.strictObject({ ...common, type: z.literal('multipleChoice'), minSelections, maxSelections })]);
-    // The shared list's own count checks, over the split arms.
-    const list = z.array(question);
-    const questions = z.core.clone(list, { ...list._zod.def, checks: request.shape.questions._zod.def.checks });
-    return z.strictObject({
-        recommendations: z.array(DeploySuggestionRecommendationV1Schema),
-        questions: z.optional(z.nullable(z.strictObject({ ...request.shape, questions }))),
-    });
-});
+export const DeploySuggestionV1Schema = lazyZodSchema(() => z.strictObject({
+    recommendations: z.array(DeploySuggestionRecommendationV1Schema),
+    questions: z.optional(z.nullable(InteractionTransientQuestionsAuthorModelShapeV1Schema)),
+}));
 export const DeploySuggestionInputV1Schema = lazyZodSchema(() => z.strictObject({
     description: z.string().check(z.refine(value => value.trim().length > 0)),
     answers: z.optional(z.record(z.string(), InteractionTransientQuestionAnswerV1Schema)),

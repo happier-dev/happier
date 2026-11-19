@@ -1,4 +1,4 @@
-import { createPluginRegistrySourceDescriptorV1, registrySourceSupportsKindV1, RegistryFetchErrorV1,
+import { createPluginRegistrySourceDescriptorV1, RegistryFetchErrorV1,
     type RegistryKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionOrigin, readPluginUiContributionSupplies } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -8,6 +8,8 @@ import {
     subscribeCommittedAppShellPluginUiProjection,
 } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { getPromptLibraryCatalogValue, subscribePromptLibraryCatalogSnapshots } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
+import { selectRegistrySources } from './registrySourceSelection';
 
 /** Preserve every proven supplier, including its retained offline declaration. */
 export function projectPluginRegistrySources(projection: Pick<PluginUiProjectionModel, 'registrySourcesById'> | null): readonly RegistrySourceDescriptorV1[] {
@@ -24,32 +26,36 @@ export function projectPluginRegistrySources(projection: Pick<PluginUiProjection
 }
 
 /**
- * Settles once a plugin source of `kind` is known or no Machine may still bring one, or on abort: the registry
- * selection's rule (`useRegistrySourceRevision`: only an empty selection waits), for readers outside React.
- * A Machine still owing its sources can only add more of a known kind, so it holds nothing up. No timer.
+ * Settles once the registry selection of `kind` is answered (`selectRegistrySources`: built-in, plugin and user
+ * sources, enabled only), or on abort, for readers outside React. A Machine still owing its sources can only add
+ * more of a known kind, so it holds nothing up. The record is read as received: its own read is the catalog
+ * read's (which reads the server row), so an unloaded record never holds this wait. No timer.
  */
-export function waitForPluginRegistrySourcesOfKind(kind: RegistryKindV1, signal?: AbortSignal): Promise<void> {
+export function waitForRegistrySourcesOfKind(kind: RegistryKindV1, signal?: AbortSignal): Promise<void> {
     const settled = () => {
-        if (signal?.aborted || !readCurrentAppShellRegistrySourcesPending()) return true;
+        if (signal?.aborted) return true;
         try {
             // Declarations, as the registry host lists them, also while the union is still establishing.
             const scope = getActiveServerAccountScope();
-            return projectPluginRegistrySources(readCurrentAppShellPluginUiProjection(scope ? { scope, declarationsOnly: true } : undefined))
-                .some(source => registrySourceSupportsKindV1(source, kind));
+            return !selectRegistrySources({ record: getPromptLibraryCatalogValue(scope, 'registry-sources').value, recordLoading: false,
+                pluginSources: projectPluginRegistrySources(readCurrentAppShellPluginUiProjection(scope ? { scope, declarationsOnly: true } : undefined)),
+                pluginsResolving: readCurrentAppShellRegistrySourcesPending(), kind }).resolving;
         } catch {
             // A conflicting declaration is the registry read's own failure to report; it decides nothing here.
-            return false;
+            return !readCurrentAppShellRegistrySourcesPending();
         }
     };
     if (settled()) return Promise.resolve();
     return new Promise(resolve => {
         const settle = () => {
             if (!settled()) return;
-            unsubscribe();
+            stopProjection();
+            stopRecord();
             signal?.removeEventListener('abort', settle);
             resolve();
         };
-        const unsubscribe = subscribeCommittedAppShellPluginUiProjection(settle);
+        const stopProjection = subscribeCommittedAppShellPluginUiProjection(settle);
+        const stopRecord = subscribePromptLibraryCatalogSnapshots(settle);
         signal?.addEventListener('abort', settle);
     });
 }

@@ -1227,8 +1227,12 @@ describe('Environment draft Machine Home', () => {
 
   // AUTO-LIVE-REVIEW F-REVFAIL (journey-deploy revFail, A3): Create saved the Environment, then the platform refused to
   // make its project (Vercel 409: the name is taken). Review keeps the stepped plan and says, row by row, what exists.
-  it('a platform that refuses to create its project after the Environment is saved says the name is taken and what was saved', async () => {
-    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-platform-create-taken.test', accountId: 'alice',
+  type PlatformRefusalCause = { phase: string; errorClass: string; errorCode: string; httpStatus: number };
+  type PlatformRefusalScreen = Readonly<{ text: () => string; rowText: (testID: string) => string;
+    banner: () => Readonly<{ description?: string; details?: readonly string[] }> | undefined }>;
+  async function refusePlatformCreateAfterSave(host: string, failureCause: PlatformRefusalCause,
+    check: (screen: PlatformRefusalScreen) => Promise<void>) {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: `https://${host}.test`, accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
@@ -1272,7 +1276,7 @@ describe('Environment draft Machine Home', () => {
         actionId: 'deployments.targets.link', tokenEpoch: 0, execute: () => { links++; return { refused: true }; },
         failure: result => typeof result === 'object' && result !== null && 'refused' in result
           ? { errorCode: 'provider_request_failed', error: 'provider_request_failed', effectAttempted: true,
-            failureCause: { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: 'conflict', httpStatus: 409 } } : null });
+            failureCause } : null });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
       const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
@@ -1309,10 +1313,10 @@ describe('Environment draft Machine Home', () => {
       const { t } = await import('@/text');
       const rowText = (testID: string) => screen.findByTestId(testID)?.findAll(() => true)
         .flatMap(node => node.children.filter(value => typeof value === 'string')).join(' ') ?? '';
-      // The cause is named once, and the rows say what exists: the Environment is saved, the provider project is not.
-      expect(screen.getTextContent()).toContain(t('newApp.deploy.plan.platformNameTaken', { platform: 'Beta runtime' }));
       expect(rowText('project-deployments.draft.creates.environment')).toContain(t('newApp.deploy.plan.saved'));
-      expect(rowText('project-deployments.draft.creates.platform.refused')).toContain(t('newApp.deploy.plan.nameTaken'));
+      const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+      await check({ text: () => screen.getTextContent(), rowText, banner: () => screen.findAllByType(AttentionBanner)
+        .find(node => node.props.testID === 'project-deployments.draft.refused')?.props });
       // The generic partial-progress view (raw Environment id, "Couldn't change this setting") is not this Review.
       expect(screen.findByTestId('project-deployments.draft.progress')).toBeNull();
       expect(frame().refused, 'something was created, so the dialog does not say nothing was').toBe(false);
@@ -1322,6 +1326,36 @@ describe('Environment draft Machine Home', () => {
       expect(saved[0]![0]).toBe('created-environment');
       await screen.unmount();
     } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
+  }
+
+  it('a platform that refuses to create its project after the Environment is saved says the name is taken and what was saved', async () => {
+    const { t } = await import('@/text');
+    await refusePlatformCreateAfterSave('draft-platform-create-taken',
+      { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: 'conflict', httpStatus: 409 }, async screen => {
+        // The cause is named once, and the rows say what exists: the Environment is saved, the provider project is not.
+        expect(screen.text()).toContain(t('newApp.deploy.plan.platformNameTaken', { platform: 'Beta runtime' }));
+        expect(screen.rowText('project-deployments.draft.creates.platform.refused')).toContain(t('newApp.deploy.plan.nameTaken'));
+      });
+  });
+
+  // REVIEW-DELTA2 F1: any other refusal (here the account's credentials are refused) keeps the shared deployment failure
+  // presenter's reason and technical details; "name taken" is the 409 answer only.
+  it('a platform refusal other than a taken name shows the shared failure reason and its technical details', async () => {
+    const { t } = await import('@/text');
+    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
+    const failureCause = { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: 'unauthorized', httpStatus: 401 };
+    const outcome = presentActionFailureOutcome({ errorCode: 'provider_request_failed', error: 'provider_request_failed',
+      effectAttempted: true, failureCause }, 'deployment');
+    expect(outcome.reason).toBeTruthy();
+    await refusePlatformCreateAfterSave('draft-platform-create-unauthorized', failureCause, async screen => {
+      const banner = screen.banner();
+      expect(banner?.description).toBe(outcome.reason);
+      // The presenter's technical lines (the real failure also carries its request id).
+      expect(banner?.details).toEqual(expect.arrayContaining(outcome.technicalDetails.map(line => `${line.label}: ${line.value}`)));
+      expect(banner?.details?.join(' ')).toContain('401');
+      expect(screen.text()).not.toContain(t('newApp.deploy.plan.platformNameTaken', { platform: 'Beta runtime' }));
+      expect(screen.rowText('project-deployments.draft.creates.platform.refused')).toContain(t('newApp.deploy.plan.refusedRow'));
+    });
   });
 
   it('offers the way to a platform when no plugin declares one, and says nothing of platforms to a viewer who cannot link', async () => {
