@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierFactLine } from '@happier-dev/plugin-ui/presentation';
+import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 
 import type { ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
@@ -175,6 +176,7 @@ export function ReviewGlanceLine(
   props: Readonly<{ glance: ReviewDetailGlance }>,
 ) {
   const { theme } = useUnistyles();
+  const workTheme = useWorkTheme();
   const { glance } = props;
   const dot =
     glance.tone === 'attention'
@@ -192,7 +194,7 @@ export function ReviewGlanceLine(
           {glance.sentence}
         </Text>
       </View>
-      <HappierFactLine facts={glance.facts} testID="review-detail:facts" />
+      <HappierFactLine facts={glance.facts} theme={workTheme} host={WORK_HOST} testID="review-detail:facts" />
     </View>
   );
 }
