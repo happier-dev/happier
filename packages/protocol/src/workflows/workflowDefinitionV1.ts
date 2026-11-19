@@ -189,9 +189,9 @@ export const WorkflowMaterializedLeafV1Schema = lazyZodSchema(() => z.strictObje
   executionTarget: WorkflowRunExecutionTargetV1Schema,
   participant: z.optional(WorkflowAcceptedParticipantV1Schema),
   role: zMini.optional(ResolvedRoleV1Schema),
-  /** Frame-local Session inputs admitted against the starting principal's corpus. */
+  /** Frame-local Session inputs or this Review leaf's explicit admitted roster. */
   sessionAuthorityBindings: z.optional(z.array(z.strictObject({
-    inputName: WorkflowInputNameSchema,
+    inputName: z.optional(WorkflowInputNameSchema),
     targets: z.array(z.strictObject({ address: ActionSessionAddressV1Schema, machineId: z.string().check(z.minLength(1)) })),
   }))),
   /** Verified Session placement for each immutable input admitted to this leaf. */

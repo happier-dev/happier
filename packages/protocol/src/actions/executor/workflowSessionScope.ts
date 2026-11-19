@@ -10,6 +10,8 @@ import type { WorkflowMaterializedLeafV1 } from '../../workflows/workflowDefinit
 import { readWorkflowCurrentInvocationAncestryV1 } from '../../workflows/workflowInvocationMembersV1.js';
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { bindWorkflowActionFieldV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import { readReviewSessionReviewerAddressesV1 } from '../../reviews/reviewStart.js';
 
 type WorkflowActionInvocationContextV1 = Readonly<{
   opened: ReturnType<typeof WorkflowRunGetResultV1Schema.parse>;
@@ -147,16 +149,25 @@ export async function resolveActionWorkflowSessionScopeV1(
     identifier => identifier === context.serverId && context.serverIdentityId ? context.serverIdentityId
       : identifier === context.serverIdentityId ? context.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
   for (const binding of leaf.sessionAuthorityBindings ?? []) {
-    const value = structure.inputs[binding.inputName];
-    if (value === undefined && structure.definition.inputs.some(field => field.name === binding.inputName && !field.required)) continue;
-    const admitted = binding.targets.find(target => sameStrictJsonValue(target.address, value));
-    if (!admitted || !sameHome(admitted.address.serverId, context.serverId) || !deps.resolveSessionReference) return null;
-    const current = await deps.resolveSessionReference({ context, actionId, sessionId: admitted.address.sessionId,
-      ...(context.signal ? { signal: context.signal } : {}) });
-    context.signal?.throwIfAborted();
-    if (current.kind !== 'unique' || current.address.sessionId !== admitted.address.sessionId
-      || !sameHome(current.address.serverId, admitted.address.serverId)) return null;
-    if (!sessions.some(address => sameStrictJsonValue(address, admitted.address))) sessions.push(admitted.address);
+    const roster = binding.inputName === undefined && actionId === 'review.start' && structure.leaf.kind === 'action'
+      ? readReviewSessionReviewerAddressesV1(Object.fromEntries(Object.entries(structure.leaf.input).map(([field, value]) =>
+        [field, bindWorkflowActionFieldV1(value, { inputs: structure.inputs, origin: opened.acceptedContext.origin },
+          structure.leaf.id, 'run', structure.frame.item)]))) : null;
+    if (binding.inputName === undefined && !roster) return null;
+    const value = binding.inputName === undefined ? undefined : structure.inputs[binding.inputName];
+    if (binding.inputName !== undefined && value === undefined
+      && structure.definition.inputs.some(field => field.name === binding.inputName && !field.required)) continue;
+    for (const selected of roster ?? [value]) {
+      const admitted = binding.targets.find(target => sameStrictJsonValue(target.address, selected));
+      if (!admitted || !sameHome(admitted.address.serverId, context.serverId) || !deps.resolveSessionReference) return null;
+      if (sessions.some(address => sameStrictJsonValue(address, admitted.address))) continue;
+      const current = await deps.resolveSessionReference({ context, actionId, sessionId: admitted.address.sessionId,
+        ...(context.signal ? { signal: context.signal } : {}) });
+      context.signal?.throwIfAborted();
+      if (current.kind !== 'unique' || current.address.sessionId !== admitted.address.sessionId
+        || !sameHome(current.address.serverId, admitted.address.serverId)) return null;
+      sessions.push(admitted.address);
+    }
   }
   return { actionRequestId: context.actionRequestId!, invocationId: invocation.index.id, sessions };
 }

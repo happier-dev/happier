@@ -8147,6 +8147,16 @@ re-checks current Session access at execution time. Runtime Actions resolve the 
 correspondence against the accepted leaf and its exact lexical frame, so one
 child's target never becomes another child's authority.
 
+An accepted `review.start` leaf also records its explicit normalized Session
+reviewer roster in the same `sessionAuthorityBindings`, with no `inputName`.
+These targets spend the same starting-principal corpus admission as named Session
+inputs. Invocation resolution intersects this row with that leaf's selected
+roster, including staged reviewers; it grants no sibling or newly selected target.
+Replay cannot add a target absent from the frozen row. Named rows retain their
+existing semantics and shape. Older strict readers reject a name-less row; these
+unreleased 0.3 producers and consumers reload together, without a migration,
+compatibility adapter, new proof or broader Session authority.
+
 The signed ReviewComment principal carries that invocation's `workflowScope` to
 Home. The scope, its addresses and its invocation identity are closed objects
 covered by the existing Machine-installation signature. Home checks the Run's

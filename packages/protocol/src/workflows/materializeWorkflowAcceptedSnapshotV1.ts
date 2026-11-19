@@ -33,7 +33,7 @@ import type { WorkflowTargetUnavailableDetailsV1 } from './workflowProgressV1.js
 import { normalizeExecutableParticipantSelectionV1 } from '../discussions/executableParticipants.js';
 import { SessionSpawnNewSelectionV2Schema } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
 import { resolveWorkflowContextInputsV1, workflowInputErrorV1, WorkflowInputErrorV1, type ResolveWorkflowSessionTargetV1, type WorkflowResolvedSessionTargetV1 } from './workflowStartPreparationV1.js';
-import { requiresReviewWorkflowCompositionV1 } from '../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, readReviewSessionReviewerAddressesV1 } from '../reviews/reviewStart.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
@@ -639,7 +639,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       }) };
     }
     const leaves = leavesOf(definition);
-    const authorityBindings: NonNullable<WorkflowMaterializedLeafV1['sessionAuthorityBindings']> = [];
+    const authorityBindings: Array<{ inputName: string; targets: NonNullable<WorkflowMaterializedLeafV1['sessionAuthorityBindings']>[number]['targets'] }> = [];
     if (purpose === 'run' || input.effects.admitSessionAuthority) {
       for (const field of authored.inputs.filter(field => field.valueType === 'json' && field.inputType
         && 'hostType' in field.inputType && field.inputType.hostType === 'session')) {
@@ -1013,6 +1013,34 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
         if (!hasDeferredBinding && !validate(sidecar.actionInput)) return invalidInput(leaf.id,
           describePluginJsonSchemaValueIssues(validate).map((issue) => ({ code: 'invalid_input', blockId: leaf.id,
             path: `/blocks/${leaf.id}/input${issue.pointer}`, message: issue.message, severity: 'error' })));
+      }
+      if (leaf.kind === 'action' && leaf.actionId === 'review.start' && (purpose === 'run' || input.effects.admitSessionAuthority)) {
+        const targets: NonNullable<WorkflowMaterializedLeafV1['sessionAuthorityBindings']>[number]['targets'] = [];
+        for (const inputs of sourceInputs.get(sourceKey) ?? []) {
+          for (const fields of bindWorkflowLeafInputsV1(authored, leaf, { ...input.context, inputs }, purpose)) {
+            // An unselected optional branch or deferred roster confers no authority.
+            if (hasUnresolvedValue(fields.reviewers) || hasUnresolvedValue(fields.steps)) continue;
+            const addresses = readReviewSessionReviewerAddressesV1(fields);
+            if (!addresses) return invalidInput(leaf.id);
+            for (const address of addresses) {
+              const target = await input.effects.resolveSessionTarget?.(address);
+              if (!target || !sameStrictJsonValue(target.address, address) || !target.machineId.trim()) return invalidInput(leaf.id);
+              const previous = frozen?.sessionAuthorityBindings?.find(binding => binding.inputName === undefined);
+              const admittedInput = authorityBindings.some(binding => binding.targets.some(accepted => sameStrictJsonValue(accepted, target)));
+              // Named witnesses already passed the unchanged frozen-input replay check above.
+              if (replay && !admittedInput && !previous?.targets.some(accepted => sameStrictJsonValue(accepted, target))) return invalidInput(leaf.id);
+              if (!admittedInput && !targets.some(accepted => sameStrictJsonValue(accepted, target))) {
+                if (input.effects.admitSessionAuthority) {
+                  if (!await input.effects.admitSessionAuthority(target)) return { ok: false, error: { code: 'subtree_denied', blockId: leaf.id } };
+                } else if (!mayAdmitSessionWithoutDedicatedAuthority(input)) {
+                  return { ok: false, error: { code: 'target_unavailable', reason: 'run_admission_unavailable', blockId: leaf.id } };
+                }
+              }
+              if (!targets.some(accepted => sameStrictJsonValue(accepted, target))) targets.push(structuredClone(target));
+            }
+          }
+        }
+        if (targets.length) sidecar.sessionAuthorityBindings = [...sidecar.sessionAuthorityBindings ?? [], { targets }];
       }
       // Every executable leaf carries concrete authoring fields. Mutable roles
       // and profile catalogs cannot influence dispatch or recovery after this pass.

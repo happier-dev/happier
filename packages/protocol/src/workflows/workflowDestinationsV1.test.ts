@@ -22,6 +22,18 @@ describe('workflow destination presentation', () => {
         { inputName: 'unrelatedSession', targets: [{ address: { serverId: 'home', sessionId: 'unrelated' }, machineId: 'machine' }] }],
     }] }).targetSessionIds).toEqual(['frozen']);
   });
+  it('projects the admitted explicit Review roster without treating other Action bindings as Review destinations', () => {
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [
+      { kind: 'action', id: 'review', actionId: 'review.start', input: {} },
+      { kind: 'action', id: 'comments', actionId: 'reviews.comments.list', input: {} },
+    ] });
+    expect(deriveWorkflowDestinationsV1({ definition, materializedLeaves: definition.blocks.map(block => ({
+      sourceKey: '$root', blockId: block.id, kind: 'action' as const, actionId: block.kind === 'action' ? block.actionId : undefined,
+      selection: {}, authoredWorkspace: { kind: 'inherit' as const }, executionTarget: { kind: 'detached_run' as const },
+      sessionAuthorityBindings: [{ targets: [{ address: { serverId: 'home', sessionId: block.id }, machineId: 'machine' }] }],
+    })) }).targetSessionIds).toEqual(['review']);
+  });
+
   it('carries canonical visible ordinals across containers without changing the Session relation', () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
       defaults: { conversation: { kind: 'existing_session', sessionId: 'destination', machineId: 'machine-one' } },

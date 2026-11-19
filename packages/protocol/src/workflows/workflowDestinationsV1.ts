@@ -133,7 +133,8 @@ export function deriveWorkflowDestinationsV1(input: Readonly<{
     for (const leaf of input.materializedLeaves.flatMap(listWorkflowAcceptedLeafSelectionsV1)) {
       const position = positions.get(leaf.sourceKey)?.find(position => position.leaf.id === leaf.blockId);
       const names = position ? actionInputNames(position.leaf) : new Set<string>();
-      const actionTargets = leaf.sessionAuthorityBindings?.filter(binding => names.has(binding.inputName))
+      const actionTargets = leaf.sessionAuthorityBindings?.filter(binding => binding.inputName === undefined
+        ? leaf.actionId === 'review.start' : names.has(binding.inputName))
         .flatMap(binding => binding.targets.map(target => target.address.sessionId));
       visit(leaf.sourceKey, leaf.blockId, leaf.selection, position,
         actionTargets?.length ? { sessionIds: [...new Set(actionTargets)], usesOriginSession: false } : undefined);

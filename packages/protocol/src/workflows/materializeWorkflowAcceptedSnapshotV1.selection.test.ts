@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ActionSessionAddressV1Schema } from '../actions/sessionAddressV1.js';
 import { materializeWorkflowAcceptedSnapshotV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
 import { resolveWorkflowAcceptedStepSelectionV1 } from './workflowStepSelectionV1.js';
@@ -421,6 +422,44 @@ describe('accepted Workflow selection bindings', () => {
       .toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ participant: { kind: 'model', launch: {
         permissionMode: 'default',
       } } }] } });
+  });
+
+  it.each(['roster', 'named'] as const)('retains an admitted Review roster on replay and refuses an unsupported or enlarged roster: %s', async witness => {
+    const address = { serverId: 'home', sessionId: 'review-target' };
+    const authored = { version: 1, defaults: {}, inputs: [{ name: 'reviewers', valueType: 'json', required: true },
+      ...(witness === 'named' ? [{ name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' } }] : [])],
+      blocks: [{ kind: 'action', id: 'review', actionId: 'review.start', input: {
+        reviewers: { kind: 'input', name: 'reviewers' }, instructions: { kind: 'literal', value: 'Inspect the repository.' },
+        target: { kind: 'literal', value: { kind: 'detached' } }, cwd: { kind: 'literal', value: '/project' },
+      } }] };
+    const acceptedContext = { ...context, inputs: { reviewers: [{ kind: 'session', session: address }], ...(witness === 'named' ? { reviewSession: address } : {}) } };
+    const effects: MaterializeWorkflowAcceptedSnapshotV1Input['effects'] = { resolveTargetAvailability: available,
+      resolveSessionTarget: async value => {
+        const parsed = ActionSessionAddressV1Schema.safeParse(value);
+        return parsed.success ? { address: parsed.data, machineId: 'machine' } : null;
+      },
+      admitSessionAuthority: async () => true,
+      readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))),
+    };
+    const result = await materialize({ definition: authored, context: acceptedContext, effects });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ sessionAuthorityBindings: expect.arrayContaining([
+      { targets: [{ address, machineId: 'machine' }] },
+    ]) }] } });
+    if (!result.ok) throw new Error(result.error.code);
+    const replay = (snapshot = result.snapshot, inputs = acceptedContext.inputs) => materialize({
+      definition: snapshot.authoredDefinition, context: { ...acceptedContext, inputs }, replay: { snapshot }, effects });
+    expect(await replay()).toMatchObject({ ok: true });
+    if (witness === 'named') {
+      const predecessor = structuredClone(result.snapshot);
+      predecessor.materializedLeaves[0]!.sessionAuthorityBindings = predecessor.materializedLeaves[0]!.sessionAuthorityBindings!
+        .filter(binding => binding.inputName !== undefined);
+      expect(await replay(predecessor)).toMatchObject({ ok: true });
+    }
+    const withoutWitness = structuredClone(result.snapshot);
+    delete withoutWitness.materializedLeaves[0]!.sessionAuthorityBindings;
+    expect(await replay(withoutWitness)).toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'review' } });
+    expect(await replay(result.snapshot, { ...acceptedContext.inputs, reviewers: [{ kind: 'session', session: { ...address, sessionId: 'other' } }] }))
+      .toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'review' } });
   });
 
   it.each(['constrained', 'automation', 'revoked'] as const)('checks current typed Session targets for %s authority without inventing a host grant', async scenario => {
