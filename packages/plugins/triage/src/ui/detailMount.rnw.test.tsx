@@ -3393,6 +3393,23 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual([]);
     });
 
+    it('settles a routed entry whose configured source is unavailable on this machine once', async () => {
+        // Live READY240: a source that is configured but not installed on the
+        // selected Machine looped the route settlement to "Maximum update depth".
+        const consoleError = vi.spyOn(console, 'error');
+        try {
+            const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+                selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' } });
+            await mountShell({ subPath, activeSurface: true, unavailableSourceCode: 'plugin_disabled', explicitOpen: true });
+            await expect.poll(() => lastPageLocation?.subPath).toBe(buildTriageRouteSubPathV1(TRIAGE_ROUTE_DEFAULT_LENS_V1));
+            expect(consoleError.mock.calls.map(call => String(call[0])).filter(text => text.includes('Maximum update depth')))
+                .toEqual([]);
+            expect(currentHarness?.exactReads).toEqual([]);
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
     it('waits for initial source answers before qualifying a restored link through an unobserved connection', async () => {
         let release!: () => void;
         const secondInitialScan = new Promise<void>(resolve => { release = resolve; });

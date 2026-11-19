@@ -316,6 +316,10 @@ export function useTriageSettledLocation(input: Readonly<{
       }
       const action = readEntryActivation(located);
       if (action?.kind === 'none') {
+        // A refusal answers the delivered open as fully as a selection does, so
+        // it is retired here too. Left pending, it would keep this route
+        // unsettled and re-run the refusal on every render it causes.
+        adoptedLaunch.current = open;
         // A settled admission refusal answers this route; absence from a
         // filtered/partial window does not. Keep every valid lens field and
         // retire only the entry no active configured connection can observe.

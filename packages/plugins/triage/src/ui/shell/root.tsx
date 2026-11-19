@@ -394,6 +394,13 @@ function TriagePublishedDetail(props: React.ComponentProps<typeof TriageDetailRe
     pin={publication === null ? props.pin : { ...props.pin, row: publication.projectPin(row) }} />;
 }
 
+/** Two admission failures the reader would be shown identically. */
+function sameTriageSourceFailureFacts(a: TriageSourceFailureV1 | undefined, b: TriageSourceFailureV1 | undefined): boolean {
+  return a === b || (a !== undefined && b !== undefined && a.class === b.class && a.code === b.code
+    && a.detail === b.detail && a.requestId === b.requestId && a.requiredPermissions === b.requiredPermissions
+    && a.retryNotBeforeMs === b.retryNotBeforeMs);
+}
+
 export function TriageListShell(props: TriageListShellProps = {}): React.ReactElement {
   const hostApi = usePluginHostApi();
   const surfaceContext = useSurfaceContext();
@@ -886,8 +893,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * rendering pins performs no read.
    */
   const [entryOpenFailure, setEntryOpenFailure] = React.useState<(Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> & { failure?: TriageSourceFailureV1 }) | null>(null);
-  const openAdmission = React.useRef({ configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner });
-  openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner };
+  const openAdmission = React.useRef({ configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner, entryOpenFailure });
+  openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner, entryOpenFailure };
   // Read at press time through the ref: a callback rebuilt with every window/session update made the row
   // environment every row reads a new value each time, re-rendering every row for nothing.
   const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1) => {
@@ -910,13 +917,18 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       });
       if (selected.kind === 'none') {
         const failure = candidates.find(source => source.availabilityFailure !== undefined)?.availabilityFailure;
-        setEntryOpenFailure({ ...selected, ...(failure === undefined ? {} : { failure }) });
+        // Route settlement asks again whenever its inputs are re-derived. An unchanged refusal sets no
+        // state, so asking again renders nothing and cannot feed that effect back into itself.
+        const previous = current.entryOpenFailure;
+        if (previous === null || previous.reason !== selected.reason || !sameTriageSourceFailureFacts(previous.failure, failure)) {
+          setEntryOpenFailure({ ...selected, ...(failure === undefined ? {} : { failure }) });
+        }
         return selected;
       }
       sourceInstanceId = selected.sourceInstanceId;
     }
     if (sourceInstanceId === null) return null;
-    setEntryOpenFailure(null);
+    if (current.entryOpenFailure !== null) setEntryOpenFailure(null);
     return {
       kind: 'rowActivated' as const,
       sectionId: hit?.sectionId ?? null,
