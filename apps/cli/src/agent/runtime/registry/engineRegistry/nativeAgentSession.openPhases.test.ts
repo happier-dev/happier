@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { logger } from '@/ui/logger';
@@ -10,6 +11,58 @@ import {
     createNativeSessionClientTestPort,
     createSessionHostServiceOwners,
 } from './nativeAgentSession.testkit';
+
+it('separates retained source loading from the actual factory call in the native open record', async () => {
+    const agentId = 'acme-runtime-factory';
+    const contributions = createExternalContributionFixtures(agentId);
+    const diagnostic = vi.spyOn(logger, 'infoFile');
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const plan = await createNativeAgentRuntimeSessionPlanFixture({
+        createRuntime: async (factoryInput: Readonly<{ signal: AbortSignal; onFactoryInvoked?: () => void }>) => {
+            clock.mockReturnValue(250);
+            wallClock.mockReturnValue(1_250);
+            factoryInput.onFactoryInvoked?.();
+            clock.mockReturnValue(275);
+            return { sessions: { open: async () => ({
+                send: async () => ({ status: 'admitted' }),
+                watch: () => ({ dispose() {} }),
+                dispose: async () => undefined,
+            }) } };
+        },
+        authorizeNewTurn: async () => ({ status: 'admitted' }),
+        lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
+        createSessionHostServiceOwners,
+        createInvocationServices: async () => createUnavailablePluginServices(),
+        sessionInput: buildPluginSessionBindingInput({
+            credentials: { token: 'runtime-factory-fixture', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+            directory: '/tmp/runtime-factory',
+            backendTarget: { kind: 'backend', backendId: agentId },
+        }),
+    });
+    let created: Awaited<ReturnType<typeof plan.config.createSessionRuntime>> | undefined;
+    try {
+        created = await plan.config.createSessionRuntime({
+            directory: '/tmp/runtime-factory', metadata: {}, machineId: 'machine-runtime-factory',
+            session: createNativeSessionClientTestPort('session-runtime-factory'),
+            transcriptSession: {}, messageBuffer: {}, mcpServers: {}, permissionHandler: {},
+            getPermissionMode: () => 'default', setThinking: () => undefined, memoryRecallGuidanceEnabled: false,
+        } as never);
+        const factoryRecords = diagnostic.mock.calls.flatMap(([label, facts]) => (
+            label === '[NativeAgentSession] Open phase' && facts && typeof facts === 'object'
+                && Reflect.get(facts, 'phase') === 'runtime_factory' ? [facts] : []
+        ));
+        expect(factoryRecords).toEqual([expect.objectContaining({
+            sessionId: 'session-runtime-factory', durationMs: 275,
+            factoryInvokedAtMs: 1_250, factoryInvocationMs: 25,
+        })]);
+    } finally {
+        await created?.operations.resetOrDisposeRuntime('session_closed');
+        diagnostic.mockRestore();
+        clock.mockRestore();
+        wallClock.mockRestore();
+    }
+});
 
 describe('native Session host-service phase attribution', () => {
     it.each(['completed', 'failed'] as const)('attributes the single awaited Team binding as %s without opening early or repeating it', async outcome => {
@@ -31,7 +84,22 @@ describe('native Session host-service phase attribution', () => {
         };
         const plan = await createNativeAgentRuntimeSessionPlanFixture({
             runtime: { sessions: { open: async request => { opened.push(request); return nativeSession; } } },
-            lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
+            lease: createLease(agentId), backend: contributions.backend,
+            agent: {
+                ...contributions.agent,
+                richDefinition: {
+                    ...contributions.agent.richDefinition,
+                    definition: {
+                        ...contributions.agent.richDefinition.definition,
+                        providerRequirements: AgentProviderRequirementsV1Schema.parse({
+                            acceptsProtocols: ['openai-responses'], required: {},
+                            credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+                            authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['HOSTSERVLAT_REGION'] },
+                            materialization: 'spawnEnv', applyPolicy: 'next_prompt', supportsFreeformModelIds: true,
+                        }),
+                    },
+                },
+            },
             createSessionHostServiceOwners,
             createInvocationServices: async () => createUnavailablePluginServices(),
             // The runner delegates this operation to the daemon over HTTP. Only that process boundary is supplied here.
@@ -89,7 +157,7 @@ describe('native Session host-service phase attribution', () => {
             release();
             const result = await settled;
             if ('error' in result) {
-                expect(outcome).toBe('failed');
+                if (outcome === 'completed') throw result.error;
                 expect(result.error).toBe(failure);
             } else {
                 created = result.value;

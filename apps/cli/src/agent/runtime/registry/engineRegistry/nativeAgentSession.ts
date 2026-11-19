@@ -4316,9 +4316,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     scmCommandRunner?: ScmCommandRunner;
     scmCheckpointPhaseRunner?: RepositoryCheckpointPhaseRunner;
     runtime?: AgentRuntime;
-    createRuntime?: (params: Readonly<{
-        signal: AbortSignal;
-    }>) => Promise<AgentRuntime>;
+    createRuntime?: import('./types').RunnerAgentSessionRuntimeSource['createRuntime'];
     prepareRuntimeSource?: (params: Readonly<{
         sessionId: string;
         signal: AbortSignal;
@@ -4851,7 +4849,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             assertGenerationCurrent();
             // The retained factory publishes executable catalog hooks. Materialize
             // it after source admission, before host services capture those hooks.
-            const runtime = params.runtime ?? await params.createRuntime!({ signal });
+            const runtime = params.runtime ?? await params.createRuntime!({
+                signal,
+                onFactoryInvoked: openPhases.markRuntimeFactoryInvoked,
+            });
             recordOpenPhase('runtime_factory');
             assertGenerationCurrent();
             const sourceCustody = identity.sourceCustody ?? null;

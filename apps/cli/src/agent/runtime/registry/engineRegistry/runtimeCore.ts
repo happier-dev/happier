@@ -125,9 +125,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
     happyHomeDir?: string;
     nativeAgentRuntime?: AgentRuntime | null;
     startupRuntimeDescriptorV1?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['runtimeDescriptorV1'];
-    createNativeAgentRuntime?: (params: Readonly<{
-        signal: AbortSignal;
-    }>) => Promise<AgentRuntime>;
+    createNativeAgentRuntime?: import('./types').RunnerAgentSessionRuntimeSource['createRuntime'];
     prepareNativeAgentRuntimeSource?: (params: Readonly<{
         sessionId: string;
         signal: AbortSignal;

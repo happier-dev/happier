@@ -557,7 +557,11 @@ describe('runner Agent session runtime source', () => {
 
     it('loads only the retained factory leaf and keeps one local runtime across daemon authority rotation', async () => {
         const runtime = { sessions: { open: vi.fn() } };
-        const factory = vi.fn(async () => runtime);
+        const reported: string[] = [];
+        const factory = vi.fn(async () => {
+            reported.push('factory');
+            return runtime;
+        });
         const admissionRequests: unknown[] = [];
         mocks.loadFactory.mockResolvedValue(factory);
         mocks.dispatch.mockImplementation(async (input) => {
@@ -619,7 +623,10 @@ describe('runner Agent session runtime source', () => {
 
         const controller = new AbortController();
         const signal = controller.signal;
-        await expect(source!.createRuntime({ signal })).resolves.toBe(runtime);
+        const factoryInput = { signal, onFactoryInvoked: () => { reported.push('invoked'); } };
+        await expect(source!.createRuntime(factoryInput)).resolves.toBe(runtime);
+        await expect(source!.createRuntime(factoryInput)).resolves.toBe(runtime);
+        expect(reported).toEqual(['invoked', 'factory']);
         await source!.createInvocationServices({
             pluginId: 'happier.agent.codex',
             pluginVersion: '1.0.0',

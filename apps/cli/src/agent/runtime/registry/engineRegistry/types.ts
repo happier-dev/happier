@@ -138,6 +138,7 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
     }>>;
     createRuntime(params: Readonly<{
         signal: AbortSignal;
+        onFactoryInvoked?: () => void;
     }>): Promise<AgentRuntime>;
     createInvocationServices: CreateAgentInvocationServices;
     authorizeNewTurn: (

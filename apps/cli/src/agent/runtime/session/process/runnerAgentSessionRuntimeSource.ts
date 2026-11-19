@@ -1494,7 +1494,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 : {}),
             isCurrent: () => !lifetime.signal.aborted,
         }),
-        async createRuntime({ signal }) {
+        async createRuntime({ signal, onFactoryInvoked }) {
             signal.addEventListener(
                 'abort',
                 retireSourceOnAbort,
@@ -1508,6 +1508,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 await prepareRuntimeLeaf();
                 const leaf = await runtimeLeafPromise!;
                 signal.throwIfAborted();
+                onFactoryInvoked?.();
                 return await leaf.factory({
                     plugin: Object.freeze({
                         id: binding.pluginId,
