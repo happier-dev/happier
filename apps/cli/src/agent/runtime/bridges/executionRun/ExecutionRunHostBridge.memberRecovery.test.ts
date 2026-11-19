@@ -3,10 +3,11 @@ import { expect, it, vi } from 'vitest';
 const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
   import('@/plugins/projection/registry/builtIn/locators.testkit')
 ));
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { withAdmittedSessionRun } from './testkit/admittedSessionRun';
 import { createNativeSessionBoundary } from './testkit/nativeSessionContext';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
@@ -33,6 +34,45 @@ import { buildPendingScmDiffSummaryOutput } from './kinds/scmDiffSummary/publish
 vi.mock('node:fs', async original => {
   const actual = await original<typeof import('node:fs')>();
   return createBundledPluginPublicationFsFixture(actual);
+});
+
+it.each([undefined, 'custodian'])('prepares a captured Review as its requester with ambient Account %s', async ambientAccountId => {
+  await withAdmittedSessionRun({ directOwner: true, run: async fixture => {
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-review-account-' });
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.backend.git/git',
+      executableDefinition: registration.runtime!, registration,
+      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
+    })]);
+    const requester = fixture.requesterWorkAttributionV1;
+    let comparisonId: string | undefined;
+    try {
+      await writeFile(join(repository.rootPath, repository.trackedPath), 'A captured change for the reviewer.\n');
+      const captured = await runWithScmAccountScope(requester.accountId, () => captureScmComparison({
+        cwd: repository.rootPath, sessionId: fixture.session.sessionId, source: { kind: 'workingTree' }, registry,
+      }));
+      comparisonId = captured.comparison.id;
+      const role = resolveRoleSelectionV1({ roleId: 'reviewer' });
+      if (!role.ok) throw new Error('Fixture reviewer role is unavailable');
+      const start = () => fixture.start({ intent: 'review', cwd: repository.rootPath,
+        requesterWorkAttributionV1: requester, intentInput: { comparisonId }, resolvedRole: role.selection });
+      const started = await (ambientAccountId ? runWithScmAccountScope(ambientAccountId, start) : start());
+      expect(started.runId).toEqual(expect.any(String));
+      expect(fixture.bridge!.get(started.runId)).toMatchObject({ requesterWorkAttributionV1: requester,
+        intentInput: { comparisonId, comparison: { id: comparisonId } } });
+      const saved = await runWithScmAccountScope(requester.accountId, () => readCapturedScmComparison({
+        cwd: repository.rootPath, sessionId: fixture.session.sessionId, comparisonId: captured.comparison.id }));
+      expect(saved.comparison.id).toBe(comparisonId);
+      // Preparation is the contract here; the composed gate owns native launch.
+      await fixture.bridge!.stop(started.runId);
+      await fixture.bridge!.waitForTerminal(started.runId);
+    } finally {
+      if (comparisonId) await runWithScmAccountScope(requester.accountId, () => hostScmComparisonShelf.remove({
+        comparisonId: comparisonId!, sessionId: fixture.session.sessionId }));
+      await rm(repository.rootPath, { recursive: true, force: true });
+    }
+  } });
 });
 
 it('restores member evidence and requester publication authority after sealed Run recovery', async () => {

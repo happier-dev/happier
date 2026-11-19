@@ -9,6 +9,7 @@ import type { ExecutionRunOutputObservation } from '@happier-dev/protocol/review
 import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
 import { isExecutionRunInRequesterAccountScope, resolveExecutionRunRequesterAccountId } from './requesterScope';
 import { runWithScmAccountScope } from '@/scm/accountScope';
+import { runWithScmExecutionRunAccountScope } from './profileStart';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 
 import {
@@ -315,12 +316,15 @@ async function prepareExecutionRunManagerStartParams(
   const offeredModel = (params.intent === 'scm_diff_summary'
     || (params.intent === 'review' && Array.isArray(input.outputs) && input.outputs.includes('walkthrough')))
     ? await readExecutionRunOfferedModel({ ...params, cwd }) : undefined;
-  const startProfilePatch = await profile.prepareStartParams?.({
+  const startProfilePatch = await runWithScmExecutionRunAccountScope({
+    requesterWorkAttributionV1: params.requesterWorkAttributionV1,
+    executionAuthorization: params.projectLaunchContext?.ingress?.callerInputAuthorization,
+  }, () => profile.prepareStartParams?.({
     sessionId: params.sessionId,
     request: omitExecutionRunRoleCompositionContext(params) as unknown as ExecutionRunStartRequest,
     cwd,
     ...(offeredModel?.contextWindowTokens ? { contextWindowTokens: offeredModel.contextWindowTokens } : {}),
-  });
+  }));
 
   const prepared: Record<string, unknown> = {
     ...(params as unknown as Record<string, unknown>),

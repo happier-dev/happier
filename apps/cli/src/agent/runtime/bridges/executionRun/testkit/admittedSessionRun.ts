@@ -131,6 +131,7 @@ type AdmittedSessionRunOptions = Readonly<{
 }>;
 
 export type AdmittedSessionRunFixture = Readonly<{
+  requesterWorkAttributionV1: NonNullable<ExecutionRunManagerStartParams['requesterWorkAttributionV1']>;
   rpc: RpcHandlerManager;
   session: ApiSessionClient;
   trackedSessions: readonly TrackedSession[];
@@ -955,7 +956,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     bridge = createDirectBridge();
     if (options) {
       if (!session) throw new Error('The composed Session Run fixture requires a real Session');
-      await options.run({ rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, nativeDetachedOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
+      await options.run({ requesterWorkAttributionV1: attribution, rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, nativeDetachedOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
         readHomeBoundary: () => [...homeBoundary].map(([operation, count]) => ({ operation, count })),
         get admittedRuntime() { return admittedRuntimeFixture!; },
         async replaceAgent(selection) {
