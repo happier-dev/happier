@@ -151,7 +151,7 @@ export async function resolveActionWorkflowSessionScopeV1(
   for (const binding of leaf.sessionAuthorityBindings ?? []) {
     const roster = binding.inputName === undefined && actionId === 'review.start' && structure.leaf.kind === 'action'
       ? readReviewSessionReviewerAddressesV1(Object.fromEntries(Object.entries(structure.leaf.input).map(([field, value]) =>
-        [field, bindWorkflowActionFieldV1(value, { inputs: structure.inputs, origin: opened.acceptedContext.origin },
+        [field, bindWorkflowActionFieldV1(value, { inputs: structure.inputs, origin: 'origin' in opened.acceptedContext ? opened.acceptedContext.origin : undefined },
           structure.leaf.id, 'run', structure.frame.item)]))) : null;
     if (binding.inputName === undefined && !roster) return null;
     const value = binding.inputName === undefined ? undefined : structure.inputs[binding.inputName];
