@@ -3353,8 +3353,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       if (result.type !== 'error') throw new Error('Expected launch admission refusal');
       expect(SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(result)))
         .toMatchObject({ errorCode: 'DAEMON_RPC_UNAVAILABLE',
-          ...(cause === 'requester_home_unavailable' ? { errorDetail: { kind: 'requester_home_unavailable' } } : {}) });
-      if (cause !== 'requester_home_unavailable') expect(result.errorDetail).toBeUndefined();
+          errorDetail: cause === 'requester_home_unavailable' ? { kind: cause } : { kind: 'launch_error', code: cause } });
     },
   );
 

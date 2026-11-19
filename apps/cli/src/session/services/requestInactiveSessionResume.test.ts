@@ -806,6 +806,21 @@ describe('requestInactiveSessionResume', () => {
     }
   });
 
+  it('reports the typed post-admission daemon refusal without logging private prose', async () => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const errorDetail = { kind: 'launch_error', code: 'session_startup_observation_unavailable',
+      message: 'Session startup cannot be observed' };
+    callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
+      errorMessage: 'private native detail', errorDetail });
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
+      rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'resume_failed', errorDetail });
+    expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+      phase: 'spawn_rpc', cause: 'DAEMON_RPC_UNAVAILABLE', outcomeCode: 'resume_failed',
+      spawnRefusalReason: 'session_startup_observation_unavailable',
+    }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private native detail');
+  });
+
   it('identifies caller cancellation without logging the abort reason', async () => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const cancellation = new AbortController();

@@ -1,6 +1,7 @@
 import { isPermissionMode } from '@/api/types';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    projectDaemonSpawnUnavailable,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
 import {
@@ -65,8 +66,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         if ((requesterAdmission || requesterBootstrap) && !params.serverId) {
             // A Machine use grant is not a requester Account credential. No unsigned
             // shared launch may borrow the custodian's settings or subscriptions.
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Session credential unavailable' };
+            return projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session credential unavailable');
         }
         const {
             directory,
@@ -417,8 +417,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                     && await isAdmittedRequesterSessionBootstrapCurrent(context)
                 : await canUseCustodianAccountForMachineRequest(context);
             if (context?.signal?.aborted) return cancelled();
-            if (!current) return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Machine admission unavailable' };
+            if (!current) return projectDaemonSpawnUnavailable('requester_machine_admission_unavailable', 'Requester Machine admission unavailable');
         }
         const requesterWorkAttribution = requesterBootstrap
             ? RequesterWorkAttributionV1Schema.parse(requesterBootstrap.attribution)

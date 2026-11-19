@@ -1,4 +1,4 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectDaemonSpawnUnavailable } from '@/session/shared/spawnSessionContract';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
@@ -48,8 +48,7 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         const observeNativeOpen = Boolean(operation || (options.existingSessionId && !options.freshSessionCreation));
         const startupDeadline = observeNativeOpen ? Date.now() + resolveSessionStartupTimeoutMs() : null;
         if (observeNativeOpen && (!input.awaitAgentSessionOpen || !input.stopSession)) {
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Session native startup observation or retirement unavailable' };
+            return projectDaemonSpawnUnavailable('session_startup_observation_unavailable', 'Session native startup observation or retirement unavailable');
         }
         const result = await input.spawnSession({ ...options, ...(operation ? { projectSetupOperation: operation } : {}) });
         if (result.type !== 'success' || !result.sessionId || !observeNativeOpen) return result;

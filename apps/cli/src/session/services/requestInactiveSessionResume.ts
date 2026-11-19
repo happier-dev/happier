@@ -6,6 +6,7 @@ import { PendingActivationRuntimeFailureReasonV1Schema } from '@happier-dev/prot
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { readSessionRuntimeIssueCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 
 import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
@@ -46,6 +47,7 @@ export type InactiveSessionResumeResult =
       message: string;
       errorDetail?: SpawnSessionErrorDetail;
       spawnErrorCode?: SpawnSessionErrorCode;
+      spawnRefusalReason?: string;
       runtimeFailureReason?: Extract<SpawnSessionResult, { type: 'error' }>['runtimeFailureReason'];
     }>;
 
@@ -55,7 +57,7 @@ function readNonEmptyString(value: unknown): string | null {
 
 /** Preserve the spawn owner's closed refusal facts at the transport boundary. */
 function readResumeSpawnFailureFacts(response: unknown, requestId: string): Pick<
-  Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'spawnErrorCode' | 'runtimeFailureReason'
+  Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'spawnErrorCode' | 'spawnRefusalReason' | 'runtimeFailureReason'
 > {
   if (!response || typeof response !== 'object') return {};
   const code = Reflect.get(response, 'errorCode');
@@ -67,8 +69,12 @@ function readResumeSpawnFailureFacts(response: unknown, requestId: string): Pick
       errorMessage: Reflect.get(response, 'errorMessage'), agentId: Reflect.get(response, 'agentId'), requestId });
     if (failure.code === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) errorDetail = failure.launchError;
   }
+  const spawnRefusalReason = code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
+    ? readSessionRuntimeIssueCode(errorDetail?.kind === 'launch_error' ? errorDetail.code : errorDetail?.kind)
+    : null;
   return {
     ...(errorDetail ? { errorDetail } : {}),
+    ...(spawnRefusalReason ? { spawnRefusalReason } : {}),
     ...(spawnErrorCode.success ? { spawnErrorCode: spawnErrorCode.data } : {}),
     ...(runtimeFailureReason.success ? { runtimeFailureReason: runtimeFailureReason.data } : {}),
   };
@@ -266,6 +272,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
           || ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(failure.message).success
           || ProviderErrorCodeV1Schema.safeParse(failure.message).success ? failure.message : 'unknown',
       } : {}),
+      ...(failure.spawnRefusalReason ? { spawnRefusalReason: failure.spawnRefusalReason } : {}),
       ...(failure.runtimeFailureReason ? { runtimeReason: failure.runtimeFailureReason } : {}),
       outcomeCode: failure.code, elapsedMs: Date.now() - startedAtMs,
       cancelled: params.signal?.aborted === true,

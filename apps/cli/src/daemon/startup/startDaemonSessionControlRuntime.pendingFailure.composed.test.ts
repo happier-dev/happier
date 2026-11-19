@@ -424,7 +424,8 @@ it.each([
   if (scenario.stop === 'mismatched-context') {
     expect(await h.daemon.spawnSessionForInternalResume({ directory: h.cwd, existingSessionId: h.sessionId,
       executionAuthorization: { provenance: 'user_request', requestId, requestedAt: 30 } },
-      { requestId: 'another-original', requestedAt: 30 })).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+      { requestId: 'another-original', requestedAt: 30 })).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
+      errorDetail: { kind: 'launch_error', code: 'pending_resume_admission_mismatch' } });
     expect(launches).toHaveLength(0);
     expect(failureReports).toEqual([]);
     return;
@@ -471,7 +472,8 @@ it.each([
         serverUrl: 'https://session-home.test', resolveCurrentMachineId: () => 'machine' }) });
   }
   if (transientRead) {
-    expect(publicResult).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+    expect(publicResult).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
+      errorDetail: { kind: 'launch_error', code: 'authority_unavailable' } });
     expect(launches).toHaveLength(0);
     expect(failureReports).toEqual([]);
     expect(raw.pendingCount).toBe(1);
@@ -490,7 +492,8 @@ it.each([
     }
     if (scenario.route === 'public-later-stop') {
       expect(laterStops).toBe(1);
-      expect(publicResult).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+      expect(publicResult).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
+        errorDetail: { kind: 'launch_error', code: 'intent_changed' } });
     }
     if (scenario.route === 'owner') expect(result).toEqual({ status: 'not-needed', reason: 'spawn-retryable' });
   } else {

@@ -19,7 +19,7 @@ import {
     awaitSpawnedSessionId,
     type SpawnSessionNonceResolver,
 } from '@/session/services/awaitSpawnedSessionId';
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { projectDaemonSpawnUnavailable, SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { SpawnDaemonSessionRequestSchema, PRIVATE_SPAWN_SESSION_RPC_METHODS } from './spawnSessionOptionsContract';
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
 import { SessionRequesterBootstrapRpcRequestV1Schema, openSessionRequesterBootstrapRpcRequestV1,
@@ -699,8 +699,7 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
         const foreignResume = admission && admission.actorAccountId !== admission.custodianAccountId
             && !context.requesterSessionBootstrap;
         if (foreignResume && (parsed.data.type !== 'resume-session' || !parsed.data.sessionId)) {
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Session credential unavailable' };
+            return projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session credential unavailable');
         }
         const response = foreignResume && resumeContext ? await withRequesterSessionRuntime(admittedSpawnData, resumeContext,
             parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler, reason => ({
@@ -725,8 +724,7 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
                         resume: { status: 'preexisting_unowned' }, targetCleanup: { status: 'not_owned', reason: 'preexisting_or_adopted' } }
                     : null);
             }
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Prepared Session handoff runner was not launched' };
+            return projectDaemonSpawnUnavailable('session_handoff_launch_custody_unavailable', 'Prepared Session handoff runner was not launched');
         }
         // Resume and seeded-row attach preserve an existing Session identity.
         // Their creator already owns birth settlement; this RPC only launches

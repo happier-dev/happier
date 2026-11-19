@@ -305,14 +305,33 @@ export type SpawnSessionResult =
     runtimeFailureReason?: import('@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1').PendingActivationFailureDetailsV1['runtimeReason'];
   };
 
+export function projectDaemonSpawnUnavailable(
+  code: SessionSpawnLaunchErrorV1['code'],
+  message: string,
+): Extract<SpawnSessionResult, { type: 'error' }> {
+  return {
+    type: 'error',
+    errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+    errorMessage: message,
+    errorDetail: { kind: 'launch_error', code, message },
+  };
+}
+
 /** One projection for private launch checks; the detail is presentation, never authority. */
 export function projectSessionRunnerLaunchAdmissionFailure(
   admission: boolean | SessionSpawnLaunchErrorV1,
 ): Extract<SpawnSessionResult, { type: 'error' }> | null {
   if (admission === true) return null;
   return !admission
-    ? { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Session handoff launch custody unavailable' }
-    : { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: admission.message, errorDetail: admission };
+    ? projectDaemonSpawnUnavailable('session_handoff_launch_custody_unavailable', 'Session handoff launch custody unavailable')
+    : {
+        type: 'error',
+        errorCode: admission.code === 'intent_changed'
+          ? SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
+          : SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: admission.message,
+        errorDetail: admission,
+      };
 }
 
 export const SessionCreationOutcomeSchema = z.strictObject({

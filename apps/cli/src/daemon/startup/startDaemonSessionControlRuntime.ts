@@ -562,7 +562,7 @@ import type {
   SpawnSessionOptions,
   SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectDaemonSpawnUnavailable, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -4057,6 +4057,7 @@ export async function startDaemonSessionControlRuntime(
     });
   };
 
+  const resumeIntentChanged = { kind: 'launch_error', code: 'intent_changed', message: 'Session resume admission unavailable' } as const;
   const runSpawnSession = async (
     options: SpawnSessionOptions,
     behavior: Readonly<{
@@ -4169,14 +4170,15 @@ export async function startDaemonSessionControlRuntime(
         if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return requesterRuntimeUnavailable;
         const admission = state ? resolveSessionAutoResumeAdmissionV1({ metadata: state.metadata,
           archivedAt: state.archivedAt, machineAvailable: true, authorityAvailable: state.metadata != null }) : null;
+        if (!admission) return projectDaemonSpawnUnavailable('authority_unavailable', 'Automatic Session resume authority unavailable');
         const refusal = projectSessionRunnerLaunchAdmissionFailure(admission === 'eligible' ? true
-          : admission ? { kind: 'launch_error', code: admission, message: 'Automatic Session resume refused' } : false);
+          : { kind: 'launch_error', code: admission, message: 'Automatic Session resume refused' });
         if (refusal) return refusal;
       }
       if (requesterRuntime || behavior.automaticExistingSessionResume && existingSessionId) {
         const beforeSessionRunnerLaunch = options.beforeSessionRunnerLaunch;
         options = { ...options, beforeSessionRunnerLaunch: async () => {
-          if (!behavior.isLaunchAdmissionCurrent()) return false;
+          if (!behavior.isLaunchAdmissionCurrent()) return resumeIntentChanged;
           const unavailable = requesterRuntimeUnavailable.errorDetail;
           const signal = shutdownCancellationDomains.daemonWorkSignal;
           if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return unavailable;
@@ -4195,8 +4197,7 @@ export async function startDaemonSessionControlRuntime(
           && params.connectedServicesRestartRequestedSessions.has(tracked.trackingKey))
       )) {
         if (!behavior.isLaunchAdmissionCurrent()) {
-          return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-            errorMessage: 'Session resume admission unavailable' };
+          return projectDaemonSpawnUnavailable('intent_changed', 'Session resume admission unavailable');
         }
         const refusal = projectSessionRunnerLaunchAdmissionFailure(options.beforeSessionRunnerLaunch
           ? await options.beforeSessionRunnerLaunch() : true);
@@ -4582,11 +4583,7 @@ export async function startDaemonSessionControlRuntime(
     } catch (error) {
       if (shutdownCancellationDomains.daemonWorkSignal.aborted
         && error === shutdownCancellationDomains.daemonWorkSignal.reason) {
-        return {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-          errorMessage: 'Daemon is shutting down',
-        };
+        return projectDaemonSpawnUnavailable('daemon_shutting_down', 'Daemon is shutting down');
       }
       logger.warn('[DAEMON RUN] Failed before spawn session work started', {
         hasExistingSessionId:
@@ -4617,11 +4614,7 @@ export async function startDaemonSessionControlRuntime(
       && !shutdownCancellationDomains.daemonWorkSignal.aborted;
     const mayCompletePlannedRestart = canCompletePlannedRestart();
     if (params.isShuttingDown?.() === true && !mayCompletePlannedRestart) {
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-        errorMessage: 'Daemon is shutting down',
-      };
+      return projectDaemonSpawnUnavailable('daemon_shutting_down', 'Daemon is shutting down');
     }
     // The one sessions-role refusal for every Session start (Machine RPC, control route, workflow
     // start, host Action ingress, CLI). Completing a running Session's planned restart is not a
@@ -4641,8 +4634,7 @@ export async function startDaemonSessionControlRuntime(
     const execution = options.executionAuthorization;
     if (pendingActivation && (!automaticExistingSessionResume || execution?.provenance !== 'user_request'
       || execution.requestId !== pendingActivation.requestId || execution.requestedAt !== pendingActivation.requestedAt)) {
-      return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-        errorMessage: 'Pending resume admission does not match the original input' };
+      return projectDaemonSpawnUnavailable('pending_resume_admission_mismatch', 'Pending resume admission does not match the original input');
     }
     // A Stop can still be persisting its hold. Capture explicit Resume intent
     // only after that same owner has completed, rather than fencing it as stale.
@@ -4732,13 +4724,13 @@ export async function startDaemonSessionControlRuntime(
         ...(mayCompletePlannedRestart || automaticExistingSessionResume || freshExplicitResumeAdmission
           ? {
               beforeSessionRunnerLaunch: async () => {
-                if (!isLaunchAdmissionCurrent()) return false;
+                if (!isLaunchAdmissionCurrent()) return resumeIntentChanged;
                 if (options.beforeSessionRunnerLaunch) {
                   const admission = await options.beforeSessionRunnerLaunch();
                   if (admission !== true) return admission;
                 }
-                if (managerResume && !await managerResume.recheck()) return false;
-                return isLaunchAdmissionCurrent();
+                if (managerResume && !await managerResume.recheck()) return resumeIntentChanged;
+                return isLaunchAdmissionCurrent() || resumeIntentChanged;
               },
             }
           : {}),

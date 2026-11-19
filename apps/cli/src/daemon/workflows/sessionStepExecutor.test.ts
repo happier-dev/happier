@@ -2774,6 +2774,46 @@ describe('workflow Session step executor', () => {
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ attachments: [attachment] }));
   });
 
+  it('keeps the subreason when an existing Workflow Session cannot resume', async () => {
+    const sessionId = 'existing-session';
+    const machineId = 'machine-1';
+    const code = 'requester_session_custody_unavailable';
+    const credentials = { token: 'token', encryption: null };
+    const read = readiness.get.getMockImplementation()!;
+    readiness.get.mockImplementation(async (url: string) => {
+      const response = await read(url);
+      return url.endsWith(`/v2/sessions/${sessionId}`)
+        ? { ...response, data: { session: { ...response.data.session, active: false } } }
+        : response;
+    });
+    readiness.callMachineRpc.mockImplementation(async ({ method }) => {
+      if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION) throw new Error('Unexpected RPC');
+      return { type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'PRIVATE_NATIVE_PROSE',
+        errorDetail: { kind: 'launch_error', code, message: 'PRIVATE_NATIVE_PROSE' } };
+    });
+    const execute = createProductionWorkflowSessionStepExecutor({ credentials, machineId,
+      machineAdmissionTransport: vi.fn(), createFreshConversation: async () => { throw new Error('Existing Session required'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId, machineId, directory: '/repo/subdir' }) });
+    const result = await execute({
+      runId: 'typed-resume', invocationRecordId: 'typed-invocation',
+      step: { kind: 'step', id: 'resume', inputMode: 'none', document: { text: '', references: [], attachments: [] },
+        input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+        invocationPath: { blockId: 'resume', scope: [] }, attempt: '0', logicalInvocationRecordId: 'typed-invocation' },
+      input: { text: '', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'existing_session', sessionId, machineId } },
+      executionTarget: { kind: 'session' },
+      authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      workspace: { machineId, directory: '/repo/subdir', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {}, onInputAccepted: async () => { throw new Error('No accepted input'); },
+      onSessionReady: async () => { throw new Error('No ready Session'); },
+    });
+    expect(result).toMatchObject({ kind: 'failed', code: 'resume_failed',
+      runtimeIssueV1: { code, failureCause: { phase: 'client_start', code } } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_PROSE');
+  });
+
   it('materializes shared, fresh, from-step, and existing conversations without a workflow-owned Session registry', async () => {
     const createFreshConversation = vi.fn(async () => ({ sessionId: 'new-session', machineId: 'machine-1', directory: '/repo/subdir' }));
     const resolveSharedRunConversation = vi.fn(async () => ({ sessionId: 'shared-session', machineId: 'machine-1', directory: '/repo/subdir' }));

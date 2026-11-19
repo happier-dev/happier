@@ -13009,6 +13009,7 @@ describe('startDaemonSessionControlRuntime', () => {
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
             errorMessage: 'Daemon is shutting down',
+            errorDetail: { kind: 'launch_error', code: 'daemon_shutting_down', message: 'Daemon is shutting down' },
         });
         expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
 

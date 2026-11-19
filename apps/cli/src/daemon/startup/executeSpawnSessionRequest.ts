@@ -56,6 +56,7 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    projectDaemonSpawnUnavailable,
     projectSessionRunnerLaunchAdmissionFailure,
 } from '@/session/shared/spawnSessionContract';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
@@ -284,8 +285,7 @@ export async function executeSpawnSessionRequest(
     if (options.requesterSessionBootstrap) {
         if (!requesterRuntime || requesterRuntime.bootstrap !== options.requesterSessionBootstrap
             || !await readRequesterHomeWithinActionLifetime(() => requesterRuntime.isCurrent(preparationSignal), preparationSignal)) {
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Account runtime unavailable' };
+            return projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Account runtime unavailable');
         }
         params = { ...params, credentials: requesterRuntime.bootstrap.credentials, api: requesterRuntime.api,
             connectedServicesMaterializationBaseDir: requesterRuntime.connectedServicesMaterializationBaseDir,
@@ -304,9 +304,9 @@ export async function executeSpawnSessionRequest(
     const requesterAccountId = requesterAttribution?.accountId ?? readAccountIdFromToken(params.credentials.token) ?? null;
     const requesterAdmissionFailure = await resolveRequesterLaunchAdmissionFailure(options);
     if (requesterAdmissionFailure) {
+        const detail = requesterAdmissionFailure.errorDetail;
         logger.infoFile('[DAEMON RUN] Spawn launch admission refused', {
-            cause: requesterAdmissionFailure.errorDetail?.kind === 'requester_home_unavailable'
-                ? 'requester_home_unavailable' : 'requester_machine_admission_unavailable',
+            cause: detail?.kind === 'launch_error' ? detail.code : detail?.kind,
             ...(diagnosticSessionId ? { sessionId: diagnosticSessionId } : {}),
             elapsedMs: Math.round(performance.now() - startedAt),
         });
@@ -333,9 +333,7 @@ export async function executeSpawnSessionRequest(
                 () => readRequesterAgentStartPolicyV1({ runtime: requesterRuntime,
                     minSettingsVersion: options.accountSettingsVersionHint, signal: preparationSignal }), preparationSignal);
             preparationSignal?.throwIfAborted();
-            if (!settingsCurrent) return {
-                type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                errorMessage: 'Requester Account settings unavailable' };
+            if (!settingsCurrent) return projectDaemonSpawnUnavailable('requester_account_settings_unavailable', 'Requester Account settings unavailable');
         } else await refreshAccountSettingsForSpawn(params);
         recordPreparationPhase('account_settings');
 
@@ -391,8 +389,7 @@ export async function executeSpawnSessionRequest(
                 // its current catalog; callers never supply the profile overlay.
                 if (requesterRuntime && !await readRequesterHomeWithinActionLifetime(
                     () => requesterRuntime.refreshAccountSettings(options.accountSettingsVersionHint, preparationSignal), preparationSignal)) {
-                    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                        errorMessage: 'Requester Account settings unavailable' };
+                    return projectDaemonSpawnUnavailable('requester_account_settings_unavailable', 'Requester Account settings unavailable');
                 }
                 profilesSnapshot = requesterRuntime ? await requesterRuntime.readAccountLaunchProfiles()
                     : await readAccountLaunchProfiles(activeAccountSettingsSnapshot?.settings, params.credentials);
@@ -1096,8 +1093,7 @@ export async function executeSpawnSessionRequest(
                     ? await requesterRuntime.bootstrap.bindExistingSession(normalizedExistingSessionId)
                     : launchExistingSessionId && tag
                       ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag) : null;
-                if (!custody) return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                    errorMessage: 'Requester Session custody unavailable' });
+                if (!custody) return await refuseSpawn(projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session custody unavailable'));
                 launchOptions = { ...launchOptions, requesterSessionCredentialFile: custody.path };
                 launchResourceScope.register({ onFailure: custody.cleanup, onExit: () => undefined });
             }
@@ -1757,7 +1753,7 @@ export async function executeSpawnSessionRequest(
                     ? await options.beforeSessionRunnerLaunch() : true);
                 if (!refusal) return null;
                 const cause = refusal.errorDetail?.kind === 'launch_error'
-                    ? refusal.errorDetail.code : 'session_handoff_launch_custody_unavailable';
+                    ? refusal.errorDetail.code : refusal.errorDetail?.kind;
                 logger.infoFile('[DAEMON RUN] Spawn launch admission refused', {
                     cause, sessionId, elapsedMs: Math.round(performance.now() - startedAt),
                 });

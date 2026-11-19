@@ -22,6 +22,7 @@ import { resolveWorkflowSessionLaunch } from './sessionStepLaunch';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionCompletionOperation } from '@happier-dev/protocol/actions/actionCompletion';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
 import { rethrowWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -1346,7 +1347,14 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
               authorityCeiling: 'account_automation', method, request, ...options,
             }),
             ...(params.signal ? { signal: params.signal } : {}) });
-          if (!resumed.ok) throw new WorkflowSessionCompositionError(resumed.code);
+          if (!resumed.ok) {
+            const reason = resumed.spawnRefusalReason;
+            const runtimeIssue = reason ? projectSessionRuntimeIssueMetadataV1({
+              v: 1, scope: 'primary_session', status: 'failed', code: reason, source: 'unknown', occurredAt: Date.now(),
+              failureCause: { phase: 'client_start', failureReason: 'unknown', code: reason },
+            }) : undefined;
+            throw new WorkflowSessionCompositionError(resumed.code, resumed.code, undefined, undefined, runtimeIssue);
+          }
         }
         return prepared.existing;
       }

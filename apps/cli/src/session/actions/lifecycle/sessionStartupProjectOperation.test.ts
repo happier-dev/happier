@@ -54,7 +54,8 @@ describe('resume native startup observation', () => {
         const spawn = createSessionStartupProjectSpawn({ context: undefined,
             spawnSession: async () => { throw new Error('must not launch without observation'); } });
         await expect(spawn({ directory: '/repo', existingSessionId: 'resumed-session' }))
-            .resolves.toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+            .resolves.toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
+                errorDetail: { kind: 'launch_error', code: 'session_startup_observation_unavailable' } });
     });
     it('does not report a webhook-acknowledged resume as opened before native authentication settles', async () => {
         let finishNativeOpen!: () => void;
