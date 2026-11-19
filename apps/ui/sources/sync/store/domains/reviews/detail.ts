@@ -1,11 +1,14 @@
 import type { ReviewGetResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import type { ReviewHumanActionStateV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 
+export type ReviewDetailData = Omit<ReviewGetResponseV1, 'human'> & Readonly<{ human: ReviewHumanActionStateV1 }>;
+
 export type ReviewDetailSnapshot = Readonly<{
-    data: ReviewGetResponseV1 | null;
+    data: ReviewDetailData | null;
     status: 'idle' | 'loading' | 'refreshing' | 'ready' | 'error';
     error: HomeActionFailure | null;
     stale: boolean;
@@ -31,7 +34,7 @@ function write(key: string, next: ReviewDetailSnapshot): void {
     snapshots.set(key, retained);
     for (const listener of listeners.get(key) ?? []) listener();
 }
-export function applyReviewDetail(key: string, data: ReviewGetResponseV1, current = true): void {
+export function applyReviewDetail(key: string, data: ReviewDetailData, current = true): void {
     write(key, { data: retainDeep(getReviewDetailSnapshot(key).data, data), status: 'ready', error: null, stale: !current });
 }
 export function beginReviewDetailLoad(key: string): void {

@@ -1,6 +1,16 @@
-import { createReviewHumanActionExecutorV1 } from '@happier-dev/protocol/reviews/reviewHumanTransportV1';
+import { createReviewHumanActionExecutorV1, type ReviewHumanResourceV1 } from '@happier-dev/protocol/reviews/reviewHumanTransportV1';
 import type { ReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+
+/** The admitted Artifact codec owns mode/key handling for every Review human reader and writer. */
+export async function readReviewHumanResource(account: Pick<LazyActionAccountContext, 'readArtifactContent'>,
+    reviewId: string, signal?: AbortSignal): Promise<ReviewHumanResourceV1> {
+    const artifact = await account.readArtifactContent(reviewId, { includeAssociatedContentOpener: true, signal });
+    if (!artifact?.openAssociatedContent || !artifact.sealAssociatedContent) {
+        throw Object.assign(new Error('review_verdict_content_unavailable'), { code: 'review_verdict_content_unavailable' });
+    }
+    return { mode: artifact.storageMode, open: artifact.openAssociatedContent, seal: artifact.sealAssociatedContent };
+}
 
 /** Uses the captured answering Account's HTTP authority and existing Artifact content codec. */
 export function createReviewHumanHttpActionExecutor(account: Pick<LazyActionAccountContext,
@@ -19,13 +29,7 @@ export function createReviewHumanHttpActionExecutor(account: Pick<LazyActionAcco
                 }
                 return payload;
             },
-            resolveResource: async reviewId => {
-                const artifact = await account.readArtifactContent(reviewId, { includeAssociatedContentOpener: true, signal: args.signal });
-                if (!artifact?.openAssociatedContent || !artifact.sealAssociatedContent) {
-                    throw Object.assign(new Error('review_verdict_content_unavailable'), { code: 'review_verdict_content_unavailable' });
-                }
-                return { mode: artifact.storageMode, open: artifact.openAssociatedContent, seal: artifact.sealAssociatedContent };
-            },
+            resolveResource: reviewId => readReviewHumanResource(account, reviewId, args.signal),
         });
         return execute(args.actionId, args.input);
     };

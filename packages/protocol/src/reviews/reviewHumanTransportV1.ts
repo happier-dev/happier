@@ -6,7 +6,7 @@ import {
   ReviewHumanGetInputV1Schema, ReviewHumanStateV1Schema, ReviewReviewersSetInputV1Schema,
   ReviewVerdictActionInputV1Schema, ReviewVerdictSubmitInputV1Schema,
   openReviewVerdictContentV1, prepareReviewVerdictTransportInputV1,
-  type ReviewHumanActionStateV1,
+  type ReviewHumanActionStateV1, type ReviewHumanStateV1,
 } from './reviewHumanV1.js';
 
 export type ReviewHumanResourceV1 = Readonly<{
@@ -14,6 +14,22 @@ export type ReviewHumanResourceV1 = Readonly<{
   seal: (value: unknown) => Promise<StoredJsonContentEnvelope>;
   open: (content: StoredJsonContentEnvelope) => Promise<unknown>;
 }>;
+
+/** Open retained prose through the admitted Artifact codec, preserving every verdict's identity binding. */
+export async function openReviewHumanStateV1(state: ReviewHumanStateV1,
+  resolveResource: (reviewId: string) => Promise<ReviewHumanResourceV1>): Promise<ReviewHumanActionStateV1> {
+  let resource: Promise<ReviewHumanResourceV1> | undefined;
+  const readResource = () => resource ??= resolveResource(state.reviewId);
+  const verdicts = await Promise.all(state.verdicts.map(async row => {
+    const { content, ...verdict } = row;
+    if (!content) return verdict;
+    const opened = await openReviewVerdictContentV1({ content,
+      expected: { reviewId: state.reviewId, roundOrdinal: row.roundOrdinal, accountId: row.accountId, revision: row.revision },
+      open: async value => (await readResource()).open(value) });
+    return { ...verdict, body: opened.body };
+  }));
+  return { ...state, verdicts };
+}
 
 /** Domain adapter beneath the Action front door; the server remains the admission authority. */
 export function createReviewHumanActionExecutorV1(context: Readonly<{
@@ -47,14 +63,6 @@ export function createReviewHumanActionExecutorV1(context: Readonly<{
       state = await send(actionId, actionId === REVIEW_HUMAN_ACTION_IDS_V1.setReviewers
         ? ReviewReviewersSetInputV1Schema.parse(input) : { reviewId });
     }
-    const verdicts = await Promise.all(state.verdicts.map(async row => {
-      const { content, ...verdict } = row;
-      if (!content) return verdict;
-      const opened = await openReviewVerdictContentV1({ content,
-        expected: { reviewId: state.reviewId, roundOrdinal: row.roundOrdinal, accountId: row.accountId, revision: row.revision },
-        open: async value => (await readResource()).open(value) });
-      return { ...verdict, body: opened.body };
-    }));
-    return { ...state, verdicts };
+    return openReviewHumanStateV1(state, readResource);
   };
 }

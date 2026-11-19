@@ -504,6 +504,106 @@ describe('Artifact composed view reads', () => {
                 || request.path.startsWith('/v1/actions/execution.run.') || request.path.startsWith('/v1/actions/workflow.run.'))).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
+    it('opens human detail with the requested Review codec when the Home substitutes another Review state', async () => {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { ArtifactEncryption } = await import('@/sync/encryption/artifactEncryption');
+        const { readReviewDetail } = await import('@/sync/api/reviews/detail');
+        const { createServedHomeAccountToken } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+        const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const secret = new Uint8Array(32).fill(17);
+        const encryption = await Encryption.create(secret);
+        const requestedId = 'requested-review';
+        const substitutedId = 'substituted-review';
+        const artifacts = new Map<string, Artifact>();
+        const artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'e2ee' });
+        let substitutedContent = '';
+        for (const [id, keyByte] of [[requestedId, 21], [substitutedId, 22]] as const) {
+            const key = new Uint8Array(32).fill(keyByte);
+            const codec = new ArtifactEncryption(key);
+            artifacts.set(id, { id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'e2ee',
+                dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(key)),
+                header: await codec.encryptHeader({ kind: 'review.v1', title: id, reviewId: id, v: 1 }),
+                body: await codec.encryptBody({ body: 'Retained review' }), headerVersion: 1, bodyVersion: 1,
+                seq: 1, createdAt: 1, updatedAt: 1 });
+            if (id === substitutedId) substitutedContent = await codec.encryptHeader({ reviewId: id, roundOrdinal: 1,
+                accountId: 'owner', revision: 1, body: 'Prose belonging to another Review' });
+        }
+        for (const artifact of artifacts.values()) artifactStore.replaceStoredRow(artifact);
+        const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://review-codec-binding.test', accountId: 'owner',
+            accountMode: 'e2ee', credentials: { token: createServedHomeAccountToken('owner'), secret: encodeBase64(secret, 'base64url') },
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }) }], route: request => {
+            if (request.path.startsWith('/v1/artifacts/')) return artifactStore.handle(request.path,
+                { method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined;
+            if (request.path === '/v1/reviews/get') return Response.json({ review: { reviewId: requestedId,
+                projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 } },
+                human: { reviewId: substitutedId, roundOrdinal: 1, requests: [], verdicts: [{ accountId: 'owner', roundOrdinal: 1,
+                    verdict: 'approve', revision: 1, submittedAt: 2, content: { t: 'encrypted', c: substitutedContent } }],
+                    needsYou: { reviewId: substitutedId, roundOrdinal: 1, reason: 'review_needs_you', requestedVerdict: false,
+                        pendingDecisions: false, needsYou: false, canSubmitVerdict: false } } });
+            return createEmptyAccountBootstrapHttpResponse(request.url.pathname + request.url.search, { method: request.method }) ?? undefined;
+        } });
+        disposeHome = served.dispose;
+        await loadSyncSingletonForTests();
+        await upsertAndActivateServer({ serverUrl: served.homes.owner!.serverUrl, scope: 'device' });
+        const initialized = sync as unknown as { credentials: AuthCredentials | null; encryption: Encryption | null };
+        initialized.credentials = await TokenStorage.getCredentialsForServerUrl(served.homes.owner!.serverUrl);
+        initialized.encryption = encryption;
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const result = await readReviewDetail({ serverId: served.homes.owner!.id, accountId: 'owner' }, requestedId, new AbortController().signal);
+        expect(result).toMatchObject({ kind: 'failed', failure: { code: 'action_failed' } });
+        expect(served.requests.filter(request => request.path === '/v1/artifacts/read').map(request => request.body))
+            .toEqual([expect.objectContaining({ artifactIds: [requestedId] })]);
+    });
+    it('keeps a retained human verdict visible after requests move to a later Review round', async () => {
+        const reviewId = 'review-retained-human-verdict';
+        const record: DecryptedArtifact = { id: reviewId, title: 'Historical people', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Historical people' },
+            body: JSON.stringify({ v: 1, rounds: [1, 2, 3].map(ordinal => ({ ordinal, state: 'completed', startedAt: ordinal,
+                finishedAt: ordinal + 1, reviewerIds: [], runs: [] })) }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 4 };
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === `/v1/artifacts/${reviewId}`) return Response.json(createPlainArtifactHttpFixture(record, 'owner'));
+            if (request.path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
+            if (request.path === '/v1/reviews/get') return Response.json({ review: {
+                reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+                state: 'completed', currentRoundOrdinal: 3, startedAt: 1, finishedAt: 4, createdAt: 1, updatedAt: 4,
+                counts: { total: 0, needsDecision: 0 } }, human: { reviewId, roundOrdinal: 3,
+                requests: [{ id: 'renewed-person', roundOrdinal: 3, principal: { kind: 'account', accountId: 'owner' },
+                    required: true, needsAccess: false }],
+                verdicts: [{ accountId: 'owner', roundOrdinal: 1, verdict: 'approve', submittedAt: 2, revision: 1,
+                    content: { t: 'plain', v: { reviewId, roundOrdinal: 1, accountId: 'owner', revision: 1,
+                        body: 'The original round is ready to merge.' } } }],
+                needsYou: { reviewId, roundOrdinal: 3, reason: 'review_needs_you', needsYou: true,
+                    requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true } } });
+        });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const screen = await renderScreen(<ArtifactView artifactId={reviewId}
+            artifact={{ ...record, sourceServerId: scope.serverId }} presentation="page" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.requestedFromYou'));
+            expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.verdictApproved');
+            expect(screen.getTextContent()).not.toContain('The original round is ready to merge.');
+            expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
+                .toBe('reviewWalkthrough.detail.submitReview');
+            await screen.pressByTestIdAsync('review-detail:round:1');
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('The original round is ready to merge.'));
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('review-detail:group:people')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.you');
+            expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.verdictApproved');
+            expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.requestedFromYou');
+            expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.optional');
+            expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.primaryAction?.title)
+                .not.toBe('reviewWalkthrough.detail.submitReview');
+            await screen.pressByTestIdAsync('review-detail:round:3');
+            expect(screen.getTextContent()).toContain('reviewWalkthrough.detail.requestedFromYou');
+            expect(screen.getTextContent()).not.toContain('reviewWalkthrough.detail.verdictApproved');
+            expect(screen.getTextContent()).not.toContain('The original round is ready to merge.');
+            expect(served.requests.filter(request => request.method !== 'GET' && request.path.includes('/verdict'))).toEqual([]);
+            expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(1);
+            expect(served.requests.filter(request => request.path === `/v1/reviews/${reviewId}/human`)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     it.each([
         { access: 'owner', canEdit: true, canManage: true, canShare: true },
         { access: 'admin', canEdit: true, canManage: true, canShare: true },

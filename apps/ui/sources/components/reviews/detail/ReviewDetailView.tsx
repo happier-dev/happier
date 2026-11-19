@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { t } from '@/text';
 
 export type ReviewDetailTabId = 'findings' | 'changes' | 'runs' | 'activity';
@@ -42,6 +43,8 @@ export type ReviewDetailParticipant = Readonly<{
   tone?: 'attention' | 'failed' | null;
   /** Required / Optional for a requested person. */
   qualifier?: string | null;
+  /** Opened prose retained with this person's verdict. */
+  body?: string;
 }>;
 
 /** One group of a round's reviewers (its agents and engines, or its people), drawn as one row. */
@@ -251,7 +254,8 @@ function ReviewDetailRoundSection(props: Readonly<{
                     bottomElement={(
                         <View style={styles.participants}>
                             {group.participants.map(participant => (
-                                <View key={participant.id} testID={`review-detail:participant:${participant.id}`} style={styles.participant}>
+                                <View key={participant.id} testID={`review-detail:participant:${participant.id}`}>
+                                  <View style={styles.participant}>
                                     {participant.mark}
                                     <Text variant="body" emphasis="medium" style={styles.participantName} numberOfLines={1}>{participant.label}</Text>
                                     {participant.qualifier ? <Text variant="body" style={styles.participantQuiet}>{participant.qualifier}</Text> : null}
@@ -260,6 +264,8 @@ function ReviewDetailRoundSection(props: Readonly<{
                                             {participant.state}
                                         </Text>
                                     ) : null}
+                                  </View>
+                                  {participant.body ? <MarkdownView markdown={participant.body} /> : null}
                                 </View>
                             ))}
                         </View>

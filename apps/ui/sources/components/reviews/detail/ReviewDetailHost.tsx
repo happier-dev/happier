@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
-import type { ReviewHumanStateV1, ReviewVerdictKindV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import type { ReviewHumanActionStateV1, ReviewVerdictKindV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -110,7 +110,7 @@ const VERDICT_KEYS = {
 const EMPTY_PRINCIPALS: readonly PrincipalRefV1[] = Object.freeze([]);
 
 /** Every person the opened Review names: requested reviewers of every round and every verdict's author. */
-function humanPrincipals(human: ReviewHumanStateV1 | null): readonly PrincipalRefV1[] {
+function humanPrincipals(human: ReviewHumanActionStateV1 | null): readonly PrincipalRefV1[] {
   if (!human) return EMPTY_PRINCIPALS;
   const byKey = new Map<string, PrincipalRefV1>();
   for (const request of human.requests) byKey.set(sharePrincipalKey(request.principal), request.principal);
@@ -123,23 +123,32 @@ function humanPrincipals(human: ReviewHumanStateV1 | null): readonly PrincipalRe
 
 /**
  * The round's people: each requested reviewer with its own mark, Required or Optional, and what they did in
- * this round. A verdict belongs to its round; a person who answered an earlier round and not this one reads
+ * this round, plus retained verdict authors whose original request is no longer present. A verdict belongs
+ * to its round; a person who answered an earlier round and not this one reads
  * "asked again". Eligibility to answer is the Review owner's `needsYou`, never re-derived here.
  */
 export function projectPeople(input: Readonly<{
-  human: ReviewHumanStateV1;
+  human: ReviewHumanActionStateV1;
   round: number;
   names: ReadonlyMap<string, string> | null;
   viewerAccountId: string | null;
 }>): ReviewDetailRoundGroup | null {
   const requests = input.human.requests.filter(request => request.roundOrdinal === input.round);
-  if (requests.length === 0) return null;
+  const verdicts = input.human.verdicts.filter(verdict => verdict.roundOrdinal === input.round);
+  if (requests.length === 0 && verdicts.length === 0) return null;
   const waitingForViewer = input.human.roundOrdinal === input.round && input.human.needsYou.requestedVerdict;
-  const participants: ReviewDetailParticipant[] = requests.map(request => {
-    const presented = presentSharePrincipal({ ref: request.principal, name: input.names?.get(sharePrincipalKey(request.principal)) ?? null,
+  const presentPerson = (principal: PrincipalRefV1) => {
+    const presented = presentSharePrincipal({ ref: principal, name: input.names?.get(sharePrincipalKey(principal)) ?? null,
       viewerAccountId: input.viewerAccountId });
+    return {
+      label: principal.kind === 'account' && principal.accountId === input.viewerAccountId
+        ? t('reviewWalkthrough.detail.you') : presented.displayName,
+      mark: presented.avatar ? <Avatar id={presented.avatar.id} imageUrl={presented.avatar.imageUrl ?? null} size={18} /> : null,
+    };
+  };
+  const participants: ReviewDetailParticipant[] = requests.map(request => {
     const accountId = request.principal.kind === 'account' ? request.principal.accountId : null;
-    const verdict = accountId ? input.human.verdicts.find(item => item.accountId === accountId && item.roundOrdinal === input.round) : undefined;
+    const verdict = accountId ? verdicts.find(item => item.accountId === accountId) : undefined;
     const earlier = accountId ? input.human.verdicts.some(item => item.accountId === accountId && item.roundOrdinal < input.round) : false;
     const isViewer = accountId !== null && accountId === input.viewerAccountId;
     const state = verdict ? t(VERDICT_KEYS[verdict.verdict])
@@ -147,13 +156,23 @@ export function projectPeople(input: Readonly<{
         : earlier ? t('reviewWalkthrough.detail.askedAgain') : null;
     return {
       id: request.id,
-      label: isViewer ? t('reviewWalkthrough.detail.you') : presented.displayName,
-      mark: presented.avatar ? <Avatar id={presented.avatar.id} imageUrl={presented.avatar.imageUrl ?? null} size={18} /> : null,
+      ...presentPerson(request.principal),
       qualifier: request.required ? null : t('reviewWalkthrough.detail.optional'),
+      body: verdict?.body,
       state,
       tone: (verdict?.verdict === 'request_changes' || (isViewer && waitingForViewer && !verdict)) ? 'attention' : null,
     };
   });
+  for (const verdict of verdicts) {
+    if (requests.some(request => request.principal.kind === 'account' && request.principal.accountId === verdict.accountId)) continue;
+    participants.push({
+      id: `verdict:${input.round}:${verdict.accountId}`,
+      ...presentPerson({ kind: 'account', accountId: verdict.accountId }),
+      state: t(VERDICT_KEYS[verdict.verdict]),
+      body: verdict.body,
+      tone: verdict.verdict === 'request_changes' ? 'attention' : null,
+    });
+  }
   return {
     id: 'people',
     title: t('reviewWalkthrough.detail.people'),
@@ -225,8 +244,11 @@ export function ReviewDetailHost(props: Readonly<{
   const newRoundPeople = React.useMemo(() => {
     if (!human) return [];
     const people = projectPeople({ human, round: lastOrdinal, names, viewerAccountId: scope?.accountId ?? null });
-    return people?.participants.map(person => ({ id: person.id, label: person.label, mark: person.mark,
-      continuity: 'asked_again' as const, required: human.requests.find(request => request.id === person.id)!.required })) ?? [];
+    return people?.participants.flatMap(person => {
+      const request = human.requests.find(request => request.id === person.id);
+      return request ? [{ id: person.id, label: person.label, mark: person.mark,
+        continuity: 'asked_again' as const, required: request.required }] : [];
+    }) ?? [];
   }, [human, lastOrdinal, names, scope?.accountId]);
   const newRound = useReviewNewRound({ scope, record, canEdit, people: newRoundPeople });
   const decide = React.useCallback((target: ReviewFindingDecisionTarget, decision: 'accept' | 'reject' | 'defer') =>
