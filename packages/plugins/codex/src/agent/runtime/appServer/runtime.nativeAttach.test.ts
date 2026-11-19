@@ -433,7 +433,7 @@ describe('native Codex attachment preparation', () => {
         delivery: { kind: 'newTurn', turnId: 'provider-auth-turn' } });
       emitNotification('turn/completed', { threadId: 'fresh-thread', turn: {
         id: 'provider-turn-1', status: 'failed', error: {
-          message: 'PRIVATE_PROVIDER_RESPONSE invalid API key',
+          message: 'invalid API key: {"error":{"message":"PRIVATE_PROVIDER_RESPONSE"}}',
           codexErrorInfo: variant === 'other' ? 'other' : { [variant]: { httpStatusCode: status } },
         },
       } });
@@ -492,7 +492,7 @@ describe('native Codex attachment preparation', () => {
                 id: `provider-turn-${occurrence}`,
                 status: 'failed',
                 error: {
-                  message: 'PRIVATE_PROVIDER_RESPONSE',
+                  message: 'HTTP 401: {"error":{"message":"PRIVATE_PROVIDER_RESPONSE"}}',
                   codexErrorInfo: {
                     httpConnectionFailed: { httpStatusCode: 401 },
                   },

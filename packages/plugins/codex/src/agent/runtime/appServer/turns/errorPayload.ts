@@ -2,6 +2,7 @@ import { readRecord, trimStringValue } from '../wire/fields.js';
 
 export type CodexAppServerErrorPayload = Readonly<{
   message: string | null;
+  diagnosticMessage: string | null;
   additionalDetails: string | null;
   codexErrorInfo: string | null;
   upstreamErrorCode?: string;
@@ -69,19 +70,20 @@ export function readCodexAppServerErrorPayload(
     httpFailure?.httpStatusCode ?? httpFailure?.http_status_code;
   // Codex 0.162.1 flattens an upstream 400 JSON error into message and labels
   // it `other`. Read the envelope's stable code; never classify its prose.
+  const message = trimStringValue(error.message) ?? (value instanceof Error ? value.message : null);
+  let diagnosticMessage = message;
   let upstreamError = error;
-  if (
-    upstreamError.code !== 'model_not_found' &&
-    typeof error.message === 'string'
-  ) {
-    const start = error.message.indexOf('{');
-    const end = error.message.lastIndexOf('}');
+  if (message) {
+    const start = message.indexOf('{');
+    const end = message.lastIndexOf('}');
     if (start >= 0 && end > start) {
       try {
-        upstreamError =
-          readRecord(
-            readRecord(JSON.parse(error.message.slice(start, end + 1)))?.error,
-          ) ?? error;
+        const envelope = readRecord(readRecord(JSON.parse(message.slice(start, end + 1)))?.error);
+        if (envelope) {
+          if (error.code !== 'model_not_found') upstreamError = envelope;
+          // The response body is evidence for classification, not diagnostic text.
+          diagnosticMessage = trimStringValue(message.slice(0, start));
+        }
       } catch {
         /* Malformed provider text supplies no structured evidence. */
       }
@@ -98,9 +100,8 @@ export function readCodexAppServerErrorPayload(
   );
   return {
     ...(requestId ? { requestId } : {}),
-    message:
-      trimStringValue(error.message) ??
-      (value instanceof Error ? value.message : null),
+    message,
+    diagnosticMessage,
     additionalDetails: trimStringValue(
       error.additionalDetails ?? error.additional_details,
     ),

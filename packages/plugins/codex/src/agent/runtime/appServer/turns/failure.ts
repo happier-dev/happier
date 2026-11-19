@@ -241,8 +241,9 @@ export function readCodexAppServerTurnFailureDiagnostic(
 }
 
 function readRetainedFailureCause(error: unknown, phase?: CodexFailureCause['phase']): CodexFailureCause | null {
-  return readSessionRuntimeFailureCause(error, phase)
-    ?? readSessionRuntimeFailureCause(readRecord(error)?.runtimeIssueV1, phase)
+  const published = readRecord(error)?.runtimeIssueV1;
+  return readSessionRuntimeFailureCause(published)
+    ?? readSessionRuntimeFailureCause(error, phase)
     ?? null;
 }
 
@@ -770,7 +771,7 @@ export function createCodexAppServerTurnFailure(
   const nativeStartup = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication';
   const providerErrorMessage = readRedactedProviderErrorMessage(params.value, nativeStartup,
     phase === 'turn' && payload?.codexErrorInfo && (providerErrorCode !== undefined || payload.httpStatus !== undefined)
-      ? payload.message : undefined);
+      ? payload.diagnosticMessage : undefined);
   const daemonPreparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
     readRecord(readRecord(params.value)?.details)?.cause,
   );
