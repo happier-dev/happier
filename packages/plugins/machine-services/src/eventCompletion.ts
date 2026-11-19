@@ -1,4 +1,3 @@
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
@@ -16,8 +15,7 @@ export async function admitNativeActionCompletionObservation(
     context: PluginInvocationContext,
     observation: PluginEventObservationV1,
 ): Promise<void> {
-    const result = await context.services.actions.execute('automation.event.admit', {
+    await context.services.actions.execute('automation.event.admit', {
         ...projectNativeEventObservationAdmissionInput(observation), definitions: [],
     }, { signal: context.signal });
-    if ('ok' in result && !result.ok && 'errorCode' in result) throw new PluginError({ code: result.errorCode });
 }
