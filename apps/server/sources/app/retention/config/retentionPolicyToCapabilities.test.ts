@@ -13,6 +13,7 @@ function createPolicy(overrides?: Partial<RetentionPolicy>): RetentionPolicy {
         domains: {
             sessions: { mode: 'keep_forever' },
             sessionSidechainMessages: { mode: 'keep_forever' },
+            toolOutputs: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
             usageEvents: { mode: 'keep_forever' },
             providerAccountUsageHistory: { mode: 'keep_forever' },

@@ -16,6 +16,7 @@ function createPolicy(): RetentionPolicy {
         domains: {
             sessions: keepForever,
             sessionSidechainMessages: keepForever,
+            toolOutputs: keepForever,
             accountChanges: keepForever,
             usageEvents: keepForever,
             providerAccountUsageHistory: { mode: 'keep_forever' },

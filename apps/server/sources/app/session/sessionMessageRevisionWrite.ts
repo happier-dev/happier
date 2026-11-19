@@ -3,6 +3,7 @@ import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredCont
 import type { Prisma } from '@prisma/client';
 
 import type { Tx } from '@/storage/inTx';
+import { db } from '@/storage/db';
 import { isPrismaErrorCode, prismaRuntime } from '@/storage/prisma';
 import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptMutationObserver';
 
@@ -65,4 +66,30 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
         if (isPrismaErrorCode(error, 'P2025')) throw new SessionMessageRowRevisionRaceError();
         throw error;
     }
+}
+
+/** Clear only detached bytes under the same revision precondition as content corrections. */
+export async function expireSessionMessageToolOutputAtRevision(params: Readonly<{
+    id: string;
+    rowRevision: bigint;
+    updatedAt: Date;
+    cutoff: Date;
+    days: number;
+}>): Promise<boolean> {
+    const result = await db.sessionMessage.updateMany({
+        where: {
+            id: params.id,
+            rowRevision: params.rowRevision,
+            createdAt: { lt: params.cutoff },
+            toolOutputBytes: { not: null },
+            toolOutputExpiredAfterDays: null,
+        },
+        data: {
+            toolOutputBytes: null,
+            toolOutputExpiredAfterDays: params.days,
+            rowRevision: { increment: 1n },
+            updatedAt: params.updatedAt,
+        },
+    });
+    return result.count === 1;
 }

@@ -2335,6 +2335,9 @@ model SessionMessage {
     content   Json
     /// Raw ciphertext; null for historical JSON envelopes and plaintext content.
     contentBytes Bytes?
+    /// Detached result body in the Session content mode.
+    toolOutputBytes Bytes?
+    toolOutputExpiredAfterDays Int?
     /// [SessionInputAdmissionReceiptV1]
     inputAdmissionReceipt Json?
     /// Derived query projection of `inputAdmissionReceipt.actorAccountId` for a

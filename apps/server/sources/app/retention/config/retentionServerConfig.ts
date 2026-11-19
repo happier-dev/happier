@@ -96,6 +96,7 @@ type RetentionDomainId = keyof RetentionDomainPolicies;
 const RETENTION_DOMAIN_COPY = {
     sessions: { group: 'user', what: 'sessions with no activity' },
     sessionSidechainMessages: { group: 'user', what: 'sub-agent (sidechain) messages' },
+    toolOutputs: { group: 'user', what: 'old Session tool output bodies' },
     usageEvents: { group: 'user', what: 'usage events' },
     providerAccountUsageHistory: { group: 'user', what: 'detailed provider usage observations covered by daily summaries' },
     automationRuns: { group: 'user', what: 'automation runs' },

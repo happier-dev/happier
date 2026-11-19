@@ -14,6 +14,7 @@ import {
     runSessionSidechainMessageRetentionRule,
     type SidechainRetentionCursor,
 } from '@/app/retention/rules/sessionSidechainMessageRetentionRule';
+import { createSessionToolOutputRetentionRule } from '@/app/retention/rules/sessionToolOutputRetentionRule';
 import { runSessionRetentionRule } from '@/app/retention/rules/sessionRetentionRule';
 import { createTerminalAuthRequestRetentionRule } from '@/app/retention/rules/terminalAuthRequestRetentionRule';
 import { createAccountAuthRequestRetentionRule } from '@/app/retention/rules/accountAuthRequestRetentionRule';
@@ -85,6 +86,7 @@ const RETENTION_RULE_FACTORIES = Object.freeze({
             },
         };
     },
+    toolOutputs: createSessionToolOutputRetentionRule,
     accountChanges: (): RetentionRule => {
         let dryRunOffset = 0;
         return {

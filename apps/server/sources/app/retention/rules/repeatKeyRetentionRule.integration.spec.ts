@@ -24,6 +24,7 @@ function createPolicy(input: Readonly<{
         domains: {
             sessions: keepForever,
             sessionSidechainMessages: keepForever,
+            toolOutputs: keepForever,
             accountChanges: keepForever,
             usageEvents: keepForever,
             providerAccountUsageHistory: { mode: 'keep_forever' },

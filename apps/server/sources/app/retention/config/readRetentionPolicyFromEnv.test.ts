@@ -6,6 +6,17 @@ import { retentionPolicyToPublicPolicy } from './retentionPolicyToPublicPolicy';
 import { retentionPolicyToCapabilities } from './retentionPolicyToCapabilities';
 
 describe('retention/readRetentionPolicyFromEnv', () => {
+
+    it('exposes operator tool-output retention through the existing public policy', () => {
+        const policy = readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__ENABLED: 'true',
+            HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__MODE: 'delete_older_than',
+            HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__DAYS: '30',
+        });
+        expect(retentionPolicyToPublicPolicy(policy).domains).toContainEqual({
+            id: 'toolOutputs', policy: { mode: 'delete_older_than', days: 30 },
+        });
+    });
     it('keeps Reviews by default and exposes the chosen duration through the generic public policy', () => {
         expect(readRetentionPolicyFromEnv({}).domains).toHaveProperty('reviews', { mode: 'keep_forever' });
         const policy = readRetentionPolicyFromEnv({

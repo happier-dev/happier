@@ -11,6 +11,7 @@ describe('retention/createRetentionRuleRegistry', () => {
         expect(registry.map((rule) => rule.id)).toEqual([
             'sessions',
             'sessionSidechainMessages',
+            'toolOutputs',
             'accountChanges',
             'usageEvents',
             'providerAccountUsageHistory',
