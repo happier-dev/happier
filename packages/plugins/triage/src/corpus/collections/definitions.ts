@@ -230,7 +230,14 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
             // Optional private intent widens the existing contract; no new index
             // or row migration is needed for retained marks without an origin.
             [CORPUS_USER_MARKS_FIELD.originReview]: TriageTaskOriginReviewV1Schema.jsonSchema,
-            [CORPUS_USER_MARKS_FIELD.admittedReview]: TriageAdmittedReviewV1Schema.jsonSchema,
+            // The v3 storage contract has no length bound. Review receipts and the mark writer enforce a non-empty ID.
+            [CORPUS_USER_MARKS_FIELD.admittedReview]: {
+                ...TriageAdmittedReviewV1Schema.jsonSchema,
+                properties: {
+                    ...TriageAdmittedReviewV1Schema.jsonSchema.properties,
+                    reviewId: { type: 'string' },
+                },
+            },
             [CORPUS_USER_MARKS_FIELD.originError]: {
                 type: 'object',
                 properties: { entryRef: TriageEntryRefV1JsonSchema, display: MARK_DISPLAY_SCHEMA },

@@ -4,6 +4,18 @@ import { testkitEntryRef } from '../testkit/observations.test-support.js';
 import { readAdmittedReview, setAdmittedReview, setPinned } from './setPinned.js';
 
 describe('the admitted Review relation at the user-mark owner', () => {
+    it('refuses an empty Review ID without changing the mark', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const input = { collections, entryRef: testkitEntryRef(),
+            displayAtMark: { title: 'Pull request 17', scopeLabel: 'example/repository' }, nowMs: 10 };
+        await setPinned({ ...input, pinned: true });
+        const before = (await collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows;
+
+        await expect(setAdmittedReview({ ...input, admittedReview: { reviewId: '', roundOrdinal: 1 } }))
+            .rejects.toMatchObject({ code: 'triage_admitted_review_id_invalid' });
+        expect((await collections.userMarks.query({ index: 'by-pinned', order: 'asc' })).rows).toEqual(before);
+    });
+
     it.each(['plain', 'e2ee'] as const)('keeps the latest admitted Review and round beside pin intent (%s)', async accountEncryptionMode => {
         const { collections } = createTestkitCorpusCollections({ accountEncryptionMode });
         const entryRef = testkitEntryRef();

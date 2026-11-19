@@ -77,6 +77,43 @@ describe('durable Collection declarations', () => {
         expect(isPluginCollectionSchemaWideningV1({ source: retained, target: narrowed })).toBe(false);
     });
 
+    it('restores the incumbent user-marks v3 writer and can replace the narrower READY241 writer', () => {
+        const declaration = PluginAccountCollectionContributionV1Schema.parse(
+            projectPluginAccountCollectionDeclaration(CORPUS_USER_MARKS_COLLECTION.id, CORPUS_USER_MARKS_COLLECTION));
+        const registered = (reviewId: { type: 'string'; minLength?: number }) => {
+            const schema = structuredClone(declaration.schema);
+            schema.properties!.admittedReview!.properties!.reviewId = reviewId;
+            return normalizePluginAccountCollectionContractV1({
+                pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+                contribution: { ...declaration, schema },
+            });
+        };
+        const incumbent = registered({ type: 'string' });
+        const narrowed = registered({ type: 'string', minLength: 1 });
+        const current = admit(CORPUS_USER_MARKS_COLLECTION);
+        // Writer refs observed on READY241 Accounts A and qa-triage-c3 pin the full contracts.
+        expect(incumbent.contractDigest).toBe('BsbuqDfnIzgkehsd6tWxZvUBRurMEa8P9qpJ3cNdYLs');
+        expect(narrowed.contractDigest).toBe('PrEatmT85MNRD75w_9z6w-BT0KA6jRubfRqYE0ZWrcY');
+        expect(isPluginCollectionSchemaWideningV1({ source: incumbent, target: narrowed })).toBe(false);
+        expect(isPluginCollectionSchemaWideningV1({ source: narrowed, target: incumbent })).toBe(true);
+
+        const mark = (reviewId: string) => toCorpusStoredValue({
+            markTag: `a${'1'.repeat(42)}`, pinned: true, markedAtMs: 1, entryRef: testkitEntryRef(),
+            displayAtMark: { title: 'Pull request 17', scopeLabel: 'example/repository' },
+            admittedReview: { reviewId, roundOrdinal: 1 },
+        });
+        const validateIncumbent = compilePluginJsonSchema(incumbent.schema);
+        const validateNarrowed = compilePluginJsonSchema(narrowed.schema);
+        expect(isValidPluginJsonSchemaValue(validateIncumbent, mark(''))).toBe(true);
+        expect(isValidPluginJsonSchemaValue(validateNarrowed, mark(''))).toBe(false);
+        expect(isValidPluginJsonSchemaValue(validateIncumbent, mark('review-1'))).toBe(true);
+        expect(isValidPluginJsonSchemaValue(validateNarrowed, mark('review-1'))).toBe(true);
+
+        expect(isPluginCollectionSchemaWideningV1({ source: incumbent, target: current })).toBe(true);
+        expect(resolvePluginCollectionContractAccessV1({ currentWriter: incumbent, requested: current })).toBe('writable');
+        expect(isPluginCollectionSchemaWideningV1({ source: narrowed, target: current })).toBe(true);
+    });
+
     it.each(['plain', 'e2ee'] as const)('round-trips durable mark and link displays beyond source text limits through the measured %s Collection envelope', (encryptionMode) => {
         const display = { title: 't'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 + 1), scopeLabel: 's'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 + 1) };
         const entryRef = testkitEntryRef();

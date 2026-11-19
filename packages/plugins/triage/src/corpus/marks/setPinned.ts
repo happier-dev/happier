@@ -373,6 +373,9 @@ export async function setAdmittedReview(input: Readonly<{
     collections: MarkCollections; entryRef: TriageEntryRefV1; displayAtMark: CorpusUserMarkDisplayV1;
     admittedReview: TriageAdmittedReviewV1; nowMs: number; signal?: AbortSignal;
 }>): Promise<CorpusSetFixPullRequestResultV1> {
+    if (input.admittedReview.reviewId.length === 0) {
+        throw new PluginError({ code: 'triage_admitted_review_id_invalid', message: 'The admitted Review ID is empty.' });
+    }
     const options = input.signal ? { signal: input.signal } : undefined;
     const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
     const existing = await readLiveMark(input.collections, markTag, options);
