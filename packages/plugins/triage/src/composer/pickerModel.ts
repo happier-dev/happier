@@ -15,7 +15,7 @@ import {
     triageEntryMatchesSearch,
     type TriageEntrySearchTextV1,
 } from '../projection/entrySearch.js';
-import type { TriageSourceHealthV1 } from '../projection/sourceHealth.js';
+import type { TriageListSourceFailureV1 } from '../ui/shell/windowState.js';
 import { findTriageAttachedEntry, type TriageAttachedEntryV1 } from './attachedEntries.js';
 import { deriveTriageComposerEntryAttachmentKey } from './attachmentValue.js';
 import { buildTriageEntryAttachmentPresentation } from './mutationPlan.js';
@@ -69,10 +69,10 @@ export type TriagePickerCorpusRowV1 = Readonly<{
 }>;
 
 /*
- * Which connections could not be read is `projection/sourceHealth.ts`'s
- * `TriageSourceHealthV1`, used here verbatim. The picker names them; it does
- * not decide them, because the shell names the same connections beside the list
- * and two joins would be two answers to one question.
+ * Which connections could not be read is the shell's own
+ * `readTriageListSourceFailuresV1`, used here verbatim. The picker names them; it
+ * does not decide them, because the shell names the same connections beside the
+ * list and two joins would be two answers to one question.
  */
 
 /**
@@ -93,7 +93,7 @@ export type TriagePickerCorpusFactsV1 = Readonly<{
     coverage: 'complete' | 'progressive';
     freshness: TriagePickerFreshnessV1;
     refreshRunning: boolean;
-    health: readonly TriageSourceHealthV1[];
+    health: readonly TriageListSourceFailureV1[];
     /**
      * The refresh coordinator's own refusal, when a read cannot start yet.
      *
@@ -164,7 +164,7 @@ export type TriagePickerRefreshV1 =
 export type TriagePickerViewV1 = Readonly<{
     rows: readonly TriagePickerRowV1[];
     state: TriagePickerStateV1;
-    health: readonly TriageSourceHealthV1[];
+    health: readonly TriageListSourceFailureV1[];
     refresh: TriagePickerRefreshV1;
     coverage: 'complete' | 'progressive';
 }>;

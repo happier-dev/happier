@@ -56,7 +56,7 @@ import { bindTriageMountedUiActions } from '../ui/mountedActions.js';
 import { useTriageCurrentUiContextPublication } from '../ui/currentContextPublication.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 import { TriageSourceMark } from '../ui/list/sourceMark.js';
-import { projectTriageSourceHealthFailureV1, readTriageListFailureLine } from '../ui/shell/windowState.js';
+import { readTriageListFailureLine } from '../ui/shell/windowState.js';
 
 /**
  * The Composer entry picker.
@@ -542,8 +542,8 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
                 {/* A list says its condition in one quiet line on the rows' edge, in the same words as the page's own
                     line; the head's Refresh is its recovery. */}
                 {view.health.length === 0 ? null : (
-                    <Status tone="warning" label={readTriageListFailureLine({ kind: 'sources',
-                        sources: view.health.map(projectTriageSourceHealthFailureV1) }, text, surface.locale).label} />
+                    <Status tone="warning" label={readTriageListFailureLine({ kind: 'sources', sources: view.health },
+                        text, surface.locale).label} />
                 )}
             </TriagePickerHead>
 

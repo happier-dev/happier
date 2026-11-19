@@ -1,6 +1,6 @@
 import { projectTriageEntrySearchText } from '../projection/entrySearch.js';
 import type { TriageListWindowSnapshotV1 } from '../projection/listWindowStore.js';
-import { projectTriageFailedSourceHealth } from '../projection/sourceHealth.js';
+import { readTriageListSourceFailuresV1 } from '../ui/shell/windowState.js';
 import { projectTriageEntryDisplay } from '../ui/window/entryDisplay.js';
 import type {
     TriagePickerCorpusFactsV1,
@@ -65,9 +65,8 @@ export function projectTriagePickerCorpusFacts(input: Readonly<{
         coverage: snapshot.window?.coverage === 'complete' ? 'complete' : 'progressive',
         freshness: pickerFreshness(snapshot),
         refreshRunning: snapshot.pending !== 'idle',
-        // The one join of failed lanes to the reader's own connection names; the
-        // shell reports the same fact from the same owner.
-        health: projectTriageFailedSourceHealth(snapshot),
+        // The page's own list of connections that could not be read, so both name the same ones.
+        health: readTriageListSourceFailuresV1(snapshot),
         // Whether a Refresh press can read anything is the refresh coordinator's
         // decision, carried here verbatim. The picker used to re-derive a
         // narrower answer from rate-limit failures alone. Every source-stated

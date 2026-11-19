@@ -192,6 +192,15 @@ export function projectTriageSourceHealthFailureV1(entry: TriageSourceHealthV1):
   });
 }
 
+/**
+ * Every connection the reader should know could not be read, from the one join the page and the Composer
+ * picker share: failed lanes, connections the pass could not read, and configured ones that are unavailable.
+ */
+export function readTriageListSourceFailuresV1(snapshot: TriageListWindowSnapshotV1): readonly TriageListSourceFailureV1[] {
+  return readShellFailure(snapshot)?.sources ?? NO_SOURCE_FAILURES_V1;
+}
+const NO_SOURCE_FAILURES_V1: readonly TriageListSourceFailureV1[] = Object.freeze([]);
+
 function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShellFailureV1 | null {
   const unavailableSourceIds = new Set(snapshot.configuredSources
     .filter((source) => !source.available).map((source) => source.sourceInstanceId));

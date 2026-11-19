@@ -147,11 +147,39 @@ describe('projectTriagePickerCorpusFacts', () => {
             nowMs: 1,
         });
 
-        expect(facts.health).toEqual([{
-            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE },
-            displayName: 'forge/repo',
-            failure: { class: 'transient', code: 'provider-busy' },
-        }]);
+        expect(facts.health.map((source) => [source.sourceInstanceId, source.displayName])).toEqual([[INSTANCE, 'forge/repo']]);
+    });
+
+    /**
+     * QB-39: the picker reads the same source health as the page. It used to name
+     * only lanes that failed with provider evidence, so a connection this pass
+     * could not read at all, or one that is not available, was missing from the
+     * picker while the page named it.
+     */
+    it('names every connection the page names: failed, unreadable and unavailable', () => {
+        const unread = '22222222-2222-4222-8222-222222222222';
+        const off = '33333333-3333-4333-8333-333333333333';
+        const configured = (sourceInstanceId: string, displayLabel: string, available: boolean) =>
+            ({ sourceInstanceId, configurationRowId: sourceInstanceId, source: SOURCE, displayLabel, available });
+        const facts = projectTriagePickerCorpusFacts({
+            snapshot: snapshot({
+                configuredSources: [configured(INSTANCE, 'forge/repo', true), configured(unread, 'Reviews', true),
+                    configured(off, 'acme/ledger', false)],
+                window: window({
+                    lanes: [{
+                        sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
+                        health: { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } },
+                    }, {
+                        sourceInstanceId: unread, source: SOURCE, exhausted: false, health: { kind: 'unavailable' },
+                    }],
+                }),
+                unreadableSources: [{ sourceInstanceId: unread, message: 'artifact_kind_internal',
+                    code: 'artifact_kind_internal', retryable: false }],
+            }),
+            nowMs: 1,
+        });
+
+        expect(facts.health.map((source) => source.displayName)).toEqual(['forge/repo', 'Reviews', 'acme/ledger']);
     });
 
     it('carries the store\'s pacing refusal instead of leaving the picker to guess', () => {

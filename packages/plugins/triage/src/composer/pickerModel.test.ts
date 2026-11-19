@@ -331,9 +331,7 @@ describe('buildTriagePickerView — corpus result state', () => {
 
     it('names an unavailable source only when every configured connection failed', () => {
         const failed = (sourceInstanceId: string, displayName: string) => ({
-            sourceInstance: { source: SOURCE, sourceInstanceId },
-            displayName,
-            failure: { class: 'permission', code: 'forbidden' },
+            sourceInstanceId, displayName, reason: 'Access was refused.', code: 'forbidden',
         } as const);
         const every = [failed(INSTANCE_ID, 'acme on Forge'), failed(OTHER_INSTANCE_ID, 'widgets on Forge')] as const;
 
@@ -354,9 +352,7 @@ describe('buildTriagePickerView — corpus result state', () => {
         // reader loses the search field, the rows and Refresh with it. The
         // warning banner beside the rows already names the broken one.
         const health = [{
-            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
-            displayName: 'acme on Forge',
-            failure: { class: 'permission', code: 'forbidden' },
+            sourceInstanceId: INSTANCE_ID, displayName: 'acme on Forge', reason: 'Access was refused.', code: 'forbidden',
         }] as const;
         const partial = facts({ configuredSourceInstanceCount: 3, rows: [], health: [...health] });
 
@@ -407,9 +403,7 @@ describe('buildTriagePickerView — corpus result state', () => {
             facts: facts({
                 rows: ROWS,
                 health: [{
-                    sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID },
-                    displayName: 'acme on Forge',
-                    failure: { class: 'transient', code: 'bad-gateway', retryNotBeforeMs: NOW_MS + 5_000 },
+                    sourceInstanceId: INSTANCE_ID, displayName: 'acme on Forge', reason: 'The source is busy.', code: 'bad-gateway',
                 }],
                 refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs: NOW_MS + 5_000 },
             }),
@@ -430,9 +424,7 @@ describe('buildTriagePickerView — corpus result state', () => {
             facts: facts({
                 rows: ROWS,
                 health: [{
-                    sourceInstance: { source: OTHER_SOURCE, sourceInstanceId: OTHER_INSTANCE_ID },
-                    displayName: 'acme on Tracker',
-                    failure: { class: 'permission', code: 'forbidden' },
+                    sourceInstanceId: OTHER_INSTANCE_ID, displayName: 'acme on Tracker', reason: 'Access was refused.', code: 'forbidden',
                 }],
             }),
             query: '',
