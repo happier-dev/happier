@@ -2342,9 +2342,6 @@ importers:
 
   packages/email-transports-protocol:
     devDependencies:
-      '@happier-dev/channels-protocol':
-        specifier: '>=0.0.0 <1.0.0'
-        version: link:../channels-protocol
       '@happier-dev/plugin-sdk':
         specifier: '>=0.0.0 <1.0.0'
         version: link:../plugin-sdk

@@ -31,11 +31,9 @@
   },
   "dependencies": {},
   "peerDependencies": {
-    "@happier-dev/channels-protocol": ">=0.0.0 <1.0.0",
     "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0"
   },
   "devDependencies": {
-    "@happier-dev/channels-protocol": ">=0.0.0 <1.0.0",
     "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

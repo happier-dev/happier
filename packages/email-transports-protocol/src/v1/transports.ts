@@ -1,7 +1,6 @@
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
-import { ConversationProviderFailureV1Schema, ConversationDeliveryResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { ConversationDeliveryResultV1ProtocolSchema, ConversationProviderFailureV1ProtocolSchema, defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 
 const text = defineProtocolString({ minLength: 1 });
 const ConversationCheckpointV1Schema = defineProtocolJsonValue();
@@ -14,24 +13,24 @@ export const EmailTransportListSinceInputV1Schema = defineProtocolObject({ ...co
 export const EmailTransportListSinceResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('batch'), refs: defineProtocolArray(text), checkpointAfterBatch: ConversationCheckpointV1Schema }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('historyGap'), reason: defineProtocolLiteral('providerHistoryUnavailable') }, { policy: 'closed' }),
-  ConversationProviderFailureV1Schema,
+  ConversationProviderFailureV1ProtocolSchema,
 ]);
 export const EmailTransportFetchRawInputV1Schema = defineProtocolObject({ ...common, ref: text }, { policy: 'closed' });
 export const EmailTransportFetchRawResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('raw'), mimeBase64: text,
-    receivedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }) }, { policy: 'closed' }), ConversationProviderFailureV1Schema,
+    receivedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }) }, { policy: 'closed' }), ConversationProviderFailureV1ProtocolSchema,
 ]);
 export const EmailTransportSubmitRawInputV1Schema = defineProtocolObject({
   ...common, mimeBase64: text, messageId: text,
   envelope: defineProtocolObject({ from: text, to: defineProtocolArray(text, { minItems: 1 }) }, { policy: 'closed' }),
 }, { policy: 'closed' });
 export const EmailTransportConnectionTestResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({ kind: defineProtocolLiteral('ready'), mailbox: text }, { policy: 'closed' }), ConversationProviderFailureV1Schema,
+  defineProtocolObject({ kind: defineProtocolLiteral('ready'), mailbox: text }, { policy: 'closed' }), ConversationProviderFailureV1ProtocolSchema,
 ]);
 export const EmailTransportFindSentInputV1Schema = defineProtocolObject({ ...common, messageId: text }, { policy: 'closed' });
 export const EmailTransportFindSentResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('found'), messageId: text }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('notFound') }, { policy: 'closed' }), ConversationProviderFailureV1Schema,
+  defineProtocolObject({ kind: defineProtocolLiteral('notFound') }, { policy: 'closed' }), ConversationProviderFailureV1ProtocolSchema,
 ]);
 
 /** Raw MIME and transport facts only. Email identity, shaping and recipients remain target-owned. */
@@ -40,7 +39,7 @@ export const EmailTransportsContributionProtocolV1 = defineContributionProtocol(
   operations: {
     listSince: { required: true, input: { kind: 'protocolDefined', schema: EmailTransportListSinceInputV1Schema }, resultSchema: EmailTransportListSinceResultV1Schema, action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
     fetchRaw: { required: true, input: { kind: 'protocolDefined', schema: EmailTransportFetchRawInputV1Schema }, resultSchema: EmailTransportFetchRawResultV1Schema, action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
-    submitRaw: { required: true, input: { kind: 'protocolDefined', schema: EmailTransportSubmitRawInputV1Schema }, resultSchema: ConversationDeliveryResultV1Schema, action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' } },
+    submitRaw: { required: true, input: { kind: 'protocolDefined', schema: EmailTransportSubmitRawInputV1Schema }, resultSchema: ConversationDeliveryResultV1ProtocolSchema, action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' } },
     connectionTest: { required: true, input: { kind: 'protocolDefined', schema: EmailTransportConnectionInputV1Schema }, resultSchema: EmailTransportConnectionTestResultV1Schema, action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
     findSent: { required: false, input: { kind: 'protocolDefined', schema: EmailTransportFindSentInputV1Schema }, resultSchema: EmailTransportFindSentResultV1Schema, action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
   },
