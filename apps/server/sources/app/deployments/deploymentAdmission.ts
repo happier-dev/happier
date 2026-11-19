@@ -10,7 +10,7 @@ import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContex
 import type { Tx } from '@/storage/inTx';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
-import { log } from '@/utils/logging/log';
+import { log, warn } from '@/utils/logging/log';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { deploymentEnvironmentPrincipalKeyV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
 import { readDeploymentEnvironmentPrincipals, type DeploymentEnvironmentPrincipalPurpose,
@@ -27,8 +27,13 @@ export function deploymentFailure<TError extends Extract<DeploymentActionFailure
     error: TError, diagnostic?: ActionFailureDiagnosticInput,
 ): Readonly<{ ok: false; error: TError }> {
     const failure = { ok: false as const, error };
-    return diagnostic ? withActionFailureDiagnostic(failure, diagnostic, safeDiagnostic =>
-        log({ module: 'deployments', errorCode: error, diagnostic: safeDiagnostic })) : failure;
+    return diagnostic ? withActionFailureDiagnostic(failure, diagnostic, safeDiagnostic => {
+        if (diagnostic.phase.startsWith('deployment.secret_launch.data_role.')) {
+            warn({ phase: diagnostic.phase, reason: diagnostic.causeKind });
+        } else {
+            log({ module: 'deployments', errorCode: error, diagnostic: safeDiagnostic });
+        }
+    }) : failure;
 }
 
 /** One placement refusal shape: credential_scope_denied carrying the deciding owner's next Action. */

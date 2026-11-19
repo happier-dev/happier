@@ -18,6 +18,7 @@ import { reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { logger } from '@/ui/logger';
 
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 const ref = { id: 'workspace-a', serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo', projectKey: 'anchor-a', createdAtMs: 1 };
@@ -348,6 +349,7 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
   });
 
   it('refuses wrong-Home and foreign requester mutation before opening the custodian rows', async () => {
+    const warn = vi.spyOn(logger, 'warnLocalFile');
     const boundary = accountRows([refRow()]);
     const actions = dependencies();
     await expect(actions.projectsWorkspaceUpdate!({ serverId: 'home-b', workspaceId: ref.id, label: 'Wrong' })).resolves.toMatchObject({ ok: false });
@@ -378,6 +380,8 @@ describe('credentialed Session Project mutation and Sync row ports', () => {
       .resolves.toEqual({ ok: false, errorCode: 'project_context_access_denied' });
     await expect(actions.projectsContextUpdate!(contextInput, { rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session-a' } }))
       .resolves.toEqual({ ok: false, errorCode: 'project_context_access_denied' });
+    expect(warn).toHaveBeenCalledWith('[ProjectAdmission] requester authority refused', { reason: 'signed_root_projection' });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('foreign-credential');
     expect(boundary.get).not.toHaveBeenCalled();
     expect(boundary.post).not.toHaveBeenCalled();
   });

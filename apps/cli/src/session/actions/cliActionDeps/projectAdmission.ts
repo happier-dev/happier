@@ -54,7 +54,7 @@ export function createCliProjectAdmission(
   // The four fixed reasons share one public refusal code.
   const refuseRequester = (reason: 'signed_root_projection' | 'external_credential_without_root'
     | 'rpc_session_without_account' | 'runtime_account_mismatch') => {
-    logger.infoFile('[ProjectAdmission] requester authority refused', { reason });
+    logger.warnLocalFile('[ProjectAdmission] requester authority refused', { reason });
     return executionRunActionFailure('project_requester_authority_unavailable', undefined, { reason });
   };
   const projectAccountAdmission = async (serverId?: string, context?: ActionExecutorContext) => {

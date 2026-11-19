@@ -949,15 +949,18 @@ describe('private installed Environment secret launch transport', () => {
             expect(allowed.body).not.toContain('launch-trims-private-sentinel');
             const otherActor = crypto.randomUUID();
             const wrongProof = request({}, authorization, otherActor);
-            const log = vi.spyOn(serverLog, 'log');
+            const warn = vi.spyOn(serverLog, 'warn');
             try {
                 const refused = await app.inject(wrongProof);
                 expect(refused.statusCode).toBe(403);
                 expect(refused.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
-                expect(log).toHaveBeenCalledWith({ module: 'deployments', errorCode: 'deployment_access_denied',
-                    diagnostic: { source: 'deployment.secret_launch.data_role.installation_proof', issues: [],
-                        phase: 'deployment.secret_launch.data_role.installation_proof', causeKind: 'access_denied' } });
-            } finally { log.mockRestore(); }
+                expect(warn).toHaveBeenCalledWith({ phase: 'deployment.secret_launch.data_role.installation_proof',
+                    reason: 'access_denied' });
+                const warnings = JSON.stringify(warn.mock.calls);
+                expect(warnings).not.toContain(otherActor);
+                expect(warnings).not.toContain(wrongProof.payload.proof.signature);
+                expect(warnings).not.toContain(f.grant.sealedContent);
+            } finally { warn.mockRestore(); }
             const url = `/v1/deployments/environments/${row.id}?serverId=${serverId}`;
             const write = await mintWrite();
             const admitWrite = (root: typeof write) => {
