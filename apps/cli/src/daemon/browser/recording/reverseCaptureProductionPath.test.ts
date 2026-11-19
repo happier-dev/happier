@@ -1,6 +1,7 @@
 import {
   UiBrowserRecordingCaptureFrameRequestV1Schema,
   UiBrowserRecordingCaptureFrameResponseV1Schema,
+  type UiBrowserRecordingCaptureFrameRequestV1,
   type UiBrowserRecordingCaptureFrameResponseV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
@@ -45,8 +46,8 @@ function uiCallThatRunsCaptureDesktopBrowserRecordingFrame(
   nativeCapture: (request: {
     outputPath: string;
   }) => Promise<UiBrowserRecordingCaptureFrameResponseV1['result']>,
-): ReverseDesktopBrowserRecordingCaptureUiCall {
-  return async (request) => {
+) {
+  return async (request: UiBrowserRecordingCaptureFrameRequestV1) => {
     // The daemon serialized a contract-valid request across the boundary.
     UiBrowserRecordingCaptureFrameRequestV1Schema.parse(request);
     const result = await nativeCapture({ outputPath: request.outputPath });
