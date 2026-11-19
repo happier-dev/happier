@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import nacl from 'tweetnacl';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -28,10 +30,11 @@ import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/cont
 import { countReadBorrowers } from '@/dev/testkit';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -126,6 +129,10 @@ vi.mock('@/text', async () => {
 
 const { ProjectScriptsBody, ProjectScriptsContent } = await import('./ProjectScriptsBody');
 const { DetectedRow } = await import('./ProjectDetectedScriptRow');
+const { Modal } = await import('@/modal');
+const showModal = vi.mocked(Modal.show);
+const installationKeys = nacl.sign.keyPair();
+const installationPublicKey = encodeBase64(installationKeys.publicKey);
 // The host renderer exposes the memo's render function as its instance type.
 const detectedRowElementType: unknown = DetectedRow;
 const detectedRowRenderType = detectedRowElementType && typeof detectedRowElementType === 'object' && 'type' in detectedRowElementType
@@ -181,6 +188,7 @@ const workspace = {
 let workspaceSequence = 0;
 let workspaceServerUrl = 'https://scripts-body.test';
 beforeEach(() => {
+  showModal.mockClear();
   workspace.serverId = 'srv_scripts_body';
   workspaceServerUrl = 'https://scripts-body.test';
   shared.operationRead.mockImplementation(async (request: Readonly<{ method: string; machineId: string; payload: unknown }>) => {
@@ -396,6 +404,12 @@ async function render(
         return Response.json(createRootLayoutFeaturesResponse({ features: {
           terminal: { embeddedPty: { enabled: true } },
         } }));
+      // Confirmed Setup carries its private requester invocation to the enrolled Machine.
+      if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+        return createMachineReadBatchResponseFixture(init.body, id => ({
+          ...createPlainMachineRowFixture({ id, accountId: 'account-1' }), installationPublicKey,
+        }));
+      }
       const machineRead = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
       if (machineRead) return machineRead;
       if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'm1', accountId: 'account-1' })]);
@@ -431,6 +445,16 @@ async function render(
         if (!spec.outputSchema) throw new Error('Project Action fixture requires an output schema');
         const input = spec.inputSchema.parse(envelope.input);
         shared.calls.push({ actionId, input });
+        if (actionId === 'projects.prepare' && root.success) {
+          const reviewed = openExternalActionRequesterAccountContextV1({
+            authorization: root.data.executionAuthorization, purpose: { kind: 'external_action' },
+            machineId: root.data.machineId, installationId: 'test-installation', serverIdentityId: workspace.serverId,
+            installationPrivateKey: installationKeys.secretKey, includeInvocation: true,
+          });
+          if (reviewed?.invocation?.presentUserConfirmation?.actionId !== actionId) {
+            return Response.json({ error: 'admission_unavailable' }, { status: 403 });
+          }
+        }
         const failure = shared.failures[actionId];
         const inspected = actionId === 'projects.inspect' ? await (shared.inspectionPending ?? shared.inspection) : undefined;
         // The daemon's revalidation contract: a held equal revision is answered without a body.
@@ -731,7 +755,9 @@ describe('ProjectScriptsBody setup affordance', () => {
     await act(async () => {
       await screen.pressByTestIdAsync('scripts.setup');
     });
-    expect(shared.navigate).toHaveBeenCalledWith({ pathname: '/new', params: { draftId: expect.any(String) } });
+    expect(shared.navigate).toHaveBeenCalledWith({ pathname: '/new', params: {
+      draftId: expect.any(String), draftAccountId: 'account-1', draftServerId: workspace.serverId,
+    } });
     const draftId = shared.navigate.mock.calls.at(-1)![0].params.draftId;
     expect(readNewSessionDraftFromRepository({ scope: { serverId: workspace.serverId, accountId: 'account-1' }, draftId }))
       .toMatchObject({ selectedMachineId: 'm1', selectedPath: '/repo', targetServerId: workspace.serverId });
@@ -753,13 +779,25 @@ describe('ProjectScriptsBody setup affordance', () => {
     expect(screen.getTextContent()).toContain('projects.authoring.refused');
   });
 
-  it('shows a deferred authoring approval as pending rather than an invalid result', async () => {
+  it('confirms the person’s Ask-first authoring press before opening the draft', async () => {
     shared.inspection = { definition: { basis: { kind: 'absent' }, document: null }, detection, importCandidates: [] };
     shared.actionSettings['session.authoring.open'] = { approvalRequiredSurfaces: ['ui'] };
     const screen = await render('page', 'scripts.detected:0');
+    const confirmation = createDeferred<boolean>();
+    const confirm = vi.mocked(Modal.confirm);
+    confirm.mockClear();
+    confirm.mockImplementationOnce(() => confirmation.promise);
     await screen.pressByTestIdAsync('scripts.setup');
-    await vi.waitFor(() => expect(screen.getTextContent()).toContain('projects.authoring.pending'));
-    expect(artifacts.list()).toHaveLength(1);
+    try {
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(shared.navigate).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => { confirmation.resolve(true); });
+    }
+    await vi.waitFor(() => expect(shared.navigate).toHaveBeenCalledWith({
+      pathname: '/new', params: { draftId: expect.any(String), draftAccountId: 'account-1', draftServerId: workspace.serverId },
+    }));
+    expect(artifacts.list()).toHaveLength(0);
   });
 
   it('leaves a retired opening silent when it was aborted', async () => {
@@ -1408,8 +1446,6 @@ describe('ProjectScriptsBody runs', () => {
   );
 
   it('offers to set up the missing worker copy through Sync and never retries the Run by itself', async () => {
-    const { Modal } = await import('@/modal');
-    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'modal' as never);
     shared.inspection = {
       definition: presentDefinition({ version: 1, scripts: { test: { source: nativeRef('test'), execution: 'portable' } } }),
       detection,
@@ -1425,8 +1461,8 @@ describe('ProjectScriptsBody runs', () => {
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test.run'); });
     await vi.waitFor(() => expect(screen.findByTestId('scripts.script:test.noWorker.setUpCopy')).toBeTruthy());
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test.noWorker.setUpCopy'); });
-    expect(show).toHaveBeenCalledTimes(1);
-    expect(show.mock.calls[0]?.[0]).toMatchObject({ props: { options: { targetMachineId: 'm2', purpose: 'worker_clean_copy' } } });
+    expect(showModal).toHaveBeenCalledTimes(1);
+    expect(showModal.mock.calls[0]?.[0]).toMatchObject({ props: { options: { targetMachineId: 'm2', purpose: 'worker_clean_copy' } } });
     expect(shared.calls.filter((call) => call.actionId === 'projects.script.run')).toHaveLength(1);
   });
 
@@ -1504,8 +1540,8 @@ describe('ProjectScriptsBody project file editor', () => {
     await act(async () => { await screen.pressByTestIdAsync('scripts.edit'); });
     const first = phone ? 'project-manifest-editor.section:scripts:test' : 'project-manifest-editor.script:test';
     await vi.waitFor(() => expect(screen.findByTestId(first)).toBeTruthy());
-    expect(screen.getTextContent()).toContain('512 MB');
-    expect(screen.getTextContent()).toContain('1.5 GB');
+    expect(screen.getTextContent()).toContain('512 MiB');
+    expect(screen.getTextContent()).toContain('1.5 GiB');
     if (phone) await screen.pressByTestIdAsync(first);
     for (const [name, bytes, edited] of [['test', 512 * 2 ** 20, 1], ['lint', 1.5 * 2 ** 30, Number.MAX_SAFE_INTEGER]] as const) {
       await screen.pressByTestIdAsync(`project-manifest-editor.script:${name}`);
@@ -1947,7 +1983,11 @@ describe('ProjectScriptsBody setup row', () => {
     await vi.waitFor(() => expect(screen.findByTestId('scripts.setup.review')).toBeTruthy());
     shared.responses['projects.prepare'] = { kind: 'success', reviewedEffectDigest: 'a'.repeat(64) };
     await act(async () => { await screen.pressByTestIdAsync('scripts.setup.review.run'); });
-    expect(shared.calls.find((call) => call.actionId === 'projects.prepare')?.input).toMatchObject({ workspace, phase: 'setup' });
+    await vi.waitFor(() => expect(showModal.mock.calls.some(([config]) =>
+      config.chrome?.testID === 'actions.confirmation-review.modal')).toBe(true));
+    await vi.waitFor(() => expect(shared.calls.find((call) => call.actionId === 'projects.prepare')?.input)
+      .toMatchObject({ workspace, phase: 'setup' }));
+    await vi.waitFor(() => expect(textOf(screen, 'scripts.setup')).not.toContain('projects.scripts.setup.pending'));
   });
 
   it('says the Setup row waits for the person once its review is open, in the needs-you tone', async () => {
@@ -2042,8 +2082,6 @@ describe('ProjectScriptsBody output', () => {
   const withTerminal = () => ({ ...operation('accepted', 1), domainRef: { ...operation('accepted', 1).domainRef, terminalId: 't1' } });
 
   it('opens a run’s output as its host’s bottom terminal tab, borrowing the same PTY, not a modal', async () => {
-    const { Modal } = await import('@/modal');
-    const show = vi.spyOn(Modal, 'show');
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [] };
     const screen = await render('widget', 'scripts.script:test', { outputScopeId: outputScopeId() });
     await act(async () => {
@@ -2055,8 +2093,7 @@ describe('ProjectScriptsBody output', () => {
         target: expect.objectContaining({ kind: 'terminal_view', machineId: 'm1', terminalId: 't1', terminalKey: 'project-command:t1', cwd: '/repo' }),
         title: 'test · tester.local',
       })));
-    expect(show).not.toHaveBeenCalled();
-    show.mockRestore();
+    expect(showModal).not.toHaveBeenCalled();
   });
 
   it.each(['docked', 'overlay'] as const)('a Run never opens the output terminal by itself (%s)', async (bottomPresentation) => {
@@ -2072,17 +2109,14 @@ describe('ProjectScriptsBody output', () => {
   });
 
   it('opens the operation detail where the host has no terminal or refuses the tab', async () => {
-    const { Modal } = await import('@/modal');
-    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'modal' as never);
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [] };
     const screen = await render('widget', 'scripts.script:test', { outputScopeId: outputScopeId(), terminalHost: false });
     await act(async () => {
       actionOperationStore.mergeSnapshots({ serverId: workspace.serverId, snapshots: [withTerminal() as never] });
     });
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test'); });
-    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
-    expect(show.mock.calls[0]?.[0]).toMatchObject({ props: { serverId: workspace.serverId, operationId: 'op-1' } });
-    show.mockRestore();
+    await vi.waitFor(() => expect(showModal).toHaveBeenCalledTimes(1));
+    expect(showModal.mock.calls[0]?.[0]).toMatchObject({ props: { serverId: workspace.serverId, operationId: 'op-1' } });
   });
 });
 
@@ -2183,8 +2217,6 @@ describe('ProjectScriptsBody on a phone', () => {
 
   it('opens a run’s output in the operation detail, never a desktop terminal tab', async () => {
     shared.device = 'phone';
-    const { Modal } = await import('@/modal');
-    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'modal' as never);
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [] };
     const screen = await render('page', 'scripts.script:test', { outputScopeId: `project:${encodeURIComponent(workspace.serverId)}:w1` });
     await act(async () => {
@@ -2192,9 +2224,8 @@ describe('ProjectScriptsBody on a phone', () => {
         ...operation('accepted', 1), domainRef: { ...operation('accepted', 1).domainRef, terminalId: 't1' } } as never] });
     });
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test'); });
-    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(showModal).toHaveBeenCalledTimes(1));
     expect(shared.calls.some((call) => call.actionId === 'session.terminals.open')).toBe(false);
-    show.mockRestore();
   });
 });
 

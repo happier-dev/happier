@@ -143,10 +143,12 @@ describe('Project Trust captured UI Account API', () => {
             installHomeGovernanceBoundaries(homes);
         }
     });
-    it('remembers only the captured Account’s currently accepted exact checkout, not another Account’s rows or a moved root', async () => {
+    it.each(['associated', 'self'] as const)('remembers only the captured Account’s currently accepted exact checkout through its %s Project, not another Account’s rows or a moved root', async association => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { rememberAdmittedProjectSetupConsent } = await import('@/sync/ops/actions/projectSetupTrustConsent');
-        const workspace = { id: 'accepted', serverId: scope.serverId, machineId: 'machine', rootPath: '/checkout', projectKey: 'project', createdAtMs: 1 };
+        const projectId = association === 'associated' ? 'project' : 'accepted';
+        const workspace = { id: 'accepted', serverId: scope.serverId, machineId: 'machine', rootPath: '/checkout',
+            ...(association === 'associated' ? { projectKey: projectId } : {}), createdAtMs: 1 };
         const address = { serverId: workspace.serverId, workspaceId: workspace.id, machineId: workspace.machineId, rootPath: workspace.rootPath };
         const rows = { scope, status: 'ready', coverage: 'complete', workspaceRefs: [workspace], relationships: [], organizations: [], revisionsByPhysicalKey: {} } satisfies ProjectAccountRowsSnapshot;
         const operation = heldOperation(scope, address, value.reviewedEffectDigest);
@@ -168,8 +170,8 @@ describe('Project Trust captured UI Account API', () => {
         expect(await rememberAdmittedProjectSetupConsent({ scope, workspace: address, operation, reviewedEffectDigest: value.reviewedEffectDigest }))
             .toEqual({ kind: 'remembered', operation: expect.objectContaining({ operationId: operation.snapshot.operationId }) });
         expect(homes.requestsFor(mutatePath).map(request => ProjectTrustMutationRequestV1Schema.parse(request.input)))
-            .toEqual([{ project: { serverId: workspace.serverId, projectId: 'project' }, expectedRevision: 'absent',
-                content: { t: 'plain', v: { project: { serverId: workspace.serverId, projectId: 'project' },
+            .toEqual([{ project: { serverId: workspace.serverId, projectId }, expectedRevision: 'absent',
+                content: { t: 'plain', v: { project: { serverId: workspace.serverId, projectId },
                     reviewedEffectDigest: value.reviewedEffectDigest, approvedAtMs: expect.any(Number) } } }]);
     });
     it('remembers the retained review through a registered Source Home alias without accepting an unknown Home', async () => {

@@ -1,5 +1,5 @@
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { rememberAdmittedProjectSetupConsentV1, type RememberProjectSetupConsentResult } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupConsent';
 export { matchesRetainedCheckout, type RememberProjectSetupConsentResult } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupConsent';
 
@@ -59,7 +59,7 @@ export async function rememberAdmittedProjectSetupConsent(input: Readonly<{
   }
 }
 
-/** The accepted Project of a qualified checkout (its workspace row's Project association). */
+/** The accepted Project of a qualified checkout, including a self Project. */
 function resolveProjectSetupProjectId(
   scope: ServerAccountScope,
   workspace: WorkspaceAddressV1,
@@ -71,5 +71,5 @@ function resolveProjectSetupProjectId(
   const resolved = resolveWorkspaceRefV1(rows?.workspaceRefs ?? [], workspace, {
     normalizeServerId: resolveServerProfileScopeIdForIdentifier,
   });
-  return resolved.kind === 'resolved' ? resolved.ref.projectKey ?? null : null;
+  return resolved.kind === 'resolved' ? projectWorkspaceRefV1(resolved.ref).projectKey : null;
 }
