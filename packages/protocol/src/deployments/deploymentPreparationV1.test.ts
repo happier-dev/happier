@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DeploymentPrepareInputV1Schema, deriveDeploymentPrepareSessionSpawnInputV1, buildDeploymentPreparationBriefV1 } from './deploymentPreparationV1.js';
 import { SessionSpawnNewActionInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import { DEPLOYMENT_VALIDATION_RULES_V1 } from './deploymentValidationV1.js';
+import { DeploymentEnvironmentCreateActionInputV1Schema } from './deploymentActionsV1.js';
 
 const source = {
   projectSourceId: 'source', sourceRevision: 1,
@@ -11,6 +12,18 @@ const source = {
 };
 
 describe('Prepare reviewed Session and import references', () => {
+  it('shows schema-valid Environment create inputs in the preparation brief', () => {
+    const input = DeploymentPrepareInputV1Schema.parse({ ...source, sessionRef: { serverId: 'home', sessionId: 'existing-session' } });
+    const brief = buildDeploymentPreparationBriefV1(input);
+    // The first JSON block is the reviewed source selection. Later blocks are Action examples.
+    const [, ...examples] = brief.matchAll(/```json\n([^`]+)\n```/gu);
+    expect(examples.length).toBeGreaterThan(0);
+    for (const [, example] of examples) {
+      const parsed = DeploymentEnvironmentCreateActionInputV1Schema.safeParse(JSON.parse(example ?? ''));
+      expect(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues)).toBe(true);
+    }
+  });
+
   it('preserves the complete reviewed Session recipe in the public child vocabulary', () => {
     const input = DeploymentPrepareInputV1Schema.parse({ ...source, sessionDraft: {
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/repo' },
