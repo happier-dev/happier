@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { createHash } from 'node:crypto';
 import { Button, defineUiSurface, Tabs, Text, type MarkdownProps } from '@happier-dev/plugin-ui';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
@@ -211,6 +212,8 @@ afterEach(async () => {
  */
 async function mountPanel(panel: string | (() => string), options: Readonly<{
   direct?: boolean;
+  admittedReview?: () => Readonly<{ reviewId: string; roundOrdinal: number }> | undefined;
+  openedResources?: unknown[];
   navigation?: Array<PluginUiPageNavigationV1 | null>;
   reads?: string[];
   renderMarkdown?: (input: MarkdownProps) => React.ReactElement;
@@ -240,9 +243,11 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
       identity: { instanceId: `fixture-instance-panel-${panel}`, mountNonce: `fixture-mount-panel-${panel}` },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface((context) => {
-        const body = renderSurface(typeof panel === 'function' ? {
-          ...context, launchInput: { ...(launchInput() as Record<string, JsonValue>), panel: panel() },
-        } : context);
+        const body = renderSurface({ ...context, launchInput: {
+          ...(context.launchInput as Record<string, JsonValue>),
+          ...(typeof panel === 'function' ? { panel: panel() } : {}),
+          ...(options.admittedReview === undefined ? {} : { admittedReview: options.admittedReview() }),
+        } });
         // The SDK artifact boundary returns an opaque UI element; the RNW host requires a real React element.
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected a React-native author surface');
         const content = body === null || options.renderMarkdown === undefined ? body
@@ -272,6 +277,27 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
       adapter: createPluginUiRnwSemanticSurfaceAdapter(options.changedFilesReview === true ? { changedFilesReview: true } : {}),
       launchInput: { ...(launchInput() as Record<string, JsonValue>), ...(options.direct ? {} : { panel: typeof panel === 'string' ? panel : panel() }) } as JsonValue,
       handlers: {
+        openResource: ({ resource }) => { options.openedResources?.push(resource); },
+        readResource: async ({ resource }) => {
+          if (typeof resource === 'string' || !('hostRead' in resource) || resource.hostRead !== 'review.get')
+            throw new PluginError({ code: 'unsupported_method' });
+          options.reads?.push('review.get');
+          const refusal = options.rejectRead?.('review.get');
+          if (refusal) throw refusal;
+          const answer = options.onAction?.('review.get', resource.input);
+          if (answer === undefined) throw new PluginError({ code: 'unavailable' });
+          const value = JSON.stringify(answer);
+          const bytes = new TextEncoder().encode(value);
+          return { contentType: 'application/json', bytes, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
+        },
+        watchResource: async ({ resource }) => {
+          if (typeof resource === 'string' || !('hostRead' in resource) || resource.hostRead !== 'review.get')
+            throw new PluginError({ code: 'unsupported_method' });
+          // A real host acknowledges the current digest before it can push an invalidation.
+          const value = JSON.stringify(options.onAction?.('review.get', resource.input));
+          if (value === undefined) throw new PluginError({ code: 'unavailable' });
+          return { digest: `sha256:${createHash('sha256').update(value).digest('hex')}` };
+        },
         ...(options.navigation === undefined ? {} : { setPageNavigation: ({ navigation }: { navigation: PluginUiPageNavigationV1 | null }) => { options.navigation?.push(navigation); } }),
         executeAction: async ({ action, input, signal }) => {
           if (action === 'shell.column.set') {
@@ -283,7 +309,7 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
             } }));
             return null;
           }
-          const localId = (action as { localId: string }).localId;
+          const localId = typeof action === 'string' ? action : action.localId;
           options.reads?.push(localId);
           const answered = options.onAction?.(localId, input);
           if (answered !== undefined) return answered;
@@ -333,6 +359,74 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
 }
 
 describe('the GitHub detail as Triage panels', () => {
+  it.each([false, true])('shows the exact admitted Happier Review on the ordinary PR overview (direct=%s)', async direct => {
+    const openedResources: unknown[] = [];
+    const reads: unknown[] = [];
+    let needsDecision = 3;
+    const verdict = direct ? '3 constats à trancher' : '3 findings to decide';
+    const count = direct ? '7 constats' : '7 findings';
+    const needsYou = direct ? 'Besoin de vous' : 'Needs you';
+    const decided = direct ? 'Tous les constats sont tranchés' : 'Every finding is decided';
+    const open = direct ? 'Ouvrir la revue' : 'Open review';
+    const fixture = await mountPanel('overview', { direct, openedResources,
+      ...(direct ? { translations: {
+        'happier.plugin-ui.review.glance.toDecide.other': '{count} constats à trancher',
+        'happier.plugin-ui.review.glance.findingsCount.other': '{count} constats',
+        'happier.plugin-ui.review.glance.allDecided': decided,
+        'happier.plugin-ui.workStatus.needsYou': needsYou,
+        'happier.plugin-ui.review.open': open,
+      } } : {}),
+      admittedReview: () => ({ reviewId: 'owned-pr-review', roundOrdinal: 1 }),
+      onAction: (id, input) => {
+        if (id !== 'review.get') return undefined;
+        reads.push(input);
+        return { review: { reviewId: 'owned-pr-review', state: 'completed', counts: { total: 7, needsDecision } },
+          human: { needsYou: { needsYou: true } } };
+      },
+    });
+    await expect(fixture.getByText(verdict)).resolves.toBeDefined();
+    await expect(fixture.getByText(count)).resolves.toBeDefined();
+    await expect(fixture.getByText(needsYou)).resolves.toBeDefined();
+    expect(new Set(reads.map(input => JSON.stringify(input)))).toEqual(new Set([JSON.stringify({ reviewId: 'owned-pr-review' })]));
+    needsDecision = 0;
+    await act(async () => { fixture.invalidateResource({ hostRead: 'review.get', input: { reviewId: 'owned-pr-review' } }, `sha256:${'d'.repeat(64)}`); });
+    await expect(fixture.getByText(decided)).resolves.toBeDefined();
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: open })); });
+    expect(openedResources).toEqual([{ kind: 'artifact', artifactId: 'owned-pr-review' }]);
+  });
+
+  it('does not scan Reviews when this PR has no admitted Review relation', async () => {
+    const reads: string[] = [];
+    const fixture = await mountPanel('overview', { reads });
+    expect(reads).not.toContain('review.get');
+    expect(reads).not.toContain('reviews.list');
+    expect(await fixture.queryAllByRole('button', { name: 'Open review' })).toHaveLength(0);
+  });
+
+  it('clears the prior Review on relation replacement and retries through the page refresh when refused', async () => {
+    let reviewId = 'first-pr-review';
+    let refused = true;
+    let refreshGeneration = 0;
+    const fixture = await mountPanel('overview', {
+      refreshGeneration: () => refreshGeneration,
+      admittedReview: () => ({ reviewId, roundOrdinal: 1 }),
+      rejectRead: id => id === 'review.get' && reviewId === 'second-pr-review' && refused
+        ? new PluginError({ code: 'permission_denied', message: 'Review access was withdrawn', retryable: false }) : undefined,
+      onAction: id => id === 'review.get' && !(reviewId === 'second-pr-review' && refused)
+        ? { review: { reviewId, state: 'completed', counts: { total: 7, needsDecision: 3 } }, human: { needsYou: { needsYou: false } } }
+        : undefined,
+    });
+    await expect(fixture.getByText('3 findings to decide')).resolves.toBeDefined();
+    reviewId = 'second-pr-review';
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture()); });
+    expect(await fixture.queryByText('3 findings to decide')).toBeUndefined();
+    await expect(fixture.getByText('This review didn’t open')).resolves.toBeDefined();
+    refused = false;
+    refreshGeneration++;
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture()); });
+    await expect(fixture.getByText('3 findings to decide')).resolves.toBeDefined();
+  });
+
   it('publishes direct page Items, honors saved strip order and selects the real Files body from the phone host', async () => {
     const navigation: Array<PluginUiPageNavigationV1 | null> = [];
     const reads: string[] = [];

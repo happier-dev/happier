@@ -102,6 +102,7 @@ import { PullRequestReviewPublicationWrite, SingleProposalPublicationWrite } fro
 import { useGithubWrite, type GithubObservedEntryHandlerV1, type GithubWriteControllerV1 } from './detail/useGithubWrite.js';
 import { GithubEntryPropertyPicker } from './detail/entryPropertyPicker.js';
 import { GithubIssueNotifications } from './detail/notifications.js';
+import { GithubHappierReviewSummary } from './detail/happierReviewSummary.js';
 import { GithubSubIssueOrder } from './detail/subIssueOrder.js';
 import { GithubPullRequestPreviewStep } from './pullRequestPreview.js';
 import type { GithubReadFailureV1 } from './detail/readBoundary.js';
@@ -2149,6 +2150,7 @@ function OverviewPanel({
   return (
     <ScrollArea>
       <Stack gap="large">
+        {kindId === 'pull-request' ? <GithubHappierReviewSummary reviewId={input.admittedReview?.reviewId} /> : null}
         <RefreshRow
           onRefresh={primaryController.refresh}
           pending={overview.refreshing}
@@ -4416,6 +4418,8 @@ function GithubStoryOverview({
   const opened = exact?.createdAtMs === undefined ? null : formatTimestamp(locale, exact.createdAtMs, 'relative', nowMs);
   const byline = [exact?.author, opened].filter((part): part is string => typeof part === 'string' && part.length > 0);
   return (
+    <Stack gap="large">
+    {kindId === 'pull-request' ? <GithubHappierReviewSummary reviewId={input.admittedReview?.reviewId} /> : null}
     <TriageDetailStory kind={kindId === 'issue' ? 'report' : 'ask'}
         // Nothing to show yet (no last read, no list summary) while the first read settles: hold ①'s place.
         loading={exact === null && overview.failure === null && (ask === undefined || ask === null || ask.length === 0)}
@@ -4451,6 +4455,7 @@ function GithubStoryOverview({
         {exact === null ? null : <GithubStoryFacts overview={exact} />}
         <GithubReadFailureDetails failures={[capabilitiesFailure]} />
     </TriageDetailStory>
+    </Stack>
   );
 }
 
