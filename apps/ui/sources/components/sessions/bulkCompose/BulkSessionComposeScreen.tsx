@@ -386,6 +386,7 @@ function BulkSessionComposer(
             count: readyCount,
           })}
           onSend={send}
+          hasSendableChanges={composer.consequences.hasSettingsChanges}
           isSendDisabled={!composer.canSend}
           isSending={composer.submitting}
           extraActionChips={extraActionChips}
@@ -449,9 +450,6 @@ function BulkConsequenceLine(
 ) {
   const { theme } = useUnistyles();
   const { consequences } = props;
-  const settingsChanged = consequences.actions.some(
-    (actionId) => actionId !== 'session.message.send',
-  );
   const parts = [
     consequences.engineSwitches > 0
       ? t('session.participants.bulk.willSwitch', {
@@ -464,7 +462,7 @@ function BulkConsequenceLine(
         })
       : null,
   ].filter((part): part is string => part !== null);
-  const text = settingsChanged ? (
+  const text = consequences.hasSettingsChanges ? (
     <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
       <Text
         variant="meta"

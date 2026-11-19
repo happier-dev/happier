@@ -19,7 +19,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider, useListPresentation } from '@/components/ui/lists/listPresentation';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
-import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
 import { t } from '@/text';
@@ -55,12 +54,10 @@ export function BulkSessionResults(
   const summary = summarizeBulkRows(props.rows);
   const delivered = props.rows.filter((row) => row.state !== 'skipped');
   const skipped = props.rows.filter((row) => row.state === 'skipped');
-  const message = Boolean(props.text);
-  const recipients = delivered.length;
   const presentation = useListPresentation();
   const footer = (
     <View style={styles.footer}>
-      {summary.notSent > 1 ? (
+      {summary.failed > 1 ? (
         <RoundButton
           testID="bulk-compose-retry-failed"
           size="normal"
@@ -102,27 +99,13 @@ export function BulkSessionResults(
           />
           <Text
             variant="label"
-            style={[styles.headline, { color: theme.colors.text.secondary }]}
-            numberOfLines={2}
-          >
-            {message
-              ? t('session.participants.bulk.sentTo')
-              : t('session.participants.bulk.changed')}{' '}
-            <Text
-              variant="label"
-              emphasis="semiBold"
-              style={{ color: theme.colors.text.primary }}
-            >
-              {t('session.participants.bulk.sessions', { count: recipients })}
-            </Text>
-          </Text>
-          <StatusPill
             testID="bulk-compose-results-summary"
-            variant="neutral"
-            labelVariant="phrase"
-            label={formatBulkSummary(summary, message)}
-            foregroundColor={theme.colors.text.secondary}
-          />
+            accessibilityRole="header"
+            emphasis="semiBold"
+            style={[styles.headline, { color: theme.colors.text.primary }]}
+          >
+            {formatBulkSummary(summary)}
+          </Text>
         </View>
         {props.text ? (
           <View style={styles.bubbleRow}>
@@ -206,7 +189,7 @@ const ResultRow = React.memo(function ResultRow(
     [row],
   );
   const action =
-    row.state === 'failed' ? (
+    data.canRetry ? (
       <RoundButton
         testID={`bulk-compose-retry:${row.target.sessionId}`}
         size="small"

@@ -1390,6 +1390,29 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
+    it('submits staged changes without text and keeps an ordinary empty composer disabled', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+        const render = (hasSendableChanges?: boolean) => renderScreen(<AgentInput
+            sessionId="session-1"
+            value=""
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={onSend}
+            hasSendableChanges={hasSendableChanges}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        const empty = await render();
+        expect(empty.findByTestId('session-composer-send')?.props.accessibilityState?.disabled).toBe(true);
+        await empty.unmount();
+
+        const staged = await render(true);
+        expect(staged.findByTestId('session-composer-send')?.props.accessibilityState?.disabled).toBe(false);
+        await staged.pressByTestIdAsync('session-composer-send');
+        expect(onSend).toHaveBeenCalledTimes(1);
+    });
+
     it('uses the latest onSend callback after rerendering', async () => {
         const { AgentInput } = await import('./AgentInput');
         const firstOnSend = vi.fn();

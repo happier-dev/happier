@@ -1,9 +1,11 @@
 import type { BulkSessionChangeRow } from '@/components/sessions/authoring/bulk/executeBulkSessionChanges';
+import { SessionAgentTransitionRejectedCodeV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
 import type { SessionAskTargetRowState } from '@/components/sessions/transcript/askRecord/SessionAskRecord';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { isBundledAgentId } from '@/agents/registry/registryCore';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
+import { resolveSessionAgentTransitionRejectedMessage } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
 import { t } from '@/text';
 
 /** Why a target can't receive this compose, from the authoring-facts owner's typed reason. */
@@ -96,9 +98,19 @@ export function describeBulkRowReason(
     return t('session.participants.bulk.reasonApproval');
   if (row.state === 'failed') {
     if (row.reason) return row.reason;
+    if (row.actionId === 'session.agent.transition') {
+      const rejected = SessionAgentTransitionRejectedCodeV1Schema.safeParse(row.code);
+      if (rejected.success) {
+        const agent = t('agentInput.agent.sectionTitle');
+        return resolveSessionAgentTransitionRejectedMessage(rejected.data, {
+          sourceAgentLabel: agent,
+          targetAgentLabel: agent,
+        });
+      }
+    }
     // A typed admission refusal says why in the session composer's own words (one code → copy owner).
     const key = getSessionInputFailureLabelKey({ code: row.code });
-    return key ? t(key) : null;
+    return key ? t(key) : t('common.requestFailed');
   }
   // A message that followed an agent switch keeps the switch in its reason line (lab: "Sent · Switched from …").
   if (row.switchedFrom && row.switchedTo) {
@@ -126,66 +138,44 @@ function describeAgentId(agentId: string, agentTitles: ReadonlyMap<string, strin
     : formatAgentLikeIdForDisplay(agentId.slice(agentId.lastIndexOf('/') + 1));
 }
 
-export type BulkSessionResultSummary = Readonly<{
-  notSent: number;
-  waits: number;
-  inProgress: number;
-  done: number;
-  total: number;
-}>;
+type BulkSessionResultSummary = Readonly<Record<BulkSessionChangeRow['state'], number>>;
 
 export function summarizeBulkRows(
   rows: readonly BulkSessionChangeRow[],
 ): BulkSessionResultSummary {
-  const count = (states: readonly BulkSessionChangeRow['state'][]) =>
-    rows.filter((row) => states.includes(row.state)).length;
-  return {
-    notSent: count(['failed']),
-    waits: count(['approval_pending']),
-    inProgress: count(['applying', 'waking']),
-    done: count(['sent', 'applied', 'switched']),
-    total: rows.filter((row) => row.state !== 'skipped').length,
+  const counts: Record<BulkSessionChangeRow['state'], number> = {
+    failed: 0, approval_pending: 0, waking: 0, applying: 0, sent: 0, applied: 0, switched: 0, skipped: 0,
   };
+  for (const row of rows) counts[row.state]++;
+  return counts;
 }
 
-/**
- * The summary pill. Its finished word is the rows' word: "sent" when the compose carried a message (rows read
- * Sent), "changed" for settings only (rows read Changed), so one state has one word on the page.
- */
-export function formatBulkSummary(
-  summary: BulkSessionResultSummary,
-  carriedMessage: boolean,
-): string {
-  // While work still moves, one progress figure; once settled, the counts that matter, failures first.
-  if (summary.inProgress > 0 && summary.notSent === 0 && summary.waits === 0) {
-    return t(
-      carriedMessage
-        ? 'session.participants.bulk.progressSent'
-        : 'session.participants.bulk.progressChanged',
-      { done: summary.done, total: summary.total },
-    );
-  }
+/** The headline uses the same outcome words as the rows, with failures first. */
+export function formatBulkSummary(summary: BulkSessionResultSummary): string {
   return [
-    summary.notSent > 0
-      ? t('session.participants.bulk.summaryNotSent', {
-          count: summary.notSent,
-        })
+    summary.failed > 0
+      ? t('session.participants.bulk.summaryNotSent', { count: summary.failed })
       : null,
-    summary.waits > 0
-      ? t('session.participants.bulk.summaryWaits', { count: summary.waits })
+    summary.approval_pending > 0
+      ? t('session.participants.bulk.summaryWaits', { count: summary.approval_pending })
       : null,
-    summary.inProgress > 0
-      ? t('session.participants.bulk.summaryInProgress', {
-          count: summary.inProgress,
-        })
+    summary.waking > 0
+      ? t('session.participants.bulk.summaryWaking', { count: summary.waking })
       : null,
-    summary.done > 0
-      ? t(
-          carriedMessage
-            ? 'session.participants.bulk.summarySent'
-            : 'session.participants.bulk.summaryChanged',
-          { count: summary.done },
-        )
+    summary.applying > 0
+      ? t('session.participants.bulk.summaryInProgress', { count: summary.applying })
+      : null,
+    summary.sent > 0
+      ? t('session.participants.bulk.summarySent', { count: summary.sent })
+      : null,
+    summary.applied > 0
+      ? t('session.participants.bulk.summaryChanged', { count: summary.applied })
+      : null,
+    summary.switched > 0
+      ? t('session.participants.bulk.summarySwitched', { count: summary.switched })
+      : null,
+    summary.skipped > 0
+      ? t('session.participants.bulk.skippedCount', { count: summary.skipped })
       : null,
   ]
     .filter((part): part is string => part !== null)

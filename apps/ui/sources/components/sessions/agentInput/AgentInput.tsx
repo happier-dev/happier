@@ -827,6 +827,8 @@ interface AgentInputProps {
     /** The attachment owner describes constraints before an OS drop is released. */
     attachmentDropHint?: string;
     hasSendableAttachments?: boolean;
+    /** The submit owner has staged changes that can be applied without a message. */
+    hasSendableChanges?: boolean;
     permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
     approvalRequests?: ReadonlyArray<OpenApprovalAttentionArtifactForSession>;
     canApprovePermissions?: boolean;
@@ -1548,7 +1550,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
     }, []);
     const hasText = liveTextStatus.hasText;
-    const hasSendableContent = hasText || props.hasSendableAttachments === true;
+    const hasSendableNonText = props.hasSendableAttachments === true || props.hasSendableChanges === true;
+    const hasSendableContent = hasText || hasSendableNonText;
     const sendMenuShortcuts = React.useMemo(() => buildComposerSendShortcutLabels({
         alternateMode: props.alternateSendMode ?? 'agent_queue', keyboardShortcutsV2Enabled,
         keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
@@ -3985,7 +3988,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Handle keyboard navigation
     const handleKeyPress = React.useCallback((event: KeyPressEvent): boolean => {
         const eventInputText = event.inputState?.text ?? inputRef.current?.getText?.() ?? inputStateRef.current.text;
-        const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText || props.hasSendableAttachments === true
+        const hasSendableInput = resolveLiveInputTextStatus(eventInputText).hasText || hasSendableNonText
             || props.armedContinuationTarget != null || props.armedRouteContinuation != null;
         const sendShortcutAction = !submitEnabled ? null : resolveComposerSendShortcutAction(event, {
             newSessionComposer: props.newSessionAfterSendMode != null,
@@ -4078,17 +4081,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
         }
         return false; // Key was not handled
-    }, [handleCommandMenuKey, dictationEditable, props.hasSendableAttachments, props.armedContinuationTarget, props.armedRouteContinuation, props.canSendNextQueued, props.alternateSendMode, onSendProp, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.messageHistory, stepMessageHistory, props.newSessionAfterSendMode, sendActionDisabled, enterToSendEnabled, submitEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
+    }, [handleCommandMenuKey, dictationEditable, hasSendableNonText, props.armedContinuationTarget, props.armedRouteContinuation, props.canSendNextQueued, props.alternateSendMode, onSendProp, handleSend, props.onPermissionModeChange, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.messageHistory, stepMessageHistory, props.newSessionAfterSendMode, sendActionDisabled, enterToSendEnabled, submitEnabled, canStopFromComposer, isAborting, runAbortShortcutAction]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;
         if (!enterToSendEnabled) return;
         if (sendActionDisabled) return;
-        const hasSendableInput = resolveLiveInputTextStatus(inputRef.current?.getText?.() ?? inputStateRef.current.text).hasText || props.hasSendableAttachments === true
+        const hasSendableInput = resolveLiveInputTextStatus(inputRef.current?.getText?.() ?? inputStateRef.current.text).hasText || hasSendableNonText
             || props.armedContinuationTarget != null || props.armedRouteContinuation != null;
         if (!hasSendableInput) return;
         handleSend();
-    }, [enterToSendEnabled, handleSend, props.hasSendableAttachments, props.armedContinuationTarget, props.armedRouteContinuation, sendActionDisabled]);
+    }, [enterToSendEnabled, handleSend, hasSendableNonText, props.armedContinuationTarget, props.armedRouteContinuation, sendActionDisabled]);
 
     const submitBehavior = React.useMemo<MultiTextInputSubmitBehavior | undefined>(() => {
         if (Platform.OS === 'web') return undefined;

@@ -39,7 +39,7 @@ function projectRow(target: ActionSessionAddressV1, actionId: ActionId, result: 
         : actionId === 'session.agent.transition' ? 'switched' : 'applied' };
 }
 export function isBulkSessionRetryable(row: BulkSessionChangeRow): boolean {
-    return row.state === 'failed' || row.state === 'waking';
+    return row.state === 'failed';
 }
 export function orderBulkSessionChangeRows(rows: readonly BulkSessionChangeRow[]): BulkSessionChangeRow[] {
     const rank: Record<BulkSessionChangeRow['state'], number> = { failed: 0, waking: 1, approval_pending: 1, applying: 2, sent: 3, applied: 3, switched: 3, skipped: 4 };
@@ -111,5 +111,6 @@ export function summarizeBulkSessionChanges(plan: ExistingSessionChangePlan) {
         .flatMap(stage => stage.targets.map(bulkChangeTargetKey))).size;
     return { restarts: count('session.connected_services_auth.set'), engineSwitches: count('session.agent.transition'),
         messages: count('session.message.send'), skipped: plan.skippedTargets.length,
-        actions: [...new Set(plan.stages.map(stage => stage.actionId))], unsupportedFields: plan.unsupportedFields };
+        hasSettingsChanges: plan.stages.some(stage => stage.actionId !== 'session.message.send'),
+        unsupportedFields: plan.unsupportedFields };
 }

@@ -210,7 +210,7 @@ export type ArmedAgentContinuationCanonicalFacts = Readonly<{
     input: ArmedAgentContinuationInputCustody;
 }>;
 
-function resolveRejectedMessage(
+export function resolveSessionAgentTransitionRejectedMessage(
     code: SessionAgentTransitionRejectedCodeV1,
     labels: ArmedAgentContinuationLabels,
 ): string {
@@ -412,7 +412,7 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
         case 'rejected':
             return buildDisposition({
                 depth: 'no_effect',
-                message: resolveRejectedMessage(result.code, labels),
+                message: resolveSessionAgentTransitionRejectedMessage(result.code, labels),
                 // A Session that already runs the armed Agent makes the armed row
                 // a promise about a switch that cannot happen.
                 armSpent: result.code === 'same_target',

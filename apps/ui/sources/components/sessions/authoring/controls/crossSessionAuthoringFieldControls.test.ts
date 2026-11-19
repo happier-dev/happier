@@ -110,6 +110,21 @@ describe('Session-specific field intersection', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'agentTarget' })).toMatchObject({ kind: 'options', unselectedLabel: 'Mixed' });
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'agentTarget', agentSwitchingEnabled: false })).toMatchObject({ kind: 'unavailable', reason: 'feature_disabled' });
     });
+    it('projects the staged engine and account declarations from the same catalog option', () => {
+        const claudeAccount = { service: { pluginId: 'happier.connect.github', localId: 'github' }, purpose: 'auth' } as const;
+        const targets = [target(codex), target(claude)].map(entry => ({
+            ...entry,
+            facts: {
+                agentTargets: [{ ...agentTargets[0]!, connectedAccounts: [claudeAccount] }, agentTargets[1]!],
+                connectedServices: { serverId: 'home' },
+            },
+        }));
+        expect(resolveCrossSessionAuthoringFieldControl({
+            ...base, targets, field: 'connectedServices', selection: { agentTarget: claude },
+        })).toMatchObject({
+            kind: 'connectedServices', agentId: 'claude', agentIdentity: claude.identity, connectedAccounts: [claudeAccount],
+        });
+    });
     it('keeps distinct catalogs for two Sessions with the same effective Agent, including a pending switch', () => {
         const targets = [target(), { ...target(), controls: { ...controls(), modelOptions: [{ value: 'model-a', label: 'Model A' }] } }];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'modelSelection' })).toMatchObject({ kind: 'options', options: [{ id: 'model-a' }] });

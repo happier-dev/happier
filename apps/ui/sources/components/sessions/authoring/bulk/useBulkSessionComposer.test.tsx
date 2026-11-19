@@ -113,6 +113,32 @@ it('keeps other failed targets retryable after a per-row retry', async () => {
     expect(hook.getCurrent().failedTargets).toEqual([]);
 });
 
+it('retries only current failures, in bulk or by address, and puts failures first', async () => {
+    const targets = ['sent', 'first-failure', 'waking', 'second-failure'].map(sessionId => ({
+        address: { serverId: 'home', sessionId }, agentId: 'agent', machineId: 'machine',
+    }));
+    const calls: string[][] = [];
+    const hook = await renderHook(() => useBulkSessionComposer({
+        targets, initialText: 'send',
+        executeConfirmed: async (_id, input) => {
+            const { addresses } = (input as { sessionId: { addresses: (typeof targets)[number]['address'][] } }).sessionId;
+            calls.push(addresses.map(address => address.sessionId));
+            return { ok: true, result: { kind: 'fanout', results: addresses.map(target => ({
+                target,
+                result: calls.length > 1 || target.sessionId === 'sent'
+                    ? { ok: true, result: { status: 'accepted', localId: target.sessionId } }
+                    : { ok: false, error: 'Unavailable', errorCode: target.sessionId === 'waking'
+                        ? 'managed_wake_unconfirmed' : 'target_unavailable' },
+            })) } };
+        },
+    }));
+    await act(async () => { await hook.getCurrent().send(); });
+    expect(hook.getCurrent().rows.map(row => row.state)).toEqual(['failed', 'failed', 'waking', 'sent']);
+    await act(async () => { await hook.getCurrent().retryFailed(targets[1]!.address); });
+    await act(async () => { await hook.getCurrent().retryFailed(); });
+    expect(calls.slice(1)).toEqual([['first-failure'], ['second-failure']]);
+});
+
 it('replans retry against current Agent facts after a successful switch and failed message', async () => {
     const address = { serverId: 'home', sessionId: 'a' };
     let targets = [{ address, agentId: 'old/agent', machineId: 'machine' }];

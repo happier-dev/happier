@@ -696,17 +696,17 @@ export function resolveSessionAuthoringFieldControl(params: Readonly<{
             // Bindings are authored for one Agent's own declared Connected
             // Accounts against one Home. Without the Agent or that scope there
             // is nothing truthful to offer, exactly as for MCP.
-            if (agentId === null) return unavailable(field, 'requires_agent_target');
+            if (!selectedAgentTarget) return unavailable(field, 'requires_agent_target');
             if (facts.connectedServices === undefined) return unavailable(field, 'owned_by_host');
-            const declarations = selectedAgentTarget?.connectedAccounts ?? [];
+            const declarations = selectedAgentTarget.connectedAccounts ?? [];
             // An Agent that declares no Connected Account has nothing to bind;
             // that is the Agent's own answer, not a missing host fact.
             if (declarations.length === 0) return unavailable(field, 'agent_has_no_options');
             return {
                 field,
                 kind: 'connectedServices',
-                agentId,
-                agentIdentity: selectedAgentTarget?.target.identity ?? null,
+                agentId: selectedAgentTarget.agentId,
+                agentIdentity: selectedAgentTarget.target.identity,
                 connectedAccounts: declarations,
                 context: facts.connectedServices,
             };

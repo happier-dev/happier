@@ -66,17 +66,19 @@ describe('BulkSessionResults', () => {
     expect(screen.findByTestId('bulk-compose-retry:z')).toBeFalsy();
   });
 
-  it('says the rows\' own word in the summary: sent for a message, changed for settings only', async () => {
-    const pill = (screen: Awaited<ReturnType<typeof render>>['screen']) =>
-      String(screen.findAll((node) => node.props?.testID === 'bulk-compose-results-summary'
-        && typeof node.props.label === 'string')[0]?.props.label).toLowerCase();
-    const sent = await render([row('a', 'sent'), row('b', 'applying')]);
-    expect(pill(sent.screen)).toContain('sent');
-    const settings = await render([
-      { ...row('c', 'applied'), actionId: 'session.permission_mode.set' },
-      { ...row('d', 'applied'), actionId: 'session.permission_mode.set' },
-    ], vi.fn(), vi.fn(), null);
-    expect(pill(settings.screen)).toContain('changed');
+  it('describes an entirely failed send without claiming either message was sent', async () => {
+    const { screen } = await render([row('a', 'failed'), row('b', 'failed')]);
+    expect(screen.findByTestId('bulk-compose-results-summary')?.props.children)
+      .toBe(t('session.participants.bulk.summaryNotSent', { count: 2 }));
+  });
+
+  it('uses each row outcome in the headline even when the composer carried a message', async () => {
+    const { screen } = await render([row('a', 'sent'), row('b', 'applied'), row('c', 'failed')]);
+    expect(screen.getTextContent()).toContain([
+      t('session.participants.bulk.summaryNotSent', { count: 1 }),
+      t('session.participants.bulk.summarySent', { count: 1 }),
+      t('session.participants.bulk.summaryChanged', { count: 1 }),
+    ].join(' · '));
   });
 
   it('keeps the agent switch in the reason line of a row whose message followed it', async () => {
@@ -100,6 +102,14 @@ describe('BulkSessionResults', () => {
   it('says why a send was refused when the target gave only a typed code', async () => {
     const { screen } = await render([{ ...row('a', 'failed'), code: 'session_input_target_update_required' }]);
     expect(screen.getTextContent()).toContain(t('session.pendingMessages.admissionRejected.targetUpdateRequired'));
+  });
+
+  it('explains that the source Agent is still working when a switch is refused', async () => {
+    const { screen } = await render([{
+      ...row('a', 'failed'), actionId: 'session.agent.transition', code: 'source_not_idle',
+    }]);
+    expect(screen.getTextContent()).toContain('still working');
+    expect(screen.getTextContent()).toContain(t('session.participants.bulk.stateNotSent'));
   });
 
   it('offers Review for a session whose send waits for an approval', async () => {
