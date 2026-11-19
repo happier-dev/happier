@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createReviewHumanActionExecutorV1 } from '@happier-dev/protocol/reviews/reviewHumanTransportV1';
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
-import type { ReviewHumanStateV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { ReviewVerdictContentV1Schema, type ReviewHumanStateV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { createReviewHumanHttpActionExecutor } from './humanApi';
 
 describe('Review human answering-client transport', () => {
@@ -54,7 +54,7 @@ describe('Review human answering-client transport', () => {
                     pendingDecisions: false, needsYou: false, canSubmitVerdict: false } }),
             resolveResource: async () => {
                 resourceReads += 1;
-                return { mode: 'e2ee', seal: async value => ({ t: 'encrypted', c: await key.encryptHeader(value) }),
+                return { mode: 'e2ee', seal: async value => ({ t: 'encrypted', c: await key.encryptHeader(ReviewVerdictContentV1Schema.parse(value)) }),
                     open: async content => content.t === 'encrypted' ? key.decryptHeaderRaw(content.c) : content.v };
             },
         });
@@ -72,7 +72,7 @@ describe('Review human answering-client transport', () => {
         let posted: unknown;
         const execute = createReviewHumanActionExecutorV1({ accountId: 'person',
             resolveResource: async () => ({ mode: 'e2ee',
-                seal: async value => ({ t: 'encrypted', c: await key.encryptHeader(value) }),
+                seal: async value => ({ t: 'encrypted', c: await key.encryptHeader(ReviewVerdictContentV1Schema.parse(value)) }),
                 open: async content => content.t === 'encrypted' ? key.decryptHeaderRaw(content.c) : content.v,
             }),
             // The HTTP transport is the system boundary; crypto and the complete domain adapter remain real.
