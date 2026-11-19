@@ -24,6 +24,7 @@ export const BUILTIN_WORKFLOW_TITLES_V1 = Object.freeze({
   'builtin:answer-and-review': 'Answer + review',
   'builtin:debate': 'Debate',
   'builtin:repository-review': 'Repository review',
+  'builtin:review-pull-request': 'Review a pull request',
 } satisfies Readonly<Record<BuiltinWorkflowIdV1, string>>);
 
 /** Display only: never add inferred metadata to the frozen accepted/replay context. */

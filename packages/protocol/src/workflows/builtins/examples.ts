@@ -6,6 +6,7 @@ import { setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlo
 import type { AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
 import { createDeploymentMoveWorkflowV1, createDeploymentDataMoveWorkflowV1 } from './deploymentMoveV1.js';
 import { createBackupVerifyWorkflowV1, createDailyHealthDigestWorkflowV1, createNightlyBackupsWorkflowV1, createRestoreDrillWorkflowV1 } from './backupExamples.js';
+import { REVIEW_PULL_REQUEST_WORKFLOW_V1 } from './pullRequestReview.js';
 
 export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes',
@@ -28,24 +29,6 @@ const askOnce: WorkflowDefinitionV1 = {
   version: 1, defaults: {}, inputs: [{ name: 'request', valueType: 'string', required: true }],
   blocks: [agent('ask', 'Answer the request', 'builder', 'Answer the supplied request.', [input('request')])],
   finalOutput: result('ask'),
-};
-
-const reviewPullRequest: WorkflowDefinitionV1 = {
-  version: 1, defaults: {}, inputs: [{ name: 'pullRequest', valueType: 'string', required: true }],
-  blocks: [
-    {
-      kind: 'parallel', id: 'reviews', name: 'Side by side', failurePolicy: 'collect_outcomes',
-      branches: [
-        { id: 'correctness', name: 'Correctness', blocks: [agent('review-correctness', 'Review correctness', 'reviewer',
-          'Review the supplied pull request for correctness. Report every finding with evidence and location.', [input('pullRequest')], true)] },
-        { id: 'tests', name: 'Tests', blocks: [agent('review-tests', 'Review tests and edge cases', 'reviewer',
-          'Review the supplied pull request for tests and edge cases. Report every finding with evidence and location.', [input('pullRequest')], true)] },
-      ],
-    },
-    agent('summarize', 'Summarize the reviews', 'builder',
-      'Summarize both reviews, retaining every finding and any failed or missing review coverage. Do not apply changes.', [result('reviews')]),
-  ],
-  finalOutput: result('summarize'),
 };
 
 const workThroughEachFile: WorkflowDefinitionV1 = {
@@ -223,7 +206,7 @@ function offUntilInputsAreSet(scheduleExpr: string): AutomationScheduleTriggerIn
 /** Seeds only: these keys never enter the runtime workflow-reference grammar. */
 export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
   example('ask-once', 'askOnce', askOnce),
-  example('review-pull-request', 'reviewPullRequest', reviewPullRequest),
+  example('review-pull-request', 'reviewPullRequest', REVIEW_PULL_REQUEST_WORKFLOW_V1),
   example('work-through-each-file', 'workThroughEachFile', workThroughEachFile),
   example('repair-until-it-passes', 'repairUntilItPasses', repairUntilItPasses),
   example('triage-an-issue', 'triageAnIssue', triageAnIssue),

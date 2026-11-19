@@ -90,7 +90,7 @@ describe('built-in workflow catalog', () => {
     expect(catalog.getBuiltinWorkflowCatalogV1().map((entry) => entry.id)).toEqual([
       'builtin:keep-going',
       'builtin:review-and-converge', 'builtin:plan-with-a-panel', 'builtin:open-a-pull-request',
-      'builtin:fresh-opinions', 'builtin:parallel-implementations', 'builtin:answer-and-review', 'builtin:debate', 'builtin:repository-review',
+      'builtin:fresh-opinions', 'builtin:parallel-implementations', 'builtin:answer-and-review', 'builtin:debate', 'builtin:repository-review', 'builtin:review-pull-request',
     ]);
   });
 
@@ -111,7 +111,7 @@ describe('built-in workflow catalog', () => {
   });
 
   it.each(['keep-going', 'review-and-converge', 'plan-with-a-panel', 'open-a-pull-request',
-    'fresh-opinions', 'parallel-implementations', 'answer-and-review', 'debate', 'repository-review'])('ships a strict, semantically valid %s definition', (id) => {
+    'fresh-opinions', 'parallel-implementations', 'answer-and-review', 'debate', 'repository-review', 'review-pull-request'])('ships a strict, semantically valid %s definition', (id) => {
     const resolved = catalog.resolveBuiltinWorkflowDefinitionV1(id);
     expect(resolved).not.toBeNull();
     expect(WorkflowDefinitionBaseSchema.safeParse(resolved?.definition).success).toBe(true);
@@ -136,9 +136,13 @@ describe('built-in workflow catalog', () => {
     for (const example of examples) {
       expect(WorkflowDefinitionBaseSchema.safeParse(example.definition).success, example.key).toBe(true);
       expect(validateWorkflowDefinition(example.definition).issues, example.key).toEqual([]);
-      expect(example.definition.finalOutput, example.key).toBeDefined();
       expect(parseWorkflowDefinitionRefV1(example.key)).toBeNull();
-      expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)).toBeNull();
+      if (example.key !== 'review-pull-request') {
+        expect(example.definition.finalOutput, example.key).toBeDefined();
+        expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)).toBeNull();
+      } else {
+        expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)?.definition).toEqual(example.definition);
+      }
     }
   });
 

@@ -13,6 +13,7 @@ const builtinMarks = {
     'seal-check': 'seal-check',
     scales: 'scales',
     'scan-search': 'magnifying-glass',
+    'check-circle': 'check-circle',
 } as const satisfies Record<BuiltinWorkflowIconV1, IconName>;
 
 /** A built-in workflow's own mark, in its navigation row, library row, pickers and run fold. */
