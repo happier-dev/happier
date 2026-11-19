@@ -21,6 +21,7 @@ import { isAgentInstallTargetInUse } from '@/agent/acp/catalog/registry/managedA
 import type { TrackedSession } from '@/daemon/types';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectAgentIsolationLaunchRefusal } from '@/daemon/agentIsolation/agentIsolationLaunchRefusal';
 import { executeAgentInstall } from './executeAgentInstall';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -267,9 +268,12 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
           const detailPhase = isJsonObject(details) ? details.phase : undefined;
           const phase = detailPhase === 'native_execution_preparation' || detailPhase === 'native_identity_binding'
             || detailPhase === 'native_execution_admission' || detailPhase === 'requester_material_cleanup' ? detailPhase : null;
-          settle(job, { kind: 'failed', code: job.controller.signal.aborted && !job.cleanupError ? 'cancelled' : 'install_failed',
+          const cancelled = job.controller.signal.aborted && !job.cleanupError;
+          const refusal = !cancelled ? projectAgentIsolationLaunchRefusal(error)?.agentIsolationRefusal : undefined;
+          settle(job, { kind: 'failed', code: cancelled ? 'cancelled' : 'install_failed',
             stepId: buildAgentInstallJobCliStepId(request), message: nativeCode
-              ? `Native Agent installation failed (${nativeCode}${phase ? `, ${phase}` : ''}).` : 'Native Agent installation failed.' });
+              ? `Native Agent installation failed (${nativeCode}${phase ? `, ${phase}` : ''}).` : 'Native Agent installation failed.',
+            ...(refusal ? { agentIsolationRefusal: refusal } : {}) });
         }
       });
       notifyActivity();

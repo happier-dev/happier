@@ -3557,6 +3557,7 @@ export class ApiMachineClient {
                         requesterIdentity: { ...requesterIdentity, homeServerIdentityId }, signal,
                     }, effects.backend);
                     const ready = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
+                        memberCliRuntime: effects.memberCliRuntime,
                         memberIdentity, signal, system: effects.nativeReadiness?.system });
                     signal?.throwIfAborted();
                     return ready.kind === 'member_native_ready'

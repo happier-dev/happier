@@ -6,6 +6,7 @@ import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachin
 import { logger } from '@/ui/logger';
 import type { LiveWorkProducerV1 } from '../lifecycle/managedActivity';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
+import { resolveAgentIsolationMemberCliRuntime } from './memberCliRuntime';
 
 /** The daemon's exact-Machine metadata and Workspace census remain authorities. */
 export function createDaemonAgentIsolationEffects(input: Readonly<{
@@ -21,6 +22,7 @@ export function createDaemonAgentIsolationEffects(input: Readonly<{
 }>): AgentIsolationEffectDependencies {
   const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel: resolveManagedCliReleaseChannelSync().ringId });
   const installedCli = join(layout.currentPath, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
+  const memberCliRuntime = process.platform === 'linux' ? resolveAgentIsolationMemberCliRuntime(installedCli) : undefined;
   input.sessionChanges?.subscribe(() => {
     if (input.trackedSessions.size !== 0) return;
     const client = input.getMachineClient();
@@ -34,11 +36,11 @@ export function createDaemonAgentIsolationEffects(input: Readonly<{
         && state.agentIsolation?.kind === 'applying' && state.agentIsolation.phase === 'runtime_replacement';
     }).catch(() => logger.warnLocalFile('[agentIsolation] Failed to publish retired runtime status'));
   });
-  return { platform: process.platform, installedCli, legacyPluginCodeRoot: input.legacyPluginCodeRoot, readRoots: input.readRoots, nativeReadiness: { privateRoots: input.privateRoots },
+  return { platform: process.platform, installedCli, memberCliRuntime, legacyPluginCodeRoot: input.legacyPluginCodeRoot, readRoots: input.readRoots, nativeReadiness: { privateRoots: input.privateRoots },
     // Retained entries remain in custody until the existing exit observer
     // finishes retirement. A requested stop, pause or unknown identity is live.
     readSessionsToReplace: () => input.trackedSessions.size,
-    protectedRoots: input.protectedRoots,
+    protectedRoots: memberCliRuntime ? [...input.protectedRoots, memberCliRuntime.root] : input.protectedRoots,
     readMemberBindingScope: input.readMemberBindingScope,
     readDaemonObservation: () => input.adminAccess.observer.read(),
     elevation: { get installationId() { return input.adminAccess.target()?.installationId ?? ''; }, installedCli,

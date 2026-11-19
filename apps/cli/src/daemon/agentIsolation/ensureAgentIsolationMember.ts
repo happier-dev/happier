@@ -46,6 +46,7 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
           activeServerDir: input.activeServerDir, signal: input.signal }, backend);
         await readAgentIsolationMemberWorkspaceRoot(identity, backend, { daemonObservation, signal: input.signal });
         const readiness = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
+          memberCliRuntime: effects.memberCliRuntime,
           memberIdentity: identity, signal: input.signal, system: effects.nativeReadiness?.system });
         if (readiness.kind === 'member_native_ready') {
           return { kind: 'ready', identity, daemonObservation };
@@ -60,6 +61,7 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
     const prepared = await input.setup();
     if (prepared.kind !== 'ready') return prepared;
     const readiness = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
+      memberCliRuntime: effects.memberCliRuntime,
       memberIdentity: prepared.identity, signal: input.signal, system: effects.nativeReadiness?.system });
     return readiness.kind === 'member_native_ready' ? { ...prepared, repaired: true }
       : { ...refused('denied'), readinessCode: readiness.code,

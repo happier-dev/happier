@@ -154,7 +154,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
         // Its cancellation may already be aborted; cleanup is still awaited.
         try {
           await execFileWithDeadline('sudo', ['-n', '-u', memberIdentity?.username ?? 'happier-agent', '--',
-            operation.managedHappierBinaryPath, 'agent-launch'], { env: {}, inputBytes: encodeAgentLaunchFrame({
+            launch.managedHappierBinaryPath, 'agent-launch'], { env: {}, inputBytes: encodeAgentLaunchFrame({
               v: 1, action: 'retire_operation', runtimeHome,
               ...(memberIdentity ? { nativeIdentity: { username: memberIdentity.username, agentUid: memberIdentity.agentUid,
                 agentGid: memberIdentity.agentGid, home: memberIdentity.home } } : {}),

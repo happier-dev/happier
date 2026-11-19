@@ -241,7 +241,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         if (current.status !== 'ready') return false;
         const policy = readMachineAgentIsolationPolicyV1(current.metadata);
         if (policy.status !== 'ready' || !agentIsolationMetadataFieldV1.equal(policy.policy, desiredPolicy)) return false;
-        const intent = await resolveAgentIsolationEffectIntent(mutation.enabled, effects).catch(() => null);
+        const intent = await resolveAgentIsolationEffectIntent(mutation.enabled, effects, undefined, undefined,
+          mutation.memberProvisioning).catch(() => null);
         return !!intent && prepared?.setupPlan.basis.kind === 'agentIsolation'
           && sameStrictJsonValue({ roots: intent.roots, ancestorAcls: intent.ancestorAcls, sessionsToReplace: intent.sessionsToReplace,
             ...(mutation.enabled && mutation.memberProvisioning ? { memberProvisioning: mutation.memberProvisioning } : {}) }, prepared.setupPlan.basis.review)

@@ -54,23 +54,27 @@ export function buildAgentIsolationMemberWorkspaceStep(identity: AgentIsolationM
     group: daemonPrimaryGroup, mode: 0o2770, ownershipMarker: identity.ownershipMarker };
 }
 
-function buildMemberRunAsStep(input: Readonly<{ daemonUsername: string; binaryPath: string }>, member: AgentIsolationMemberIdentity): Extract<MachineRecipeStepV1, { kind: 'file' }> {
-  assertLaunchPrincipal(input);
+function buildMemberRunAsStep(input: Readonly<{ daemonUsername: string; binaryPath: string; memberBinaryPath?: string }>,
+  member: AgentIsolationMemberIdentity): Extract<MachineRecipeStepV1, { kind: 'file' }> {
+  const binaryPath = input.memberBinaryPath ?? input.binaryPath;
+  assertLaunchPrincipal({ ...input, binaryPath });
   const alias = `HAPPIER_MEMBER_${member.digest.toUpperCase()}`;
   const policy = [
     `# Happier managed member launch ${member.digest}`,
-    `Cmnd_Alias ${alias} = ${input.binaryPath} agent-launch`,
+    `Cmnd_Alias ${alias} = ${binaryPath} agent-launch`,
     `Defaults!${alias} umask=0002,umask_override`,
     `${input.daemonUsername} ALL=(${member.username}) NOPASSWD:NOSETENV: ${alias}`,
     '',
   ].join('\n');
-  return { id: 'agent-runas', kind: 'file', path: `/etc/sudoers.d/91-happier-${member.username}`,
+  const priority = input.memberBinaryPath ? 92 : 91;
+  return { id: 'agent-runas', kind: 'file', path: `/etc/sudoers.d/${priority}-happier-${member.username}`,
     owner: 'root', group: 'root', mode: 0o440, content: { kind: 'literal', value: policy }, validate: 'sudoers' };
 }
 
 /** Shared bootstrap/enablement plan; execution belongs to the typed setup interpreter. */
 export function buildAgentIsolationProvisioningSteps(input: Readonly<{
   daemonUsername: string; daemonPrimaryGroup: string | null; binaryPath: string; requesterIdentity?: AgentIsolationMemberRequester;
+  memberBinaryPath?: string;
   retainedMemberUid?: number;
   /** Retire named-user ancestry grants left by the former private plugin code root. */
   legacyPluginCodeRoot?: string;
@@ -116,6 +120,8 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
     { id: 'member-workspace-traversal', kind: 'pathTraversal', path: '/srv/happier', agentUsername: member.username },
     buildAgentIsolationMemberWorkspaceStep(member, input.daemonPrimaryGroup),
     buildAgentIsolationToolsRootStep({ daemonUsername: input.daemonUsername, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: tools.toolsRoot }),
+    ...(input.memberBinaryPath ? [retireMemberRule('agent-runas-retire',
+      buildMemberRunAsStep({ daemonUsername: input.daemonUsername, binaryPath: input.binaryPath }, member))] : []),
     buildMemberRunAsStep(input, member),
     ...toolsLayout,
     ...retirePluginTraversal(member.username),
@@ -124,12 +130,18 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
 
 /** Removing RunAs never creates/deletes a user or discards retained authored data. */
 export function buildAgentIsolationMemberRetirementSteps(input: Readonly<{
-  daemonUsername: string; binaryPath: string; requesterIdentity: AgentIsolationMemberRequester;
+  daemonUsername: string; binaryPath: string; memberBinaryPath?: string; requesterIdentity: AgentIsolationMemberRequester;
 }>): MachineRecipeStepV1[] {
-  const rule = buildMemberRunAsStep(input, deriveAgentIsolationMemberIdentity(input.requesterIdentity));
+  const member = deriveAgentIsolationMemberIdentity(input.requesterIdentity);
+  return [retireMemberRule('agent-runas-retire',
+    buildMemberRunAsStep({ daemonUsername: input.daemonUsername, binaryPath: input.binaryPath }, member)),
+  ...(input.memberBinaryPath ? [retireMemberRule('agent-runas-runtime-retire', buildMemberRunAsStep(input, member))] : [])];
+}
+
+function retireMemberRule(id: string, rule: ReturnType<typeof buildMemberRunAsStep>): MachineRecipeStepV1 {
   if (rule.content?.kind !== 'literal') throw new PluginError({
     code: 'agent_isolation_unavailable', message: 'Requester execution setup is unavailable', retryable: false,
     details: { reason: 'requester_authority_unavailable', phase: 'native_execution_preparation' } });
-  return [{ id: 'agent-runas-retire', kind: 'file', path: rule.path, owner: 'root', group: 'root', mode: 0o440,
-    state: 'absent', expectedContentDigest: createHash('sha256').update(rule.content.value, 'utf8').digest('hex') }];
+  return { id, kind: 'file', path: rule.path, owner: rule.owner, group: rule.group, mode: rule.mode,
+    state: 'absent', expectedContentDigest: createHash('sha256').update(rule.content.value, 'utf8').digest('hex') };
 }

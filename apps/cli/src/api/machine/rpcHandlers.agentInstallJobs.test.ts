@@ -16,8 +16,38 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it('carries a closed member isolation cause through the install RPC and Action failure', async () => {
+  const handlers = new Map<string, RpcHandler>();
+  const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [] });
+  const context: RpcHandlerContext = { signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
+    machineAdmission: { actorAccountId: 'custodian', custodianAccountId: 'custodian', machineId: 'machine',
+      installationId: 'installation', role: 'manage', encryptionMode: 'plain' } };
+  registerMachineAgentInstallJobRpcHandlers({ owner, deps: { platform: 'linux', resolveHostHomeServerIdentityId: async () => 'home',
+    nativeOperationRuntime: { async prepareNativeOperation() { throw new Error('Unavailable members cannot start an install'); } },
+    agentIsolation: {
+      read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: { kind: 'unavailable', code: 'payload_not_accessible' }, workspaceRoots: [] }),
+      async readMember() {
+        throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Private setup detail', retryable: false,
+          details: { reason: 'member_setup_required', phase: 'native_execution_preparation', readinessCode: 'payload_not_accessible',
+            remedy: { kind: 'ask_machine_manager' }, privateValue: 'PRIVATE_MARKER' } });
+      },
+    } }, rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+  try {
+    const reply = DaemonAgentInstallStartResponseSchema.parse(await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({
+      agentId: 'fixture', intent: 'install', consent: { vendorRecipe: true },
+    }, context));
+    expect(readActionFailureEnvelope(reply)).toMatchObject({ ok: false, errorCode: 'member_install_unavailable',
+      details: { agentIsolationRefusal: { reason: 'member_setup_required', phase: 'native_execution_preparation',
+        readinessCode: 'payload_not_accessible', remedy: { kind: 'ask_machine_manager' } } } });
+    expect(JSON.stringify(reply)).not.toMatch(/Private setup detail|PRIVATE_MARKER/u);
+    expect(owner.list('custodian')).toMatchObject({ ok: true, jobs: [] });
+  } finally { await owner.shutdown(); }
+});
 
 it('returns the catalog terminal failure when a finite caller waits for installation', async () => {
   const handlers = new Map<string, RpcHandler>();
@@ -35,6 +65,26 @@ it('returns the catalog terminal failure when a finite caller waits for installa
       details: { outcome: { kind: 'failed', code: 'install_not_available' } } });
     expect(owner.list('custodian')).toMatchObject({ ok: true, jobs: [{ done: true,
       outcome: { kind: 'failed', code: 'install_not_available' } }] });
+  } finally { await owner.shutdown(); }
+});
+
+it('retains the closed member isolation cause after an admitted install starts', async () => {
+  const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [],
+    readRegistry: () => ({ agents: [{ id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture',
+      sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none',
+      manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false } }] }) });
+  try {
+    const started = owner.start({ agentId: 'fixture', intent: 'install', consent: { vendorRecipe: true } },
+      { accountId: 'custodian', async executeMember() {
+        throw new PluginError({ code: 'agent_isolation_unavailable', message: 'PRIVATE_MARKER', retryable: false,
+          details: { reason: 'payload_not_accessible', phase: 'native_execution_preparation',
+            readinessCode: 'payload_not_accessible', privateValue: 'PRIVATE_MARKER' } });
+      } });
+    if (!started.ok) throw new Error(`Fixture failed to admit job: ${started.errorCode}`);
+    const result = await owner.read({ jobId: started.jobId, cursor: 0, waitForTerminal: true }, 'custodian');
+    expect(result).toMatchObject({ ok: true, done: true, outcome: { kind: 'failed', code: 'install_failed',
+      agentIsolationRefusal: { reason: 'payload_not_accessible', phase: 'native_execution_preparation', readinessCode: 'payload_not_accessible' } } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_MARKER');
   } finally { await owner.shutdown(); }
 });
 

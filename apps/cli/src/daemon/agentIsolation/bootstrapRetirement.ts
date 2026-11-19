@@ -9,7 +9,8 @@ type Retirement = NonNullable<AgentIsolationEffectPlanV1['retirement']>;
 /** Inventory comes from the bootstrap producer, including useradd's implicit
  * primary group. This program is CHECK-only; only exact removable files enter APPLY. */
 export function buildAgentIsolationBootstrapRetirementObservations(input: Readonly<{
-  daemonUsername: string; daemonPrimaryGroup: string; binaryPath: string; memberBindings?: readonly AgentIsolationMemberBinding[];
+  daemonUsername: string; daemonPrimaryGroup: string; binaryPath: string; memberBinaryPath?: string;
+  memberBindings?: readonly AgentIsolationMemberBinding[];
 }>): MachineRecipeStepV1[] {
   const bootstrap = buildAgentIsolationProvisioningSteps(input).flatMap((step): MachineRecipeStepV1[] => {
     if (step.kind === 'file' && step.content?.kind === 'literal') return [{ id: step.id, kind: 'file',
@@ -21,7 +22,8 @@ export function buildAgentIsolationBootstrapRetirementObservations(input: Readon
     const member = projectAgentIsolationMemberBinding(binding);
     return buildAgentIsolationMemberRetirementSteps({ ...input,
       requesterIdentity: { ...member, kind: 'isolated', separationRequired: true } })
-      .map(step => ({ ...step, id: `member-runas-${member.digest}` }));
+      .map(step => ({ ...step, id: step.id === 'agent-runas-retire'
+        ? `member-runas-${member.digest}` : `member-runtime-runas-${member.digest}` }));
   })];
 }
 
@@ -57,8 +59,10 @@ export function projectAgentIsolationBootstrapRetirement(plan: Pick<MachineSetup
 
 /** Derive the inventory without claiming an OS principal or actionable plan.
  * The placeholder is used only to enumerate the producer's fixed resources. */
-export function buildUnobservedAgentIsolationBootstrapRetirement(binaryPath: string, memberBindings?: readonly AgentIsolationMemberBinding[]): Retirement {
-  const steps = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: 'unknown', daemonPrimaryGroup: 'unknown', binaryPath, memberBindings });
+export function buildUnobservedAgentIsolationBootstrapRetirement(binaryPath: string,
+  memberBindings?: readonly AgentIsolationMemberBinding[], memberBinaryPath?: string): Retirement {
+  const steps = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: 'unknown', daemonPrimaryGroup: 'unknown',
+    binaryPath, memberBindings, memberBinaryPath });
   return projectAgentIsolationBootstrapRetirement({ steps, nativeFacts: [] }).map(item => item.stepId === 'unknown-shared-git'
     ? { ...item, stepId: 'daemon-shared-git', target: 'Daemon global Git configuration (identity unavailable)' } : item);
 }

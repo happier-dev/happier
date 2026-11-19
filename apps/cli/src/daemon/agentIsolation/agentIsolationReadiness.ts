@@ -13,6 +13,7 @@ import type { SessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTran
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { logger } from '@/ui/logger';
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
+import { isAgentIsolationMemberCliCurrent, type AgentIsolationMemberCliRuntime } from './memberCliRuntime';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 
 /** Explicit launch preparation may qualify a successor's unknown shared-user
@@ -142,6 +143,7 @@ printf 'member-native-ready\\n'
  * global effectiveness. Actual RunAs and payload access are checked as member. */
 export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly<{
   installedCli: string;
+  memberCliRuntime?: AgentIsolationMemberCliRuntime;
   memberIdentity: AgentIsolationMemberNativeIdentity;
   /** The host selects this exact Agent tuple once, before granting its launch. */
   agentCliLaunch?: Readonly<{ command: string; resolvedPath: string }>;
@@ -153,6 +155,9 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
   const unavailable = (code: Unavailable['code']): Unavailable => ({ kind: 'unavailable', code });
   if (process.platform !== 'linux') return unavailable('unsupported_platform');
   input.signal?.throwIfAborted();
+  if (input.memberCliRuntime && !await isAgentIsolationMemberCliCurrent(input.memberCliRuntime))
+    return unavailable('payload_not_accessible');
+  const installedCli = input.memberCliRuntime?.executable ?? input.installedCli;
   const identity = input.memberIdentity;
   const selected = { username: identity.username, uid: identity.agentUid, gid: identity.agentGid,
     home: identity.home, cwd: identity.home };
@@ -160,10 +165,10 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
   try {
     // The existing framed shim creates the private operation runtime home. Its
     // controlled finite shell and material-finally own cleanup as that member.
-    const launch = createUnixAgentIdentityLaunch({ managedHappierBinaryPath: input.installedCli,
+    const launch = createUnixAgentIdentityLaunch({ managedHappierBinaryPath: installedCli,
       memberIdentity: identity, executable: '/bin/sh',
       args: ['-c', memberProbe, 'happier-isolation-readiness', String(identity.agentUid), identity.home,
-        input.installedCli, runtimeHome,
+        installedCli, runtimeHome,
         ...(input.agentCliLaunch ? [input.agentCliLaunch.command, input.agentCliLaunch.resolvedPath] : [])], cwd: identity.home, runtimeHome,
       environment: { PATH: '/usr/bin:/bin', LC_ALL: 'C', READINESS_EXPECTED_USER: identity.username,
         READINESS_ALLOWED_GROUPS: String(identity.agentGid) },

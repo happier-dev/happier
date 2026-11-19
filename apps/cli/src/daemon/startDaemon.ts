@@ -1893,6 +1893,7 @@ export async function startDaemon(
     machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
     const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
       managedHappierBinaryPath: isolationEffects.installedCli,
+      memberManagedHappierBinaryPath: isolationEffects.memberCliRuntime?.executable,
       qualifyNativeReadiness: createAgentIsolationNativeReadinessQualification({
         read: () => agentIsolation.read(), effects: isolationEffects,
       }),

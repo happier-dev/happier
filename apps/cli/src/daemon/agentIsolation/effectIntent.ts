@@ -1,11 +1,13 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import type { AgentIsolationEffectPlanV1, MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
+import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { buildAgentIsolationProvisioningSteps, type AgentIsolationMemberRequester } from './provisioning';
 import { readAgentIsolationMemberBindings } from './memberBindings';
 import { buildAgentIsolationBootstrapRetirementObservations, buildUnobservedAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
+import { buildAgentIsolationMemberCliRuntimeSteps } from './memberCliRuntime';
 
 type UnavailableStatus = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
 type RequiredFactPrerequisite = Extract<NonNullable<UnavailableStatus['prerequisite']>, { reason: 'required_fact_unavailable' }>;
@@ -27,7 +29,7 @@ function unavailable(requiredFact: RequiredFactPrerequisite['requiredFact'], rem
 
 /** Preparation decides its own missing facts before native CHECK can run. */
 export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, effects: AgentIsolationEffectDependencies,
-  requesterIdentity?: AgentIsolationMemberRequester, retainedMemberUid?: number) {
+  requesterIdentity?: AgentIsolationMemberRequester, retainedMemberUid?: number, memberProvisioning?: 'linuxUsersV1') {
   const sessionsToReplace = effects.readSessionsToReplace();
   if (!Number.isSafeInteger(sessionsToReplace) || sessionsToReplace < 0) return unavailable('session_inventory',
     'Restore the daemon Session inventory before reviewing isolation.');
@@ -39,19 +41,27 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
       observation: 'unknown', action: 'retain', reasonCode: 'native_check_unavailable',
       remedy: 'Restore the private member binding inventory and retry, or have an administrator inspect retained managed member RunAs rules.' }] : [];
   const daemon = await effects.elevation.observe().catch(() => null);
+  const memberBinaryPath = effects.memberCliRuntime?.executable;
   if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) {
     if (!enabled) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, steps: [],
-      retirement: [...buildUnobservedAgentIsolationBootstrapRetirement(effects.installedCli, memberBindings), ...retirementWarnings] } };
+      retirement: [...buildUnobservedAgentIsolationBootstrapRetirement(effects.installedCli, memberBindings, memberBinaryPath), ...retirementWarnings] } };
     return unavailable('daemon_identity', 'Run the daemon as a named non-root OS user with a primary group, then review isolation.');
   }
   if (!enabled) {
     const retirementObservations = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: daemon.daemonUsername,
-      daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, memberBindings });
+      daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, memberBinaryPath, memberBindings });
     return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, daemonObservation: daemon,
       steps: retirementObservations.filter(step => step.kind === 'file' && step.state === 'absent'), retirementObservations, retirementWarnings } };
   }
+  let runtimeSteps: MachineRecipeStepV1[] = [];
+  if (effects.memberCliRuntime && (requesterIdentity || memberProvisioning === 'linuxUsersV1')) {
+    try { runtimeSteps = await buildAgentIsolationMemberCliRuntimeSteps(effects.memberCliRuntime); }
+    catch { return { kind: 'unavailable' as const, status: { kind: 'unavailable', code: 'payload_not_accessible' } satisfies UnavailableStatus }; }
+  }
   if (requesterIdentity) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
-    steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, legacyPluginCodeRoot: effects.legacyPluginCodeRoot, requesterIdentity, retainedMemberUid }) } };
+    steps: [...runtimeSteps, ...buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername,
+      daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, memberBinaryPath,
+      legacyPluginCodeRoot: effects.legacyPluginCodeRoot, requesterIdentity, retainedMemberUid })] } };
   const admitted = effects.readRoots();
   // A newly created server may have no Workspace yet. Only an unavailable
   // census is unknown; a known empty census still needs account/RunAs setup.
@@ -71,6 +81,7 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   // Do not give one native plan contradictory present/absent effects.
   const workspaceTraversalPaths = new Set(ancestorAcls.map(acl => acl.path));
   const steps = [
+    ...runtimeSteps,
     ...provisioningSteps.filter(step => step.kind !== 'pathTraversal' || step.state !== 'absent' || !workspaceTraversalPaths.has(step.path)),
     ...ancestorAcls.map((acl, index) => ({ id: `ancestor-${index}`, kind: 'pathTraversal' as const, path: acl.path, agentUsername: 'happier-agent' })),
     ...roots.map(root => ({ id: `workspace-${root.rootId}`, kind: 'workspaceAccess' as const, path: root.path,

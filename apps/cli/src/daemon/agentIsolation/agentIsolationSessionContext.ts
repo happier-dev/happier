@@ -65,13 +65,14 @@ export function createAgentIsolationSessionContext(input: Readonly<{
     },
     ...(input.machine ? { async prepareLaunch({ requesterIdentity, sessionMcpContext, mcpLaunchMaterial, agentNativeLaunch, signal }: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]) {
       const material = input.readMaterial();
-      const managedHappierBinaryPath = input.managedHappierBinaryPath;
+      const member = material?.memberIdentity;
+      const managedHappierBinaryPath = (member ? input.machine?.memberManagedHappierBinaryPath : undefined)
+        ?? input.managedHappierBinaryPath;
       if (!material || !managedHappierBinaryPath
         || agentNativeLaunch && !sessionMcpContext) throw new PluginError({ code: 'agent_isolation_unavailable',
         message: 'Current Session isolation material is unavailable', retryable: false,
         details: { phase: 'native_execution_preparation', cause: (!material ? 'session_launch_material_missing'
           : !managedHappierBinaryPath ? 'managed_binary_missing' : 'session_mcp_context_missing') satisfies AgentIsolationLaunchMaterialFailureCode } });
-      const member = material.memberIdentity;
       // Ordinary Account Sessions use the Home already qualified by the
       // requester resolver; protected requester birth keeps its retained Home.
       const home = input.sessionRequesterHomeServerIdentityId ?? input.hostHomeServerIdentityId;
@@ -170,6 +171,8 @@ export function createAgentIsolationOperationContext(input: Readonly<{
     details: { phase: 'native_execution_preparation' } }); };
   input.signal.throwIfAborted();
   const member = input.memberIdentity;
+  const managedHappierBinaryPath = (member ? input.machine.memberManagedHappierBinaryPath : undefined)
+    ?? input.managedHappierBinaryPath;
   const identity = member ? requireAgentIsolationMaterialNativeIdentity(member, input.requesterIdentity)
     : 'nativeIdentity' in input ? input.nativeIdentity : unavailable();
   const requesterIdentity = { kind: input.requesterIdentity.kind, requester: input.requesterIdentity.requester,
@@ -205,7 +208,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
     return { ...machine, ...(member ? { memberIdentity: member } : {}),
       ...(input.daemonObservation ? { daemonObservation: input.daemonObservation } : {}),
       localTransport: { agentUid: identity.agentUid, agentGid: identity.agentGid },
-      launch: { managedHappierBinaryPath: input.managedHappierBinaryPath, runtimeHome: projected.runtimeHome,
+      launch: { managedHappierBinaryPath, runtimeHome: projected.runtimeHome,
         providerEnvironmentKeys: input.providerEnvironmentKeys,
         environment: projected.environment, selectedEnvironmentKeys: Object.keys(projected.environment),
         selectedMaterials: projected.selectedMaterials,

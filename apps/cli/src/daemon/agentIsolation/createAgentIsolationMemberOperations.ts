@@ -13,6 +13,7 @@ import type { ManagedActivityInventory } from '../lifecycle/managedActivity';
 import { waitForRequesterMachineNaturalBoundary } from './naturalBoundary';
 import { memberIdentityRetirementInput, supersedeMemberIdentityRetirement } from './supersedeRetirement';
 import { readAgentIsolationMemberLaunchIdentity, readAgentIsolationMemberRequesterForWorkspacePath } from './memberBindings';
+import { isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
 import { retireAgentIsolationMemberIdentity, readProvisionedRequesterAccounts,
   ensureAgentIsolationMember, applyAgentIsolationMemberEffects, type EnsureAgentIsolationMemberResult,
   type AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
@@ -115,6 +116,11 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
         });
       const identity = await readAgentIsolationMemberLaunchIdentity({ requesterIdentity,
         activeServerDir: options.activeServerDir, signal }, options.effects.backend);
+      const { memberCliRuntime } = options.effects;
+      if (memberCliRuntime && !await isAgentIsolationMemberCliCurrent(memberCliRuntime)) throw new PluginError({
+        code: 'agent_isolation_unavailable', message: 'The managed member CLI is unavailable', retryable: false,
+        details: { reason: 'payload_not_accessible', phase: 'native_execution_preparation', readinessCode: 'payload_not_accessible' },
+      });
       signal?.throwIfAborted();
       return { identity, daemonObservation };
     },

@@ -143,8 +143,10 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
         expect(material).toBeDefined();
         if (!material) throw new Error('Selected material producer returned no projection');
         members.push({ requester, material });
+        const memberManagedHappierBinaryPath = '/opt/happier-member-cli/current/happier';
         const context = createAgentIsolationSessionContext({
-          machine: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: input.status, workspaceRoots: [activeServerDir] }) },
+          machine: { memberManagedHappierBinaryPath,
+            read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: input.status, workspaceRoots: [activeServerDir] }) },
           managedHappierBinaryPath: effects.installedCli,
           sessionRequester: requester.requester, sessionRequesterHomeServerIdentityId: requester.homeServerIdentityId,
           hostHomeServerIdentityId: requester.homeServerIdentityId, sessionCustodianAccountId: 'owner',
@@ -217,7 +219,7 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
             signal, assertCurrent() {},
           });
           try {
-            expect(launch.args).toEqual(['-n', '-u', expected.username, '--', effects.installedCli, 'agent-launch']);
+            expect(launch.args).toEqual(['-n', '-u', expected.username, '--', memberManagedHappierBinaryPath, 'agent-launch']);
             const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
             expect(frame.nativeIdentity).toEqual({ username: expected.username, agentUid: uid, agentGid: uid, home: expected.home });
             expect(frame.cwd).toBe(expected.home);
@@ -238,7 +240,7 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
           sessionMcpContext: transport.localContext, signal, assertCurrent() {},
         });
         try {
-          expect(service.args).toEqual(['-n', '-u', expected.username, '--', effects.installedCli, 'agent-launch']);
+          expect(service.args).toEqual(['-n', '-u', expected.username, '--', memberManagedHappierBinaryPath, 'agent-launch']);
           const frame = await readAgentLaunchFrame(Readable.from([service.stdinPreamble], { objectMode: false }));
           expect(frame.nativeIdentity).toEqual({ username: expected.username, agentUid: uid, agentGid: uid, home: expected.home });
         } finally { await service.release(); }

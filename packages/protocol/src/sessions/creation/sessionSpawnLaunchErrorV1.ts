@@ -16,6 +16,18 @@ export const SessionAgentIsolationRefusalRemedyV1Schema = lazyZodSchema(() => z.
   z.strictObject({ kind: z.literal('open_machine_security'), target: MachineTargetV1Schema }),
 ]));
 
+/** Closed presentation of native isolation refusal, shared by launch and install replies. */
+export const SessionAgentIsolationRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: z.union([z.literal('member_setup_required'), MachineAgentIsolationUnavailableStatusV1Schema.shape.code]),
+  phase: z.enum(['native_identity_binding', 'native_execution_preparation']),
+  reasonCode: z.optional(MachineElevatedNotAppliedResultV1Schema.shape.reasonCode),
+  nativeFailure: z.optional(z.pick(MachineElevationFailureV1Schema, { kind: true, reason: true, phase: true })),
+  probeFailure: z.optional(MachineAgentIsolationProbeFailureV1Schema),
+  readinessCode: z.optional(MachineAgentIsolationUnavailableStatusV1Schema.shape.code),
+  operationErrorCode: z.optional(z.literal('machine_setup_operation_unavailable')),
+  remedy: z.optional(SessionAgentIsolationRefusalRemedyV1Schema),
+}));
+
 /** Existing daemon child-stderr diagnostic budget, shared by producer and wire reader. */
 export const SESSION_SPAWN_CHILD_STDERR_MAX_BYTES = 2_048;
 const diagnosticText = () => z.string().check(z.refine(
@@ -55,16 +67,7 @@ export const SessionSpawnLaunchErrorV1Schema = lazyZodSchema(() => z.strictObjec
   pluginCodeRefusal: z.optional(z.strictObject({
     remedy: SessionAgentIsolationRefusalRemedyV1Schema,
   })),
-  agentIsolationRefusal: z.optional(z.strictObject({
-    reason: z.union([z.literal('member_setup_required'), MachineAgentIsolationUnavailableStatusV1Schema.shape.code]),
-    phase: z.enum(['native_identity_binding', 'native_execution_preparation']),
-    reasonCode: z.optional(MachineElevatedNotAppliedResultV1Schema.shape.reasonCode),
-    nativeFailure: z.optional(z.pick(MachineElevationFailureV1Schema, { kind: true, reason: true, phase: true })),
-    probeFailure: z.optional(MachineAgentIsolationProbeFailureV1Schema),
-    readinessCode: z.optional(MachineAgentIsolationUnavailableStatusV1Schema.shape.code),
-    operationErrorCode: z.optional(z.literal('machine_setup_operation_unavailable')),
-    remedy: z.optional(SessionAgentIsolationRefusalRemedyV1Schema),
-  })),
+  agentIsolationRefusal: z.optional(SessionAgentIsolationRefusalV1Schema),
   profileRefusal: z.optional(z.strictObject({
     profileId: z.string().check(z.trim(), z.minLength(1)),
     reason: z.enum(['profile_catalog_unavailable', 'profile_overlay_mismatch', 'profile_resume_unavailable', 'profile_target_incompatible']),

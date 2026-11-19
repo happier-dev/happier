@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
+import { SessionAgentIsolationRefusalV1Schema } from '../sessions/creation/sessionSpawnLaunchErrorV1.js';
 
 // Development install-job operation, independent of the package version. Every
 // envelope is closed: caller-supplied commands and consent extensions are rejected.
@@ -42,6 +43,7 @@ export const AgentInstallJobOutcomeSchema = lazyZodSchema(() => z.discriminatedU
     message: z.string().check(z.minLength(1)),
     guideUrl: z.optional(z.string().check(z.url())),
     failureCause: z.optional(ActionFailureCauseV1Schema),
+    agentIsolationRefusal: z.optional(SessionAgentIsolationRefusalV1Schema),
   }),
 ]));
 export const AgentInstallJobEventSchema = lazyZodSchema(() => z.discriminatedUnion('t', [
@@ -87,6 +89,8 @@ export const DaemonAgentInstallStartResponseSchema = lazyZodSchema(() => z.union
   z.strictObject({ ok: z.literal(true), jobId: z.string().check(z.minLength(1)),
     executionScope: AgentInstallJobSchema.shape.executionScope }),
   DaemonAgentInstallErrorSchema,
+  z.strictObject({ ok: z.literal(false), errorCode: z.literal('member_install_unavailable'), error: z.string().check(z.minLength(1)),
+    details: z.strictObject({ agentIsolationRefusal: SessionAgentIsolationRefusalV1Schema }) }),
   z.strictObject({ ok: z.literal(false), errorCode: z.enum(['native_effect_failed', 'cancelled']), error: z.string(),
     details: z.strictObject({ jobId: z.string().check(z.minLength(1)), outcome: AgentInstallJobOutcomeSchema }) }),
 ]));

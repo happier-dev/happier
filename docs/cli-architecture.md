@@ -4199,6 +4199,17 @@ This source contract is not a completed loaded-native certification.
 Native Session launch consumes the incumbent materialization
 lease and live Session MCP context through the host-issued native qualifier and
 private runner transport; the public Exec request cannot supply either authority.
+
+In 0.3 development, Separate users publishes the current installed CLI payload,
+including companion files, to a root-owned, read-only runtime on Linux. The
+reviewed Apply and existing member setup use the same publisher. Readiness,
+RunAs, Session launch and finite operations use that runtime while the owner's
+home keeps its existing permissions. After the managed installer switches
+releases, the existing member setup refreshes the runtime before a new member
+launch. Member retirement removes either exact managed RunAs rule during the
+path migration. Agent install replies and failed jobs carry the same closed
+isolation refusal used for Session launch.
+
 Turning isolation off reviews the current replacement count and retires only the
 verified managed bootstrap and member RunAs sudoers drop-ins through the reviewed
 elevated plan. Member inventory comes from the existing private bindings. Revoke

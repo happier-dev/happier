@@ -396,6 +396,7 @@ export type HostAgentIsolationLaunchContext = Readonly<{
     /** Native Session custody is demanded before effects, not at service construction. */
     resolveRequesterIdentity?(signal?: AbortSignal): Promise<HostRequesterExecutionIdentity>;
     managedHappierBinaryPath?: string;
+    memberManagedHappierBinaryPath?: string;
     /** Demand-only qualification at the native readiness/publication owner. */
     qualifyNativeReadiness?(input: Readonly<{ requesterIdentity?: HostRequesterExecutionIdentity; signal?: AbortSignal }>): Promise<void>;
     /** Read the already admitted native binding without setup or a readiness probe. */

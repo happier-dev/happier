@@ -10,7 +10,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readMemberAgentInstallExecutor, type MemberAgentInstallExecutionDeps } from '@/capabilities/installJobs/memberInstallExecution';
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectAgentIsolationLaunchRefusal } from '@/daemon/agentIsolation/agentIsolationLaunchRefusal';
 
 export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerManager: RpcHandlerRegistrar; owner?: AgentInstallJobOwner;
   deps?: MemberAgentInstallExecutionDeps }): void {
@@ -34,11 +34,16 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
     // verified ingress, including built-in Agent jobs and their later reads.
     if (context && !accountId || parsed.data.definitionId !== undefined && !accountId) return unavailable;
     if (parsed.data.intent === 'uninstall' && context?.machineAdmission?.role !== 'manage' && context) return unavailable;
-    const executeMember = accountId ? await readMemberAgentInstallExecutor(context!, params.deps).catch(error => {
+    let executeMember: Awaited<ReturnType<typeof readMemberAgentInstallExecutor>>;
+    try {
+      executeMember = accountId ? await readMemberAgentInstallExecutor(context!, params.deps) : undefined;
+    } catch (error) {
       context!.signal.throwIfAborted();
-      if (isPluginError(error) && error.code === 'agent_isolation_unavailable') return null;
-      throw error;
-    }) : undefined;
+      const refusal = projectAgentIsolationLaunchRefusal(error);
+      if (!refusal) throw error;
+      return refusal.agentIsolationRefusal
+        ? { ...memberUnavailable, details: { agentIsolationRefusal: refusal.agentIsolationRefusal } } : memberUnavailable;
+    }
     if (executeMember === null) return memberUnavailable;
     const account = accountId ? { accountId, ...(executeMember ? { executeMember } : {}) } : undefined;
     const start = async (selectedAccount: Parameters<AgentInstallJobOwner['start']>[1] = account) => {

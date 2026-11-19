@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveSeparateUserToolsLayout } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
@@ -11,10 +12,75 @@ import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolic
 import { buildAgentIsolationProvisioningSteps } from './provisioning';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
+import { createDaemonAgentIsolationEffects } from './createDaemonAgentIsolationEffects';
+import { isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe('agent isolation provisioning', () => {
+  it.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID_INTEGRATION !== '1')(
+    'publishes the current managed CLI and its companion files for a member without opening the private home', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'happier-private-cli-'));
+      const sudo = (...args: string[]) => execFileSync('/usr/bin/sudo', ['-n', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const requesterIdentity = { kind: 'isolated' as const, separationRequired: true, homeServerIdentityId: 'home',
+        requester: { serverId: 'profile', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
+      const boundary = createAgentIsolationEffectsBoundary({ installationId: 'installation',
+        installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: async () => {} });
+      vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', root);
+      const production = createDaemonAgentIsolationEffects({ getMachineClient: () => null,
+        adminAccess: { target: () => null, observer: {
+          read: () => null, inspect: async () => { throw new Error('unused fixture observer'); },
+        } }, readRoots: () => [], trackedSessions: new Map(), protectedRoots: [], privateRoots: [] });
+      const privateCli = production.elevation.installedCli;
+      const effects = { ...production, elevation: { ...boundary.effects.elevation, installedCli: privateCli } };
+      let publishedRoot: string | undefined;
+      try {
+        const source = dirname(dirname(privateCli));
+        const stageRelease = async (version: string, companion: string) => {
+          const payload = join(source, 'versions', version);
+          await mkdir(payload, { recursive: true });
+          await writeFile(join(payload, 'companion'), companion, { mode: 0o600 });
+          await writeFile(join(payload, 'happier'), '#!/bin/sh\ncat "$(dirname "$(realpath "$0")")/companion"\n', { mode: 0o700 });
+          await symlink(payload, join(source, 'next'));
+          await rename(join(source, 'next'), dirname(privateCli));
+        };
+        await stageRelease('v1', 'managed release\n');
+        await writeFile(join(root, 'credentials'), 'private', { mode: 0o644 });
+        expect(() => sudo('-u', 'nobody', '--', privateCli)).toThrow(/Permission denied/);
+        const reviewed = await resolveAgentIsolationEffectIntentResult(true, effects, undefined, undefined, 'linuxUsersV1');
+        if (reviewed.kind !== 'ready') throw new Error('Expected a ready policy Apply plan');
+        const directory = reviewed.intent.steps.find(step => step.id === 'member-cli-root');
+        const publish = reviewed.intent.steps.find(step => step.id === 'member-cli-payload');
+        expect(directory).toMatchObject({ kind: 'directory', owner: 'root', group: 'root', protectedAncestors: true });
+        if (directory?.kind !== 'directory' || publish?.kind !== 'command') throw new Error('No member runtime in Apply');
+        publishedRoot = directory.path;
+        sudo('install', '-d', '-m', '0755', '--', publishedRoot);
+        sudo(publish.executable, ...publish.args);
+        const prepared = await resolveAgentIsolationEffectIntentResult(true, effects, requesterIdentity);
+        if (prepared.kind !== 'ready') throw new Error('Expected a ready member Apply plan');
+        const rule = prepared.intent.steps.find(step => step.id === 'agent-runas');
+        const target = rule?.kind === 'file' && rule.content?.kind === 'literal'
+          ? / = (\S+) agent-launch/u.exec(rule.content.value)?.[1] : undefined;
+        expect(target).toBeDefined();
+        expect(sudo('-u', 'nobody', '--', target!, 'agent-launch')).toBe('managed release\n');
+        expect(() => sudo('-u', 'nobody', '--', 'cat', join(root, 'credentials'))).toThrow(/Permission denied/);
+        expect(() => sudo('-u', 'nobody', '--', 'test', '-w', target!)).toThrow();
+        expect((await lstat(root)).mode & 0o777).toBe(0o700);
+        const previous = await realpath(target!);
+        await stageRelease('v2', 'new managed release\n');
+        expect(await isAgentIsolationMemberCliCurrent(production.memberCliRuntime!)).toBe(false);
+        const upgrade = await resolveAgentIsolationEffectIntentResult(true, effects, requesterIdentity);
+        const refresh = upgrade.kind === 'ready' && upgrade.intent.steps.find(step => step.id === 'member-cli-payload');
+        if (!refresh || refresh.kind !== 'command') throw new Error('No member runtime refresh in Apply');
+        sudo(refresh.executable, ...refresh.args);
+        expect(await isAgentIsolationMemberCliCurrent(production.memberCliRuntime!)).toBe(true);
+        expect(sudo('-u', 'nobody', '--', target!, 'agent-launch')).toBe('new managed release\n');
+        expect(sudo('-u', 'nobody', '--', previous, 'agent-launch')).toBe('managed release\n');
+      } finally {
+        if (publishedRoot) sudo('rm', '-rf', '--', publishedRoot);
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   it.skipIf(process.platform !== 'linux').each(['shared', 'member'] as const)('converts a personal install through the reviewed setup without opening its home (%s)', placement => {
     vi.stubEnv('HOME', '/home/alice');
     vi.stubEnv('HAPPIER_HOME_DIR', '/home/alice/.happier');

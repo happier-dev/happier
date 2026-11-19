@@ -13,6 +13,7 @@ import { readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBin
   type AgentIsolationMemberBindingScope } from './memberBindings';
 import { projectAgentIsolationBootstrapRetirement } from './bootstrapRetirement';
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
+import type { AgentIsolationMemberCliRuntime } from './memberCliRuntime';
 import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { describeMachineSetupSessionRefresh, readMachineSetupSessionRefreshRequirement } from '@/daemon/service/userManagerGroups';
@@ -25,6 +26,7 @@ export { readAgentIsolationMemberBinding, readAgentIsolationMemberBindingForAcco
 export type AgentIsolationEffectDependencies = Readonly<{
   platform: NodeJS.Platform;
   installedCli: string;
+  memberCliRuntime?: AgentIsolationMemberCliRuntime;
   /** Former code root whose named-UID ancestor grants retire at provisioning. */
   legacyPluginCodeRoot?: string;
   readRoots(): readonly Readonly<{ rootId: string; path: string }>[] | null;
@@ -48,8 +50,8 @@ export type PreparedAgentIsolationEffects = Readonly<{
 }>;
 
 export async function resolveAgentIsolationEffectIntent(enabled: boolean, effects: AgentIsolationEffectDependencies,
-  requesterIdentity?: AgentIsolationMemberRequester, retainedMemberUid?: number) {
-  const result = await resolveAgentIsolationEffectIntentResult(enabled, effects, requesterIdentity, retainedMemberUid);
+  requesterIdentity?: AgentIsolationMemberRequester, retainedMemberUid?: number, memberProvisioning?: 'linuxUsersV1') {
+  const result = await resolveAgentIsolationEffectIntentResult(enabled, effects, requesterIdentity, retainedMemberUid, memberProvisioning);
   return result.kind === 'ready' ? result.intent : null;
 }
 
@@ -94,7 +96,7 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   if (snapshot.status !== 'ready') return unavailable('metadata_unavailable');
   const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
   if (policy.status !== 'ready') return unavailable('metadata_unavailable');
-  const resolved = await resolveAgentIsolationEffectIntentResult(input.enabled, effects, input.requesterIdentity);
+  const resolved = await resolveAgentIsolationEffectIntentResult(input.enabled, effects, input.requesterIdentity, undefined, input.memberProvisioning);
   if (resolved.kind === 'unavailable') return resolved;
   const intent = resolved.intent;
   const { roots, ancestorAcls, sessionsToReplace, steps } = intent;
@@ -285,7 +287,8 @@ export async function retireAgentIsolationMemberIdentity(input: Readonly<{
         // Withdrawal grants no identity authority. The native file owner proves
         // the exact content/root/mode/no-symlink contract; account or binding
         // drift must not prevent removing that verified launch permission.
-        const steps = buildAgentIsolationMemberRetirementSteps({ daemonUsername: daemon.daemonUsername, binaryPath: effects.installedCli, requesterIdentity });
+        const steps = buildAgentIsolationMemberRetirementSteps({ daemonUsername: daemon.daemonUsername,
+          binaryPath: effects.installedCli, memberBinaryPath: effects.memberCliRuntime?.executable, requesterIdentity });
         const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.scope.machineId,
           enabled: true, expectedPolicy: { enabled: true }, review: { roots: [], ancestorAcls: [], sessionsToReplace: 0 } };
         const result = await runElevatedMachineSetupIntent({ machineId: input.scope.machineId, operationId: input.operationId,
