@@ -24,6 +24,9 @@ import type {
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { resolveRequestAuthSourceCutoverRequirement } from '../plannedRunnerRestart/requestAuthSourceCutover';
 import { legacyPidSessionTrackingKey, trackedSessionsForProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import {
+  attachSessionHolderChild, createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild,
+} from '@/subprocess/supervision/sessionHolder';
 
 const terminalHostAttachmentMocks = vi.hoisted(() => ({
   read: vi.fn<() => Promise<TerminalHostAttachmentInfo | null>>(async () => null),
@@ -129,6 +132,43 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     terminalHostAttachmentMocks.disposeSession.mockClear();
     sessionHookArtifactMocks.disposeSession.mockClear();
   });
+
+  it.skipIf(process.platform === 'win32')('releases a non-adoptable native Agent of a dead runner before cold resume', async () => {
+    const socketPath = createSessionHolderSocketPath();
+    const child = spawnSessionHolderChild({
+      executablePath: requireSessionHolderExecutablePath(), socketPath, command: process.execPath,
+      args: ['-e', 'process.stdin.resume()'], role: 'primary',
+    });
+    await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    const held = { role: 'primary' as const, socketPath, holderPid: child.holderPid!, agentPid: child.pid! };
+    child.detach();
+    const runnerPid = 2 ** 30;
+    const marker = {
+      trackingKey: legacyPidSessionTrackingKey(runnerPid), pid: runnerPid, happySessionId: 'retained-native-session',
+      happyHomeDir: configuration.happyHomeDir, createdAt: 1, updatedAt: 1, startedBy: 'daemon' as const,
+      cwd: process.cwd(), heldAgentsV1: [held],
+    };
+    vi.mocked(listSessionMarkers).mockResolvedValue([marker]);
+    try {
+      const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
+
+      expect(result.orphanedDeadDaemonSessions).toContainEqual(expect.objectContaining({ sessionId: marker.happySessionId }));
+      expect(result.heldAgentRespawnCandidates).toBeUndefined();
+      expect(() => process.kill(held.agentPid, 0)).toThrow();
+    } finally {
+      const remaining = await (async () => {
+        try { process.kill(held.agentPid, 0); } catch { return null; }
+        return await attachSessionHolderChild(socketPath, 'primary').catch(() => null);
+      })();
+      if (remaining) {
+        remaining.resumeDelivery();
+        const exited = new Promise<void>(resolve => remaining.once('exit', () => resolve()));
+        remaining.kill('SIGKILL');
+        await exited;
+        remaining.detach();
+      }
+    }
+  }, 30_000);
 
   it('reconstructs required startup identity across both daemon reattach paths and suppresses every unproven restart', async () => {
     vi.useFakeTimers();

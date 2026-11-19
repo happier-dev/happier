@@ -56,6 +56,7 @@ export const AGENT_STARTUP_FAILURE_PREVIEWS = {
   plugin_exec_managed_dependency_resolution_unavailable: 'Agent managed-dependency executable resolution is unavailable',
   native_adapter_invocation_unavailable: 'Agent native runtime invocation is unavailable',
   AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing',
+  agent_resume_session_in_use: 'This native Session is open in another process. Close it there, then resume here.',
   codex_refresh_free_auth_unsupported: 'Agent startup authentication is unavailable',
   plugin_services_managed_provider_authority_unavailable: 'Access to the shared provider is unavailable. Check the Gateway and its machine connection, then retry the session.',
   provider_endpoint_unavailable: 'The provider endpoint is unavailable. Check the Gateway and its machine connection, then retry the session.',

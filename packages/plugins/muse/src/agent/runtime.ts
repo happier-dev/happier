@@ -1,6 +1,6 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
-import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionConfigurationUpdate, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
   AgentSessionHostServices, AgentSessionCompactResult, AgentSessionCancelResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -594,6 +594,16 @@ async function openMuseConversation<SessionId extends string | undefined>(
     interactions.dispose();
     try { await msp.dispose(); }
     finally { await inputBinding?.dispose(); await modelsBinding?.dispose(); projection.dispose(); }
+    const rejection = readJsonRpcApplicationRejection(error);
+    // Muse MSP's sessionInUse means an existing writer owns this native Session.
+    if (rejection?.method === 'session/resume' && rejection.providerErrorCode === -32021) {
+      const code = 'agent_resume_session_in_use';
+      throw new PluginError({ code, retryable: false,
+        message: 'This native Session is open in another process. Close it there, then resume here.',
+        details: { failureCause: { code, phase: 'thread_open', failureReason: 'unclassified_provider_error',
+          providerErrorCode: rejection.providerErrorCode, retryable: false } },
+      });
+    }
     throw error;
   }
 }

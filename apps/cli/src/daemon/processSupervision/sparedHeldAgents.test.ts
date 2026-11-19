@@ -6,6 +6,9 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 import { createSessionRunnerRespawnManager } from './sessionRunnerRespawn';
 import { createSparedHeldAgentCustody } from './sparedHeldAgents';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import {
+    attachSessionHolderChild, createSessionHolderSocketPath, requireSessionHolderExecutablePath, spawnSessionHolderChild,
+} from '@/subprocess/supervision/sessionHolder';
 
 /**
  * A crashed runner's held primary Agent through the real respawn owner: handed
@@ -180,4 +183,42 @@ describe('spared held Agent custody through the respawn owner', () => {
         expect(await custody.spare({ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, happySessionId: 'cs1', startedBy: 'daemon', heldAgentsV1: [held] } as TrackedSession)).toBeNull();
         expect(run.ended).toEqual([]);
     });
+
+    it.skipIf(process.platform === 'win32')('releases the exact non-adoptable local Agent after host loss', async () => {
+        const socketPath = createSessionHolderSocketPath();
+        const child = spawnSessionHolderChild({
+            executablePath: requireSessionHolderExecutablePath(), socketPath, command: process.execPath,
+            args: ['-e', 'process.stdin.resume()'], role: 'primary',
+        });
+        await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+        const held = { role: 'primary' as const, socketPath, holderPid: child.holderPid!, agentPid: child.pid! };
+        child.detach();
+        const custody = createSparedHeldAgentCustody({
+            ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },
+            endTurn: async () => undefined,
+        });
+        const tracked: TrackedSession = {
+            trackingKey: legacyPidSessionTrackingKey(43219), pid: 43219, happySessionId: 'request-wake-session',
+            startedBy: 'daemon', heldAgentsV1: [held],
+        };
+        try {
+            expect(await custody.spare(tracked)).toBeNull();
+            await custody.endStranded({ ...tracked, heldAgentsV1: [{ ...held, holderPid: process.pid }] });
+            expect(() => process.kill(held.agentPid, 0)).not.toThrow();
+            await custody.endStranded(tracked);
+            expect(() => process.kill(held.agentPid, 0)).toThrow();
+        } finally {
+            const remaining = await (async () => {
+                try { process.kill(held.agentPid, 0); } catch { return null; }
+                return await attachSessionHolderChild(socketPath, 'primary').catch(() => null);
+            })();
+            if (remaining) {
+                const exited = new Promise<void>(resolve => remaining.once('exit', () => resolve()));
+                remaining.resumeDelivery();
+                remaining.kill('SIGKILL');
+                await exited;
+                remaining.detach();
+            }
+        }
+    }, 30_000);
 });

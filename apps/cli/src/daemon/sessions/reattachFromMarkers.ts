@@ -28,7 +28,7 @@ import {
   restoreMarkerSpawnOptions,
 } from '../reattach';
 import { buildTrackedSessionFromMarker } from './trackedSessionFromMarker';
-import { probeAdoptableSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
+import { probeAdoptableSessionHolder, stopDetachedLocalSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
   hashProcessCommand,
@@ -748,6 +748,9 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           continue;
         }
         if (hasRetainedPlainRunnerOrigin && sessionId) {
+          // A plain runner without an adoption or terminal owner must release its native writer
+          // before the daemon can start a replacement for the same Session.
+          if (heldAgent && marker.startedBy === 'daemon') await stopDetachedLocalSessionHolder(heldAgent);
           orphanedDeadDaemonSessions.push(projectOrphanedDeadDaemonSession(marker));
           continue;
         }

@@ -8005,8 +8005,13 @@ channels and exits when the holder closes that connection.
     state, so only it is spared. Pi's Session spawn carries no `nativeLaunch`
     qualifier today, so it is not held and its opt-in has no effect yet.
   - The ACP host runtime always opts in.
-  - Muse (host-started turns only) and OpenCode (a local HTTP server, not stdio)
-    are not adoptable and keep the sweep.
+  - The Session host starts Muse turns. After host loss Muse reopens the retained
+    native Session. Runner exit and cold reattach release a surviving local
+    primary Agent recorded for the dead runner through its holder before a
+    replacement starts. A native Muse Session still open in
+    another process reports a typed contention error. Close it there and use
+    Resume again to keep the same native Session.
+  - OpenCode runs a local HTTP server and retains its existing process sweep.
 - Adopting runtimes learn it from the Session host service `adoptsHeldAgent`
   (set while the runner holds the adopt token). Pi then joins turn output that
   arrives before any turn it began as one provider-started turn. Claude, whose

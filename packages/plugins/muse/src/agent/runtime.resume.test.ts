@@ -19,6 +19,37 @@ beforeAll(async () => {
 afterAll(async () => { await admittedRuntime?.dispose(); });
 
 it.each([
+  { entry: 'explicit owner Resume', code: -32021, kind: 'sessionInUse' },
+  { entry: 'resume to deliver a retained request', code: -32021, kind: 'sessionInUse' },
+  { entry: 'resume with missing native state', code: -32020, kind: 'sessionNotFound' },
+])('distinguishes native writer contention on $entry', async ({ code, kind }) => {
+  const capture = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/isolated-resume-fork-after.json', import.meta.url), 'utf8')));
+  if (!Array.isArray(capture.rows)) throw new Error('Expected captured native resume');
+  const frame = readMuseRecord(capture.rows[4]);
+  const fixture = await createAdmittedMuseSessionFixture({ admittedRuntime, native: {
+    recording: { rows: [...capture.rows.slice(0, 4), { ...frame, message: {
+      jsonrpc: '2.0', id: readMuseRecord(frame.message).id,
+      error: { code, message: 'Native fixture detail /private/session', data: { kind, retryable: false } },
+    } }] },
+    playbackSteps: [{ requestRow: 3, receiveUntilRow: 5 }],
+  } });
+  try {
+    const open = fixture.open({ kind: 'resume', sessionId: 'host-admitted-muse', cwd: process.cwd(),
+      providerSessionId: '00000000-0000-7000-8000-000000000002', strictNativeResumeIdentity: true });
+    if (kind === 'sessionInUse') {
+      await expect(open).rejects.toMatchObject({ code: 'agent_resume_session_in_use', retryable: false,
+        details: { failureCause: { code: 'agent_resume_session_in_use', phase: 'thread_open', providerErrorCode: -32021 } },
+      });
+    } else {
+      await expect(open).rejects.toMatchObject({ code });
+    }
+    expect((await fixture.readAudit()).methods).toEqual(['initialize', 'initialized', 'session/resume']);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+it.each([
   { historyMode: 'inline', permissionIntent: null },
   { historyMode: 'inline', permissionIntent: null, nativeSandbox: 'off' },
   { historyMode: 'inline', permissionIntent: null, nativeSandbox: 'off', nativeProfile: ':read-only' },

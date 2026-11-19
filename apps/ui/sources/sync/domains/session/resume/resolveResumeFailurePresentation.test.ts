@@ -6,6 +6,20 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { t } from '@/text';
 
 describe('session resume failure presentation', () => {
+    it.each(['action', 'wake'] as const)('keeps the native writer recovery available on %s', source => {
+        const code = 'agent_resume_session_in_use';
+        const errorDetail = { kind: 'launch_error', code, message: 'Private diagnostic /private/session' };
+        const presentation = resolveResumeFailurePresentation({
+            errorCode: 'resume_failed',
+            ...(source === 'action' ? { details: { errorDetail } } : { errorDetail }),
+        }, 'Resume failed');
+
+        expect(presentation).toMatchObject({ kind: 'alert', errorCode: code });
+        if (presentation.kind !== 'alert') throw new Error('Expected a recovery alert');
+        expect(presentation.message).toContain(t('session.startFailure.cause.agent_resume_session_in_use'));
+        expect(presentation.message).not.toContain('/private/session');
+    });
+
     it.each(['action', 'wake', 'direct'] as const)('explains manual Machine runtime repair for a %s start refusal', source => {
         const code = 'SOURCE_RUNTIME_RELOAD_REQUIRED';
         const errorDetail = { kind: 'launch_error', code, message: 'Private launch diagnostic' };

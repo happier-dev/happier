@@ -8204,6 +8204,7 @@ export const zhHans: TranslationStructure = {
         database_transaction_timeout: "服务器在创建此会话时超时。请尝试重新启动会话。",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在这台机器上重新加载 Happier，才能开始此步骤",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少恢复所需的智能体原生状态。",
+        agent_resume_session_in_use: "此原生会话已在另一个进程中打开。请先在那里关闭，然后回到这里继续。",
         codex_refresh_free_auth_unsupported: "Codex 无法使用你已连接的账户登录。请在 Codex 设置中检查，然后重新启动会话。",
         codex_refresh_bridge_unavailable: "此机器上的智能体登录不可用。请重新连接或更新机器上的 Happier。",
         codex_experimental_api_unavailable: "此版本的智能体不支持所需的登录 API。请更新机器上的智能体。",

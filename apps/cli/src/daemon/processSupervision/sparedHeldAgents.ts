@@ -1,7 +1,7 @@
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import type { TrackedSession } from '@/daemon/types';
 import { resolveTrackedSessionExitSettlementEvidence } from '@/daemon/sessions/resolveTrackedSessionExitSettlementEvidence';
-import { probeAdoptableSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
+import { probeAdoptableSessionHolder, stopDetachedLocalSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { logger } from '@/ui/logger';
 
 /**
@@ -128,7 +128,8 @@ export function createSparedHeldAgentCustody(input: Readonly<{
             spared.delete(sessionId);
         },
         /**
-         * A final runner exit with no spare. A placed Session's runner that this daemon
+         * A final runner exit with no spare releases any surviving local primary Agent.
+         * A placed Session's runner that this daemon
          * reattached without restoring its relay ran without its placement (relay and authority
          * ended with the previous daemon), so it could not stop its target-held Agent through
          * its holder: that Agent is ended in its target. A runner this daemon placed, or whose
@@ -137,7 +138,12 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         async endStranded(tracked: TrackedSession): Promise<void> {
             if (releaseRelay(tracked)) return;
             const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
-            if (!held || !tracked.reattachedFromDiskMarker || !tracked.spawnOptions?.managedTargetPlacement || !input.target) return;
+            if (!held) return;
+            if (!tracked.spawnOptions?.managedTargetPlacement) {
+                await stopDetachedLocalSessionHolder(held);
+                return;
+            }
+            if (!tracked.reattachedFromDiskMarker || !input.target) return;
             await input.target.end(tracked, held);
             logger.infoFile('[DAEMON RUN] Ended the target-held Agent of a reattached runner that left without it', { sessionId: tracked.happySessionId });
         },

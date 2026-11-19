@@ -8823,6 +8823,7 @@ localTailscale: {
         database_transaction_timeout: "このセッションの作成中にサーバーがタイムアウトしました。もう一度開始してください。",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "このステップを開始するには、このマシンで Happier を再読み込みする必要があります",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "再開に必要なエージェントのネイティブ状態が見つかりません。",
+        agent_resume_session_in_use: "このネイティブセッションは別のプロセスで開いています。そのプロセスで閉じてから、ここで再開してください。",
         codex_refresh_free_auth_unsupported: "Codex が接続済みアカウントでサインインできませんでした。Codex の設定で確認してから、セッションをもう一度開始してください。",
         codex_refresh_bridge_unavailable: "このマシンではエージェントにサインインできません。マシン上の Happier を再接続または更新してください。",
         codex_experimental_api_unavailable: "このバージョンのエージェントは必要なサインイン API に対応していません。マシン上のエージェントを更新してください。",

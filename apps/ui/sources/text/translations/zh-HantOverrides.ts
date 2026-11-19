@@ -7026,6 +7026,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               database_transaction_timeout: "伺服器在建立此工作階段時逾時。請嘗試重新啟動工作階段。",
               SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在這台機器上重新載入 Happier，才能開始此步驟",
               AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少繼續所需的代理程式原生狀態。",
+              agent_resume_session_in_use: "此原生工作階段已在另一個程序中開啟。請先在該程序中關閉，再回到這裡繼續。",
               codex_refresh_free_auth_unsupported: "Codex 無法使用你已連結的帳號登入。請在 Codex 設定中檢查，然後重新啟動工作階段。",
               codex_refresh_bridge_unavailable: "此機器上的代理程式登入無法使用。請重新連線或更新機器上的 Happier。",
               codex_experimental_api_unavailable: "此版本的代理程式不支援所需的登入 API。請更新機器上的代理程式。",

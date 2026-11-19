@@ -9938,6 +9938,7 @@ const enSession = {
       database_transaction_timeout: "The server timed out while creating this session. Try starting it again.",
       SOURCE_RUNTIME_RELOAD_REQUIRED: 'This machine needs a Happier reload before the step can start',
       AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing.',
+      agent_resume_session_in_use: 'This native Session is open in another process. Close it there, then resume here.',
       codex_refresh_free_auth_unsupported: "Codex couldn’t sign in with your connected account. Check it in Codex settings, then start the session again.",
       codex_refresh_bridge_unavailable: "Agent sign-in is unavailable on this machine. Reconnect or update Happier on the machine.",
       codex_experimental_api_unavailable: "This Agent version does not support the required sign-in API. Update the Agent on the machine.",

@@ -1198,10 +1198,19 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
  * Delivery waits for `resumeDelivery()`, so the adopter's listeners see the
  * replay and any exit that happened while no runner was attached.
  */
-export function attachSessionHolderChild(socketPath: string, role: SessionHolderRole = 'auxiliary'): Promise<SessionHolderChild> {
+export function attachSessionHolderChild(socketPath: string, role: SessionHolderRole = 'auxiliary',
+    expected?: Readonly<{ holderPid?: number; agentPid?: number }>): Promise<SessionHolderChild> {
     const child = new SessionHolderChild(socketPath, role);
     return new Promise((resolve, reject) => {
+        const disconnected = () => reject(Object.assign(new Error('Session holder disconnected before attach'), { code: 'session_holder_failed' }));
+        child.once('holderDisconnected', disconnected);
         connectHolder(child, (hello) => {
+            child.off('holderDisconnected', disconnected);
+            if (expected && !holderHelloMatches(hello, expected)) {
+                child.detach();
+                reject(Object.assign(new Error('Session holder identity does not match the recorded Agent'), { code: 'session_holder_identity_mismatch' }));
+                return;
+            }
             Object.defineProperty(child, 'pid', { value: hello.agentPid, writable: true, configurable: true });
             child.holderPid = hello.holderPid;
             child.adoptedMeta = hello.meta ?? null;
@@ -1209,6 +1218,38 @@ export function attachSessionHolderChild(socketPath: string, role: SessionHolder
             resolve(child);
         }, reject, true);
     });
+}
+
+/** The runner exit owner released this local hold instead of handing it to a successor. */
+export async function stopDetachedLocalSessionHolder(held: SessionHeldAgentV1): Promise<void> {
+    if (held.relaySocketPath || !isPidPresent(held.agentPid)) return;
+    await stopLocalSessionHolderAgent(held);
+}
+
+async function stopLocalSessionHolderAgent(input: Readonly<{ socketPath: string; holderPid?: number; agentPid?: number }>): Promise<void> {
+    // The address comes from a hand-off or a record: attach only where this Machine places holder sockets.
+    if (!isSessionHolderSocketPath(input.socketPath)) {
+        logger.warn('[SessionHolder] Agent holder address outside its placement left untouched');
+        return;
+    }
+    if (input.holderPid !== undefined && !isPidPresent(input.holderPid)) return;
+    const held = await attachSessionHolderChild(input.socketPath, 'primary', input).catch((error: NodeJS.ErrnoException) => {
+        logger.warn('[SessionHolder] Agent holder unreachable for its release', { code: error.code ?? 'unknown' });
+        return null;
+    });
+    if (!held) return;
+    try {
+        const exited = new Promise<boolean>(resolve => {
+            held.once('exit', () => resolve(true));
+            held.once('holderDisconnected', () => resolve(false));
+        });
+        // An attached client's delivery (the Agent's exit included) waits until it resumes.
+        held.resumeDelivery();
+        held.kill('SIGKILL');
+        if (!await exited) logger.warn('[SessionHolder] Agent holder disconnected before its exit was observed');
+    } finally {
+        held.detach();
+    }
 }
 
 /**
@@ -1269,6 +1310,11 @@ export function probeAdoptableSessionHolder(held: SessionHeldAgentV1): Promise<b
     return readAdoptableHolderHello(connect(held.socketPath), held);
 }
 
+function holderHelloMatches(hello: SessionHolderHello, expected: Readonly<{ holderPid?: number; agentPid?: number }>): boolean {
+    return (expected.holderPid === undefined || hello.holderPid === expected.holderPid)
+        && (expected.agentPid === undefined || hello.agentPid === expected.agentPid);
+}
+
 /**
  * The adoptable check over an attach channel (a local socket, or a target's
  * provider channel running `holder attach`): the hello names the recorded
@@ -1291,7 +1337,7 @@ export function readAdoptableHolderHello(channel: Duplex, held: SessionHeldAgent
             try {
                 const hello = JSON.parse(buffered.subarray(FRAME_HEADER_BYTES, FRAME_HEADER_BYTES + length).toString('utf8')) as SessionHolderHello;
                 const meta = hello.meta as { role?: unknown } | null | undefined;
-                finish(hello.holderPid === held.holderPid && hello.agentPid === held.agentPid && meta?.role === 'primary');
+                finish(holderHelloMatches(hello, held) && meta?.role === 'primary');
             } catch {
                 finish(false);
             }
