@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { LocalServicesSurfaceHost, type LocalServicesSurfaceHostProps } from '@/components/sessions/localServices';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionMachineDisplayTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type {
     LocalServiceLauncherSnapshotClient,
@@ -28,7 +28,7 @@ export type SessionServicesSurfaceScreenProps = Readonly<{
 export function SessionServicesSurfaceScreen(props: SessionServicesSurfaceScreenProps = {}): React.ReactElement {
     const sessionId = props.sessionId ?? '';
     const preferredServerId = usePreferredServerIdForSession({ serverId: props.serverId, sessionId });
-    const sessionMachineTarget = useSessionMachineTarget(sessionId, preferredServerId);
+    const sessionMachineTarget = useSessionMachineDisplayTarget(sessionId, preferredServerId);
     const machineId = props.machineId ?? sessionMachineTarget?.machineId ?? null;
 
     return (

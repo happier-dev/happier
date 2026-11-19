@@ -81,7 +81,6 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useOpenApprovalArtifactsForSession } from '@/sync/store/hooks';
 
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionBoardContinuity } from '@/components/sessions/board/SessionBoardContinuity';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -198,7 +197,6 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         () => normalizeSessionAddress(servicesServerId, props.sessionId),
         [props.sessionId, servicesServerId],
     );
-    const sessionMachineTarget = useSessionMachineTarget(sessionAddress);
     const pluginProjection = useSessionPluginRuntime({ address: sessionAddress });
     const session = useSessionViewShellSession(props.sessionId, servicesServerId);
     const boardFeatureEnabled = useSessionBoardFeatureEnabled(servicesServerId);
@@ -211,7 +209,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         scopeId: `${props.scopeId}:browser`,
         scope: 'sessionMobile',
         accountLifetime: pluginProjection.accountLifetime,
-        machineId: sessionMachineTarget?.machineId ?? null,
+        machineId: pluginProjection.machineId,
         serverId: servicesServerId,
         sessionId: props.sessionId,
         onAfterOpen: switchToBrowserSurface,

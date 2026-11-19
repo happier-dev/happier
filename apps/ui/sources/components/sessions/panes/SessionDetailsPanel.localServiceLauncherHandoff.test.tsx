@@ -49,6 +49,7 @@ let reopenService = false;
 let accessUnavailable = false;
 let firstStart = false;
 let nativeRunning = false;
+let offlineMachine: ReturnType<typeof createMachineFixture> | null = null;
 let startReply = createDeferred<void>();
 const firstStartTargetId = 'project-service:first-web';
 const firstStartSnapshot = (): LocalServiceLauncherSnapshot => ({ v: 1 as const, machineId: 'machine-a', sessionId: 'session-a',
@@ -87,8 +88,9 @@ const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-a',
         if (reopenService && path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'browser.workspace.open': ['ui'] } },
         } } });
-        if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' })]);
-        return createPlainMachineReadHttpResponseFixture(path, init, 'account-a');
+        if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a',
+            ...(offlineMachine ? { machine: offlineMachine } : {}) })]);
+        return createPlainMachineReadHttpResponseFixture(path, init, 'account-a', offlineMachine ?? undefined);
     },
     rpc: async (method, _input, machineId) => {
     if (method.includes('localServices.')) serviceMethods.push(method);
@@ -129,6 +131,7 @@ beforeEach(() => {
     accessUnavailable = false;
     firstStart = false;
     nativeRunning = false;
+    offlineMachine = null;
     startReply = createDeferred<void>();
     serviceMethods.length = 0;
     serviceRequests.length = 0;
@@ -139,6 +142,41 @@ beforeEach(() => {
 });
 
 describe('SessionDetailsPanel local service launcher handoff', () => {
+    it.each(['route', 'pane'] as const)('retains the offline Session Machine binding in the %s runtime owner', async owner => {
+        const { useSessionPluginRuntime } = await import('../plugins/useSessionPluginRuntime');
+        const { useOptionalPaneDriverReader } = await import('@/components/appShell/panes/AppPaneProvider');
+        let runtimeMachineId: string | null = null;
+        let readDriver!: NonNullable<ReturnType<typeof useOptionalPaneDriverReader>>;
+        let scopeId = '';
+        function RouteOwner() {
+            runtimeMachineId = useSessionPluginRuntime({ address: { sessionId: 'session-a', serverId: runtime.serverId } }).machineId;
+            return null;
+        }
+        function PaneOwner() {
+            scopeId = useRegisterSessionPaneDriver('session-a', runtime.serverId);
+            readDriver = useOptionalPaneDriverReader()!;
+            return null;
+        }
+        const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now(), presenceProtocolVersion: 1,
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Studio', host: 'studio' } });
+        offlineMachine = machine;
+        storage.getState().applyMachines([machine], false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
+        storage.getState().applySessions([createSessionFixture({ id: 'session-a', serverId: runtime.serverId,
+            metadata: { path: '/repo', host: 'studio', machineId: machine.id } })]);
+        const screen = await renderScreen(<runtime.Wrapper>{owner === 'route' ? <RouteOwner /> : <PaneOwner />}</runtime.Wrapper>);
+        const readMachineId = () => owner === 'route' ? runtimeMachineId : readDriver(scopeId)?.surfaceScope?.machineId;
+        try {
+            await expect.poll(readMachineId).toBe(machine.id);
+            offlineMachine = { ...machine, active: false, activeAt: Date.now(), updatedAt: Date.now() };
+            await act(async () => storage.getState().applyMachines([offlineMachine!], false,
+                { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' }));
+            await flushHookEffects();
+            const { isMachineOnline } = await import('@/sync/domains/machines/reachability/machinePresence');
+            expect(isMachineOnline(storage.getState().machines[machine.id]!)).toBe(false);
+            expect(readMachineId()).toBe(machine.id);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['pane', 'chat'] as const)('opens an addressed Browser Action from cold %s before Details or Browser mounts', async host => {
         if (host === 'chat') Object.assign(viewport, { width: 390, height: 844 });
         reopenService = true;

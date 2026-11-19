@@ -3,7 +3,7 @@ import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projection
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import type { PaneDriver } from '@/components/appShell/panes/types';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionMachineDisplayTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { RIGHT_SIDEBAR_BUILTIN_TABS } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import { createSessionPaneSurfaceScope } from '@/components/sessions/plugins/useSessionPluginRuntime';
@@ -97,8 +97,8 @@ export function useRegisterSessionPaneDriver(
     // The registered PaneDriver is the sole target/currentness producer for
     // this scope. AppPane receives these facts; it must not reconstruct a
     // Session target from `scopeId` or issue a competing projection lookup.
-    const sessionMachineTarget = useSessionMachineTarget(
-        suppliedPluginRuntime ? null : sessionId,
+    const sessionMachineTarget = useSessionMachineDisplayTarget(
+        suppliedPluginRuntime ? '' : sessionId,
         suppliedPluginRuntime ? null : explicitServerId,
     );
     const inferredServerId = usePreferredServerIdForSession({ serverId: explicitServerId, sessionId });

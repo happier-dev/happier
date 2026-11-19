@@ -3,7 +3,7 @@ import { SESSION_PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projection
 
 import type { PaneSurfaceScope } from '@/components/appShell/panes/types';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionMachineDisplayTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -54,8 +54,11 @@ export function useSessionPluginRuntime(params: Readonly<{
     pluginUiProjection?: PluginUiProjectionModel | null;
     platform?: LocalServicePreviewPlatform;
 }>): SessionPluginRuntimeState {
-    const machineTarget = useSessionMachineTarget(params.address);
     const hasRegisteredPaneScope = params.paneSurfaceScope !== undefined;
+    const machineTarget = useSessionMachineDisplayTarget(
+        hasRegisteredPaneScope ? '' : params.address?.sessionId ?? '',
+        hasRegisteredPaneScope ? null : params.address?.serverId,
+    );
     const registeredPaneScope = admitSessionPaneSurfaceScopeForAddress(
         params.address,
         params.paneSurfaceScope,
