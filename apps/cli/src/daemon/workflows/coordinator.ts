@@ -2,7 +2,7 @@ import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowL
 import type { WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { readWorkflowActionFieldTextEncodingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1, readWorkflowAcceptedActionStartDepthV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowAcceptedStepSelectionV1, workflowActionSelectionOverridesEngineV1, WorkflowStepSelectionErrorV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { isAgentStartActionV1, resolveActionAgentStartRequestsV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
@@ -1964,13 +1964,17 @@ async function executeActionBlock(
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
     const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
     const invocationRecordId = row.recordId;
+    const admittedStartDepth = readWorkflowAcceptedActionStartDepthV1({ machineId: actionWorkspace.machineId,
+      workspaceTarget: { project: actionWorkspace }, workDepth: context.workDepth }, selected);
     const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
       source: context.source,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
       ...(selected.role ? { role: selected.role } : {}),
-      ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId };
+      ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId,
+      ...(admittedStartDepth === undefined ? {} : { agentStartWorkDepth: admittedStartDepth,
+        ...(selected.role ? { agentStartWorkspaceWrites: selected.role.workspaceWrites } : {}) }) };
     // Qualified plugin Actions consume the same host front door and approval
     // contract as every other contributed Action; workflow custody stays here.
     const prepared = await context.holds.track(() => builtinActionId.success

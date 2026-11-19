@@ -6,7 +6,7 @@ import { hasFlag, readCommandPositionals } from '@/cli/commands/shared/argvFlags
 import { resolveAdmittedActionCliCommand } from '@/cli/commandRegistry';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
+import { normalizeCliActionThrownError, projectCliActionFailure } from './shared/normalizeActionExecuteResult';
 import {
   SESSION_HELP_LINES,
   SESSION_NESTED_SUBCOMMAND_HELP_LINES,
@@ -197,17 +197,14 @@ export async function handleSessionCommand(
     }
   } catch (error) {
     if (!structuredOutput) throw error;
-    const mapped = mapUnknownErrorToControlError(error);
+    const { failure, unexpected } = normalizeCliActionThrownError(error);
     await printJsonEnvelope(
       {
         ok: false,
         kind,
-        error: {
-          code: mapped.code,
-          ...(mapped.message ? { message: mapped.message } : {}),
-        },
+        error: projectCliActionFailure(failure),
       },
-      { exitCode: mapped.unexpected ? 2 : 1 },
+      { exitCode: unexpected ? 2 : 1 },
     );
   }
 }

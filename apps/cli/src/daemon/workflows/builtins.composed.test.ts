@@ -48,6 +48,9 @@ import { projectReviewNeedsYouV1, type ReviewRequestedReviewerV1, type ReviewVer
 import { reviewReviewerIdsForStartV1, reviewReviewerIdForSelectionV1, type ReviewStartInput } from '@happier-dev/protocol/reviews/reviewStart';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import * as reviewComposition from '@happier-dev/protocol/workflows/builtins/reviewAndConverge';
+import { admitAgentStartV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { readWorkflowRunLeafStartRequestV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { RoleArtifactV1Schema } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const engine = buildBackendTargetKeyV2(agentTarget);
@@ -71,8 +74,12 @@ function historicalReview(): WorkflowDefinitionV1 {
   return WorkflowDefinitionV1Schema.parse(historicalReviewAndConvergeV1);
 }
 
+type AcceptanceOptions = Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'admission'> & {
+  source?: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'];
+  effects?: Partial<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['effects']>;
+};
 async function accepted(definition: WorkflowDefinitionV1, evidence: Record<string, WorkflowJsonValue> = {}, origin = true, discussion = false,
-  options?: { source?: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'] }) {
+  options?: AcceptanceOptions) {
   const inputs = bindAutomationWorkflowInputs({ definition, evidence });
   const result = await materializeWorkflowAcceptedSnapshotV1({ definition, context: {
     source: options?.source ?? { kind: 'inline' }, inputs, machineId: workspace.machineId, executionTarget: { kind: 'session' },
@@ -80,7 +87,7 @@ async function accepted(definition: WorkflowDefinitionV1, evidence: Record<strin
       ...(discussion ? { discussion: { discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 2 } } : {}) },
     authorization: { principal: { kind: 'host' } },
   }, roleSelection: { defaultEngine: { agentTargetKey: engine }, availableAgentTargetKeys: [engine, otherEngine] },
-  admission: { kind: 'user' }, effects: {
+  admission: options?.admission ?? { kind: 'user' }, effects: {
     resolveSessionTarget: async (value) => {
       const address = typeof value === 'string' ? { serverId: 'home', sessionId: value } : value;
       return address && typeof address === 'object' && !Array.isArray(address)
@@ -94,6 +101,7 @@ async function accepted(definition: WorkflowDefinitionV1, evidence: Record<strin
       const spec = getActionSpec(parsed.data);
       return freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(spec));
     },
+    ...options?.effects,
   } });
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.snapshot;
@@ -101,6 +109,7 @@ async function accepted(definition: WorkflowDefinitionV1, evidence: Record<strin
 
 type NativeRun = { localInputId: string; value: JsonValue; intent: string; failed?: boolean };
 type Fixtures = {
+  workDepthLimit?: number;
   reviewCounts?: { total: number; needsDecision: number } | (() => { total: number; needsDecision: number });
   reviewRequests?: readonly ReviewRequestedReviewerV1[];
   reviewVerdicts?: readonly ReviewVerdictV1[];
@@ -412,7 +421,7 @@ function harness(fixtures: Fixtures = {}) {
       ...(params.originSessionId ? { runOriginSessionId: params.originSessionId } : {}) },
       baseline: { machineId: workspace.machineId, directory: workspace.directory }, ledSubtreeSessionIds: [],
       callerPermissionCeiling: params.authorization.admittedPermissionCeiling,
-      roles: role.success ? { [role.data.roleId]: role.data } : {}, workDepthLimit: 4 },
+      roles: role.success ? { [role.data.roleId]: role.data } : {}, workDepthLimit: fixtures.workDepthLimit ?? 4 },
     executionRunTargetMachineId: workspace.machineId,
     externalActionTarget: { kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } },
   }; };
@@ -860,6 +869,92 @@ describe('built-ins through accepted materialization and native leaf adapters', 
   // REVIEWS-1117 plan 03 U2: new authored starts are one pass. Accepted
   // historical definitions retain their original loop, rather than supplying
   // that loop as the current starter's execution policy.
+  it('admits each intentional Review engine once and dispatches its frozen Role after the catalog changes', async () => {
+    const h = harness({ workDepthLimit: 1, reviewCounts: { total: 0, needsDecision: 0 } });
+    const reviewInput = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review once.', reviewers: [
+      { kind: 'engine', engineId: engine, roleId: 'custom-reviewer', connectedServices: null },
+      { kind: 'engine', engineId: engine, roleId: 'custom-reviewer', connectedServices: null },
+    ] });
+    let source = RoleArtifactV1Schema.parse({ name: 'Reviewer', instructions: 'Review as selected.', enabled: true,
+      workspaceWrites: 'allow', secondOpinion: 'off',
+      engine: { agentTargetKey: otherEngine, modelId: 'admitted-model' }, runsAs: { kind: 'background_run', intent: 'task' } });
+    const roleReads: string[] = [];
+    const admitted: string[] = [];
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    const snapshot = await accepted(composed.definition, composed.inputs, true, false, {
+      admission: { kind: 'agent', admitLeaf: async (leaf, facts) => {
+        admitted.push(leaf.blockId);
+        return admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, readWorkflowRunLeafStartRequestV1(leaf), {
+          caller: { kind: 'originless', runId: 'author', runDepth: 0 }, baseline: { machineId: workspace.machineId, directory: workspace.directory },
+          ledSubtreeSessionIds: [], roles: facts.role ? { [facts.role.roleId]: facts.role } : {},
+          callerPermissionCeiling: 'read-only', workDepthLimit: 1,
+        });
+      } },
+      effects: { readRoleSelection: async roleId => {
+        if (roleId === undefined) return {};
+        roleReads.push(roleId);
+        return { settingsRoles: { [roleId]: source } };
+      } },
+    });
+    expect(admitted).toEqual(['step-1-reviewer-1', 'step-1-reviewer-2']);
+    expect(roleReads).toEqual(['custom-reviewer']);
+    expect(snapshot.materializedLeaves.filter(leaf => leaf.role).map(leaf => ({
+      roleId: leaf.role?.roleId, target: leaf.selection.agentTarget, model: leaf.selection.modelSelection?.ref.modelId,
+    }))).toEqual(Array.from({ length: 2 }, () => ({ roleId: 'custom-reviewer',
+      target: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, model: 'admitted-model' })));
+    source = RoleArtifactV1Schema.parse({ ...source, enabled: false,
+      engine: { agentTargetKey: engine, modelId: 'changed-model' } });
+    expect(await h.runAccepted(snapshot)).toMatchObject({ state: 'succeeded' });
+    expect(roleReads).toEqual(['custom-reviewer']);
+    expect(h.store.list().filter(row => row.lifecycle === 'failed').map(row => ({ blockId: row.blockId, reason: row.reason }))).toEqual([]);
+    expect(h.launches.map(({ request }) => ({ intent: request.intent, modelId: request.modelId,
+      backendTarget: request.backendTarget, connectedServices: request.connectedServices }))).toEqual([
+      { intent: 'task', modelId: 'admitted-model', backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: null },
+      { intent: 'task', modelId: 'admitted-model', backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: null },
+    ]);
+    expect(admitted).toHaveLength(2);
+  });
+
+  it('refuses a forbidden Review engine at acceptance before native effects', async () => {
+    const h = harness();
+    const reviewInput = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review once.',
+      reviewers: [{ kind: 'engine', engineId: engine }] });
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, await h.admitReview(reviewInput));
+    await expect(accepted(composed.definition, composed.inputs, true, false, {
+      admission: { kind: 'agent', admitLeaf: async leaf => admitAgentStartV1({ ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        allowBackendTargetOverride: false }, readWorkflowRunLeafStartRequestV1(leaf), {
+        caller: { kind: 'originless', runId: 'author', runDepth: 0 }, baseline: { machineId: workspace.machineId, directory: workspace.directory },
+        ledSubtreeSessionIds: [], roles: {}, callerPermissionCeiling: 'read-only', workDepthLimit: 1,
+      }) },
+    })).rejects.toThrow('policy_denied_field');
+    expect(h.launches).toEqual([]);
+  });
+
+  it('admits an unresolved Review roster at invocation through the ordinary depth policy', async () => {
+    const h = harness({ workDepthLimit: 1, session: () => [{ kind: 'engine', engineId: engine }] });
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
+      defaults: { agentTarget, permissionMode: 'read-only', conversation: { kind: 'origin_session' } },
+      blocks: [
+        { kind: 'step', id: 'choose', document: { text: 'Choose reviewers', references: [], attachments: [] },
+          result: { kind: 'json', schema: { type: 'array', items: { type: 'object' } } } },
+        { kind: 'action', id: 'review', actionId: 'review.start', input: {
+          scope: { kind: 'literal', value: 'repository' }, instructions: { kind: 'literal', value: 'Review once.' },
+          reviewers: { kind: 'result', producer: { blockId: 'choose', scope: { kind: 'current' } }, path: [] },
+        } },
+      ],
+    });
+    const snapshot = await accepted(definition, {}, true, false, {
+      admission: { kind: 'agent', admitLeaf: async leaf => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        readWorkflowRunLeafStartRequestV1(leaf), {
+          caller: { kind: 'originless', runId: 'author', runDepth: 0 }, baseline: { machineId: workspace.machineId, directory: workspace.directory },
+          ledSubtreeSessionIds: [], roles: {}, callerPermissionCeiling: 'read-only', workDepthLimit: 1,
+        }) },
+    });
+    expect(await h.runAccepted(snapshot)).toMatchObject({ state: 'failed', reason: 'work_depth_exceeded' });
+    expect(h.launches).toEqual([]);
+  });
+
   it('preserves historical accepted graphs when a starter executes a newly authored review once', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }, { verdict: 'converged' }], session: (id) => {
       expect(id).toBe('verify'); return 'verified';

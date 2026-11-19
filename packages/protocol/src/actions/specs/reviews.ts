@@ -153,13 +153,13 @@ function createReviewActionSpecs(): readonly [
     bindings: { voiceClientToolName: 'startReview', mcpToolName: 'review_start' },
     inputHints: {
       title: 'Start a code review',
-      description: 'Start one or more parallel review runs against the current worktree.',
+      description: 'Choose an ordered roster of engines, Sessions, models and requested people for a Review.',
       fields: [
         {
-          path: 'engineIds',
-          title: 'Review engines',
-          description: 'Select one or more engines. Each engine runs as its own execution run.',
-          widget: 'multiselect',
+          path: 'reviewers',
+          title: 'Reviewers',
+          description: 'Ordered reviewer selections. Each engine selection retains its own model, profile, credentials and options.',
+          widget: 'json',
           required: true,
           requireExplicitSelection: true,
           optionsSourceId: 'review.engines.available',
@@ -188,7 +188,7 @@ function createReviewActionSpecs(): readonly [
         {
           path: 'teamCredentialModel',
           title: 'Team credential model (json)',
-          description: 'Optional exact Team credential resource/model selection from the recipient-safe Team catalog. Requires one review engine.',
+          description: 'Optional inherited Team credential selection for a single engine. Mixed reviewers select credentials on each engine entry.',
           widget: 'json',
           optionsSourceId: 'teams.credential_models.available',
         },
@@ -241,7 +241,7 @@ function createReviewActionSpecs(): readonly [
       ],
     },
     examples: {
-      voice: { argsExample: '{"engineIds":["codex"],"instructions":"Review this.","changeType":"uncommitted","base":{"kind":"none"}}' },
+      voice: { argsExample: '{"reviewers":[{"kind":"engine","engineId":"codex"}],"instructions":"Review this.","changeType":"uncommitted","base":{"kind":"none"}}' },
     },
     surfaces: {
       ui: true,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
@@ -23,8 +23,35 @@ vi.mock('@/session/actions/ensureCliActionPolicySettings', () => ({
 }));
 
 describe('happier session review start command', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('returns the admitted Workflow and Review round for a composed selection', async () => {
+    const run = { id: 'review-workflow', sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
+      origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'machine',
+      workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+      availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+    const reviewRound = { reviewId: 'review', roundOrdinal: 1 };
+    execute.mockResolvedValueOnce({ ok: true, result: { run, admission: 'created', reviewRound } });
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['review', 'start', 'sess-review', '--engines', 'engine-1,engine-2', '--instructions', 'Review.', '--json'],
+        { readCredentialsFn: async () => ({ token: 'hap_v1_token_secret', encryption: null, credentialProvenance: 'api_token' as const }) },
+      );
+      expect(output.json()).toMatchObject({ ok: true, kind: 'session_review_start', data: {
+        sessionId: 'sess-review-1', workflow: { runId: run.id, origin: run.origin }, reviewRound,
+      } });
+    } finally {
+      output.restore();
+    }
+  });
+
   it('selects the public Action transport before legacy Session bootstrap for API tokens', async () => {
-    execute.mockResolvedValueOnce({ ok: true, result: { results: [{ key: 'review-1' }] } });
+    const reviewRound = { reviewId: 'direct-review', roundOrdinal: 1 };
+    const results = [{ key: 'step-1-reviewer-1', ok: true, result: { runId: 'review-1' } }];
+    execute.mockResolvedValueOnce({ ok: true, result: { intent: 'review', sessionId: 'sess-review-1', reviewRound, results } });
     const { handleSessionCommand } = await import('../handleSessionCommand');
     const output = captureConsoleJsonOutput();
     try {
@@ -43,14 +70,18 @@ describe('happier session review start command', () => {
         expect.objectContaining({ reviewers: [{ kind: 'engine', engineId: 'engine-1' }], instructions: 'Review.', changeType: 'uncommitted', base: { kind: 'none' } }),
         { defaultSessionId: 'sess-review-1' },
       );
-      expect(output.json()).toEqual(expect.objectContaining({ ok: true, kind: 'session_review_start' }));
+      expect(output.json()).toMatchObject({ ok: true, kind: 'session_review_start', data: { results, reviewRound } });
     } finally {
       output.restore();
     }
   });
 
   it('preserves a whole-input mixed roster and explicitly selected transcript source', async () => {
-    execute.mockResolvedValueOnce({ ok: true, result: { results: [{ key: 'review-mixed' }] } });
+    execute.mockResolvedValueOnce({ ok: true, result: { intent: 'review', sessionId: 'sess-review-1', results: [
+      { key: 'step-1-reviewer-1', ok: true, result: { runId: 'review-mixed-1' } },
+      { key: 'step-1-reviewer-2', ok: true, result: { runId: 'review-mixed-2' } },
+      { key: 'step-1-reviewer-3', ok: true, result: { runId: 'review-mixed-3' } },
+    ] } });
     const { handleSessionCommand } = await import('../handleSessionCommand');
     const reviewers = [
       { kind: 'engine', engineId: 'engine-1', modelId: 'model-a', options: { effort: 'high' }, includeSessionTranscript: true },
@@ -73,6 +104,21 @@ describe('happier session review start command', () => {
       expect(execute).toHaveBeenLastCalledWith('review.start', expect.objectContaining({
         reviewers, sourceSession, outputs: ['walkthrough'], scope: 'changes',
       }), { defaultSessionId: 'sess-review-1' });
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('reports an unknown start outcome when the selected reviewer receipt is missing', async () => {
+    execute.mockResolvedValueOnce({ ok: true, result: { intent: 'review', sessionId: 'sess-review-1', results: [] } });
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(
+        ['review', 'start', 'sess-review', '--engines', 'engine-1', '--instructions', 'Review.', '--json'],
+        { readCredentialsFn: async () => ({ token: 'hap_v1_token_secret', encryption: null, credentialProvenance: 'api_token' as const }) },
+      );
+      expect(output.json()).toMatchObject({ ok: false, kind: 'session_review_start', error: { code: 'action_outcome_unknown' } });
     } finally {
       output.restore();
     }

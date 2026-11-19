@@ -1,4 +1,6 @@
 import chalk from 'chalk';
+import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions';
+import { reviewReviewersForEngineIdsV1, type ReviewStartInput } from '@happier-dev/protocol/reviews/reviewStart';
 
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -8,6 +10,7 @@ import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/json
 import { invalidCommandArguments } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
 import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
+import { throwCliActionFailure } from '../shared/normalizeActionExecuteResult';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 
 function splitCsv(value: string | null): string[] {
@@ -52,7 +55,7 @@ export async function cmdSessionReviewStart(
       ? { kind: 'branch', baseBranch }
       : undefined;
   const composed = args.compose({
-    ...(engineIds.length > 0 ? { reviewers: engineIds.map((engineId) => ({ kind: 'engine', engineId })) } : {}),
+    ...(engineIds.length > 0 ? { reviewers: reviewReviewersForEngineIdsV1(engineIds) } : {}),
     ...(base ? { base } : {}),
   });
   if (!composed.ok) throw invalidCommandArguments(usage, composed.message);
@@ -104,17 +107,26 @@ export async function cmdSessionReviewStart(
     process.exit(1);
   }
 
-  const results = normalized.results;
+  // compose already validated this input with review.start's canonical schema.
+  const receipt = readReviewStartActionResultV1(started, composed.input as ReviewStartInput);
+  if (receipt.kind === 'outcome_unknown') {
+    throwCliActionFailure({ ok: false, errorCode: 'action_outcome_unknown',
+      error: 'Review start outcome is unknown. Inspect the existing Review before starting again.' });
+  }
+  const data = { sessionId,
+    ...(receipt.kind === 'workflow' ? { workflow: receipt.workflow } : { results: normalized.results }),
+    ...(receipt.reviewRound ? { reviewRound: receipt.reviewRound } : {}),
+  };
 
   if (json) {
     await printJsonEnvelope({
       ok: true,
       kind: 'session_review_start',
-      data: { sessionId, results },
+      data,
     });
     return;
   }
 
   console.log(chalk.green('✓'), 'review started');
-  await writeJsonStdout({ sessionId, results }, { pretty: true });
+  await writeJsonStdout(data, { pretty: true });
 }
