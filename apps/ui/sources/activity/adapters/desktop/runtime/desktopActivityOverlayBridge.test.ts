@@ -82,7 +82,8 @@ describe('desktopActivityOverlayBridge', () => {
         expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_show_main_window', undefined);
     });
 
-    it('resolves an overlay interaction request from the matching result event', async () => {
+    it('keeps an admitted overlay interaction pending past its acknowledgement deadline', async () => {
+        vi.useFakeTimers();
         const resultHandlerRef: { current?: (payload: unknown) => void } = {};
         const unlisten = vi.fn();
         listenDesktopHostEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
@@ -111,6 +112,12 @@ describe('desktopActivityOverlayBridge', () => {
         }));
         const resultHandler = resultHandlerRef.current;
         expectTauriEventHandler(resultHandler);
+
+        resultHandler({
+            windowLabel: 'activity_overlay', requestId: 'quick-reply-request-1', phase: 'admitted', ok: true,
+        });
+        await vi.advanceTimersByTimeAsync(10_001);
+        expect(unlisten).not.toHaveBeenCalled();
 
         resultHandler({
             windowLabel: 'activity_overlay',

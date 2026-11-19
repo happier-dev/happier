@@ -7,11 +7,13 @@ import type { NotchSurface } from '../ui/presentation/notchPresentation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     emitDesktopWindowAction,
+    emitDesktopWindowActionAcknowledgement,
     emitDesktopWindowActionResult,
     executeDesktopWindowActionWithResult,
     listenDesktopWindowAction,
     listenDesktopWindowActionResult,
     DESKTOP_WINDOW_ACTION_EVENTS,
+    type DesktopWindowActionResult,
 } from '@/utils/platform/desktopWindowActionBridge';
 
 export const DESKTOP_ACTIVITY_OVERLAY_EVENTS = {
@@ -136,14 +138,8 @@ export type DesktopActivityOverlayInteractionPayload = Readonly<{
     data: Record<string, unknown>;
 }>;
 
-export type DesktopActivityOverlayInteractionResultPayload = Readonly<{
-    requestId: string;
-    ok: boolean;
-    /** The Action's output when it succeeded (already validated by the executor in main). */
-    result?: unknown;
-    errorCode?: string;
-    error?: string;
-}>;
+/** The result carries the Action's validated output from main when it succeeds. */
+export type DesktopActivityOverlayInteractionResultPayload = Omit<DesktopWindowActionResult, 'windowLabel'>;
 
 export async function syncDesktopActivityOverlay(payload: DesktopActivityOverlaySyncPayload): Promise<void> {
     await requireDesktopHostRole('activity');
@@ -195,10 +191,19 @@ export async function emitDesktopActivityOverlayInteractionResult(
     await emitDesktopWindowActionResult({ ...payload, windowLabel: 'activity_overlay' });
 }
 
+/** Main has accepted the bridge request. The Action still owns its admission and final result. */
+export function acknowledgeDesktopActivityOverlayInteraction(requestId: string | null | undefined): void {
+    if (!requestId) return;
+    fireAndForget(emitDesktopWindowActionAcknowledgement({ windowLabel: 'activity_overlay', requestId }), {
+        tag: 'DesktopActivityOverlay.acknowledgeInteraction',
+    });
+}
+
 export async function executeDesktopActivityOverlayInteractionWithResult(
     payload: DesktopActivityOverlayInteractionPayload,
     options: Readonly<{ timeoutMs?: number }> = {},
 ): Promise<DesktopActivityOverlayInteractionResultPayload> {
+    // The deadline measures whether main took the interaction. Actions own their settlement.
     const { windowLabel: _windowLabel, ...result } = await executeDesktopWindowActionWithResult(
         { ...payload, windowLabel: 'activity_overlay' },
         { timeoutMs: options.timeoutMs ?? DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS },

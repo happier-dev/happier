@@ -142,6 +142,22 @@ describe('desktop window Action result transport', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
+    it('waits for a slow notch send after main acknowledges it', async () => {
+        vi.useFakeTimers();
+        const pending = executeDesktopActivityOverlayInteractionWithResult({
+            requestId: 'slow-reply', actionIdentifier: 'session.message.send', data: {},
+        });
+        await Promise.resolve();
+        const receive = host.listeners.get('desktopWindow://action-result')!;
+        receive({ windowLabel: 'activity_overlay', requestId: 'slow-reply', phase: 'admitted', ok: true });
+
+        await vi.advanceTimersByTimeAsync(10_001);
+        receive({ windowLabel: 'activity_overlay', requestId: 'slow-reply', phase: 'settled', ok: true });
+        await expect(pending).resolves.toMatchObject({ ok: true });
+        expect(host.listeners.size).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
     it('carries the native caller refusal through the requesting window without leaking an opaque exception', async () => {
         host.invoke.mockRejectedValueOnce('desktop_window_action_source_refused');
         await expect(executeDesktopWindowActionWithResult({

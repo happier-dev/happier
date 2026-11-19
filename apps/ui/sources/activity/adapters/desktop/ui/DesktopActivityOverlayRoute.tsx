@@ -19,7 +19,6 @@ import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/r
 import { Text } from '@/components/ui/text/Text';
 import { measureRectInContainer, RectFlightLayer, unionFlightRects, useRectFlight, type FlightRect } from '@/components/ui/motion/rectFlight';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -436,12 +435,10 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                 actionIdentifier: action.actionIdentifier,
                 data: { ...action.data },
             });
-            if (result.ok) return true;
-            Modal.alert(t('common.error'), result.error ?? t('errors.operationFailed'));
-        } catch (error) {
-            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed'));
+            return result.ok ? { ok: true } : { ok: false, errorCode: result.errorCode };
+        } catch {
+            return { ok: false };
         }
-        return false;
     }, []);
     // A side dock draws no word, so its name says how many need you.
     const accessibilityLabel = composeDesktopActivityOverlayAccessibilityLabel([

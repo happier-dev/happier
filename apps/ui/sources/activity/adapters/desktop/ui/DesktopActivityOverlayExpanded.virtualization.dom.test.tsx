@@ -103,7 +103,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
         } satisfies Extract<DesktopActivityOverlayExpandedCard, { kind: 'permission_request' }>;
         const element = (cards: readonly DesktopActivityOverlayExpandedCard[]) => <div id="virtualized-list-host">
             <DesktopActivityOverlayExpanded visualMode="floating_overlay" maxHeight={400}
-                model={{ expanded: { title: 'Bots', rows: [], cards } }} onOpenSession={() => {}} onAction={() => true}
+                model={{ expanded: { title: 'Bots', rows: [], cards } }} onOpenSession={() => {}} onAction={() => ({ ok: true })}
                 bots={{ faces, handlers: { onOpen: () => {}, onOpenIn: () => {} } }} />
         </div>;
         await act(async () => harness.root.render(element([card])));
@@ -144,7 +144,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
         } satisfies Extract<DesktopActivityOverlayExpandedCard, { kind: 'user_question' }>;
         await act(async () => harness.root.render(<div id="virtualized-list-host">
             <DesktopActivityOverlayExpanded visualMode="floating_overlay" maxHeight={400}
-                model={{ expanded: { title: 'Bots', rows: [], cards: [card] } }} onOpenSession={() => {}} onAction={() => true}
+                model={{ expanded: { title: 'Bots', rows: [], cards: [card] } }} onOpenSession={() => {}} onAction={() => ({ ok: true })}
                 bots={{ faces, handlers: { onOpen: () => {}, onOpenIn: () => {} } }} />
         </div>));
         await harness.flush();
@@ -176,7 +176,7 @@ describe('DesktopActivityOverlayExpanded viewport mounting', () => {
         } satisfies Extract<DesktopActivityOverlayExpandedCard, { kind: 'permission_request' }>));
         const element = (inventory: readonly DesktopActivityOverlayExpandedCard[]) => <DesktopActivityOverlayExpandedCards
             visualMode="floating_overlay" model={{ expanded: { title: 'Conversation', rows: [], cards: inventory } }}
-            onOpenSession={() => {}} onAction={() => true} />;
+            onOpenSession={() => {}} onAction={() => ({ ok: true })} />;
         await act(async () => harness.root.render(element(cards)));
         const action = (id: string) => harness.container.querySelector<HTMLElement>(`[data-testid="${resolveDesktopActivityOverlayCardActionInstanceTestID(id, 'allow')}"]`);
         await act(async () => action('first')!.click());

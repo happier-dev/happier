@@ -7,7 +7,7 @@ import { buildSessionPermissionChoiceActionAnswer, type SessionPermissionChoice 
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { listenDesktopWindowAction } from '@/utils/platform/desktopWindowActionBridge';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { emitDesktopActivityOverlayInteractionResult } from './desktopActivityOverlayBridge';
+import { acknowledgeDesktopActivityOverlayInteraction, emitDesktopActivityOverlayInteractionResult } from './desktopActivityOverlayBridge';
 
 /** Main hosts the same request-owned MCP controller as the Session; the auxiliary webview has no Sync. */
 export function DesktopActivityOverlayMcpPermission(props: Readonly<{
@@ -34,8 +34,9 @@ export function DesktopActivityOverlayMcpPermission(props: Readonly<{
             if (disposed || payload.windowLabel !== 'activity_overlay' || payload.actionIdentifier !== 'overlay-mcp-always-allow'
                 || payload.data.serverId !== props.scope.serverId || payload.data.sessionId !== props.sessionId
                 || payload.data.requestId !== props.requestId || payload.data.turnId !== props.turnId) return;
+            acknowledgeDesktopActivityOverlayInteraction(payload.requestId);
             fireAndForget((async () => {
-                const result = await latest.current.allow();
+                const result = await latest.current.allow().catch(() => null);
                 const ok = result?.status === 'saved';
                 const errorCode = result?.errorCode ?? 'mcp_always_allow_unavailable';
                 if (payload.requestId) await emitDesktopActivityOverlayInteractionResult({ requestId: payload.requestId, ok,

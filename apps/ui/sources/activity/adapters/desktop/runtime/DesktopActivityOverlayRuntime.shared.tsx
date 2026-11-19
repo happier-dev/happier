@@ -44,6 +44,7 @@ import { registerMountedDesktopOverlayPresentation, type DesktopOverlayPresentat
 import {
     emitDesktopActivityOverlayInteractionResult,
     showDesktopMainWindow,
+    acknowledgeDesktopActivityOverlayInteraction,
     syncDesktopActivityOverlay,
     type DesktopActivityOverlaySyncPayload,
 } from './desktopActivityOverlayBridge';
@@ -649,6 +650,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 surfaceName: 'desktop_overlay',
             });
             let command = sharedCommand;
+            let requestId = readRequestIdFromInteraction(payload);
             const directActionCommand = buildVerifiedDesktopDirectActionCommand({
                 actionIdentifier,
                 payload,
@@ -657,13 +659,13 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             if (directActionCommand) {
                 command = directActionCommand;
             } else if (DESKTOP_OVERLAY_DIRECT_ACTION_IDS.has(actionIdentifier)) {
-                const requestId = readRequestIdFromInteraction(payload);
                 const serverUrl = readServerUrlFromInteraction(payload);
                 emitDirectActionInteractionResult(requestId, {
                     ok: false,
                     errorCode: 'unsafe_server_scope',
                     error: 'unsafe_server_scope',
                 });
+                requestId = null;
                 const fallbackSessionId = readSessionIdFromInteraction(payload) ?? currentSnapshot.primary?.sessionId ?? '';
                 const currentSource = context.source;
                 const fallbackServerId = resolveServerIdForSessionIdFromLocalState({
@@ -688,7 +690,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                     : sharedCommand;
             }
             if (command.kind === 'executeAction') {
-                const requestId = readRequestIdFromInteraction(payload);
+                acknowledgeDesktopActivityOverlayInteraction(requestId);
                 fireAndForget((async () => {
                     try {
                         const serverId = resolveActionContextServerId(command.identity?.serverId ?? command.target.serverId);
@@ -713,15 +715,16 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 return;
             }
 
+            const routeRequestId = command.kind === 'openSession' ? requestId : null;
+            acknowledgeDesktopActivityOverlayInteraction(routeRequestId);
             fireAndForget((async () => {
-                const requestId = command.kind === 'openSession' ? readRequestIdFromInteraction(payload) : null;
                 try {
                     await showDesktopMainWindow();
                     router.push(admitInternalRouteHref(command.route));
                     setDetailAddresses(null);
-                    emitDirectActionInteractionResult(requestId, { ok: true });
+                    emitDirectActionInteractionResult(routeRequestId, { ok: true });
                 } catch (error) {
-                    emitDirectActionInteractionError(requestId, error);
+                    emitDirectActionInteractionError(routeRequestId, error);
                 }
             })(), {
                 tag: 'DesktopActivityOverlayRuntime.showMainWindow.beforeRoute',

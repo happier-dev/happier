@@ -35,7 +35,7 @@ export type DesktopWindowActionResult = Readonly<{
     errorCode?: string;
     error?: string;
 }>;
-/** Retires a presenter's wait, never an already admitted main-renderer operation. */
+/** The optional deadline covers admission. Abort retires only the presenter's wait. */
 export type DesktopWindowActionWaitOptions = Readonly<{ timeoutMs?: number; signal?: AbortSignal }>;
 
 export const DESKTOP_WINDOW_ACTION_EVENTS = {
@@ -51,6 +51,10 @@ export function emitDesktopWindowAction(payload: DesktopWindowActionRequest): Pr
 
 export function emitDesktopWindowActionResult(payload: DesktopWindowActionResult): Promise<void> {
     return invokeDesktopHost<void>('desktop_window_emit_action_result', { payload });
+}
+
+export function emitDesktopWindowActionAcknowledgement(address: Pick<DesktopWindowActionResult, 'windowLabel' | 'requestId'>): Promise<void> {
+    return emitDesktopWindowActionResult({ ...address, phase: 'admitted', ok: true });
 }
 
 export function listenDesktopWindowAction(handler: (request: DesktopWindowActionRequest) => void): Promise<() => void> {
@@ -93,10 +97,15 @@ export function executeDesktopWindowActionWithResult(
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let dispose: (() => void) | null = null;
     return new Promise(resolve => {
+        const clearAcknowledgementDeadline = () => {
+            if (timeoutId === null) return;
+            clearTimeout(timeoutId);
+            timeoutId = null;
+        };
         const settle = (result: DesktopWindowActionResult) => {
             if (settled) return;
             settled = true;
-            if (timeoutId !== null) clearTimeout(timeoutId);
+            clearAcknowledgementDeadline();
             dispose?.();
             options.signal?.removeEventListener('abort', retire);
             resolve(result);
@@ -114,7 +123,12 @@ export function executeDesktopWindowActionWithResult(
             }), options.timeoutMs);
         }
         void listenDesktopWindowActionResult(result => {
-            if (result.windowLabel === payload.windowLabel && result.requestId === requestId && result.phase !== 'admitted') settle(result);
+            if (result.windowLabel !== payload.windowLabel || result.requestId !== requestId) return;
+            if (result.phase === 'admitted') {
+                clearAcknowledgementDeadline();
+                return;
+            }
+            settle(result);
         }).then(nextDispose => {
             if (settled) { nextDispose(); return; }
             dispose = nextDispose;

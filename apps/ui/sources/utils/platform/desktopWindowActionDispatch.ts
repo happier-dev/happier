@@ -1,7 +1,7 @@
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ScreenCaptureOpenInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
-import { DESKTOP_CAPTURE_NEW_SESSION, DESKTOP_CAPTURE_OPEN_SESSION, DESKTOP_CAPTURE_OPEN_SETTINGS, DESKTOP_CAPTURE_SESSION_CHOOSER_READ, emitDesktopWindowActionResult, isCaptureWindowLabel, type DesktopWindowActionRequest } from './desktopWindowActionBridge';
+import { DESKTOP_CAPTURE_NEW_SESSION, DESKTOP_CAPTURE_OPEN_SESSION, DESKTOP_CAPTURE_OPEN_SETTINGS, DESKTOP_CAPTURE_SESSION_CHOOSER_READ, emitDesktopWindowActionAcknowledgement, emitDesktopWindowActionResult, isCaptureWindowLabel, type DesktopWindowActionRequest } from './desktopWindowActionBridge';
 
 // This is the Capture webview's capability surface, not a second Action catalog.
 const CAPTURE_WINDOW_ACTION_IDS = [
@@ -42,7 +42,7 @@ export async function dispatchDesktopCaptureWindowAction(
         await emitDesktopWindowActionResult({ ...address, phase: 'settled', ok: false, errorCode: admission.errorCode });
         return;
     }
-    await emitDesktopWindowActionResult({ ...address, phase: 'admitted', ok: true });
+    await emitDesktopWindowActionAcknowledgement(address);
     try {
         let data = request.data;
         let context: Readonly<{ surface: 'ui'; serverId?: string; runtimeAccountId?: string }> = { surface: 'ui' };

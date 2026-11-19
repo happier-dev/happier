@@ -161,7 +161,7 @@ const showDesktopMainWindowMock = vi.hoisted(
 const discardCaptureMock = vi.hoisted(() => vi.fn<(captureRef: unknown) => Promise<void>>(async () => {}));
 const routerPushMock = vi.hoisted(() => vi.fn());
 const emitDesktopActivityOverlayInteractionResultMock = vi.hoisted(
-    () => vi.fn<(payload: { requestId: string; ok: boolean; errorCode?: string; error?: string }) => Promise<void>>(async () => {}),
+    () => vi.fn<(payload: import('@/utils/platform/desktopWindowActionBridge').DesktopWindowActionResult) => Promise<void>>(async () => {}),
 );
 const actionExecutorExecuteMock = vi.hoisted(
     () => vi.fn<(actionId: string, input: unknown, context: unknown) => void>(),
@@ -1067,7 +1067,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
     });
 
-    it('acknowledges a request-bearing legacy completion Open after showing and routing its Session', async () => {
+    it('acknowledges legacy completion Open before the window shows and settles after routing', async () => {
         const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
         await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
         let finishShowing!: () => void;
@@ -1080,7 +1080,10 @@ describe('DesktopActivityOverlayRuntime', () => {
                 data: { serverId: 'server-1', sessionId: 'session-1' },
             });
         });
-        expect(emitDesktopActivityOverlayInteractionResultMock).not.toHaveBeenCalled();
+        expect(emitDesktopActivityOverlayInteractionResultMock.mock.calls.map(([result]) => result)).toEqual([
+            { windowLabel: 'activity_overlay', requestId: 'completion-open', phase: 'admitted', ok: true },
+        ]);
+        expect(routerPushMock).not.toHaveBeenCalled();
 
         await act(async () => { finishShowing(); });
         expect(routerPushMock).toHaveBeenCalledWith('/session/session-1?serverId=server-1');
@@ -1088,7 +1091,7 @@ describe('DesktopActivityOverlayRuntime', () => {
             windowLabel: 'activity_overlay', requestId: 'completion-open', ok: true,
         });
         expect(routerPushMock.mock.invocationCallOrder[0]).toBeLessThan(
-            emitDesktopActivityOverlayInteractionResultMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+            emitDesktopActivityOverlayInteractionResultMock.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
         );
     });
 
@@ -1132,6 +1135,7 @@ describe('DesktopActivityOverlayRuntime', () => {
                     sessionId: 'session-1',
                     serverId: 'server-1',
                     message: 'Continue',
+                    localId: 'notch-reply-1',
                 },
             });
         });
@@ -1173,6 +1177,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(quickReplyCall?.[1]).toEqual(expect.objectContaining({
             sessionId: 'session-1',
             message: 'Continue',
+            localId: 'notch-reply-1',
         }));
         expect(quickReplyCall?.[1]).not.toHaveProperty('serverId');
         expect(quickReplyCall?.[2]).toEqual(
@@ -1333,6 +1338,9 @@ describe('DesktopActivityOverlayRuntime', () => {
             ?.find(card => card.kind === 'permission_request')?.actions?.some(action => action.id === 'mcp_always_allow')).toBe(true));
         await act(async () => dispatchDesktopInteraction({ requestId: 'mcp-click', actionIdentifier: 'overlay-mcp-always-allow',
             data: { sessionId: 'session-1', serverId: 'server-1', requestId: 'permission-1' } }));
+        expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenNthCalledWith(1, {
+            windowLabel: 'activity_overlay', requestId: 'mcp-click', phase: 'admitted', ok: true,
+        });
         await waitForHomeGovernance(() => expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenCalledWith({
             windowLabel: 'activity_overlay', requestId: 'mcp-click', ok: false,
             errorCode: 'permission_answer_failed', error: 'permission_answer_failed',
@@ -1377,6 +1385,9 @@ describe('DesktopActivityOverlayRuntime', () => {
             }),
         );
         expect(actionExecutorExecuteMock.mock.calls[0]?.[1]).not.toHaveProperty('serverId');
+        expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenNthCalledWith(1, {
+            windowLabel: 'activity_overlay', requestId: 'permission-request-1', phase: 'admitted', ok: true,
+        });
         await waitForHomeGovernance(() => expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenCalledWith({
             windowLabel: 'activity_overlay',
             requestId: 'permission-request-1',
@@ -1583,13 +1594,14 @@ describe('DesktopActivityOverlayRuntime', () => {
         await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
 
         const handler = dispatchDesktopInteraction as
-            | ((payload: { actionIdentifier: string; data?: Record<string, unknown> }) => void)
+            | ((payload: { requestId?: string; actionIdentifier: string; data?: Record<string, unknown> }) => void)
             | undefined;
 
         expect(handler).toBeTypeOf('function');
 
         await act(async () => {
             handler?.({
+                requestId: 'unsafe-send',
                 actionIdentifier: 'session.message.send',
                 data: {
                     sessionId: 'session-1',
@@ -1603,6 +1615,10 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(showDesktopMainWindowMock).toHaveBeenCalledTimes(1);
         expect(routerPushMock).toHaveBeenCalledWith('/session/session-1?serverId=server-1');
         expect(setDesktopActivityOverlayExpandedMock).not.toHaveBeenCalled();
+        expect(emitDesktopActivityOverlayInteractionResultMock.mock.calls.map(([result]) => result)).toEqual([{
+            windowLabel: 'activity_overlay', requestId: 'unsafe-send', ok: false,
+            errorCode: 'unsafe_server_scope', error: 'unsafe_server_scope',
+        }]);
     });
 
     it('disposes a late-resolving interaction listener when runtime unmounts before subscription resolves', async () => {

@@ -782,7 +782,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                 visualMode="notch_integrated"
                 model={createModel({ expanded: { title: 'Actions', rows: [], cards: [card] } })}
                 onOpenSession={() => {}}
-                onAction={() => true}
+                onAction={() => ({ ok: true })}
             />,
         );
 

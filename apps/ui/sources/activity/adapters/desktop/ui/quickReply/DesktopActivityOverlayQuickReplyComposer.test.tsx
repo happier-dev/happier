@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import * as React from 'react';
+import type { DesktopActivityOverlayActionOutcome } from '../shared/desktopActivityOverlayUiModel';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -37,7 +38,7 @@ function deferred<T>() {
 }
 
 /** The route's shape: the draft is held above the composer and handed back on every change. */
-async function renderComposer(onSend: (message: string) => Promise<boolean>) {
+async function renderComposer(onSend: (message: string, localId: string) => Promise<DesktopActivityOverlayActionOutcome>) {
   const { DesktopActivityOverlayQuickReplyComposer } =
     await import('./DesktopActivityOverlayQuickReplyComposer');
   const drafts: string[] = [];
@@ -75,17 +76,17 @@ async function renderComposer(onSend: (message: string) => Promise<boolean>) {
 
 describe('DesktopActivityOverlayQuickReplyComposer', () => {
   it('keeps what was typed while a reply was being sent', async () => {
-    const pending = deferred<boolean>();
+    const pending = deferred<DesktopActivityOverlayActionOutcome>();
     const onSend = vi.fn(() => pending.promise);
     const composer = await renderComposer(onSend);
 
     await composer.type('Quarantine it');
     await composer.send();
-    expect(onSend).toHaveBeenCalledWith('Quarantine it');
+    expect(onSend).toHaveBeenCalledWith('Quarantine it', expect.any(String));
 
     await composer.type('And file a bug for the wait');
     await act(async () => {
-      pending.resolve(true);
+      pending.resolve({ ok: true });
       await pending.promise;
     });
     await flushHookEffects();
@@ -94,7 +95,7 @@ describe('DesktopActivityOverlayQuickReplyComposer', () => {
   });
 
   it('clears the reply that went out', async () => {
-    const composer = await renderComposer(async () => true);
+    const composer = await renderComposer(async () => ({ ok: true }));
     await composer.type('Quarantine it');
     await composer.send();
     await flushHookEffects();
@@ -102,7 +103,7 @@ describe('DesktopActivityOverlayQuickReplyComposer', () => {
   });
 
   it('sends once while a send is in flight', async () => {
-    const pending = deferred<boolean>();
+    const pending = deferred<DesktopActivityOverlayActionOutcome>();
     const onSend = vi.fn(() => pending.promise);
     const composer = await renderComposer(onSend);
 
@@ -121,7 +122,7 @@ describe('DesktopActivityOverlayQuickReplyComposer', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      pending.resolve(true);
+      pending.resolve({ ok: true });
       await pending.promise;
     });
   });

@@ -20,8 +20,8 @@ import { captureSessionDraftCurrentness, clearSessionMessagingDraftMutationAttem
     getOrCreateSessionMessagingDraftMutationAttempt } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { resolveAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { sendableAttachmentDrafts } from '@/components/sessions/attachments/attachmentDraftModel';
-import { captureSessionComposerMessageAttachments, readSessionComposerMessageAdmission,
-    type AdmittedSessionComposerMessageResult } from './sessionComposerMessaging';
+import { captureSessionComposerMessageAttachments } from './sessionComposerMessaging';
+import { readSessionComposerMessageAdmission, type AdmittedSessionComposerMessageResult } from './readSessionComposerMessageAdmission';
 
 export type SessionDraftSubmitResult = ActionExecuteFailure | Readonly<{ ok: true; result: AdmittedSessionComposerMessageResult }>;
 

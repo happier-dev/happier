@@ -4,7 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { TextInput } from '@/components/ui/text/Text';
+import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
 import {
@@ -19,6 +21,8 @@ import {
 import type { DesktopActivityOverlayPressableInteractionState } from '../DesktopActivityOverlayPressableInteractionState';
 import type { DesktopActivityOverlayFocusTargetRef } from '../resolveDesktopActivityOverlayInitialFocusTarget';
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
+import type { DesktopActivityOverlayActionOutcome } from '../shared/desktopActivityOverlayUiModel';
+import { readDesktopActivityOverlayActionFailureReason } from '../shared/readDesktopActivityOverlayActionFailureReason';
 import { Icon } from '@/components/ui/icons/Icon';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { setDesktopActivityOverlayKeyboardWanted } from '../../runtime/desktopActivityOverlayBridge';
@@ -34,6 +38,8 @@ type WebStopPropagationProps = Readonly<{
     onPointerDown: (event?: StopPropagationEvent) => void;
 }>;
 
+type ReplyFailure = Readonly<{ message: string; source: 'draft' | 'phrase'; localId: string; errorCode?: string }>;
+
 export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     visualMode: DesktopActivityOverlayVisualMode;
     phrases: readonly string[];
@@ -41,7 +47,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     /** Names who the reply goes to ("Reply to Flake hunter…"); the generic "Message" otherwise. */
     placeholder?: string;
     inputRef?: DesktopActivityOverlayFocusTargetRef;
-    onSend: (message: string) => boolean | Promise<boolean>;
+    onSend: (message: string, localId: string) => Promise<DesktopActivityOverlayActionOutcome>;
     onDraftChange?: (draft: string) => void;
     onDismissKey?: () => void;
 }>): React.ReactElement {
@@ -50,7 +56,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     const [localDraft, setLocalDraft] = React.useState('');
     const controlledDraft = props.draft;
     const draft = controlledDraft ?? localDraft;
-    const [sendFailed, setSendFailed] = React.useState(false);
+    const [failure, setFailure] = React.useState<ReplyFailure | null>(null);
     // The latest text, read when a send settles: anything typed while it was in flight is kept.
     const draftRef = React.useRef(draft);
     draftRef.current = draft;
@@ -83,19 +89,21 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
             return;
         }
         sendingRef.current = true;
+        // The owner may have admitted a reply whose result was lost. Retry that same Session input.
+        const localId = failure?.message === trimmedMessage && failure.source === source ? failure.localId : randomUUID();
         setSending(true);
-        setSendFailed(false);
-        let sent = false;
+        setFailure(null);
+        let outcome: DesktopActivityOverlayActionOutcome;
         try {
-            sent = await onSend(trimmedMessage);
+            outcome = await onSend(trimmedMessage, localId);
         } catch {
-            sent = false;
+            outcome = { ok: false };
         } finally {
             sendingRef.current = false;
             setSending(false);
         }
-        if (!sent) {
-            setSendFailed(true);
+        if (!outcome.ok) {
+            setFailure({ message: trimmedMessage, source, localId, errorCode: outcome.errorCode });
             return;
         }
         if (source === 'phrase') return;
@@ -109,7 +117,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
             setLocalDraft(remaining);
         }
         onDraftChange?.(remaining);
-    }, [controlledDraft, onDraftChange, onSend]);
+    }, [controlledDraft, failure, onDraftChange, onSend]);
 
     const handleChangeText = React.useCallback((nextDraft: string) => {
         draftRef.current = nextDraft;
@@ -207,14 +215,14 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     ))}
                 </View>
             ) : null}
-            {sendFailed ? (
-                <Text
+            {failure ? (
+                <SurfaceFreshnessLine
                     testID="desktop-activity-overlay-quick-reply-error"
-                    variant="meta"
-                    style={styles.errorText}
-                >
-                    {t('errors.failedToSendMessage')}
-                </Text>
+                    tone="warning"
+                    reason={readDesktopActivityOverlayActionFailureReason(failure.errorCode, t('errors.failedToSendMessage'))}
+                    action={{ label: t('common.retry'), testID: 'desktop-activity-overlay-quick-reply-retry',
+                        onPress: () => void sendMessage(failure.message, failure.source) }}
+                />
             ) : null}
         </View>
     );
@@ -265,8 +273,5 @@ const styles = StyleSheet.create((theme) => ({
     },
     disabledAction: {
         opacity: 0.45,
-    },
-    errorText: {
-        color: theme.colors.text.secondary,
     },
 }));

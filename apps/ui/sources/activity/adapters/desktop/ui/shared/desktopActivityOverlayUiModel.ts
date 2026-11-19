@@ -4,8 +4,9 @@ import type {
 } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import type { DesktopActivityOverlayActionDescriptor } from '@/activity/adapters/desktop/presentation/model/desktopActivityOverlayModelTypes';
 
-/** True means the addressed action completed successfully. */
-export type DesktopActivityOverlayActionHandler = (action: DesktopActivityOverlayActionDescriptor) => boolean | Promise<boolean>;
+export type DesktopActivityOverlayActionOutcome = Readonly<{ ok: true } | { ok: false; errorCode?: string }>;
+export type DesktopActivityOverlayActionHandler = (action: DesktopActivityOverlayActionDescriptor) =>
+    DesktopActivityOverlayActionOutcome | Promise<DesktopActivityOverlayActionOutcome>;
 
 export type {
     DesktopActivityOverlayExpandedCard,

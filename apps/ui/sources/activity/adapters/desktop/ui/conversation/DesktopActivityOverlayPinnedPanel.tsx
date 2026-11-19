@@ -2,11 +2,13 @@ import * as React from 'react';
 
 import { executeDesktopActivityOverlayInteractionWithResult } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import { useDesktopActivityOverlayField } from '@/activity/adapters/desktop/runtime/useDesktopActivityOverlayState';
+import { readSessionComposerMessageAdmission } from '@/components/sessions/composer/readSessionComposerMessageAdmission';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import type { DesktopActivityOverlayFocusTargetRef } from '../resolveDesktopActivityOverlayInitialFocusTarget';
 import type {
-    DesktopActivityOverlayActionHandler,
+  DesktopActivityOverlayActionHandler,
+  DesktopActivityOverlayActionOutcome,
   DesktopActivityOverlayUiModel,
 } from '../shared/desktopActivityOverlayUiModel';
 import { DesktopActivityOverlayConversation } from './DesktopActivityOverlayConversation';
@@ -84,25 +86,20 @@ export function DesktopActivityOverlayPinnedPanel(
     [conversation, onExtract],
   );
   const send = React.useCallback(
-    async (message: string) => {
-      if (!conversation) return false;
-      try {
-        const result = await executeDesktopActivityOverlayInteractionWithResult(
-          {
-            actionIdentifier: 'session.message.send',
-            data: {
-              sessionId: conversation.sessionId,
-              message,
-              ...(conversation.serverId
-                ? { serverId: conversation.serverId }
-                : {}),
-            },
-          },
-        );
-        return result.ok;
-      } catch {
-        return false;
-      }
+    async (message: string, localId: string): Promise<DesktopActivityOverlayActionOutcome> => {
+      if (!conversation) return { ok: false };
+      const result = await executeDesktopActivityOverlayInteractionWithResult({
+        actionIdentifier: 'session.message.send',
+        data: {
+          sessionId: conversation.sessionId,
+          message,
+          localId,
+          ...(conversation.serverId ? { serverId: conversation.serverId } : {}),
+        },
+      });
+      if (!result.ok) return { ok: false, errorCode: result.errorCode };
+      const admission = readSessionComposerMessageAdmission(result.result);
+      return admission.kind === 'accepted' ? { ok: true } : { ok: false, errorCode: admission.code };
     },
     [conversation],
   );

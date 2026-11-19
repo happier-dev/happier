@@ -29,7 +29,7 @@ const emitDesktopActivityOverlayInteractionMock = vi.hoisted(
     () => vi.fn<(payload: { actionIdentifier: string; data: Record<string, unknown> }) => Promise<void>>(async () => {}),
 );
 const executeDesktopActivityOverlayInteractionWithResultMock = vi.hoisted(
-    () => vi.fn<(payload: { actionIdentifier: string; data: Record<string, unknown> }) => Promise<{ requestId: string; ok: boolean; result?: unknown }>>(
+    () => vi.fn<(payload: { actionIdentifier: string; data: Record<string, unknown> }) => Promise<{ requestId: string; ok: boolean; result?: unknown; errorCode?: string; error?: string }>>(
         async () => ({ requestId: 'test-request', ok: true }),
     ),
 );
@@ -244,7 +244,10 @@ describe('DesktopActivityOverlayRoute', () => {
         isDesktopHostMock.mockReturnValue(true);
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
         listenDesktopActivityOverlayWindowStateMock.mockImplementation(async () => () => {});
-        executeDesktopActivityOverlayInteractionWithResultMock.mockImplementation(async () => ({ requestId: 'test-request', ok: true }));
+        executeDesktopActivityOverlayInteractionWithResultMock.mockImplementation(async ({ actionIdentifier, data }) => ({
+            requestId: 'test-request', ok: true,
+            ...(actionIdentifier === 'session.message.send' ? { result: { status: 'accepted', localId: data.localId } } : {}),
+        }));
     });
 
     afterEach(() => {
@@ -255,6 +258,7 @@ describe('DesktopActivityOverlayRoute', () => {
         reducedMotion.value = false;
         presentDesktopActivityOverlayMock.mockReset();
         emitDesktopActivityOverlayInteractionMock.mockReset();
+        alertError.mockClear();
         executeDesktopActivityOverlayInteractionWithResultMock.mockReset();
         pointer.handler = null;
         presentation.handler = null;
@@ -482,7 +486,7 @@ describe('DesktopActivityOverlayRoute', () => {
     });
 
     it('keeps approval choices until the result succeeds, preserving them and the error on failure', async () => {
-        const response = createDeferred<{ requestId: string; ok: boolean; error?: string }>();
+        const response = createDeferred<{ requestId: string; ok: boolean; errorCode?: string; error?: string }>();
         executeDesktopActivityOverlayInteractionWithResultMock.mockReturnValueOnce(response.promise);
         const screen = await renderRoute(createWindowState({}, {
             rows: [],
@@ -504,14 +508,19 @@ describe('DesktopActivityOverlayRoute', () => {
         });
         expect(screen.findByTestId('desktop-activity-overlay-card-answered-permission-1')).toBeNull();
         expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-1', 'allow'))).toBeTruthy();
-        await act(async () => { response.resolve({ requestId: 'r', ok: false, error: 'Approval could not be delivered' }); });
+        await act(async () => { response.resolve({ requestId: 'r', ok: false, errorCode: 'ack_timeout', error: 'ack_timeout' }); });
         expect(screen.findByTestId('desktop-activity-overlay-card-answered-permission-1')).toBeNull();
         expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-1', 'allow'))).toBeTruthy();
-        expect(alertError).toHaveBeenCalledWith('common.error', 'Approval could not be delivered');
+        expect(alertError).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('errors.connectionTimeout');
+        expect(screen.getTextContent()).not.toContain('ack_timeout');
 
-        await act(async () => { screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-1', 'allow')); });
+        await act(async () => { screen.pressByTestId('desktop-activity-overlay-card-retry-permission-1'); });
+        expect(executeDesktopActivityOverlayInteractionWithResultMock.mock.calls).toHaveLength(2);
+        expect(executeDesktopActivityOverlayInteractionWithResultMock.mock.calls[1]).toEqual(executeDesktopActivityOverlayInteractionWithResultMock.mock.calls[0]);
         expect(screen.findByTestId('desktop-activity-overlay-card-answered-permission-1')).toBeTruthy();
         expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID('permission-1', 'allow'))).toBeNull();
+        expect(screen.findByTestId('desktop-activity-overlay-card-retry-permission-1')).toBeNull();
     });
 
     it('takes the keyboard when Other opens its answer field, and not for an answer chip', async () => {
@@ -1008,7 +1017,7 @@ describe('DesktopActivityOverlayRoute', () => {
             await flushHookEffects();
             expect(executeDesktopActivityOverlayInteractionWithResultMock).toHaveBeenLastCalledWith({
                 actionIdentifier: 'session.message.send',
-                data: { sessionId: 'bot-flake', serverId: 'server-1', message: 'Keep the full reply' },
+                data: { sessionId: 'bot-flake', serverId: 'server-1', message: 'Keep the full reply', localId: expect.any(String) },
             });
             expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')?.props.value).toBe('');
         });
@@ -1110,12 +1119,26 @@ describe('DesktopActivityOverlayRoute', () => {
                 invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-quick-reply-input'), 'onChangeText', message);
             });
             await flushHookEffects();
+            executeDesktopActivityOverlayInteractionWithResultMock.mockResolvedValueOnce({ requestId: 'send-refused', ok: true,
+                result: { status: 'rejected', code: 'session_input_target_unavailable' } });
             await act(async () => { screen.pressByTestId('desktop-activity-overlay-quick-reply-send'); });
+            await flushHookEffects();
+            expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')?.props.value).toBe(message);
+            expect(screen.findByTestId('desktop-activity-overlay-quick-reply-error')).toBeTruthy();
+            expect(alertError).not.toHaveBeenCalled();
+
+            const [send] = executeDesktopActivityOverlayInteractionWithResultMock.mock.calls[1]!;
+            expect(send).toEqual({ actionIdentifier: 'session.message.send',
+                data: { sessionId: 'bot-flake', serverId: 'server-1', message, localId: expect.any(String) } });
+            executeDesktopActivityOverlayInteractionWithResultMock.mockResolvedValueOnce({ requestId: 'send-settled', ok: true,
+                result: { status: 'accepted', localId: send.data.localId } });
+            await act(async () => { screen.pressByTestId('desktop-activity-overlay-quick-reply-retry'); });
             await flushHookEffects();
             expect(executeDesktopActivityOverlayInteractionWithResultMock.mock.calls.map(([request]) => request)).toEqual([
                 { actionIdentifier: 'approve-permission', data: permission },
-                { actionIdentifier: 'session.message.send', data: { sessionId: 'bot-flake', serverId: 'server-1', message } },
+                send, send,
             ]);
+            expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')?.props.value).toBe('');
         });
 
         it('goes back to how a pinned Bot is once it no longer asks', async () => {

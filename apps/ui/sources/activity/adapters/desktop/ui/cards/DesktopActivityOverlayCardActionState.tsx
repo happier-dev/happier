@@ -2,12 +2,15 @@ import * as React from 'react';
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
+import type { DesktopActivityOverlayActionDescriptor } from '../shared/desktopActivityOverlayUiModel';
+
 type CardActionState = Readonly<{
     answer: string | null;
+    failure: Readonly<{ action: DesktopActivityOverlayActionDescriptor; label: string; errorCode?: string }> | null;
     freeAnswerOpen: boolean;
     freeAnswer: string;
 }>;
-const EMPTY: CardActionState = { answer: null, freeAnswerOpen: false, freeAnswer: '' };
+const EMPTY: CardActionState = { answer: null, failure: null, freeAnswerOpen: false, freeAnswer: '' };
 type InventoryState = Readonly<Record<string, CardActionState>>;
 const CardActionStateContext = React.createContext<StoreApi<InventoryState> | null>(null);
 

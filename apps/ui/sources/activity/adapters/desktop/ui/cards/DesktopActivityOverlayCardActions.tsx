@@ -7,6 +7,7 @@ import { Typography } from '@/constants/Typography';
 import { RoundButton, type RoundButtonDisplay } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -26,6 +27,7 @@ import {
 } from '../desktopActivityOverlayKeyboard';
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
 import type { DesktopActivityOverlayActionDescriptor, DesktopActivityOverlayActionHandler } from '../shared/desktopActivityOverlayUiModel';
+import { readDesktopActivityOverlayActionFailureReason } from '../shared/readDesktopActivityOverlayActionFailureReason';
 import {
     resolveDesktopActivityOverlayCardActionInstanceTestID,
     resolveDesktopActivityOverlayCardActionKindTestID,
@@ -76,9 +78,12 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
 }>): React.ReactElement | null {
     // Keep the choices until the addressed action succeeds; failures remain retryable in place.
     const { state, update } = useDesktopActivityOverlayCardActionState(props.stateKey);
-    const { answer } = state;
+    const { answer, failure } = state;
     const answerWith = React.useCallback(async (action: DesktopActivityOverlayActionDescriptor, label: string) => {
-        if (await props.onAction?.(action)) update({ answer: label });
+        update({ failure: null });
+        const outcome = await props.onAction?.(action);
+        if (outcome?.ok) update({ answer: label, failure: null });
+        else if (outcome) update({ failure: { action, label, errorCode: outcome.errorCode } });
     }, [props.onAction, update]);
     if (props.actions.length === 0) {
         return null;
@@ -86,14 +91,11 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
     if (answer !== null) {
         return <DesktopActivityOverlayAnswered cardId={props.cardId} label={answer} />;
     }
-    if (props.layout === 'choices') {
-        return <DesktopActivityOverlayChoiceActions {...props} state={state} update={update} onAnswer={answerWith} />;
-    }
-    const ordered = [...props.actions].sort((left, right) => rankActionTone(left.tone) - rankActionTone(right.tone));
-
-    return (
+    const controls = props.layout === 'choices' ? (
+        <DesktopActivityOverlayChoiceActions {...props} state={state} update={update} onAnswer={answerWith} />
+    ) : (
         <View style={styles.decision}>
-            {ordered.map((action) => (
+            {[...props.actions].sort((left, right) => rankActionTone(left.tone) - rankActionTone(right.tone)).map((action) => (
                 <View
                     key={action.id}
                     testID={resolveDesktopActivityOverlayCardActionKindTestID(action.id)}
@@ -114,6 +116,19 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
                 </View>
             ))}
         </View>
+    );
+    return (
+        <>
+            {controls}
+            {failure ? (
+                <SurfaceFreshnessLine
+                    tone="warning"
+                    reason={readDesktopActivityOverlayActionFailureReason(failure.errorCode, t('errors.operationFailed'))}
+                    action={{ label: t('common.retry'), testID: `desktop-activity-overlay-card-retry-${props.cardId}`,
+                        onPress: () => void answerWith(failure.action, failure.label) }}
+                />
+            ) : null}
+        </>
     );
 }
 

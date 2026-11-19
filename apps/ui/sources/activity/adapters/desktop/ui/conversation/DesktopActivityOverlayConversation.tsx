@@ -112,7 +112,7 @@ export function DesktopActivityOverlayConversation(
     onRetryDraft: () => void;
     initialFocusRef?: DesktopActivityOverlayFocusTargetRef;
     onDraftChange: (draft: string) => void;
-    onSend: (message: string) => Promise<boolean>;
+    onSend: React.ComponentProps<typeof DesktopActivityOverlayQuickReplyComposer>['onSend'];
     onBack: () => void;
     onUnpin: () => void;
     /** Opens the same Session in its window; resolves whether a window opened or was focused. */
@@ -130,7 +130,7 @@ export function DesktopActivityOverlayConversation(
   const [extract, setExtract] = React.useState<'idle' | 'opening' | 'failed'>(
     'idle',
   );
-  const targetKey = `${conversation.serverId}:${conversation.sessionId}`;
+  const targetKey = JSON.stringify([conversation.serverId, conversation.accountId, conversation.sessionId]);
   React.useEffect(() => {
     setExtract('idle');
   }, [targetKey]);
