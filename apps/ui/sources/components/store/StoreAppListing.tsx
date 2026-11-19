@@ -174,11 +174,11 @@ export function StoreAppListing(
           size: formatMemory(memory),
         }),
       });
-    if (summary.license)
+    if (state.license)
       list.push({
         key: 'licence',
         label: t('capabilities.store.appPage.licenceLabel'),
-        value: summary.license,
+        value: state.license,
       });
     const kept = app.volumes.filter((volume) => volume.persistent).length;
     if (kept > 0)
@@ -194,7 +194,7 @@ export function StoreAppListing(
         value: t('capabilities.store.appPage.firstRunValue'),
       });
     return list;
-  }, [app, summary.license]);
+  }, [app, state.license]);
 
   // A catalog App's summary version pins its template catalog's content, not the App's own release: Versions shows
   // only a real release, never the content digest.
@@ -361,7 +361,7 @@ export function StoreAppListing(
           facts={{
             version: catalogFacts.version,
             versionNote: null,
-            license: summary.license ?? null,
+            license: state.license,
             sourceTitle: catalogFacts.sourceTitle,
             links: {
               ...(catalogFacts.repository

@@ -656,6 +656,32 @@ it('shows the ports and names the App declares in the person’s install review 
   }
 });
 
+it('exposes the exact App listing payload pin and leaves an absent licence absent', async () => {
+  const { StoreAppListing } = await import('./StoreAppListing');
+  const fixture = await createFixture();
+  const captured: { listing?: ReturnType<typeof useStoreAppListing> } = {};
+  function Listing() {
+    const state = useStoreAppListing({
+      selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true },
+    });
+    captured.listing = state;
+    return state.kind === 'ready' ? <StoreAppListing state={state} lifetime={fixture.lifetime}
+      pushed={false} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<Listing />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.listing:primary')).toBeTruthy());
+    const { listing } = captured;
+    if (listing?.kind !== 'ready') throw new Error('Expected the selected App listing');
+    expect(listing.templateRef.ref).toMatchObject({ kind: 'content', digest: /^sha256:[0-9a-f]{64}$/ });
+    expect(listing).toMatchObject({ catalogRef: listing.templateRef.ref, license: null });
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
+
 it('opens an App through the Store listing body in its native ready, needs-review and unavailable states', async () => {
   const fixture = await createFixture();
   const body = (itemId: string) => (

@@ -42,19 +42,24 @@ export type StoreAppCreateOutcome = StoreAppCreatedIdentity | StoreAppCreateFail
 type NativeRead = ReturnType<typeof useRegistryItem>;
 type ReadFacts = Pick<NativeRead, 'loading' | 'stale' | 'error' | 'status' | 'refresh'>;
 type ReviewPayload = Extract<RegistryItemPayloadV1, { kind: 'app'; state: 'needs_review' }>;
+type CatalogListingFacts = Readonly<{
+    item: RegistryItemV1;
+    catalogRef: Extract<RegistryItemPayloadV1, { kind: 'app' }>['ref'];
+    license: string | null;
+}>;
 
 export type StoreAppListingState = ReadFacts & (
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'unavailable' }>
-    | Readonly<{ kind: 'needs_review'; item: RegistryItemV1; diagnostics: ReviewPayload['diagnostics'];
-        reviewSource?: RegistryAppMappingV1; correctMappings: (correction: RegistryAppMappingV1) => void }>
-    | Readonly<{
-        kind: 'ready'; item: RegistryItemV1; app: DeploymentTemplateV1; templateRef: DeploymentTemplateRefV1;
+    | (CatalogListingFacts & Readonly<{ kind: 'needs_review'; diagnostics: ReviewPayload['diagnostics'];
+        reviewSource?: RegistryAppMappingV1; correctMappings: (correction: RegistryAppMappingV1) => void }>)
+    | (CatalogListingFacts & Readonly<{
+        kind: 'ready'; app: DeploymentTemplateV1; templateRef: DeploymentTemplateRefV1;
         appMappingCorrection?: RegistryAppMappingV1;
         prepare: (input: StoreAppPreparationInput, signal?: AbortSignal) => Promise<StoreAppPreparationOutcome>;
         create: (prepared: DeploymentPublishPrepareResultV1, choices: StoreAppCreateChoices, signal?: AbortSignal) => Promise<StoreAppCreateOutcome>;
         environmentHref: (input: StoreAppCreatedIdentity) => string;
-    }>
+    }>)
 );
 
 /** Native selected read → exact pin → explicit preparation. The presenter supplies no template/default policy. */
@@ -86,14 +91,15 @@ export function useStoreAppListing(input: Readonly<{
     }, [selectionKey, version]);
     const entry = React.useMemo(() => {
         if (!item || item.payload.kind !== 'app') return null;
+        const listing = { item, catalogRef: item.payload.ref, license: item.summary.license ?? null };
         if (item.payload.state === 'needs_review') return {
-            kind: 'needs_review' as const, item, diagnostics: item.payload.diagnostics,
+            ...listing, kind: 'needs_review' as const, diagnostics: item.payload.diagnostics,
             reviewSource: item.payload.reviewSource, correctMappings,
         };
         const templateRef = readStoreAppTemplateRef(item)!;
         const execute = createFrontDoorActionExecute();
         return {
-            kind: 'ready' as const, item, app: item.payload.app, templateRef, appMappingCorrection,
+            ...listing, kind: 'ready' as const, app: item.payload.app, templateRef, appMappingCorrection,
             prepare: (operand: StoreAppPreparationInput, signal?: AbortSignal) => prepareCatalogApp({
                 ...operand, serverId: input.lifetime.scope.serverId, templateRef, ...(appMappingCorrection ? { appMappingCorrection } : {}),
             }, signal),
