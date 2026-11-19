@@ -23,7 +23,7 @@ const DEFAULT_SCREEN_FRACTION: f64 = 0.85;
 const MAX_WINDOW_WIDTH_PX: f64 = 1500.0;
 
 #[cfg(desktop)]
-const MAX_WINDOW_HEIGHT_PX: f64 = 860.0;
+const MAX_WINDOW_HEIGHT_PX: f64 = 1000.0;
 
 #[cfg(desktop)]
 const MIN_WINDOW_WIDTH_PX: f64 = 520.0;
@@ -1125,7 +1125,7 @@ mod tests {
         };
         let (width, height) = compute_default_window_size(monitor);
         assert_eq!(width, MAX_WINDOW_WIDTH_PX);
-        assert_eq!(height, MAX_WINDOW_HEIGHT_PX);
+        assert_eq!(height, 1000.0);
     }
 
     #[test]
