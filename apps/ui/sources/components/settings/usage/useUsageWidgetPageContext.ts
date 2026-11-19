@@ -12,7 +12,7 @@ import { t } from '@/text';
 import type { UsageHistoryModel } from './useUsageHistory';
 import { describeUsageHistoryRead } from './widgets/usageBodyKit';
 import { applyUsageWidgetPageScope, describeUsageWidgetSlotValue, readUsageWidgetPageContext, readUsageWidgetPageScope, readUsageWidgetQueryOverrides, resolveUsageWidgetPageInitialQuery,
-    resolveUsageWidgetPeriod, type UsageWidgetPageInitialFilters, type UsageWidgetPageScope, type UsageWidgetQueryOverrides } from './usageWidgetPageContext';
+    resolveUsageWidgetPeriod, resolveUsagePageDefaultPeriod, type UsageWidgetPageInitialFilters, type UsageWidgetPageScope, type UsageWidgetQueryOverrides } from './usageWidgetPageContext';
 
 export type UsageWidgetPageContextInput = Readonly<{
     authority: ServerAccountScopeLifetime | null;
@@ -50,7 +50,7 @@ export function useUsageWidgetPageContext(input: UsageWidgetPageContextInput): U
         sessionId: input.sessionId,
         query: resolveUsageWidgetPageInitialQuery({ initialFilters: input.initialFilters, sessionId: input.sessionId,
             nowMs: input.nowMs ?? Date.now(), timeZoneOffsetMinutes: input.timeZoneOffsetMinutes ?? -new Date().getTimezoneOffset() }),
-        period: input.initialFilters?.period ?? '7days' as UsagePeriod,
+        period: input.initialFilters?.period ?? resolveUsagePageDefaultPeriod(input.sessionId),
         edited: false,
         retired: false,
         callerContext: undefined as ActionExecutorContext | undefined,

@@ -10,7 +10,14 @@ import { UsageWidgetPageScopeSchema } from './usageRouteParams';
 import { formatUsageCalendarPeriod } from '@/sync/domains/usage/usageCalendarPresentation';
 
 export type UsageWidgetPageScope = Pick<UsageQuery, 'period' | 'agents' | 'machines' | 'projects' | 'sources' | 'session' | 'costBasis'>;
-export type UsageWidgetPageInitialFilters = UsageFilterState & Readonly<{ scope?: UsageWidgetPageScope; layoutId?: string; queryOverrides?: UsageWidgetQueryOverrides }>;
+/** `period` is present only when the route carried one; the page's default is `resolveUsagePageDefaultPeriod`. */
+export type UsageWidgetPageInitialFilters = Omit<UsageFilterState, 'period'> & Readonly<{ period?: UsagePeriod; scope?: UsageWidgetPageScope; layoutId?: string;
+    queryOverrides?: UsageWidgetQueryOverrides }>;
+
+/** The one default period: the account page opens on the last 7 days, a Session's own page on the whole Session. */
+export function resolveUsagePageDefaultPeriod(sessionId?: string): UsagePeriod {
+    return sessionId === undefined ? '7days' : 'all';
+}
 export type UsageWidgetQueryOverrides = Omit<UsageQuery, keyof UsageWidgetPageScope | 'metric' | 'breakdown'>;
 
 export { parseUsageWidgetPageScope } from './usageRouteParams';
@@ -108,7 +115,7 @@ export function resolveUsageWidgetPageInitialQuery(input: Readonly<{
     const filters = input.initialFilters;
     const metric = filters?.metric ?? 'tokens';
     // A Session's own page reads that Session over its whole life unless its route narrowed the period (a Work autopsy link).
-    const period = filters?.period ?? (input.sessionId === undefined ? '7days' : 'all');
+    const period = filters?.period ?? resolveUsagePageDefaultPeriod(input.sessionId);
     const query = usageAnalyticsRequestToQuery({
         granularity: getUsagePeriodDefinition(period).granularity,
         timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,

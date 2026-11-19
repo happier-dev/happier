@@ -73,9 +73,8 @@ export function resolveUsagePageInitialFilters(
         try { scope = parseUsageWidgetPageScope(JSON.parse(scopeValue)); } catch { /* Malformed route input has no admitted scope. */ }
     }
 
-    const period = isUsagePeriod(periodValue)
-        ? periodValue
-        : '7days';
+    // A route without a period leaves it to the page's one default (`resolveUsagePageDefaultPeriod`).
+    const period = isUsagePeriod(periodValue) ? periodValue : undefined;
     const metric = VALID_METRICS.has(metricValue as UsageMetric)
         ? (metricValue as UsageMetric)
         : 'tokens';
@@ -93,7 +92,7 @@ export function resolveUsagePageInitialFilters(
         : null;
 
     return {
-        period,
+        ...(period === undefined ? {} : { period }),
         metric,
         costMode,
         focus,

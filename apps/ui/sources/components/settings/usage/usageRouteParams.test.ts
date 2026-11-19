@@ -64,6 +64,18 @@ describe('Usage route filter owner', () => {
         expect(next.metric).toBe('cost');
     });
 
+    it('opens a Session route that carries no period over the whole Session, and keeps a narrowed route period (review F-02)', () => {
+        const nowMs = Date.parse('2026-10-09T12:00:00Z');
+        const plain = resolveUsageWidgetPageInitialQuery({ sessionId: 's1', nowMs, timeZoneOffsetMinutes: 120,
+            initialFilters: resolveUsagePageInitialFilters({ id: 's1' }) });
+        expect(plain.period).toEqual({ relative: 'all' });
+        const narrowed = resolveUsageWidgetPageInitialQuery({ sessionId: 's1', nowMs, timeZoneOffsetMinutes: 120,
+            initialFilters: resolveUsagePageInitialFilters({ id: 's1', period: '30days' }) });
+        expect(narrowed.period).toEqual({ relative: '30days' });
+        const account = resolveUsageWidgetPageInitialQuery({ nowMs, timeZoneOffsetMinutes: 120, initialFilters: resolveUsagePageInitialFilters({}) });
+        expect(account.period).toEqual({ relative: '7days' });
+    });
+
     it('reads a Session over its whole life unless its route narrowed the period (USAGE-ACCEPT 1118 #17)', () => {
         const query = resolveUsageWidgetPageInitialQuery({ sessionId: 'admitted-session', nowMs: Date.parse('2026-10-09T12:00:00Z'), timeZoneOffsetMinutes: 120 });
         expect(query.period).toEqual({ relative: 'all' });
