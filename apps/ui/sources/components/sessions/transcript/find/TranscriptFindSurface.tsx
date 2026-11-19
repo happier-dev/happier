@@ -16,7 +16,7 @@ import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import { useReviewRunsComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
-import { collectStructuredMessageReviewRunIds, structuredMessageFindUsesSessionMessages } from '../structured/StructuredMessageBlock';
+import { collectStructuredMessageReviewRunTargets, structuredMessageFindUsesSessionMessages } from '../structured/StructuredMessageBlock';
 import { useWorkflowRunForToolUseId, resolveWorkflowRunHeadlineForToolUseId } from '@/components/sessions/workState/useSessionWorkflowActivity';
 import type { WorkflowRunDetailState } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
 import type { SessionTranscriptSource } from '../source/types';
@@ -189,13 +189,15 @@ function TranscriptFindActive(props: Props & Readonly<{
     const workflowMessages = React.useMemo(() => messages.filter((message): message is Extract<Message, {kind:'tool-call'}> =>
         props.source.kind === 'app' && message.kind === 'tool-call'
         && resolveWorkflowRunHeadlineForToolUseId(metadata, message.tool.id) !== null), [messages, metadata, props.source.kind]);
-    const reviewRunIds = React.useMemo(() => collectStructuredMessageReviewRunIds(messages, {
+    const reviewRunTargets = React.useMemo(() => collectStructuredMessageReviewRunTargets(messages, {
         canNavigate: props.source.navigate !== null, debugInformationEnabled,
     }), [messages, props.source.navigate, debugInformationEnabled]);
+    const reviewRunIds = React.useMemo(() => reviewRunTargets.map(target => target.runId), [reviewRunTargets]);
+    const reviewIdsByRunId = React.useMemo(() => Object.fromEntries(reviewRunTargets.map(target => [target.runId, target.reviewId])), [reviewRunTargets]);
     // Full transcript cards share their already-loaded scoped comments. Find never
     // creates an ambient Account read or starts a second review-loading path.
     const reviewSnapshots = useReviewRunsComments({ scope: accountScope, sessionId: props.sessionId,
-        runIds: reviewRunIds, enabled: false });
+        runIds: reviewRunIds, reviewIdsByRunId, enabled: false });
     const reviewComments = React.useMemo(() => new Map(reviewRunIds.map((id, index) => [id, reviewSnapshots[index]])),
         [reviewRunIds, reviewSnapshots]);
     const readReviewComments = React.useCallback((runId: string) => reviewComments.get(runId), [reviewComments]);
@@ -227,9 +229,10 @@ function TranscriptFindActive(props: Props & Readonly<{
     const corpus = React.useMemo<TranscriptFindCorpus>(() => ({
         messages, history, displayContexts,
         hasPendingText: workflowMessages.some((message) => !workflowDetails.get(message.id) || workflowDetails.get(message.id)?.state === 'loading')
-            || reviewRunIds.some((id) => !reviewComments.get(id) || ['idle', 'loading'].includes(reviewComments.get(id)!.status)),
+            || reviewRunIds.some((id) => !reviewComments.get(id) || ['idle', 'loading'].includes(reviewComments.get(id)!.status)
+                || reviewComments.get(id)?.cursor != null),
         hasUnreadableText: workflowMessages.some((message) => workflowDetails.get(message.id)?.state === 'missing')
-            || reviewRunIds.some((id) => reviewComments.get(id)?.status === 'failed'),
+            || reviewRunIds.some((id) => reviewComments.get(id)?.status === 'failed' || reviewComments.get(id)?.loadMoreFailed === true),
     }), [messages, history, displayContexts, workflowDetails, workflowMessages, reviewRunIds, reviewComments]);
     const visible = props.visible;
     React.useLayoutEffect(() => {

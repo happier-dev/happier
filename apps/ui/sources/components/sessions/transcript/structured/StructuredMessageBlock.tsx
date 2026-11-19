@@ -1,4 +1,5 @@
 import React from 'react';
+import type { reviewRunCommentsTargetFromFindings } from '@/sync/domains/reviews/comments/reviewRunComments';
 
 import type { MessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 
@@ -92,15 +93,15 @@ export function projectStructuredMessageFindText(message: Message, context: Stru
 }
 
 /** Full-mode review cards use only these validated descriptor-owned comment targets. */
-export function collectStructuredMessageReviewRunIds(messages: readonly Message[], context: Pick<StructuredFindTextContext, 'canNavigate' | 'debugInformationEnabled'> = {}): readonly string[] {
+export function collectStructuredMessageReviewRunTargets(messages: readonly Message[], context: Pick<StructuredFindTextContext, 'canNavigate' | 'debugInformationEnabled'> = {}): readonly ReturnType<typeof reviewRunCommentsTargetFromFindings>[] {
     if (context.canNavigate !== false) return [];
-    const runIds = new Set<string>();
+    const targets = new Map<string, ReturnType<typeof reviewRunCommentsTargetFromFindings>>();
     for (const message of messages) {
         const presentation = resolveStructuredMessagePresentation(message, context.debugInformationEnabled);
         if (presentation?.kind !== 'builtin') continue;
-        for (const runId of presentation.entry.reviewRunIds?.(presentation.payload) ?? []) runIds.add(runId);
+        for (const target of presentation.entry.reviewRunTargets?.(presentation.payload) ?? []) targets.set(target.runId, target);
     }
-    return [...runIds];
+    return [...targets.values()];
 }
 
 /** Only review-findings descriptors derive displayed rows from later transcript follow-ups. */

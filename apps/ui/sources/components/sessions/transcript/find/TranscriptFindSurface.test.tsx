@@ -18,10 +18,46 @@ import { revealTranscriptFindMatch } from './revealTranscriptFindMatch';
 import { createTranscriptFindModel, type TranscriptFindCorpus } from './useTranscriptFind';
 import { buildChatListItems } from '../../chatListItems';
 import { OlderLoadRetryOverlay } from '../OlderLoadRetryOverlay';
+import { createTestSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
+import { loadMoreReviewRunComments, loadReviewRunComments, resetReviewRunCommentsForTests } from '@/sync/domains/reviews/comments/reviewRunComments';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 afterEach(standardCleanup);
+afterEach(resetReviewRunCommentsForTests);
+
+it('keeps Find coverage partial until the shared Review comment window is complete', async () => {
+    const scope = { serverId: 'find-review-home', accountId: 'reader' };
+    const target = { scope, sessionId: 'find-review-session', runId: 'find-review-run' };
+    const message: Message = { kind: 'agent-text', id: 'find-review-message', localId: null, createdAt: 1,
+        text: '', meta: { happier: { kind: 'review_findings.v2', payload: {
+            runRef: { runId: target.runId, callId: 'call', backendId: 'claude', retentionPolicy: 'resumable' },
+            summary: 'needle', overviewMarkdown: 'needle', generatedAtMs: 1, findings: [], questions: [], assumptions: [],
+        } } } };
+    const source = createTestSessionTranscriptSource({ sessionId: target.sessionId, serverId: scope.serverId,
+        messages: [message], authorship: { viewerScope: scope, hasOtherNamedCollaborator: false } });
+    const items = buildChatListItems({ messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message }, pendingMessages: [] });
+    let corpus: TranscriptFindCorpus = { messages: [message], history: { isLoaded: true, hasOlder: false, isLoadingOlder: false } };
+    const model = createTranscriptFindModel({ readCorpus: () => corpus, loadPage: null,
+        jumpToTarget: async target => ({ status: 'scrolled', target }), reveal: async () => {} });
+    await loadReviewRunComments({ ...target, execute: async () => ({ items: [], cursor: null }) });
+    model.open(); model.setQuery('needle');
+    const screen = await renderScreen(<TranscriptFindSurface model={model} source={source}
+        sessionId={target.sessionId} serverId={scope.serverId} viewportRef={React.createRef()}
+        items={items} loadedMessages={[]} publishCorpus={next => { corpus = next; }} measureMessage={() => null} contentHeight={0}>
+        <View />
+    </TranscriptFindSurface>);
+    try {
+        expect(model.status).toMatchObject({ kind: 'results', coverage: 'complete' });
+        await act(async () => { await loadReviewRunComments({ ...target, execute: async () => ({ items: [], cursor: 'next' }) }); });
+        expect(model.status).toMatchObject({ kind: 'results', coverage: 'loaded' });
+        await act(async () => { await expect(loadMoreReviewRunComments({ ...target,
+            execute: async () => { throw new Error('offline'); } })).rejects.toThrow('review_run_comments_unavailable'); });
+        expect(model.status).toMatchObject({ kind: 'results', coverage: 'partialErrors' });
+        await act(async () => { await loadMoreReviewRunComments({ ...target, execute: async () => ({ items: [], cursor: null }) }); });
+        expect(model.status).toMatchObject({ kind: 'results', coverage: 'complete' });
+    } finally { await screen.unmount(); model.dispose(); }
+});
 
 describe('transcript Find surface registration', () => {
     it('withdraws addressed Find while retained ineligible and resumes its real controller when eligible again', async () => {

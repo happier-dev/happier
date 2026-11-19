@@ -1,4 +1,5 @@
 import React from 'react';
+import { reviewRunCommentsTargetFromFindings } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { z, type core } from 'zod/mini';
 import { t } from '@/text';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -74,7 +75,7 @@ export type StructuredMessageRegistryEntry<T> = Readonly<{
     schema: StructuredMessageSchema<T>;
     render: (payload: T, params: StructuredMessageRendererParams) => React.ReactElement | null;
     projectFindText: (payload: T, params: StructuredFindProjectionContext & Readonly<{ message: Message }>) => readonly StructuredFindTextBlock[] | null;
-    reviewRunIds?: (payload: T) => readonly string[];
+    reviewRunTargets?: (payload: T) => readonly ReturnType<typeof reviewRunCommentsTargetFromFindings>[];
     usesSessionMessages?: true;
 }>;
 
@@ -176,7 +177,7 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
             />
         ),
         projectFindText: (payload, params) => projectReviewFindingsFindText(payload, { ...params, reviewComments: params.readReviewComments?.(payload.runRef.runId) }),
-        reviewRunIds: (payload) => [payload.runRef.runId],
+        reviewRunTargets: (payload) => [reviewRunCommentsTargetFromFindings(payload)],
         usesSessionMessages: true,
     },
     {
@@ -190,7 +191,7 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
             />
         ),
         projectFindText: (payload, params) => projectReviewFindingsFindText(payload, { ...params, reviewComments: params.readReviewComments?.(payload.runRef.runId) }),
-        reviewRunIds: (payload) => [payload.runRef.runId],
+        reviewRunTargets: (payload) => [reviewRunCommentsTargetFromFindings(payload)],
         usesSessionMessages: true,
     },
     {
