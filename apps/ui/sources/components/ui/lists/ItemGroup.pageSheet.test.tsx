@@ -476,6 +476,31 @@ describe('Page row seams start at the text and run to the sheet trailing edge (P
         expect(rowSeams(screen, ['row-a'])).toEqual([{ start: inset, end: bleed }]);
         expect(rowDividers(screen, ['row-a'])).toEqual([theme.colors.border.subtle]);
     });
+
+    it('stops a flat list\'s row rule on the content edge too, not in the margin (Home Teams, TH-VISUAL-ACCEPT-16 D2)', async () => {
+        const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
+        const { PAGE_LIST_METRICS } = await import('./pageListMetrics');
+        // A browse list states its rows' order (`CollectionRows`), so each row draws the one list-row rule.
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page">
+                <ItemGroup title="Teams" surface="none">
+                    <presentation.HappierListRowFollowedContext.Provider value={true}>
+                        <Item testID="row-a" title="Northwind Platform" subtitle="Owner · 4 members" />
+                        {/* Home Teams and Home People draw catalog records. */}
+                        <Item testID="row-b" rowRole="catalogRow" title="Harbor Research" subtitle="Admin · 3 members" />
+                    </presentation.HappierListRowFollowedContext.Provider>
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        const ruleEnd = (testID: string) => {
+            const row = screen.findAllByTestId(testID).find((node) => typeof node.type === 'string');
+            const rule = row?.findAll((node) => node.props.testID === 'happier-list-row-rule')[0];
+            if (!rule) throw new Error(`Missing the row rule of ${testID}`);
+            return flattenTestStyle(rule.props.style).end;
+        };
+        const bleed = PAGE_LIST_METRICS.rowPaddingHorizontalPx - PAGE_LIST_METRICS.headingOpticalInsetPx;
+        expect({ page: ruleEnd('row-a'), catalog: ruleEnd('row-b') }).toEqual({ page: bleed, catalog: bleed });
+    });
 });
 
 describe('Item on a page sheet follows the whole sheet policy', () => {

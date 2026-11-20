@@ -1717,8 +1717,9 @@ function ItemRow(props: ItemProps & Readonly<{
         || (leftElementOutsidePressable && Boolean(leftAccessory))
         || (Boolean(bottomElement) && bottomElementOutsidePressable));
     const fillMargins = ruleOutsideFill ? readHorizontalMargins(pressableStyle) : NO_MARGINS;
+    // A bare section's row bleeds into the margin; its rule still stops on the content's trailing edge (TH-VISUAL-ACCEPT-16 D2).
     const listRule = listRuleShown ? <HappierListRowRule startPx={listRuleStartPx + fillMargins.start}
-        endPx={fillMargins.end} color={theme.colors.border.divider} /> : null;
+        endPx={Math.max(fillMargins.end, rowBleedPx)} color={theme.colors.border.divider} /> : null;
     const dividerNode = listRuleRow ? listRule : (sharedItemBehavior.dividerVisible ? (
         <HappierDivider
             color={flatDividerColor ?? theme.colors.border.default}
