@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
@@ -15,7 +14,7 @@ import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/d
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
-import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
+import { deploymentBackupTargetOperands, RESTIC_RUNTIME_V1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 import { PLUGIN_MANIFEST as BACKUP_DESTINATIONS } from '../../../plugins/backup-destinations/src/manifest';
 import { nativeRestic0191 } from '../../../../apps/cli/src/daemon/local/services/launch/nativeResticRegistry.testkit';
 import { installRestoreBoundary } from '../../../../apps/cli/src/deployments/targets/ownServer/nativeRestore.testkit';
@@ -23,6 +22,7 @@ import { startAutomationsEverywhereDeploymentFixture } from '../../src/testkit/a
 import type { TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchAccountId } from '../../src/testkit/socialFriends';
 import { fetchJson } from '../../src/testkit/http';
+import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 
@@ -30,7 +30,7 @@ let fixture: TeamSetupFFixture | undefined;
 afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
 
 it('P01.F3 observes a native backup failure before its first snapshot from a second Machine with any and backup selectors', async () => {
-    const testDir = await mkdtemp(join(tmpdir(), 'automations-p01-backup-'));
+    const testDir = createRunDirs({ runLabel: 'automations-p01-f3-backup' }).testDir('backup-failure');
     const setup = await startAutomationsEverywhereDeploymentFixture(testDir, { volumeBackup: true });
     fixture = setup.fixture;
     const { actor, machine, docker, deployInput, invoke } = setup;
@@ -114,9 +114,14 @@ it('P01.F3 observes a native backup failure before its first snapshot from a sec
         explicit: { backupDestination: configuration.destinationRef, backupRetention: configuration.retention, backupSchedule: null },
     }));
     expect(saved.kind).toBe('configured');
+    if (saved.kind !== 'configured') throw new Error(`Backup configuration refused: ${saved.kind}`);
     const configuredDetail = DeploymentActionOutputSchemasV1['deployments.environments.get'].parse(await invoke('deployments.environments.get', environmentAddress));
-    if (!configuredDetail.ok || !configuredDetail.backupTarget) throw new Error('Backup owner did not publish its configured target');
-    const backupTarget = configuredDetail.backupTarget;
+    if (!configuredDetail.ok) throw new Error('Backup Environment unavailable');
+    const backupOperands = deploymentBackupTargetOperands({ environment: configuredDetail.environment,
+        runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1({ environment: configuredDetail.environment,
+            targetLinks: configuredDetail.targetLinks.map(targetLink => ({ targetLink })) }) }, saved.configuration);
+    if (!backupOperands) throw new Error('Backup Environment has no active native target');
+    const backupTarget = { serverId: fixture.serverId, ...backupOperands };
     const before = DeploymentBackupHistoryResultV1Schema.parse(await invoke('deployments.backups.history', backupTarget));
     expect(before.history.entries).toEqual([]);
     const headers = { Authorization: `Bearer ${actor.credentials.token}`,
@@ -127,8 +132,7 @@ it('P01.F3 observes a native backup failure before its first snapshot from a sec
         return AutomationV3RunListResponseSchema.parse(response.data).runs;
     };
     for (const trigger of linked) expect(await runs(trigger.set.automationId)).toEqual([]);
-    const failure = await actor.execute(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, backupTarget,
-        { presentUserConfirmation: { actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } });
+    const failure = await actor.executeReviewed(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, backupTarget);
     expect(failure.ok, JSON.stringify(failure)).toBe(false);
     const history = DeploymentBackupHistoryResultV1Schema.parse(await invoke('deployments.backups.history', backupTarget));
     expect(history.history.entries).toMatchObject([{ action: 'backup', state: 'failed', snapshotIds: [] }]);
@@ -145,8 +149,7 @@ it('P01.F3 observes a native backup failure before its first snapshot from a sec
     }
     const observedRevisions = await Promise.all(linked.map(async trigger => (await sourceStatus(trigger))?.revision ?? -1));
     await observer.daemon.stop();
-    const whileOffline = await actor.execute(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, backupTarget,
-        { presentUserConfirmation: { actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } });
+    const whileOffline = await actor.executeReviewed(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, backupTarget);
     expect(whileOffline.ok, JSON.stringify(whileOffline)).toBe(false);
     const restarted = await fixture.enrollDaemon({ ...actor, name: 'backup-observer' }, {
         pairedHome: { homeDir: observer.homeDir, serverId: observer.cliServerId, machineId: observer.target.machineId },

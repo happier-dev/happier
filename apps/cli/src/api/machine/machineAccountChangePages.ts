@@ -8,7 +8,7 @@ import {
 // Every domain consumed by Machine catch-up, including share revisions.
 // Selection belongs in the shared feed query (read or pushed), before transport decoding.
 export const MACHINE_ACCOUNT_CHANGE_KINDS = [
-    'account', 'automation', 'artifact', 'discussion', 'machine', 'machineRecipientAccess',
+    'account', 'automation', 'artifact', 'discussion', 'kv', 'machine', 'machineRecipientAccess',
     'pluginDomain', 'savedSecretResource', 'session', 'share',
 ] as const satisfies readonly ChangeKind[];
 

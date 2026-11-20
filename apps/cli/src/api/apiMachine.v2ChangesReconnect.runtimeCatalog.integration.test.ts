@@ -994,7 +994,12 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             hint: { pluginDomain: 'dataKv', pluginId: 'happier.machine.services', keys: ['health:source'] } }];
         mockAccountGet(async (url: string) => {
             if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'kv-observer-account' } };
-            if (url.includes('/v2/changes')) return { status: 200, data: { changes, nextCursor: changes.at(-1)?.cursor ?? 2 } };
+            if (url.includes('/v2/changes')) {
+                // The real HTTP feed selects the requested kinds before returning rows.
+                const kinds = new URL(url).searchParams.get('kinds')?.split(',');
+                return { status: 200, data: { changes: changes.filter(change => !kinds || kinds.includes(change.kind)),
+                    nextCursor: changes.at(-1)?.cursor ?? 3 } };
+            }
             throw new Error(`Unexpected KV observer request: ${new URL(url).pathname}`);
         });
         const client = new ApiMachineClient('token', machine);
@@ -1009,12 +1014,17 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             ] }]));
             changes = [{ cursor: 2, kind: 'kv', entityId: 'self', changedAt: 2,
                 hint: { keys: ['machine-outcome:v1:changed'] } }];
-            await sync('reconnect');
+            await sync('live');
             await vi.waitFor(() => expect(received).toHaveLength(2));
             expect(received[1]).toEqual({ entityIds: ['self'], accountKvChanges: [{ keys: ['machine-outcome:v1:changed'] }] });
+            changes = [{ cursor: 3, kind: 'kv', entityId: 'self', changedAt: 3,
+                hint: { keys: ['machine-outcome:v1:reconnected'] } }];
+            await sync('reconnect');
+            await vi.waitFor(() => expect(received).toHaveLength(3));
+            expect(received[2]).toEqual({ entityIds: ['self'], accountKvChanges: [{ keys: ['machine-outcome:v1:reconnected'] }] });
             changes = [];
             await sync('live');
-            expect(received).toHaveLength(2);
+            expect(received).toHaveLength(3);
         } finally {
             await subscription?.dispose();
             await client.shutdown();
