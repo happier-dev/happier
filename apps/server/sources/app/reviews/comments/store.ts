@@ -306,11 +306,49 @@ function publicationResultOutcomes(result: ReviewCommentPublicationTransportResu
     };
 }
 
+function classifyPublicationClaims(
+    params: ReviewCommentStorePublicationClaimParams,
+    claims: readonly (ReviewCommentStoredPublicationClaim | undefined)[],
+): Readonly<{ origin: ReviewCommentStoredPublicationClaim | undefined; owned: readonly number[]; reused: ReadonlySet<number> }> {
+    let origin: ReviewCommentStoredPublicationClaim | undefined;
+    let missing = false;
+    const owned: number[] = [];
+    const reused = new Set<number>();
+    const conflict = () => new ReviewCommentOperationError(
+        "review_comment_idempotency_conflict",
+        "A review comment is already claimed by a different publication plan",
+    );
+    claims.forEach((claim, index) => {
+        if (claim === undefined) {
+            missing = true;
+            owned.push(index);
+        } else if (claim.publicationPlanId === params.publicationPlanId) {
+            if (origin && stringifyJson(origin.lifecycle) !== stringifyJson(claim.lifecycle)) throw conflict();
+            origin = claim;
+            owned.push(index);
+        } else {
+            const entry = params.entries[index];
+            // A complete prior Review may lend its settled entry, but its sealed result
+            // is bound to that plan. The forge reconciles the stable provider marker.
+            if (params.verdictPublicationCorrelationId === null || !entry
+                || claim.lifecycle?.dispatchToken !== null
+                || !claim.lifecycle.result?.entries.some(previous =>
+                    previous.happierCommentId === entry.commentId
+                    && previous.publicationCorrelationId === entry.publicationCorrelationId
+                    && previous.outcome.kind === "published")) throw conflict();
+            reused.add(index);
+        }
+    });
+    if (origin && missing) throw conflict();
+    return { origin, owned, reused };
+}
+
 function publicationClaimInstructions(params: Readonly<{
     entryCount: number;
     hasVerdict: boolean;
     lifecycle: ReviewCommentStoredPublicationLifecycle | null;
     allowDispatch: boolean;
+    reused?: ReadonlySet<number>;
 }>): ReviewCommentStorePublicationClaimResult["instructions"] {
     const outcomes = publicationResultOutcomes(params.lifecycle?.result ?? null);
     const activeOrUnknown = params.lifecycle === null || params.lifecycle.dispatchToken !== null;
@@ -319,6 +357,7 @@ function publicationClaimInstructions(params: Readonly<{
     const entryInstruction = (index: number): ReviewCommentPublicationDispatchInstructionV1 => {
         const outcome = outcomes.entries[index] ?? null;
         if (outcome?.kind === "published") return "confirmed";
+        if (params.reused?.has(index)) return "reconcile";
         if (activeOrUnknown) return "reconcile";
         if (hasUncertain) return outcome?.kind === "uncertain" ? "reconcile" : "held";
         return params.allowDispatch ? "dispatch" : "held";
@@ -343,6 +382,7 @@ function publicationClaimResult(params: Readonly<{
     hasVerdict: boolean;
     lifecycle: ReviewCommentStoredPublicationLifecycle | null;
     allowDispatch: boolean;
+    reused?: ReadonlySet<number>;
 }>): ReviewCommentStorePublicationClaimResult {
     const instructions = publicationClaimInstructions(params);
     const hasDispatch = instructions.entries.includes("dispatch") || instructions.verdict === "dispatch";
@@ -360,13 +400,15 @@ function initialPublicationClaimResult(params: Readonly<{
     dispatchToken: string;
     entryCount: number;
     hasVerdict: boolean;
+    reused: ReadonlySet<number>;
 }>): ReviewCommentStorePublicationClaimResult {
     return {
         disposition: "dispatch",
         dispatchToken: params.dispatchToken,
         publicationPlanId: params.publicationPlanId,
         instructions: {
-            entries: Array.from({ length: params.entryCount }, () => "dispatch" as const),
+            entries: Array.from({ length: params.entryCount }, (_, index) =>
+                params.reused.has(index) ? "reconcile" as const : "dispatch" as const),
             verdict: params.hasVerdict ? "dispatch" : null,
         },
         priorResult: null,
@@ -842,23 +884,10 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
                     ? []
                     : [`${params.accountId}:verdict:${params.verdictPublicationCorrelationId}`]),
             ];
-            const existingClaims = claimKeys
-                .map((claimKey) => publicationClaims.get(claimKey))
-                .filter((value): value is ReviewCommentStoredPublicationClaim => value !== undefined);
-            if (existingClaims.length > 0) {
-                const first = existingClaims[0]!;
-                const sameLifecycle = existingClaims.every((claim) => (
-                    claim.publicationPlanId === first.publicationPlanId
-                    && stringifyJson(claim.lifecycle) === stringifyJson(first.lifecycle)
-                ));
-                if (existingClaims.length !== claimKeys.length
-                    || !sameLifecycle
-                    || first.publicationPlanId !== params.publicationPlanId) {
-                    throw new ReviewCommentOperationError(
-                        "review_comment_idempotency_conflict",
-                        "A review comment is already claimed by a different publication plan",
-                    );
-                }
+            const { origin: first, owned, reused } = classifyPublicationClaims(params,
+                claimKeys.map(claimKey => publicationClaims.get(claimKey)));
+            const ownedKeys = owned.map(index => claimKeys[index]!);
+            if (first) {
                 if (params.settlement !== undefined) {
                     const lifecycle = first.lifecycle;
                     const mayRelease = params.settlement.dispatchToken !== null;
@@ -881,13 +910,14 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
                         }),
                     };
                     const settled = { publicationPlanId: params.publicationPlanId, lifecycle: merged };
-                    claimKeys.forEach((claimKey) => publicationClaims.set(claimKey, settled));
+                    ownedKeys.forEach((claimKey) => publicationClaims.set(claimKey, settled));
                     return publicationClaimResult({
                         publicationPlanId: params.publicationPlanId,
                         entryCount: params.entries.length,
                         hasVerdict: params.verdictPublicationCorrelationId !== null,
                         lifecycle: merged,
                         allowDispatch: false,
+                        reused,
                     });
                 }
                 const current = publicationClaimResult({
@@ -896,6 +926,7 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
                     hasVerdict: params.verdictPublicationCorrelationId !== null,
                     lifecycle: first.lifecycle,
                     allowDispatch: true,
+                    reused,
                 });
                 if (current.disposition === "dispatch") {
                     const retried: ReviewCommentStoredPublicationClaim = {
@@ -905,7 +936,7 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
                             result: first.lifecycle?.result ?? null,
                         },
                     };
-                    claimKeys.forEach((claimKey) => publicationClaims.set(claimKey, retried));
+                    ownedKeys.forEach((claimKey) => publicationClaims.set(claimKey, retried));
                     return { ...current, dispatchToken: params.dispatchToken };
                 }
                 return current;
@@ -931,12 +962,13 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
                 publicationPlanId: params.publicationPlanId,
                 lifecycle: { dispatchToken: params.dispatchToken, result: null },
             };
-            claimKeys.forEach((claimKey) => publicationClaims.set(claimKey, claimed));
+            ownedKeys.forEach((claimKey) => publicationClaims.set(claimKey, claimed));
             return initialPublicationClaimResult({
                 publicationPlanId: params.publicationPlanId,
                 dispatchToken: params.dispatchToken,
                 entryCount: params.entries.length,
                 hasVerdict: params.verdictPublicationCorrelationId !== null,
+                reused,
             });
         },
     };
@@ -1379,10 +1411,10 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         "Publication Account encryption state changed before persistence");
                 }
             };
-            const resolveExistingInTx = async (tx: Tx, options: Readonly<{
+            const resolveInTx = async (tx: Tx, options: Readonly<{
                 settlement: ReviewCommentStorePublicationClaimParams["settlement"];
-                allowAbsent?: boolean;
-            }>): Promise<ReviewCommentStorePublicationClaimResult | null> => {
+                allowNew: boolean;
+            }>): Promise<ReviewCommentStorePublicationClaimResult> => {
                 await assertPublicationAccountCurrent(tx);
                 const rows = await tx.$queryRaw<Array<{
                     publication_correlation_id: string;
@@ -1394,22 +1426,61 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         AND publication_correlation_id IN (${Prisma.join(expectedCorrelations)})
                     ${lockClause}
                 `);
-                if (rows.length === 0 && options.allowAbsent) return null;
-                const parsed = rows.map((row) => parseStoredPublicationClaim(row.target_json));
-                const first = parsed[0] ?? null;
-                const sameLifecycle = first !== null && parsed.every((claim) => (
-                    claim !== null
-                    && claim.publicationPlanId === first.publicationPlanId
-                    && stringifyJson(claim.lifecycle) === stringifyJson(first.lifecycle)
-                ));
-                if (first === null
-                    || rows.length !== expectedCorrelations.length
-                    || !sameLifecycle
-                    || first.publicationPlanId !== params.publicationPlanId) {
+                const claims = new Map(rows.map(row => [row.publication_correlation_id,
+                    parseStoredPublicationClaim(row.target_json)]));
+                if ([...claims.values()].some(claim => claim === null)) {
                     throw new ReviewCommentOperationError(
                         "review_comment_idempotency_conflict",
-                        "A review comment is already claimed by a different publication plan",
+                        "A stored publication claim cannot be opened",
                     );
+                }
+                const { origin: first, owned, reused } = classifyPublicationClaims(params,
+                    expectedCorrelations.map(correlation => claims.get(correlation) ?? undefined));
+                const ownedCorrelations = owned.map(index => expectedCorrelations[index]!);
+                if (!first) {
+                    if (!options.allowNew) {
+                        throw new ReviewCommentOperationError("review_comment_idempotency_conflict",
+                            "Publication completion has no matching dispatch claim");
+                    }
+                    if (params.entries.length > 0) {
+                        const expectedRows = Prisma.join(params.entries.map((entry) => Prisma.sql`
+                            (id = ${entry.commentId} AND server_revision = ${entry.serverRevision})
+                        `), " OR ");
+                        const matched = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                            SELECT id
+                            FROM review_comments
+                            WHERE ${commentAccessPredicate(params)}
+                                AND (${expectedRows})
+                            ${lockClause}
+                        `);
+                        if (matched.length !== params.entries.length) {
+                            throw new ReviewCommentOperationError(
+                                "review_comment_conflict",
+                                "One or more review comments changed before publication",
+                            );
+                        }
+                    }
+                    const storedClaim = stringifyJson({
+                        v: 1, publicationPlanId: params.publicationPlanId,
+                        lifecycle: { dispatchToken: params.dispatchToken, result: null },
+                    });
+                    const claimRows = Prisma.join(owned.map(index => Prisma.sql`
+                        (${expectedCorrelations[index]!}, ${params.accountId}, ${params.entries[index]?.commentId ?? null},
+                            ${params.targetKey}, ${storedClaim}, ${params.createdAt})
+                    `));
+                    await tx.$executeRaw(Prisma.sql`
+                        INSERT INTO review_comment_publication_correlations (
+                            publication_correlation_id, account_id, comment_id, target_key,
+                            target_json, created_at
+                        ) VALUES ${claimRows}
+                    `);
+                    return initialPublicationClaimResult({
+                        publicationPlanId: params.publicationPlanId,
+                        dispatchToken: params.dispatchToken,
+                        entryCount: params.entries.length,
+                        hasVerdict: params.verdictPublicationCorrelationId !== null,
+                        reused,
+                    });
                 }
                 if (options.settlement !== undefined) {
                     const mayRelease = options.settlement.dispatchToken !== null;
@@ -1440,7 +1511,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         UPDATE review_comment_publication_correlations
                         SET target_json = ${storedClaim}
                         WHERE account_id = ${params.accountId}
-                            AND publication_correlation_id IN (${Prisma.join(expectedCorrelations)})
+                            AND publication_correlation_id IN (${Prisma.join(ownedCorrelations)})
                     `);
                     return publicationClaimResult({
                         publicationPlanId: params.publicationPlanId,
@@ -1448,6 +1519,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         hasVerdict: params.verdictPublicationCorrelationId !== null,
                         lifecycle,
                         allowDispatch: false,
+                        reused,
                     });
                 }
                 const current = publicationClaimResult({
@@ -1456,6 +1528,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                     hasVerdict: params.verdictPublicationCorrelationId !== null,
                     lifecycle: first.lifecycle,
                     allowDispatch: true,
+                    reused,
                 });
                 if (current.disposition !== "dispatch") return current;
                 const lifecycle: ReviewCommentStoredPublicationLifecycle = {
@@ -1471,77 +1544,20 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                     UPDATE review_comment_publication_correlations
                     SET target_json = ${storedClaim}
                     WHERE account_id = ${params.accountId}
-                        AND publication_correlation_id IN (${Prisma.join(expectedCorrelations)})
+                        AND publication_correlation_id IN (${Prisma.join(ownedCorrelations)})
                 `);
                 return { ...current, dispatchToken: params.dispatchToken };
             };
             try {
-                return await inTx(async (tx) => {
-                    // Account-first fencing keeps lookup and first admission atomic
-                    // with other claimants and encryption transitions.
-                    const existing = await resolveExistingInTx(tx, {
-                        settlement: params.settlement,
-                        allowAbsent: params.settlement === undefined,
-                    });
-                    if (existing !== null) return existing;
-                    if (params.entries.length > 0) {
-                        const expectedRows = Prisma.join(params.entries.map((entry) => Prisma.sql`
-                            (id = ${entry.commentId} AND server_revision = ${entry.serverRevision})
-                        `), " OR ");
-                        const matched = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-                            SELECT id
-                            FROM review_comments
-                            WHERE ${commentAccessPredicate(params)}
-                                AND (${expectedRows})
-                            ${lockClause}
-                        `);
-                        if (matched.length !== params.entries.length) {
-                            throw new ReviewCommentOperationError(
-                                "review_comment_conflict",
-                                "One or more review comments changed before publication",
-                            );
-                        }
-                    }
-                    const storedClaim = stringifyJson({
-                        v: 1,
-                        publicationPlanId: params.publicationPlanId,
-                        lifecycle: {
-                            dispatchToken: params.dispatchToken,
-                            result: null,
-                        },
-                    });
-                    const claimRows = Prisma.join([
-                        ...params.entries.map((entry) => Prisma.sql`
-                            (
-                                ${entry.publicationCorrelationId}, ${params.accountId}, ${entry.commentId},
-                                ${params.targetKey}, ${storedClaim}, ${params.createdAt}
-                            )
-                        `),
-                        ...(params.verdictPublicationCorrelationId === null
-                            ? []
-                            : [Prisma.sql`
-                                (
-                                    ${params.verdictPublicationCorrelationId}, ${params.accountId}, ${null},
-                                    ${params.targetKey}, ${storedClaim}, ${params.createdAt}
-                                )
-                            `]),
-                    ]);
-                    await tx.$executeRaw(Prisma.sql`
-                        INSERT INTO review_comment_publication_correlations (
-                            publication_correlation_id, account_id, comment_id, target_key,
-                            target_json, created_at
-                        ) VALUES ${claimRows}
-                    `);
-                    return initialPublicationClaimResult({
-                        publicationPlanId: params.publicationPlanId,
-                        dispatchToken: params.dispatchToken,
-                        entryCount: params.entries.length,
-                        hasVerdict: params.verdictPublicationCorrelationId !== null,
-                    });
-                });
+                // Account-first fencing keeps lookup and first admission atomic
+                // with other claimants and encryption transitions.
+                return await inTx(tx => resolveInTx(tx, {
+                    settlement: params.settlement,
+                    allowNew: params.settlement === undefined,
+                }));
             } catch (error) {
                 if (!isPrismaUniqueConstraintError(error)) throw error;
-                return (await inTx(async (tx) => await resolveExistingInTx(tx, { settlement: undefined })))!;
+                return await inTx(tx => resolveInTx(tx, { settlement: undefined, allowNew: false }));
             }
         },
     };
