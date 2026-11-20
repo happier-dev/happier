@@ -4794,7 +4794,7 @@ export type ReviewCommentsActionResultById = {
         }[];
         failed: {
             commentId: string;
-            errorCode: 'review_comment_already_redacted' | 'review_comment_conflict' | 'review_comment_direct_write_permission_required' | 'review_comment_encryption_mode_mismatch' | 'review_comment_idempotency_conflict' | 'review_comment_invalid_filter' | 'review_comment_invalid_request' | 'review_comment_invalid_transition' | 'review_comment_not_found' | 'review_comment_permission_denied' | 'review_comment_snapshot_invalid' | 'review_comment_thread_closed';
+            errorCode: 'review_comment_already_redacted' | 'review_comment_conflict' | 'review_comment_encryption_mode_mismatch' | 'review_comment_idempotency_conflict' | 'review_comment_invalid_filter' | 'review_comment_invalid_request' | 'review_comment_invalid_transition' | 'review_comment_not_found' | 'review_comment_permission_denied' | 'review_comment_snapshot_invalid' | 'review_comment_thread_closed';
             error: string;
         }[];
     };

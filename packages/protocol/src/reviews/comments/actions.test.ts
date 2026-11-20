@@ -307,8 +307,6 @@ describe('review comment operation contracts', () => {
       error: 'Review comment state did not match expectedState',
     }]);
 
-    expect(ReviewCommentOperationErrorCodeV1Schema.parse('review_comment_direct_write_permission_required'))
-      .toBe('review_comment_direct_write_permission_required');
     expect(ReviewCommentOperationErrorCodeV1Schema.parse('review_comment_encryption_mode_mismatch'))
       .toBe('review_comment_encryption_mode_mismatch');
     expect(ReviewCommentOperationErrorCodeV1Schema.parse('review_comment_already_redacted'))

@@ -530,41 +530,6 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         expect(axiosPostMock).not.toHaveBeenCalled();
     });
 
-    it('preserves direct-write denial without publishing a legacy plugin grant request', async () => {
-        axiosPostMock.mockResolvedValueOnce({
-            status: 400,
-            data: {
-                error: 'review_comment_direct_write_permission_required',
-                message: 'reviews.comments.write.direct is required',
-            },
-        });
-        const signingKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
-        const executor = createCliReviewCommentActionExecutorFromCredentials({
-            ...plainEventStorageParams,
-            credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
-            resolvePrincipalSigningContext: async () => ({
-                machineId: 'machine-1',
-                installationId: 'installation-1',
-                privateKeyBase64Url: Buffer.from(signingKeyPair.secretKey).toString('base64url'),
-            }),
-        });
-
-        await expect(executor('reviews.comments.create', {
-            projectId: 'project-1',
-            anchor: { kind: 'file', filePath: 'src/a.ts' },
-            snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
-            body: 'Fix this directly.',
-            authorIntent: 'open',
-            clientMutationId: 'mutation-1',
-        }, {
-            principal: {
-                actor: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
-            },
-        })).rejects.toMatchObject({ code: 'review_comment_direct_write_permission_required' });
-
-        expect(axiosPostMock).toHaveBeenCalledTimes(1);
-    });
-
     it('seals the verified user mutation binding into the single plain POST', async () => {
         axiosPostMock.mockResolvedValueOnce({
             status: 200,
