@@ -78,9 +78,11 @@ it.each([
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
         executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' }, permissionMode: 'read-only',
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-        ...(explicit ? { configuration: { mode: { value: null, updatedAtMs: 0 },
+        configuration: { mode: { value: null, updatedAtMs: 0 },
             model: { value: null, updatedAtMs: 0, selectionSource: 'inherited' },
-            permissionIntent: { value: null, updatedAtMs: 0 }, options: {}, nativeSandbox: explicit } } : {}),
+            permissionIntent: { value: null, updatedAtMs: 0 },
+            options: { reasoning_effort: { value: 'minimal', updatedAtMs: 0 } },
+            ...(explicit ? { nativeSandbox: explicit } : {}) },
         ...(source === 'binding' ? { teamCredentialBindings: [binding] } : { modelSelection: selection }),
     });
     const boundary = createSessionMetadataHttpBoundary(() => ({}));
@@ -107,6 +109,7 @@ it.each([
         expect(birthRequest).toHaveProperty('teamCredentialBindings', [binding]);
         expect(birthRequest).toHaveProperty('ownerMetadata.v.system.sessionCreationCorrespondenceV1.recipe.modelSelection', selection);
         expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.modelSelectionIntentV2', selection);
+        expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.acpConfigOptionOverridesV1.overrides.reasoning_effort.value', 'minimal');
         if (expected) {
             expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.nativeSandbox', expected);
         } else {

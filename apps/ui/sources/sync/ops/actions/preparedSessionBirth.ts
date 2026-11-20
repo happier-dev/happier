@@ -21,6 +21,7 @@ import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/
 import { mergeSessionTeamCredentialBindingIntents, readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { resolveManagedAgentSandbox } from '@happier-dev/protocol/teams/managedDefaults';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
 import { readDaemonMergedProjectionSummary } from '@/agents/backendCatalog/daemonMergedProjectionCache';
 import { readAccountE2eeCustody } from '@/auth/storage/tokenStorage';
 import { createSessionCreateOrLoad } from '@/sync/domains/session/hostedSystemSession';
@@ -142,6 +143,8 @@ export async function createUiPreparedSessionBirthV1(
         identity: input.identity, memoryEnabled: input.memoryEnabled, approvalProfileId: input.approvalProfileId,
         promptStack: input.promptStack, initialTitle: input.title, initialSessionRolesV1: args.initialSessionRolesV1,
         modelSelection, connectedServices: input.connectedServices,
+        sessionConfigOptionOverrides: input.configuration
+            ? buildSessionConfigOptionOverridesFromServerStart(input.configuration) ?? undefined : undefined,
         capabilitySelection: input.capabilitySelection, allowedTools: input.allowedTools,
         unlistedTools: input.unlistedTools, workspaceWrites: args.context?.workspaceWrites, nativeSandbox,
         authoringOrigin: input.authoringOrigin, teamCredentialBindings,
