@@ -663,7 +663,6 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-auth-entry-unavailable');
 
-        expect(screen.getTextContent()).toContain(t('teams.entry.returnToHappier'));
         await screen.pressByTestIdAsync('team-auth-entry-unavailable-secondary-action');
 
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');

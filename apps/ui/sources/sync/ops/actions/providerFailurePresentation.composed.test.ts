@@ -16,8 +16,9 @@ async function presentProviderFailure(operation: () => Promise<unknown>) {
         // real adapters, rather than a handwritten failed-Action envelope.
         const failure = readPluginActionError(error);
         if (!failure) throw new Error('Provider did not publish a typed Action failure');
-        const surfaced = createPluginSurfaceActionFailureError(projectPluginActionFailure(failure));
-        return { failure, message: resolveActionExecutionErrorMessage(surfaced, 'Provider unavailable') };
+        const projected = projectPluginActionFailure(failure);
+        const surfaced = createPluginSurfaceActionFailureError(projected);
+        return { failure, details: projected.details, message: resolveActionExecutionErrorMessage(surfaced, 'Provider unavailable') };
     }
     throw new Error('Expected provider failure');
 }
@@ -46,7 +47,10 @@ it('carries the real Docker template login refusal from sbx through the Action s
     try {
         const presented = await presentProviderFailure(() => kit.invokeAction('options', {}, { surface: 'plugin' }));
         expect(presented.failure).toMatchObject({ code: 'credential_unavailable', retryable: true });
-        expect(presented.message).toBe('Sign in to Docker: run sbx login');
+        expect(presented.details).toMatchObject({ prerequisites: [{ repairAction: {
+            action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'sign-in' }, input: {},
+        } }] });
+        expect(presented.message).toBe('Sign in to Docker');
         expect(invocations).toEqual([['template', 'ls', '--quiet']]);
     } finally { await kit.dispose(); }
 });
