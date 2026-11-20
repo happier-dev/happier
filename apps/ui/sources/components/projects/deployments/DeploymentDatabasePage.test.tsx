@@ -151,6 +151,7 @@ async function renderDatabase(
     workbenchDiscoveryRefused?: boolean | (() => boolean);
     /** Exercise the Database subject read through the real selected-Environment transport. */
     readDatabaseAutomations?: boolean;
+    databaseSizeActionRefused?: boolean;
     database?: string;
     sizeReadUnavailable?: boolean;
     retainedBackup?: boolean;
@@ -411,6 +412,8 @@ async function renderDatabase(
     });
     await answerExternalActionAccountForHome(homes, serverId, {
       machineId, installationId: 'installation-a', actionId: 'deployments.data.size', tokenEpoch: 0,
+      failure: () => input.databaseSizeActionRefused
+        ? { errorCode: 'target_unavailable', error: 'target_unavailable' } : null,
       execute: raw => {
         const operand = DeploymentActionInputSchemasV1['deployments.data.size'].parse(raw);
         return { ok: true, size: { service: operand.service, deploymentId: operand.deploymentId,
@@ -716,9 +719,10 @@ function expectOpenedDatabaseConsole(view: Awaited<ReturnType<typeof renderDatab
 }
 
 describe('Environment → Database → Workbench', () => {
-  it('keeps Automations visible when database discovery refuses and retries the same selected Environment', async () => {
+  it.each([false, true])('retries discovery for the selected Database when size Action refused is %s', async databaseSizeActionRefused => {
     let refused = true;
-    const view = await renderDatabase({ readDatabaseAutomations: true, workbenchDiscoveryRefused: () => refused });
+    const view = await renderDatabase({ readDatabaseAutomations: true, databaseSizeActionRefused,
+      workbenchDiscoveryRefused: () => refused });
     try {
       expect(await view.settle('subject-triggers')).not.toBeNull();
       expect(await view.settle('subject-triggers-read-retry')).not.toBeNull();
@@ -730,6 +734,11 @@ describe('Environment → Database → Workbench', () => {
         expect(view.screen.findByTestId('subject-triggers-read-retry')).toBeNull();
         expect(view.screen.findByTestId('subject-triggers')).not.toBeNull();
         expect(view.screen.findByTestId('subject-triggers-add')).not.toBeNull();
+        const queries = homes.requestsFor('/v3/automations/query').map(request => request.input);
+        expect(queries).toContainEqual(expect.objectContaining({
+          subject: { kind: 'database', serverId: view.serverIdentityId,
+            target: { kind: 'environment', environmentId: view.environmentId, service: 'postgres', database: 'shop' } },
+        }));
         const discoveries = view.effects.filter(effect => effect.actionId === 'action.invoke');
         expect(discoveries.length).toBeGreaterThan(0);
         for (const discovery of discoveries) expect(discovery.input).toMatchObject({

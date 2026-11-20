@@ -254,12 +254,18 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     if (!nativeTarget || !runtimeTargetLink?.activeDeploymentId) {
                         databaseSizes.push(unavailable(metadata && !metadata.ok ? metadata.failure.code : 'active_deployment_required')); continue;
                     }
-                    const measured = DeploymentDataSizeResultV1Schema.safeParse(await execute(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
-                        { ...home, ...nativeTarget, deploymentId: runtimeTargetLink.activeDeploymentId,
-                            service: service.service, previous: previous?.databaseSizes?.find(size => size.service === service.service) },
-                        { signal: options.signal }));
-                    databaseSizes.push(measured.success && measured.data.ok ? measured.data.size
-                        : unavailable(measured.success ? measured.data.error : 'invalid_response'));
+                    try {
+                        const measured = DeploymentDataSizeResultV1Schema.safeParse(await execute(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
+                            { ...home, ...nativeTarget, deploymentId: runtimeTargetLink.activeDeploymentId,
+                                service: service.service, previous: previous?.databaseSizes?.find(size => size.service === service.service) },
+                            { signal: options.signal }));
+                        databaseSizes.push(measured.success && measured.data.ok ? measured.data.size
+                            : unavailable(measured.success ? measured.data.error : 'invalid_response'));
+                    } catch (error) {
+                        options.signal.throwIfAborted();
+                        // Size telemetry can fail independently of the admitted Database subject.
+                        databaseSizes.push(unavailable(failureFromError(error).failure.code));
+                    }
                 }
                 const databaseSubjects = Object.fromEntries<AutomationDatabaseSubjectReadV1>((databaseTargets?.targets ?? []).flatMap<readonly [string, AutomationDatabaseSubjectReadV1]>(descriptor => {
                     const target = descriptor.target;
