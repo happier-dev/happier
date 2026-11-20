@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
+
 import { resolveUsageCostModeLabel } from './resolveUsageCostModeLabel';
 
 describe('resolveUsageCostModeLabel', () => {
@@ -24,6 +26,6 @@ describe('resolveUsageCostModeLabel', () => {
         expect(resolveUsageCostModeLabel({
             availableCostModes: ['auto', 'reported', 'api_equivalent'],
             mode: 'api_equivalent',
-        })).toBe('Worth at API prices');
+        })).toBe(t('usage.board.page.factApiEquivalent'));
     });
 });
