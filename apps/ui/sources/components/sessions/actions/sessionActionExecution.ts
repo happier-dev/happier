@@ -336,7 +336,7 @@ async function executeArchiveAction(
     if (!address) throwUnsupportedSingleTargetAction();
     if (isSessionArchivePending(address)) return false;
     const archiveSession = resolveArchiveSession(context);
-    if (target.isActive || target.hasRecoverableTerminalHost) {
+    if (target.hasRecoverableTerminalHost) {
         return await runStopArchiveFlow({ target, address, context, archiveAfterStop: 'always', alsoArchiveReports });
     }
     const result = await archiveSessionWithPendingState(address, (archiveOperation) => archiveSession(address.sessionId, {

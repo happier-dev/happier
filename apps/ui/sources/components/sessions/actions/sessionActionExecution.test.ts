@@ -144,17 +144,17 @@ describe('executeSessionAction', () => {
         await executeSessionAction({ actionId: 'ui.session.follow', target: { ...target, followEnabled: false }, context });
         expect(opened).toEqual([{ address: { serverId: 'home_b', sessionId: 'session_1' }, archived: true }]);
     });
-    it('archives an active session through the stop/archive flow', async () => {
+    it('archives when Home accepts Archive but the browser still shows the offline Session as active', async () => {
         const effects: string[] = [];
         await executeSessionAction({
             actionId: SESSION_ACTION_ARCHIVE_ID,
             target: createTarget({ active: true }),
             context: { hideInactiveSessions: true, operations: {
-                stopSession: async () => { effects.push('stop'); return { success: true }; },
+                stopSession: async () => { effects.push('stop'); return { success: false, code: 'session_stop_control_unavailable' }; },
                 archiveSession: async () => { effects.push('archive'); return { success: true }; },
             } },
         });
-        expect(effects).toEqual(['stop', 'archive']);
+        expect(effects).toEqual(['archive']);
         expect(readSessionArchivePending(storage.getState(), { serverId: 'server_1', sessionId: 'session_1' })).toBe(false);
     });
 
