@@ -258,7 +258,7 @@ async function pressCreate(
         }
       : declaration;
   });
-  const targets = createTargetActionInvocationRegistry({
+  const targets = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
     actions: declarations.map((declaration) => ({
       pluginId: PLUGIN_MANIFEST.id,
       pluginVersion: PLUGIN_MANIFEST.version,

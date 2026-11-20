@@ -90,7 +90,7 @@ describe('Lima declared native process environment', () => {
             const activated = await activateContributionModule({
                 pluginId, occurrenceId, manifest, moduleNamespace: { activate: LIMA_PLUGIN.activate }, isOccurrenceCurrent: () => true,
             });
-            const registry = createTargetActionInvocationRegistry({
+            const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
                 actions: activated.registrations.flatMap((registration): TargetActionInvocationRegistration[] => {
                     if (registration.family !== 'actions') return [];
                     const declaration = manifest.contributes.actions.find(action => action.id === registration.localId)!;

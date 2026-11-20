@@ -538,7 +538,7 @@ describe('registered Channels composed journeys through real CLI Session admissi
     const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
     const occurrenceId = createPluginRuntimeOccurrenceId('happier.channels');
     const confirmations: unknown[] = [];
-    const registry = createTargetActionInvocationRegistry({ actions: [{ pluginId: 'happier.channels', pluginVersion: '0.0.0',
+    const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, actions: [{ pluginId: 'happier.channels', pluginVersion: '0.0.0',
       occurrenceId, sourceCustody: createManagedPluginSourceCustody('channels-workflow-journey'), localId,
       definition: declaration,
       // The target transport crosses into the actual activated SDK test host;

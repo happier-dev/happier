@@ -20,7 +20,7 @@ it('keeps admitted native descriptors live-only and out of persisted approval an
     };
     const records: PluginInvocationLogRecord[] = [];
     const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write: record => records.push(record) } });
-    const target = buildTargetActionInvocationRegistry({
+    const target = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         ...owners, contributes: f.runtimeRegistry.contributes, targetActivationFacts: [facts],
         targetRegistrations: [{ pluginId, occurrenceId, registration: { family: 'actions', localId,
             value: (async (input, context) => { context.services.logger.info(`native-policy ${JSON.stringify(input)}`); return { kind: 'confirmed' }; }) satisfies ActionHandler,

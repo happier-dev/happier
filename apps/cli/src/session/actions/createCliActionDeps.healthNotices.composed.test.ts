@@ -101,7 +101,7 @@ it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
         revalidatePluginActionCallerMaterialization: async () => true, revalidatePluginActionCallerOccurrence: async () => true }));
     const owners = createProductionPluginInvocationServiceOwners({ actionExecutor: executor, invokeContributedAction: invokeRegistry });
     const targetOccurrenceId = createPluginRuntimeOccurrenceId(TRIAGE_SESSION_HANDOFF_ACTION_REF_V1.pluginId);
-    targets = createTargetActionInvocationRegistry({
+    targets = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         actions: [TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1, TRIAGE_SESSION_HANDOFF_ACTION_REF_V1].map(action => ({
             pluginId: action.pluginId, pluginVersion: '1.0.0', occurrenceId: targetOccurrenceId,
             sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-target' }, localId: action.localId,

@@ -46,7 +46,7 @@ function compositionActionRegistry(pluginIds: readonly string[]) {
     generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
     resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],
   });
-  const registry = createTargetActionInvocationRegistry({
+  const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
     actions: pluginIds.map((pluginId) => ({
       pluginId, pluginVersion: '1.0.0', occurrenceId: `occurrence-${pluginId}` as PluginRuntimeOccurrenceId,
       localId: `${pluginId.split('.')[0]}-action`,

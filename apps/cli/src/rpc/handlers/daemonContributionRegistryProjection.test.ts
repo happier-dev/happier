@@ -2022,7 +2022,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             occurrenceIdsByPluginId: { 'acme.preview': occurrenceId },
         });
         const run = vi.fn(async () => ({ published: true }));
-        const targetActionInvocations = createTargetActionInvocationRegistry({
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{
                 pluginId: 'acme.preview',
                 pluginVersion: '1.0.0',
@@ -2854,7 +2854,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             },
         };
         const outerHandler = vi.fn(async () => ({ prepared: true }));
-        const targetActionInvocations = createTargetActionInvocationRegistry({
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{
                 pluginId: 'acme.mounted',
                 pluginVersion: '1.0.0',
@@ -3037,7 +3037,7 @@ describe('daemon contribution registry projection rpc handler', () => {
         const targetOccurrenceId = createPluginRuntimeOccurrenceId('acme.target');
         const mountedSourceCustody = { kind: 'development' as const, registeredRootId: 'test:acme.mounted' };
         const targetHandler = vi.fn(async () => ({ published: true }));
-        const targetActionInvocations = createTargetActionInvocationRegistry({
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{
                 pluginId: 'acme.target',
                 pluginVersion: '1.0.0',

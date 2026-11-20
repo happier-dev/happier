@@ -438,7 +438,7 @@ describe('managed native-role custody at contributed dispatch', () => {
                 handler: (input, context) => Reflect.apply(registration.value, undefined, [input, context]),
             }];
         });
-        const targetActionInvocations = createTargetActionInvocationRegistry({ actions: registrations,
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, actions: registrations,
             readCurrentPluginOccurrenceId: () => occurrenceId,
             resolveAuthorizationFacts: () => ({ generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
                 resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],

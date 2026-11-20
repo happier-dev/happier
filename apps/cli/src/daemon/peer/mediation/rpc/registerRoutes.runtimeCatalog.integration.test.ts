@@ -747,7 +747,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         const actionAborted = createDeferred<boolean>();
         let releaseAction = () => {};
 
-        const targetActionInvocations = createTargetActionInvocationRegistry({
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             readCurrentPluginOccurrenceId: pluginId => pluginId === 'acme.direct' ? occurrenceId : null,
             actions: [{
                 pluginId: 'acme.direct',

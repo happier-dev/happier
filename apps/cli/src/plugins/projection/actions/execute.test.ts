@@ -113,10 +113,10 @@ function createManagedPluginRuntimeIdentity(
 }
 
 function createTargetActionInvocationRegistry(
-  params: Omit<Parameters<typeof createTargetActionInvocationRegistryBase>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts'>
-    & Partial<Pick<Parameters<typeof createTargetActionInvocationRegistryBase>[0], 'resolveAuthorizationFacts'>>,
+  params: Omit<Parameters<typeof createTargetActionInvocationRegistryBase>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts' | 'readMachineLocalDatabaseAgentLevel'>
+    & Partial<Pick<Parameters<typeof createTargetActionInvocationRegistryBase>[0], 'resolveAuthorizationFacts' | 'readMachineLocalDatabaseAgentLevel'>>,
 ) {
-  return createTargetActionInvocationRegistryBase({
+  return createTargetActionInvocationRegistryBase({ readMachineLocalDatabaseAgentLevel: async () => undefined,
     resolveAuthorizationFacts: (action) => ({
       generation: {
         targetGeneration: action.occurrenceId,
@@ -1036,7 +1036,7 @@ describe('executeContributedAction', () => {
         immutableGenerationId: 'acme.alpha-immutable-generation',
       }),
     ];
-    const targetActionInvocations = createTargetActionInvocationRegistryBase({
+    const targetActionInvocations = createTargetActionInvocationRegistryBase({ readMachineLocalDatabaseAgentLevel: async () => undefined,
       actions: registrations,
       expectedActions: [
         { pluginId: 'acme.alpha', localId: 'start' },

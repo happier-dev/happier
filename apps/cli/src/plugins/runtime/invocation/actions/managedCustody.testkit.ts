@@ -282,7 +282,7 @@ export function fixture(options: Readonly<{
         } } : {}),
         ...options.hostServiceAdapters,
     }) : createUnavailablePluginServicesFactory();
-    const targetActionInvocations = createTargetActionInvocationRegistry({
+    const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         actions: loadedRegistrations, expectedActions: actualRegistrations,
         readActions: () => loadedRegistrations,
         readCurrentPluginOccurrenceId: () => currentOccurrenceId,

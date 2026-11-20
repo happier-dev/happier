@@ -256,7 +256,7 @@ describe('CLI session pull request binding', () => {
         materializationRef: materialization.materialization } };
     } });
     const core = await createPluginTestkit({ manifest: CHANNELS_MANIFEST, module: CHANNELS_PLUGIN });
-    const registry = createTargetActionInvocationRegistry({
+    const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
       actions: declarations.flatMap(({ manifest, occurrenceId, sourceCustody }) => {
         const kit = manifest.id === CHANNELS_MANIFEST.id ? core : manifest.id === TRIAGE_PLUGIN.manifest.id ? triage : provider;
         return manifest.contributes.actions.flatMap(definition => {

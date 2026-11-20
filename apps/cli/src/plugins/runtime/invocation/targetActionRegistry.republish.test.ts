@@ -28,7 +28,7 @@ describe('target Action registry republish', () => {
             },
         };
         let actions: readonly TargetActionInvocationRegistration[] = [registration];
-        const registry = createTargetActionInvocationRegistry({ actions, readActions: () => actions,
+        const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, actions, readActions: () => actions,
             readCurrentPluginOccurrenceId: () => occurrenceId,
             createServices: createUnavailablePluginServicesFactory(),
             resolveHostBinding: createTargetActionHostBindingResolver(),

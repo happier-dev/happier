@@ -161,7 +161,7 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
         resolvePath: async () => { throw new Error('Unexpected native path resolution outside the run boundary'); },
       },
     }) : createUnavailablePluginServicesFactory();
-  const invocations = buildTargetActionInvocationRegistry({ contributes,
+  const invocations = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, contributes,
     targetRegistrations: activated.registrations.map(registration => ({ pluginId, occurrenceId, registration })),
     targetActivationFacts: [{ pluginId, pluginVersion: manifest.version, source: 'localPath', occurrenceId,
       host: 'daemon', platform: 'linux', occurredAtMs: 1, status: activated.status,

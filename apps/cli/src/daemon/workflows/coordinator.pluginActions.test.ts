@@ -73,7 +73,7 @@ describe('workflow contributed Action leaves', () => {
     const contexts: ActionExecutorContext[] = [];
     const confirmations: unknown[] = [];
     const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
-    const registry = createTargetActionInvocationRegistry({
+    const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
       actions: [{ pluginId, pluginVersion: '1.0.0', occurrenceId,
         sourceCustody: createManagedPluginSourceCustody('channels-generation'), localId,
         definition: { id: localId, dangerLevel: 'externalSideEffect', scopes: ['global'], surfaces: ['agent'],

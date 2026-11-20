@@ -42,7 +42,7 @@ describe('Resource read admission through an external authored Action', () => {
         const createServices = createPluginInvocationServicesFactory({ loggerSink: { write() {} }, connectedAccounts: host });
         const occurrenceId = 'authority-1' as PluginRuntimeOccurrenceId;
         const manifest = normalizePluginManifestV2(plugin.manifest);
-        const registry = createTargetActionInvocationRegistry({
+        const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: plugin.manifest.id, pluginVersion: '1.0.0', localId: 'read', occurrenceId,
                 sourceCustody: createManagedPluginSourceCustody('authority-generation'),
                 definition: { ...manifest.contributes.actions[0]!,
@@ -88,7 +88,7 @@ describe('Resource read admission through an external authored Action', () => {
         const handler = kit.registration('actions', 'read');
         if (typeof handler !== 'function') throw new Error('Expected committed external handler');
         const occurrenceId = 'nested-1' as PluginRuntimeOccurrenceId;
-        const registry = createTargetActionInvocationRegistry({
+        const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: plugin.manifest.id, pluginVersion: '1.0.0', occurrenceId,
                 sourceCustody: createManagedPluginSourceCustody('nested-generation'), localId: 'read',
                 definition: declaration, handler, observeRead: readPluginActionReadObserver(handler) }],
@@ -128,7 +128,7 @@ describe('Resource read admission through an external authored Action', () => {
         } finally { registry.dispose(); await kit.dispose(); }
     });
     it('reports a legacy snapshot-only Action as unobservable before a read ceiling is considered', async () => {
-        const registry = createTargetActionInvocationRegistry({
+        const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: 'acme.legacy', pluginVersion: '1.0.0', occurrenceId: 'legacy-1' as PluginRuntimeOccurrenceId,
                 sourceCustody: createManagedPluginSourceCustody('legacy-generation'), localId: 'read',
                 definition: { id: 'read', dangerLevel: 'safe', scopes: ['global'], surfaces: ['plugin'] },
@@ -184,7 +184,7 @@ describe('Resource read admission through an external authored Action', () => {
         const declaration = normalizePluginManifestV2(plugin.manifest).contributes.actions[0]!;
         const handler = kit.registration('actions', 'state');
         if (typeof handler !== 'function') throw new Error('Expected committed external handler');
-        const registry = createTargetActionInvocationRegistry({
+        const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: plugin.manifest.id, pluginVersion: '1.0.0', occurrenceId: 'source-1' as PluginRuntimeOccurrenceId,
                 sourceCustody: createManagedPluginSourceCustody('source-generation'), localId: 'state', definition: declaration,
                 handler, observeRead: readPluginActionReadObserver(handler) }],

@@ -473,7 +473,7 @@ describe('plugin invocation ActionsService', () => {
             resolveCurrentPluginExecutionOrigin: async () => resolveOrigin(),
         });
         const occurrenceId = createPluginRuntimeOccurrenceId('acme.provider');
-        targets = createTargetActionInvocationRegistry({
+        targets = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: 'acme.provider', pluginVersion: '1.0.0', occurrenceId,
                 sourceCustody: { kind: 'development', registeredRootId: 'provider-root' }, localId: 'read-caller',
                 definition: { id: 'read-caller', dangerLevel: 'safe', scopes: ['global'], surfaces: ['plugin'], inputSchema: { type: 'object' }, resultSchema: {} },
@@ -625,7 +625,7 @@ describe('plugin invocation ActionsService', () => {
         }
         const services = createProductionPluginInvocationServiceOwners({ actionExecutor, invokeContributedAction });
         const targetOccurrenceId = createPluginRuntimeOccurrenceId('acme.background');
-        const targetActionInvocations = createTargetActionInvocationRegistry({
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: 'acme.background', pluginVersion: '1.0.0', occurrenceId: targetOccurrenceId,
                 sourceCustody: { kind: 'development', registeredRootId: 'background-root' }, localId: 'start',
                 definition: { id: 'start', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], inputSchema: { type: 'object' }, resultSchema: {} },
@@ -2336,7 +2336,7 @@ describe('plugin invocation ActionsService', () => {
         const owners = createProductionPluginInvocationServiceOwners({
             actionExecutor: createContributedActionExecutorForTest(invokeContributedAction), invokeContributedAction,
         });
-        targets = createTargetActionInvocationRegistry({
+        targets = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: 'acme.target', pluginVersion: '1.0.0', occurrenceId,
                 sourceCustody: createManagedPluginSourceCustody('target'), localId: 'inspect',
                 definition: { id: 'inspect', dangerLevel: 'safe', scopes: ['global'], surfaces: ['plugin'], inputSchema: { type: 'object' }, resultSchema: {} },

@@ -80,7 +80,7 @@ function starterRuntime() {
             identity: { pluginId, localId: 'dashboard' }, manifestPath: '/plugins/acme.starter/.happier-plugin/plugin.json',
             definition: { id: 'dashboard', container: 'detailsTab', target: { kind: 'session' }, renderer: 'renderer',
                 title: 'Dashboard', instancePolicy: 'singleton', headerActions: [] } }] });
-    const targetActionInvocations = createTargetActionInvocationRegistry({
+    const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         actions: [{ pluginId, pluginVersion: '1.0.0', occurrenceId, sourceCustody, localId: 'start',
             definition: { id: 'start', dangerLevel: 'safe', scopes: ['global'], surfaces: ['ui', 'agent', 'mcp', 'cli'],
                 inputSchema: { type: 'object' }, resultSchema: {} },

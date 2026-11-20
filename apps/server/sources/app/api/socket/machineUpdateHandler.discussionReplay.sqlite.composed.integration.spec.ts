@@ -122,7 +122,7 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
             const inputSchema = { type: 'object', properties: {}, additionalProperties: false } satisfies PluginJsonSchemaV2;
             const outputSchema = { type: 'object', properties: { checked: { type: 'boolean' } }, required: ['checked'], additionalProperties: false };
             const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
-            const registry = createTargetActionInvocationRegistry({ actions: [{ pluginId, pluginVersion: '1.0.0', occurrenceId,
+            const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, actions: [{ pluginId, pluginVersion: '1.0.0', occurrenceId,
                 sourceCustody: createManagedPluginSourceCustody('external-publisher'), localId,
                 definition: { id: localId, dangerLevel: 'externalSideEffect', scopes: ['global'], surfaces: ['agent'],
                     inputSchema, resultSchema: outputSchema, confirmation: { title: 'Check', body: 'Run check?', confirmLabel: 'Run' } },

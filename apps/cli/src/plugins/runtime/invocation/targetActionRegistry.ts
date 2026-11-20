@@ -352,7 +352,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     expectedActions?: readonly Readonly<{ pluginId: string; localId: string }>[];
     readActions?: () => readonly TargetActionInvocationRegistration[];
     resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
-    readMachineLocalDatabaseAgentLevel?: Parameters<typeof withMachineLocalDatabaseAgentLevelV1>[1];
+    /** Required: a host without the Machine-local level reader would drop worktree/manual database approval floors (F10). */
+    readMachineLocalDatabaseAgentLevel: Parameters<typeof withMachineLocalDatabaseAgentLevelV1>[1];
     resolveAuthorizationFacts: (action: ResolvedTargetAction) => TargetActionAuthorizationFacts;
     evaluateCatalogPolicy?: (params: Readonly<{
         pluginId: string;
@@ -1135,9 +1136,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         { phase: 'deployment.plugin.approval.scope', causeKind: 'client_required' },
                         diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId })));
                 // The requester may supply Environment custody. Machine-local policy still comes from this Machine.
-                const resolveScope = params.readMachineLocalDatabaseAgentLevel
-                    ? withMachineLocalDatabaseAgentLevelV1(resolveEnvironment, params.readMachineLocalDatabaseAgentLevel)
-                    : resolveEnvironment;
+                const resolveScope = withMachineLocalDatabaseAgentLevelV1(resolveEnvironment, params.readMachineLocalDatabaseAgentLevel);
                 try {
                     const admitted = await resolveScope({
                         actionId: formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId }),

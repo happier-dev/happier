@@ -45,7 +45,7 @@ describe('reviewed shared-save Action admission', () => {
             const admissions: Array<PluginSharedSaveAdmission | undefined> = [];
             let handlerRuns = 0;
             let approvals = 0;
-            const registry = createTargetActionInvocationRegistry({
+            const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
                 actions: [{ pluginId, pluginVersion: '1.0.0', localId: 'save', occurrenceId,
                     sourceCustody: createManagedPluginSourceCustody('shared-save-generation'),
                     definition: { id: 'save', dangerLevel: scenario === 'proposedOnly' ? 'safe' : 'writesRemote', scopes: ['global'], surfaces: ['cli'],

@@ -18,7 +18,7 @@ it('redacts a started mutation failure and plugin log after cancellation and ret
     let handlerStarted!: () => void;
     const started = new Promise<void>(resolve => { handlerStarted = resolve; });
     let scope: Parameters<typeof owners.beginDiagnosticScope>[0] | undefined;
-    const registry = createTargetActionInvocationRegistry({
+    const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         ...owners,
         beginDiagnosticScope: (...args) => { scope = args[0]; owners.beginDiagnosticScope(...args); },
         resolveHostBinding: createTargetActionHostBindingResolver(),

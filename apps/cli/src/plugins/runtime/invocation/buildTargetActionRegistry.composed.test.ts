@@ -138,10 +138,10 @@ import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachi
 
 type BuildRegistryParams = Omit<
     Parameters<typeof buildTargetActionInvocationRegistry>[0],
-    'createServices' | 'resolveAuthorizationFacts' | 'resolveHostBinding' | 'resolveHostPolicy'
+    'createServices' | 'resolveAuthorizationFacts' | 'resolveHostBinding' | 'resolveHostPolicy' | 'readMachineLocalDatabaseAgentLevel'
 > & Partial<Pick<
     Parameters<typeof buildTargetActionInvocationRegistry>[0],
-    'createServices' | 'resolveHostBinding' | 'resolveHostPolicy'
+    'createServices' | 'resolveHostBinding' | 'resolveHostPolicy' | 'readMachineLocalDatabaseAgentLevel'
 >> & Readonly<{
     resolveAuthorizationFacts?: (action: Readonly<{
         pluginId: string;
@@ -153,7 +153,7 @@ type BuildRegistryParams = Omit<
 function buildRegistry(
     params: BuildRegistryParams,
 ) {
-    return buildTargetActionInvocationRegistry({
+    return buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         createServices: createUnavailablePluginServicesFactory(),
         resolveAuthorizationFacts: () => authorizationFacts(),
         resolveHostBinding: createTargetActionHostBindingResolver(),

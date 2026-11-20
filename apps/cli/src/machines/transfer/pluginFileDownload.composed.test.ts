@@ -174,7 +174,7 @@ describe('admitted plugin file download', () => {
     let approvals = 0;
     let publicationSignal: AbortSignal | undefined;
     let accountCurrent = true;
-    const registry = createTargetActionInvocationRegistry({
+    const registry = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
       actions: [{ pluginId: 'external.download-fixture', pluginVersion: '1.0.0', occurrenceId: 'download-generation' as PluginRuntimeOccurrenceId,
         sourceCustody: createManagedPluginSourceCustody('download-fixture'), localId: 'download',
         definition: { id: 'download', dangerLevel, ...('readOnly' in scenario ? { readOnly: scenario.readOnly } : {}), scopes: ['global'], surfaces: ['ui', 'plugin', 'agent', 'mcp'],

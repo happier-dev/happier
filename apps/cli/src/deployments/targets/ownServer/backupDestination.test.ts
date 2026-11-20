@@ -256,7 +256,7 @@ it.each(['first-party', 'external'] as const)('prepares selected sources through
         await expect(open({ ...request, configuration: { ...configuration, credentialBindings: configuration.credentialBindings.slice(0, 1) } }))
             .rejects.toMatchObject({ data: { code: 'backup_required' } });
         if (kind === 'first-party') {
-            const missing = createTargetActionInvocationRegistry({ actions: [],
+            const missing = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, actions: [],
                 createServices: createUnavailablePluginServicesFactory(), resolveHostBinding: createTargetActionHostBindingResolver(),
                 readCurrentPluginOccurrenceId: () => occurrenceId,
                 resolveAuthorizationFacts: action => ({ generation: { targetGeneration: action.occurrenceId,

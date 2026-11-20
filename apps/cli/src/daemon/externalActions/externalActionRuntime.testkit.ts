@@ -138,7 +138,7 @@ export function createExternalActionRuntime(
       ? { kind: 'managed', immutableGenerationId: 'fixture-immutable-generation', installSource: 'localPath' } as const
     : { kind: 'development', registeredRootId: `fixture-root:${pluginId}` } as const);
   const fixtureOccurrenceId = actionOptions.occurrenceId ?? createPluginRuntimeOccurrenceId(pluginId);
-  const targetActionInvocations = buildTargetActionInvocationRegistry({
+  const targetActionInvocations = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
     ...(actionOptions.executionTarget === 'account' ? { executionRealm: 'account' as const } : {}),
     contributes,
     targetRegistrations: activationOnly ? [] : resolvedActions.map((entry) => ({

@@ -41,7 +41,7 @@ describe('webhook delivery canonical Action admission', () => {
     const effects: number[] = [];
     const executions: PluginActionExecutionAttempt[] = [];
     const occurrenceId = createPluginRuntimeOccurrenceId('acme.github');
-    const target = createTargetActionInvocationRegistry({
+    const target = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
       actions: [{
         pluginId: 'acme.github', pluginVersion: '1.0.0', occurrenceId, localId: 'handle-webhook',
         sourceCustody: PluginSourceCustodyV1Schema.parse({

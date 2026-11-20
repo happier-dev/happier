@@ -231,7 +231,7 @@ describe('plugin Action current intent through the registered daemon ingress', (
             ...action, definition: { ...action.definition, id: 'invoke', dangerLevel: 'safe', confirmation: undefined, confirmationWhen: undefined,
                 execution: { target: 'client', client: { artifactId: 'client-caller', exportName: 'activate' }, platforms: ['web'] } },
         }], occurrenceIdsByPluginId: { [pluginId]: occurrenceId } });
-        const targetActionInvocations = createTargetActionInvocationRegistry({
+        const targetActionInvocations = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId, pluginVersion: '1.0.0', occurrenceId, sourceCustody, localId: 'apply',
                 definition: { id: 'apply', dangerLevel: 'writesLocal', confirmation, confirmationWhen, scopes: ['global'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], inputSchema, resultSchema,
                     ...(confidential ? { secretInputPaths: ['releaseTag'], secretInputLabels: { releaseTag: 'Release credential' } } : {}) },

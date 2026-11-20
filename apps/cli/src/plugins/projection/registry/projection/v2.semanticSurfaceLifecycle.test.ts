@@ -186,7 +186,7 @@ function executableRegistry(params: Readonly<{
         activateContributionsOnDemand: params.activated.activateContributionsOnDemand,
         readPluginOccurrenceId: params.activated.readPluginOccurrenceId,
         readPluginSourceCustody: params.activated.readPluginSourceCustody,
-        targetActionInvocations: buildTargetActionInvocationRegistry({
+        targetActionInvocations: buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             contributes: params.registry,
             targetRegistrations: params.targetRegistrations ?? params.activated.targetRegistrations,
             readCurrentPluginOccurrenceId: (pluginId) => params.activated.readPluginOccurrenceId(pluginId),

@@ -391,7 +391,7 @@ describe('buildTargetActionInvocationRegistry caller currentness', () => {
             'start',
             occurrenceIds.get('acme.alpha')!,
         ));
-        targetActionInvocations = buildTargetActionInvocationRegistry({
+        targetActionInvocations = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             contributes,
             readCurrentPluginOccurrenceId: (pluginId) => (
                 occurrenceIds.get(pluginId) ?? null
@@ -641,7 +641,7 @@ async function createComposedAdmittedOperationFixture() {
                 };
         },
     });
-    targetActionInvocations = buildTargetActionInvocationRegistry({
+    targetActionInvocations = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         contributes,
         readCurrentPluginOccurrenceId: (pluginId: string) => (
             currentOccurrenceIds.get(pluginId) ?? null

@@ -95,7 +95,7 @@ describe('createHostContributedActionInvoker', () => {
         };
         const executor = createExecutorForTest(createInvokerForTest(invokeContributedAction));
         const owners = createProductionPluginInvocationServiceOwners({ actionExecutor: executor, invokeContributedAction });
-        targets = createTargetActionInvocationRegistry({
+        targets = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: 'acme.target', pluginVersion: '1.0.0', occurrenceId,
                 sourceCustody: { kind: 'development', registeredRootId: 'target-root' }, localId: 'write',
                 definition: { id: 'write', dangerLevel: 'safe', scopes: ['global'], surfaces: ['plugin'],

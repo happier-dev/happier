@@ -122,7 +122,7 @@ describe('registered daemon GitHub count Resource', () => {
         });
         const createServiceBinding = (occurrence: string, id: string) =>
             createPluginInvocationServiceBinding(occurrence, id);
-        const actionRegistry = buildTargetActionInvocationRegistry({ contributes,
+        const actionRegistry = buildTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined, contributes,
             targetRegistrations: [{ pluginId, occurrenceId,
                 registration: { family: 'actions', localId: actionDeclaration.id, value: nativeHandler } }],
             targetActivationFacts: [{ pluginId, pluginVersion: PLUGIN_MANIFEST.version, source: 'localPath', occurrenceId,

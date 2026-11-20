@@ -117,10 +117,10 @@ function action(overrides: Record<string, unknown> = {}) {
 }
 
 function createRegistry(
-    params: Omit<Parameters<typeof createTargetActionInvocationRegistry>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts'>
-        & Partial<Pick<Parameters<typeof createTargetActionInvocationRegistry>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts'>>,
+    params: Omit<Parameters<typeof createTargetActionInvocationRegistry>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts' | 'readMachineLocalDatabaseAgentLevel'>
+        & Partial<Pick<Parameters<typeof createTargetActionInvocationRegistry>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts' | 'readMachineLocalDatabaseAgentLevel'>>,
 ) {
-    return createTargetActionInvocationRegistry({
+    return createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
         resolveAuthorizationFacts: (resolvedAction) => ({
             generation: {
                 targetGeneration: resolvedAction.occurrenceId,

@@ -112,7 +112,7 @@ describe('Triage Save defaults approval through the Account host', () => {
                     : { status: 'failed', code: result.errorCode, message: result.error };
             },
         });
-        const targets = createTargetActionInvocationRegistry({
+        const targets = createTargetActionInvocationRegistry({ readMachineLocalDatabaseAgentLevel: async () => undefined,
             actions: [{ pluginId: PLUGIN_MANIFEST.id, pluginVersion: PLUGIN_MANIFEST.version, occurrenceId, sourceCustody,
                 localId: declaration.id, definition: declaration,
                 handler: async (value, context) => StrictJsonValueSchema.parse(await plugin.invokeAction(declaration.id, value, { ...context,
