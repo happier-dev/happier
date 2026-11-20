@@ -15,20 +15,21 @@ import { fakeClaudeFixturePath } from './fakeClaude';
 import { fetchJson } from './http';
 import { reserveAvailablePort } from './network/reserveAvailablePort';
 import { withWorkspaceSourceRuntime } from './process/tsxImportHook';
-import { startServerLight, resolveServerStartLaunchSpec, renderServerLightSqliteDatabaseUrl } from './process/serverLight';
+import { startServerLight, resolveServerStartLaunchSpec, type TestDbProvider } from './process/serverLight';
 import { runLoggedCommand } from './process/spawnProcess';
 
-/** FIN composition of committed server/auth/daemon fixtures, with its own SQLite DB.
+/** FIN composition of committed server/auth/daemon fixtures, with its own database.
  * Provider executables are the only substituted boundary. Account B is a real
  * second Account; no shared QA data or foreign in-flight fixture is consumed. */
-export async function startFinJourneyFixture(params: Readonly<{ testDir: string; serverEnv?: NodeJS.ProcessEnv }>) {
+export async function startFinJourneyFixture(params: Readonly<{ testDir: string; dbProvider?: TestDbProvider; serverEnv?: NodeJS.ProcessEnv }>) {
+  const dbProvider = params.dbProvider ?? 'sqlite';
   const port = await reserveAvailablePort();
   const sourceOptions = withWorkspaceSourceRuntime(process.env).NODE_OPTIONS;
   // Native requester custody resolves this Home through its published descriptor.
   const serverEnv = { ...process.env, NODE_OPTIONS: sourceOptions, HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1', ...params.serverEnv,
     HAPPIER_PUBLIC_SERVER_URL: `http://127.0.0.1:${port}` };
-  const server = await startServerLight({ testDir: params.testDir, dbProvider: 'sqlite', port, extraEnv: serverEnv });
+  const server = await startServerLight({ testDir: params.testDir, dbProvider, port, extraEnv: serverEnv });
   const daemons: StartedDaemon[] = [];
   try {
     const features = await fetchJson<unknown>(`${server.baseUrl}/v1/features`);
@@ -74,13 +75,13 @@ export async function startFinJourneyFixture(params: Readonly<{ testDir: string;
         target: { serverId, machineId: seeded.machineId } };
     }
     async function claimHomeOwner(account: Awaited<ReturnType<typeof createAccount>>) {
-      const launch = resolveServerStartLaunchSpec({ provider: 'sqlite', env: { ...process.env, ...serverEnv } });
+      const launch = resolveServerStartLaunchSpec({ provider: dbProvider, env: { ...process.env, ...serverEnv } });
       const stdoutPath = join(server.dataDir, 'fin-claim.stdout.log');
       await runLoggedCommand({ ...launch, args: [...launch.args,
         `${HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1}=${readAccountIdFromToken(account.auth.token)}`],
-        env: { ...process.env, ...serverEnv, ...launch.env, HAPPIER_DB_PROVIDER: 'sqlite', HAPPY_DB_PROVIDER: 'sqlite',
+        env: { ...process.env, ...serverEnv, ...launch.env, HAPPIER_DB_PROVIDER: dbProvider, HAPPY_DB_PROVIDER: dbProvider,
           HAPPIER_SERVER_LIGHT_DATA_DIR: server.dataDir, HAPPY_SERVER_LIGHT_DATA_DIR: server.dataDir,
-          DATABASE_URL: renderServerLightSqliteDatabaseUrl({ dbPath: join(server.dataDir, 'happier-server-light.sqlite') }) },
+          DATABASE_URL: server.databaseUrl },
         stdoutPath, stderrPath: join(server.dataDir, 'fin-claim.stderr.log'), timeoutMs: null });
       const output = (await readFile(stdoutPath, 'utf8')).split(/\r?\n/).some(line => {
         try { return HomeOwnerClaimCommandOutputV1Schema.safeParse(JSON.parse(line)).success; } catch { return false; }
