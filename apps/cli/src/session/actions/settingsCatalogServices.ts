@@ -8,6 +8,7 @@ import { buildScmDiffSummaryModelProfiles } from '@happier-dev/protocol/actions/
 import { readSettings, type StoredCredentials } from '@/persistence';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { projectNativeModelStructuredOutputCapabilities } from '@/capabilities/probes/nativeCatalogModels';
 import { probeAgentModelsBestEffort } from './cliActionDeps/resolveAgentProbeInventoryDeps';
 import { probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { readAgentRoutingIdForContributionIdentity, indexAgentRoutingIdsByContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
@@ -147,8 +148,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
         });
         params.signal?.throwIfAborted();
         const profiles = probe.source === 'unavailable' ? [] : buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models: probe.availableModels,
-            catalogModels: getAgentStaticModels(agentId, { catalogOnly: true }),
-            agentFormats: configured ? null : readAgentStructuredOutputCapabilities(parsedKey?.richDefinition?.definition)?.formats });
+            catalogModels: getAgentStaticModels(agentId, { catalogOnly: true }) });
         return { profiles, ...(probe.spawnFailure ? { probeFailures: [{ backendTargetKey: selector.backendTargetKey, spawnFailure: probe.spawnFailure }] } : {}),
             isCurrent: (current: AccountSettings) => !params.signal?.aborted
             && readCurrentContributionRegistry() === registry
@@ -271,8 +271,8 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                 const explicitProfiles = [...registry.agentDefinitionsById.values()].flatMap(entry => entry.identity
                     ? listAgentExecutionTargetsV1(entry.identity).flatMap(target => unavailableTargetKeys.has(buildBackendTargetKeyV2(target))
                         ? buildScmDiffSummaryModelProfiles({ backendTarget: target,
-                            models: getAgentStaticModels(entry.id, { catalogOnly: true }),
-                            agentFormats: readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats }) : []) : []);
+                            models: projectNativeModelStructuredOutputCapabilities(getAgentStaticModels(entry.id, { catalogOnly: true }),
+                                readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats) }) : []) : []);
                 const requestedTargets = new Set(configuredTargets);
                 // Automatic authentication ranks defaults, not explicit model discovery.
                 // Agents without authored models still need their native catalog when
@@ -354,11 +354,10 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                                 unavailableTargets.push({ backendTargetKey, reason: route.reason });
                                 return [];
                             }
-                            const agentFormats = readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats;
                             if (route.kind === 'team') {
                                 return route.models.flatMap(({ descriptor, selection }) => {
                                     const { kind: _kind, ...ref } = selection;
-                                    return buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models: [descriptor], agentFormats })
+                                    return buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models: [descriptor] })
                                         .map(profile => {
                                             const modelSelector = { backendTargetKey, modelId: ref.modelId,
                                                 modelSelection: { source: 'team_resource' as const, ...ref }, connectedServices: null };
@@ -372,8 +371,9 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                                 ...(params.credentials ? { credentials: params.credentials } : {}), signal: params.signal,
                             });
                             if (observation?.spawnFailure) probeFailures.push({ backendTargetKey, spawnFailure: observation.spawnFailure });
-                            const models = observation?.availableModels ?? staticModels;
-                            const modelProfiles = buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models, agentFormats });
+                            const models = observation?.availableModels ?? projectNativeModelStructuredOutputCapabilities(staticModels,
+                                readAgentStructuredOutputCapabilities(entry.richDefinition?.definition)?.formats);
+                            const modelProfiles = buildScmDiffSummaryModelProfiles({ backendTarget: executionTarget, models });
                             return route.kind === 'personal' ? modelProfiles.map(profile => {
                                 const modelSelector = { ...profile.modelSelector, backendTargetKey, connectedServices: route.connectedServices };
                                 return { ...profile, modelSelector, catalogId: encodeScmDiffSummaryModelOverride(modelSelector) };

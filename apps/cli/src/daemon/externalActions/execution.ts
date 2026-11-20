@@ -1,5 +1,6 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { isMachineAgentInventoryReadActionIdV1, REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
@@ -152,6 +153,7 @@ export function createDaemonExternalActionExecution({
   params: Readonly<{
 machineId: string;
 readDoctorResourceVitals?: () => Readonly<{ sample: MachineVitalsSampleV1 | null }>;
+projectProviderModels?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModels'];
 projectProviderModelsForAccount?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModelsForAccount'];
 readProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountRead;
 prepareTeamCredentialNativeSource?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
@@ -754,6 +756,9 @@ resolveServerFeaturesSnapshot?: () =>
         custodianAccountId: requesterRuntime.bootstrap.savedSecretOperationContext.machineAdmission?.custodianAccountId,
         isCurrent: () => requesterRuntime.isCurrent(),
       } : null;
+      const foreignProjectionAccount = providerProjectionAccount?.custodianAccountId
+        && providerProjectionAccount.accountId !== providerProjectionAccount.custodianAccountId;
+      const observesInventoryModels = isMachineAgentInventoryReadActionIdV1(actionId) || actionId === REVIEW_START_ACTION_ID_V1;
       // Only the ordinary installed-credential invocation leaves the existing
       // authenticated Machine transport in charge. Any native/requester/replay
       // claim, even a half pair, stays with the native owner and fails closed.
@@ -1215,15 +1220,18 @@ resolveServerFeaturesSnapshot?: () =>
           } },
         } : {}),
         ...(requesterAccountContext ? { savedSecretOperationContext: requesterAccountContext.savedSecretOperationContext } : {}),
-        ...(providerProjectionAccount && providerProjectionAccount.custodianAccountId
-          && providerProjectionAccount.accountId !== providerProjectionAccount.custodianAccountId ? {
-            ...(params.projectProviderModelsForAccount ? {
-              projectModelsForAccount: async (request, actionContext) => {
-                const account = await createProviderReadContext(actionContext);
-                return account ? await params.projectProviderModelsForAccount!(request, account)
-                  : { status: 'error', error: createForegroundProviderError('provider_authorization_changed') };
-              },
-            } : {}),
+        ...(params.projectProviderModelsForAccount && providerProjectionAccount && (foreignProjectionAccount || observesInventoryModels) ? {
+            projectModelsForAccount: async (request, actionContext) => {
+              const account = await createProviderReadContext(actionContext);
+              return account ? await params.projectProviderModelsForAccount!(request, account)
+                : { status: 'error', error: createForegroundProviderError('provider_authorization_changed') };
+            },
+          } : observesInventoryModels && params.projectProviderModels ? {
+            projectModelsForAccount: (request, actionContext) => params.projectProviderModels!(request, actionContext.signal, {
+              callerInputAuthorization: actionContext.externalActionExecutionAuthorization,
+            }),
+          } : {}),
+        ...(foreignProjectionAccount ? {
             ...(params.readProviderForAccount ? {
               readProviderForAccount: async (request, actionContext) => {
                 const account = await createProviderReadContext(actionContext);

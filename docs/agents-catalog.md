@@ -662,6 +662,9 @@ readiness owner for setup and unavailable reasons. Setup-required reviewers stay
 in the roster; Account-disabled filtering remains a separate explicit choice.
 A capability snapshot alone does not establish the Machine's authentication
 readiness. Clients consume the projected readiness rather than probe again.
+The inventory offers narration when the selected launch model has structured
+output support in its native or Provider catalog. A selectable engine whose
+model lacks that evidence still supports findings.
 
 Captured review scope belongs to `reviews/scope/resolve.ts`, which consumes
 the retained comparison metadata or admitted PR revision range before ambient

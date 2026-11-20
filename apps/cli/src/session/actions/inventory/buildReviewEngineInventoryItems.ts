@@ -10,14 +10,16 @@ import { isAgentStartReadinessBlockingV1 } from '@happier-dev/protocol/actions/e
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { resolveExecutionRunAgentDefaultSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
-import { isNativeAutomaticModelSelectionInputV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
+import { resolveModelStructuredOutputSupport, type AgentModelDescriptor } from '@happier-dev/protocol/models/descriptor';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import {
   resolveExecutionRunProfileSelectionForAgent,
   resolveExecutionRunProfileContributionDescriptor,
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
-import { readAgentExecutionRunCapabilities, readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import type { ExecutionRunManagerStartParams } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type {
   ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
@@ -122,6 +124,10 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
   scope?: ReviewEngineScope;
   registrySnapshot?: ReviewAgentCatalog;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
+  cwd?: string;
+  signal?: AbortSignal;
+  readNativeOfferedModel?: ExecutionRunManagerStartParams['readNativeOfferedModel'];
+  readProviderOfferedModel?: (ref: ProviderBoundModelRef) => Promise<AgentModelDescriptor | undefined>;
   /** One batched observation from the existing Machine inventory readiness owner. */
   readReadiness?: (targetKeys: readonly string[]) => Promise<readonly (MachineAgentExecutionStateV1 | undefined)[] | null>;
 }>): Promise<readonly ActionReviewEngineInventoryItem[]> {
@@ -151,8 +157,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
         enabled: !isBackendTargetDisabledByAccountSettings(accountSettings, { kind: 'backend', backendId: agent.id }),
         backendId: agent.id,
         ...profileFacts,
-        capabilities: { structuredNarration: readAgentStructuredOutputCapabilities(agent.richDefinition?.definition)?.formats.includes('json') === true,
-          sessionTranscript },
+        capabilities: { structuredNarration: false, sessionTranscript },
       }];
     });
   const configuredItems = (await buildConfiguredAcpBackendInventoryItems(accountSettings, params.acpCatalogSnapshot, registry))
@@ -170,24 +175,40 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
     }));
   const roster = [...agentItems, ...configuredItems];
   const readiness = roster.length > 0 ? await params.readReadiness?.(roster.map(item => item.value)) : null;
-  const items = roster
-    .map((item, index): ActionReviewEngineInventoryItem => {
-      const selection = resolveExecutionRunAgentDefaultSelection({
-        backendTarget: item.engineId === item.backendId ? { kind: 'backend', backendId: item.backendId } : item.value,
-        accountSettings,
-      });
-      const launchModelId = selection && !isNativeAutomaticModelSelectionInputV1(selection) ? selection.modelId : undefined;
-      const state = readiness?.[index];
-      const unavailableCode = !item.enabled ? 'account_disabled'
-        : isAgentStartReadinessBlockingV1(state) ? state : undefined;
-      return { ...ReviewEngineListItemSchema.parse({ ...item, enabled: !unavailableCode, available: !unavailableCode,
-        ...(state ? { readiness: state } : {}), ...(unavailableCode ? { unavailableCode } : {}),
-        ...(launchModelId ? { launchModelId } : {}) }),
-        value: item.value, backendId: item.backendId };
-    })
-    .filter((_item, index) => includeDisabled || roster[index]?.enabled !== false);
-
-  return limit ? items.slice(0, limit) : items;
+  const visible = roster
+    .map((item, index) => ({ item, state: readiness?.[index] }))
+    .filter(({ item }) => includeDisabled || item.enabled);
+  const items = limit ? visible.slice(0, limit) : visible;
+  return await Promise.all(items.map(async ({ item, state }): Promise<ActionReviewEngineInventoryItem> => {
+    const backendTarget = item.engineId === item.backendId ? { kind: 'backend' as const, backendId: item.backendId } : item.value;
+    const selection = resolveExecutionRunAgentDefaultSelection({ backendTarget, accountSettings });
+    const launchModelId = selection && !isNativeAutomaticModelSelectionInputV1(selection) ? selection.modelId : undefined;
+    const unavailableCode = !item.enabled ? 'account_disabled'
+      : isAgentStartReadinessBlockingV1(state) ? state : undefined;
+    let model: AgentModelDescriptor | undefined;
+    if (!unavailableCode) {
+      try {
+        if (selection?.providerConnectionId) {
+          model = await params.readProviderOfferedModel?.(selection);
+        } else if (params.readNativeOfferedModel) {
+          const { readExecutionRunOfferedModel } = await import('@/agent/runtime/bridges/executionRun/structuredOutputAdmission');
+          model = await readExecutionRunOfferedModel({
+            backendTarget, modelSelection: selection, cwd: params.cwd, accountSettings,
+            readNativeOfferedModel: params.readNativeOfferedModel, signal: params.signal,
+          });
+        }
+      } catch {
+        // A failed model read still leaves a findings-only reviewer.
+        params.signal?.throwIfAborted();
+      }
+    }
+    const structuredNarration = resolveModelStructuredOutputSupport({ model, catalogModel: Boolean(model) }) === 'supported';
+    return { ...ReviewEngineListItemSchema.parse({ ...item, enabled: !unavailableCode, available: !unavailableCode,
+      capabilities: { ...item.capabilities, structuredNarration },
+      ...(state ? { readiness: state } : {}), ...(unavailableCode ? { unavailableCode } : {}),
+      ...(launchModelId ? { launchModelId } : {}) }),
+      value: item.value, backendId: item.backendId };
+  }));
 }
 
 export async function buildReviewEngineInventory(

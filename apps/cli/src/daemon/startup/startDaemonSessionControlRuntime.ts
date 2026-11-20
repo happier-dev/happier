@@ -1152,6 +1152,7 @@ export async function startDaemonSessionControlRuntime(
     externalActionAccountId?: string | null;
     openAccountConnectionProviderBrokerAccess?: import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
     openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
+    projectProviderModels?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModels'];
     projectProviderModelsForAccount?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModelsForAccount'];
     readProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountRead;
     /** Profile identity paired with `serverBaseUrl` for this daemon lifecycle. */

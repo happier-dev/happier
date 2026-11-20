@@ -191,16 +191,17 @@ async function applyReviewWalkthroughActionInAccountScope(host: Host): Promise<E
   }
   const inventory = await buildReviewEngineInventoryItems({ acpCatalogSnapshot: host.acpCatalogSnapshot,
     registrySnapshot: host.nativeModelRegistry, accountSettings: first.runtimeSettings?.accountSettings
-    ? AccountSettingsSchema.parse(first.runtimeSettings.accountSettings) : null });
+    ? AccountSettingsSchema.parse(first.runtimeSettings.accountSettings) : null,
+    cwd: host.cwd, readNativeOfferedModel: host.readNativeOfferedModel });
   const policy = resolveReviewNarratorPolicy({ selectedEngineIds: runs.map(run =>
     inventory.find(engine => engine.backendId === run.backendId)?.value ?? run.backendId), engines: inventory });
-  const firstEngine = runs.length === 1 && policy.defaultNarratorEngineId
-    ? inventory.find(engine => engine.value === policy.defaultNarratorEngineId) : undefined;
+  const firstEngine = runs.length === 1 && first.retentionPolicy === 'resumable'
+    ? inventory.find(engine => engine.backendId === first.backendId && engine.enabled) : undefined;
   const incumbent = host.controllers.get(first.runId);
   const lifecycle = resolveExecutionRunLifecycle(first, incumbent ?? null);
   const continuationSelected = runs.length === 1 && Boolean(firstEngine)
     && readReview(first, host.runs).hasOutput
-    && (!request.narrator || (request.narrator.engineId === firstEngine?.engineId
+    && (!request.narrator || ((request.narrator.engineId === firstEngine?.engineId || request.narrator.engineId === firstEngine?.value)
       && (!request.narrator.modelId || request.narrator.modelId === (first.launch?.modelId ?? first.effectiveEngine?.modelId))));
   if (continuationSelected && lifecycle.projection.state === 'current' && incumbent?.kind === 'backend' && incumbent.turnInFlight) {
     return failure('execution_run_busy', 'The reviewer is still processing its current input.');
@@ -253,11 +254,10 @@ async function applyReviewWalkthroughActionInAccountScope(host: Host): Promise<E
     const unavailable = host.runs.get(first.runId);
     if (unavailable) host.runs.set(first.runId, { ...unavailable, runClass: first.runClass, ioMode: first.ioMode });
   }
-  const selectedId = request.narrator ? resolveReviewNarratorPolicy({ selectedEngineIds: [request.narrator.engineId], engines: inventory }).defaultNarratorEngineId
-    : policy.defaultNarratorEngineId;
-  const selected = inventory.find(engine => engine.value === selectedId);
+  const selectedId = request.narrator?.engineId ?? policy.defaultNarratorEngineId;
+  const selected = inventory.find(engine => engine.enabled && (engine.value === selectedId || engine.engineId === selectedId));
   if (!selected) return failure('review_narrator_required', 'Select an available structured narration engine.');
-  const target = resolveExecutionRunRuntimeBackendTarget({ kind: 'builtInAgent', agentId: selected.backendId });
+  const target = resolveExecutionRunRuntimeBackendTarget(selected.value);
   if (!target) return failure('review_narrator_unavailable', 'The selected narrator target is unavailable.');
   const basis = await provenance(host, runs, request.comparisonId, 'seeded_narrator', request.launchFailures);
   const selectedReviewer = runs.find(run => run.backendId === selected.backendId);
@@ -268,6 +268,7 @@ async function applyReviewWalkthroughActionInAccountScope(host: Host): Promise<E
     ...(first.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: first.requesterWorkAttributionV1 } : {}),
     ...(selectedReviewer && !request.narrator?.modelId ? selection : {}),
     ...(request.narrator?.modelId ? { modelId: request.narrator.modelId } : {}),
+    ...(!selectedReviewer && !request.narrator?.modelId && selected.launchModelId ? { childSelection: 'agentDefault' as const } : {}),
     ...(first.runtimeSettings?.accountSettings ? { accountSettings: first.runtimeSettings.accountSettings } : {}),
     permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
     approvalProfileId: first.approvalProfileId ?? null,

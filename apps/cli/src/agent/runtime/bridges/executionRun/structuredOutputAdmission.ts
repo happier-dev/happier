@@ -7,7 +7,7 @@ import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import { readExecutionRunErrorCode } from './errors';
-import type { AgentModelDescriptor } from '@happier-dev/protocol/models/descriptor';
+import { resolveModelStructuredOutputSupport, type AgentModelDescriptor } from '@happier-dev/protocol/models/descriptor';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type ModelAdmissionParams = Pick<ExecutionRunManagerStartParams,
@@ -35,6 +35,16 @@ export function modelCatalogUnavailable(modelId: string, reason: string, causeCo
     rpcErrorCode: code,
     details: { modelId, reason, ...(causeCode ? { causeCode } : {}) },
   });
+}
+
+export function findNativeExecutionRunOfferedModel(models: readonly AgentModelDescriptor[], modelId: string): AgentModelDescriptor | undefined {
+  const model = models.find(model => model.id === modelId);
+  if (model) return model;
+  const variant = models.find(model => model.extendedContextModelId === modelId);
+  if (!variant) return undefined;
+  // An explicitly offered variant does not inherit its base model's context size.
+  const { contextWindowTokens: _baseWindow, extendedContextModelId: _variantId, ...facts } = variant;
+  return { ...facts, id: modelId };
 }
 
 /** One probe owner serves both daemon-retained and ordinary native admission. */
@@ -76,16 +86,7 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
     }
     return undefined;
   }
-  let model = catalog.data.availableModels.find(model => model.id === params.modelId);
-  if (!model) {
-    const variant = catalog.data.availableModels.find(model => model.extendedContextModelId === params.modelId);
-    if (variant) {
-      // This is an explicitly offered variant, not a freeform suffix. Its base
-      // model's window does not establish the variant's actual context size.
-      const { contextWindowTokens: _baseWindow, extendedContextModelId: _variantId, ...facts } = variant;
-      model = { ...facts, id: params.modelId };
-    }
-  }
+  const model = findNativeExecutionRunOfferedModel(catalog.data.availableModels, params.modelId);
   // A failed refresh does not erase a published model fact. Structured-output
   // support is a separate admission decision, not a condition for reading it.
   if (catalog.data.refreshError && !model) {
@@ -127,7 +128,8 @@ export async function readExecutionRunOfferedModel(params: ModelAdmissionParams)
 
 export async function assertExecutionRunStructuredOutputModelAllowed(params: ModelAdmissionParams): Promise<void> {
   const modelId = params.teamCredentialModel?.modelId ?? params.modelSelection?.modelId ?? params.modelId ?? 'default';
-  const support = (await readExecutionRunOfferedModel(params))?.capabilities?.structuredOutput ?? 'unknown';
+  const model = await readExecutionRunOfferedModel(params);
+  const support = resolveModelStructuredOutputSupport({ model, catalogModel: Boolean(model) });
   if (support !== 'supported') {
     const code = 'model_structured_output_unsupported';
     throw Object.assign(new Error('The selected model does not establish structured JSON output support.'), {

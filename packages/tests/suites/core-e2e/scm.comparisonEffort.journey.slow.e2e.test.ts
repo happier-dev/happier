@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { ExecutionRunGetResponseSchema, ExecutionRunListResponseSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol';
+import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineKeyPreparationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
@@ -55,6 +56,20 @@ it.each(['claude', 'codex'] as const)('generates comparison outputs with explici
       executionRunTargetMachineId: machine.target.machineId,
       actionCaller: { kind: 'host' as const }, externalActionTarget: { kind: 'machine' as const,
         machineId: machine.target.machineId, project: { machineId: machine.target.machineId, directory: workspace } } };
+    if (agentId === 'codex') {
+      const agentTargetKey = 'agent:happier.agent.codex/codex';
+      for (const [modelId, structuredNarration] of [['gpt-5.4', true], ['unoffered-playback-model', false]] as const) {
+        const saved = await ui.execute('providers.defaults.set', {
+          agentTargetKey, selection: { v: 1, updatedAt: Date.now(), ref: { agentTargetKey, providerConnectionId: null, modelId } },
+        }, { surface: 'ui', authority: 'present_user', serverId: ui.serverId });
+        expect(saved).toMatchObject({ ok: true });
+        const listed = await ui.execute('review.engines.list', { sessionId: null, machineId: machine.target.machineId }, context);
+        expect(listed).toMatchObject({ ok: true });
+        if (!listed.ok) throw new Error('Review inventory Action refused');
+        expect(ReviewEngineInventorySchema.parse(listed.result).items.find(item => item.value === agentTargetKey))
+          .toMatchObject({ launchModelId: modelId, capabilities: { structuredNarration } });
+      }
+    }
     const started = await ui.execute('scm.diffSummary.generate', { cwd: workspace, source: { kind: 'workingTree' },
       modelSelector: { backendTargetKey: `backend:${agentId}`, modelId: agentId === 'codex' ? 'gpt-5.4' : 'claude-sonnet-4-6',
         sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'low' } } } },

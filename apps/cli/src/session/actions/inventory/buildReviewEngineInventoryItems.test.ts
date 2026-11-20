@@ -10,6 +10,7 @@ import { createInMemoryReviewRecordPortV1 } from '../../../../../../packages/pro
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
+import { resolveMuseModelCapabilities } from '../../../../../../packages/plugins/muse/src/modelFacts';
 
 const registryMocks = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn(),
@@ -219,26 +220,49 @@ describe('buildReviewEngineInventoryItems', () => {
     expect(items.find(item => item.engineId === 'codex')?.value).toBe(buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }));
   });
 
-  it('projects narration through real admitted Agent declarations without inferring it from engine identity or Session resume', async () => {
-    const project = (id: string, structured: boolean) => projectManifestAgentContribution({
-      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+  it('offers narration for a native default described by the model catalog', async () => {
+    registryMocks.getResolvedContributionRegistry.mockReturnValue({
+      agentDefinitionsById: new Map([['codex', {
+        id: 'codex', definition: { id: 'codex', title: 'Codex' },
+        richDefinition: { definition: runCapableDefinition({ id: 'codex', title: 'Codex' }) },
+      }]]), executionRunProfiles: [],
+    });
+    const items = await buildReviewEngineInventoryItems({
+      readNativeOfferedModel: async ({ modelId }) => modelId === 'default'
+        ? { id: modelId, name: 'Default', capabilities: { structuredOutput: 'supported' } } : undefined,
+    });
+    expect(items).toMatchObject([{ engineId: 'codex', capabilities: { structuredNarration: true } }]);
+    expect(items[0]).not.toHaveProperty('launchModelId');
+  });
+
+  it.each([
+    ['muse-spark-1.3-contributor', null, true],
+    ['muse-spark-1.3', null, false],
+    ['muse-spark-1.3-contributor', 'pc_fixture', true],
+    ['muse-spark-1.3', 'pc_fixture', false],
+  ] as const)('offers narration for selected model %s on connection %s', async (modelId, providerConnectionId, structuredNarration) => {
+    const agent = projectManifestAgentContribution({
+      pluginId: 'happier.agent.muse', provenance: 'first_party', source: { kind: 'bundled' },
       definition: PluginAgentContributionV2Schema.parse({
-        id, title: id, primary: 'sessions', runtime: { kind: 'custom' },
-        capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
-          ...(structured ? { structuredOutput: { formats: ['json'] } } : {}) },
+        id: 'muse', title: 'Muse', primary: 'sessions', runtime: { kind: 'custom' },
+        capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
       }),
     });
-    const capable = project('assistant', true);
-    const findingsOnly = project('codex', false);
-    // Current installed-plugin declarations cross the daemon reload projection boundary.
-    // Admission, qualified identity and catalog projection stay real beneath it.
-    registryMocks.getReloadState.mockReturnValue({ activeRegistry: { contributes: {
-      agentDefinitionsById: new Map([[capable.id, capable], [findingsOnly.id, findingsOnly]]),
-      executionRunProfiles: [], catalogEntriesById: {},
-    } } });
-    expect(await buildReviewEngineInventoryItems({})).toEqual([
-      expect.objectContaining({ engineId: 'acme.review/assistant', capabilities: { structuredNarration: true, sessionTranscript: true } }),
-      expect.objectContaining({ engineId: 'acme.review/codex', capabilities: { structuredNarration: false, sessionTranscript: true } }),
+    const targetKey = buildBackendTargetKeyV2({ kind: 'agent', identity: agent.identity! });
+    const offeredModel = (offeredId: string) => ({
+      id: offeredId, name: offeredId, capabilities: resolveMuseModelCapabilities(offeredId),
+    });
+    const input = {
+      accountSettings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: {
+        [targetKey]: { v: 1, updatedAt: 1, ref: { agentTargetKey: targetKey, modelId, providerConnectionId } },
+      } }),
+      registrySnapshot: { agentDefinitionsById: new Map([[agent.id, agent]]), executionRunProfiles: [] },
+      readNativeOfferedModel: async ({ modelId: offeredId }: { modelId: string }) => offeredModel(offeredId),
+      readProviderOfferedModel: async (ref: { providerConnectionId: string | null; modelId: string }) =>
+        ref.providerConnectionId === 'pc_fixture' ? offeredModel(ref.modelId) : undefined,
+    };
+    expect(await buildReviewEngineInventoryItems(input)).toEqual([
+      expect.objectContaining({ engineId: agent.id, launchModelId: modelId, capabilities: { structuredNarration, sessionTranscript: true } }),
     ]);
   });
 

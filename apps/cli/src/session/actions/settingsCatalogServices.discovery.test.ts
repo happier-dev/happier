@@ -79,6 +79,7 @@ async function createNativeCatalog() {
         const previous = getActiveAccountSettingsSnapshot();
         let purposeAvailable = true;
         let teamMember = false;
+        let teamModelSupportsStructuredOutput = true;
         let personalAvailable = true;
         let admitted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
         const dispose = async () => {
@@ -168,7 +169,8 @@ async function createNativeCatalog() {
                             sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
                             providerModels: [{ selection: { kind: 'team_credential_provider_model', resourceId: 'team-resource',
                                 teamId: 'team', expectedResourceRevision: 7, deliveryMode: 'brokered', agentTargetKey: application.agentTargetKey, modelId: 'gpt-5.6-luna' },
-                                descriptor: { id: 'gpt-5.6-luna', name: 'Luna', capabilities: { structuredOutput: 'supported' } },
+                                descriptor: { id: 'gpt-5.6-luna', name: 'Luna',
+                                    ...(teamModelSupportsStructuredOutput ? { capabilities: { structuredOutput: 'supported' } } : {}) },
                                 sourceRevision: 'source-7', availability: 'available', application,
                                 sourceFacts: { endpoint: { id: application.endpointTemplateId, protocol: application.protocol,
                                     capabilities: { streaming: 'supported', toolRoundTrips: 'supported',
@@ -192,6 +194,7 @@ async function createNativeCatalog() {
             return { executor, observe, configuredTargetKey,
                 setNativeSignIn: (signedIn: boolean) => writeTextFileSync(signInFile, signedIn ? 'yes' : 'no'),
                 setTeamMember: (member: boolean) => { teamMember = member; },
+                setTeamModelStructuredOutput: (supported: boolean) => { teamModelSupportsStructuredOutput = supported; },
                 setPersonalAvailable: (available: boolean) => { personalAvailable = available; },
                 modelReads: () => Number(readFileSync(modelReadsFile, 'utf8')),
                 writeModels: (modelId: string) => writeTextFileSync(modelFile, JSON.stringify([{ id: modelId, displayName: modelId, isDefault: true }])),
@@ -264,7 +267,7 @@ describe('Summary native model discovery', () => {
     });
 
     it('returns a brokered runner only while the requesting Account is entitled to the Team model', async () => {
-        const { executor, setNativeSignIn, setPersonalAvailable, setTeamMember } = catalog;
+        const { executor, observe, setNativeSignIn, setPersonalAvailable, setTeamMember, setTeamModelStructuredOutput } = catalog;
         const resolve = () => executor.execute('agents.models.list', { purpose: 'llm_task_runner', task: 'deploy_suggestion',
             machineId: 'native-model-machine' }, { surface: 'cli', authority: 'present_user' });
         setNativeSignIn(false);
@@ -276,12 +279,18 @@ describe('Summary native model discovery', () => {
                 modelSelection: { source: 'team_resource', teamId: 'team', resourceId: 'team-resource',
                     expectedResourceRevision: 7, deliveryMode: 'brokered', modelId: 'gpt-5.6-luna' },
             } } } });
+            const readTeamModel = async () => (await observe()).automaticProfiles?.find(profile =>
+                profile.modelSelector?.modelSelection?.source === 'team_resource');
+            expect(await readTeamModel()).toMatchObject({ structuredOutput: 'supported' });
+            setTeamModelStructuredOutput(false);
+            expect(await readTeamModel()).toMatchObject({ structuredOutput: 'unknown' });
             setTeamMember(false);
             expect(await resolve()).toMatchObject({ ok: true, result: { llmTaskRunner: { ok: false, reason: 'no_ready_agent' } } });
         } finally {
             setNativeSignIn(true);
             setPersonalAvailable(true);
             setTeamMember(false);
+            setTeamModelStructuredOutput(true);
         }
     });
 

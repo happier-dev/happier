@@ -334,6 +334,7 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
 export function createCliActionInventoryDeps(params: Readonly<{
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   localMachineId?: string;
+  projectModelsForAccount?: import('./types').CliActionDepsParams['projectModelsForAccount'];
   readHomeDomainAction?: () => ActionExecutorDeps['homeDomainAction'];
   /** Lazy because the Machine inventory owner is composed after the Account catalog owner. */
   getReviewReadinessDeps?: (catalog: AcpCatalogSnapshotV1) => Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>;
@@ -366,6 +367,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     signal?: AbortSignal;
     context?: ActionExecutorContext;
     effectActionId?: string;
+    exactMachine?: true;
     timeoutMs?: number | null;
   }>) => Promise<unknown>;
 }> & SessionStoredContentCryptoContext): Pick<
@@ -659,6 +661,10 @@ export function createCliActionInventoryDeps(params: Readonly<{
     reviewEnginesList: async ({ sessionId, machineId, includeDisabled, scope, profileSelections }, context = {}) => {
       const captured = await readAcpCatalogSnapshot(context.signal);
       const selectedMachineId = machineId ?? params.localMachineId;
+      const authorization = context.externalActionExecutionAuthorization;
+      const requester = readRequesterAccountActionContext(authorization);
+      const projectDirectory = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.project?.directory : undefined;
+      let sessionPath: Promise<string | null> | undefined;
       const { resolveCliEngineRegistry } = await import('@/agent/runtime/registry/engineRegistry');
       const registry = await resolveCliEngineRegistry();
       const profileCatalog = await registry.resolveExecutionRunProfileCatalog({
@@ -672,6 +678,48 @@ export function createCliActionInventoryDeps(params: Readonly<{
         acpCatalogSnapshot: captured.catalog,
         registrySnapshot: registry.contributions,
         profileCatalog,
+        signal: context.signal,
+        readNativeOfferedModel: async (input, signal) => {
+          const request = { ...input, cwd: projectDirectory ?? (sessionId ? await (sessionPath ??= readCurrentSessionValue('path')) : null) ?? input.cwd };
+          const [{ resolveExecutionRunRuntimeBackendId }, { findNativeExecutionRunOfferedModel, readNativeExecutionRunOfferedModel }] = await Promise.all([
+            import('@/agent/runtime/bridges/executionRun/backendTargets'),
+            import('@/agent/runtime/bridges/executionRun/structuredOutputAdmission'),
+          ]);
+          const agentId = resolveExecutionRunRuntimeBackendId(request.backendTarget);
+          if (selectedMachineId && selectedMachineId !== params.localMachineId) {
+            const observation = await probeMachineInventory({
+              args: { agentId, machineId: selectedMachineId, probe: { cwd: request.cwd }, signal },
+              agentId, backendTarget: readBackendTargetRefV2(request.backendTarget), context,
+              method: 'probeModels', schema: AgentModelsProbeObservationSchema,
+            });
+            return observation && !('ok' in observation) && observation.source !== 'unavailable'
+              ? findNativeExecutionRunOfferedModel(observation.availableModels, request.modelId) : undefined;
+          }
+          if (requester?.readNativeOfferedModel) return requester.readNativeOfferedModel(request, signal);
+          if (authorization && authorization.binding.accountId !== authorization.binding.custodianAccountId) return undefined;
+          const { withAgentPreflightCatalog } = await import('@/capabilities/probes/withAgentPreflightCatalog');
+          return await withAgentPreflightCatalog({ agentId, signal }, catalog => readNativeExecutionRunOfferedModel({
+            ...request, ...catalog, signal, accountSettings: captured.account.settings,
+            promptCredentials: params.savedSecretOperationContext?.credentials ?? params.credentials,
+            preflightDependencies: { savedSecretOperationContext: params.savedSecretOperationContext },
+          }));
+        },
+        ...(selectedMachineId ? { readProviderOfferedModel: async (ref) => {
+          const request = { machineId: selectedMachineId, agentTargetKey: ref.agentTargetKey,
+            sourceConnectionId: ref.providerConnectionId ?? undefined, currentSelection: ref, mode: 'picker' as const,
+            refreshPolicy: 'current_only' as const };
+          const response = params.projectModelsForAccount && selectedMachineId === params.localMachineId
+            ? await params.projectModelsForAccount(request, context)
+            : context.externalActionExecutionAuthorization ? undefined : await params.callMachineAction?.({
+              machineId: selectedMachineId, serverId: context.serverId, method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+              request, context, exactMachine: true, signal: context.signal,
+            });
+          const projection = DaemonProviderModelProjectionResponseV1Schema.safeParse(response);
+          if (!projection.success || projection.data.status !== 'success' || projection.data.agentTargetKey !== ref.agentTargetKey) return undefined;
+          const row = projection.data.groups.find(group => group.connectionId === ref.providerConnectionId)?.rows
+            .find(row => row.ref.modelId === ref.modelId && row.descriptor.id === ref.modelId && row.compatibility.confirmed);
+          return row?.descriptor;
+        } } : {}),
         ...(selectedMachineId && params.getReviewReadinessDeps ? {
           readReadiness: targets => readAgentTargetReadinessV1(params.getReviewReadinessDeps!(captured.catalog), selectedMachineId,
             targets.map(target => parseBackendTargetKeyV2(target)), context),
