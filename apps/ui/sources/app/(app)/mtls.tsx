@@ -198,7 +198,7 @@ export default function MtlsCallbackScreen() {
                             }, { expectedCredentialTokenDigest: pending.accountContinuation.credentialTokenDigest })) {
                                 throw new Error('Account Service credential custody changed');
                             }
-                            resolvePostAuthLanding({ replace: router.replace, returnTo: destination });
+                            resolvePostAuthLanding({ replace: router.replace, continuation: admitInternalRouteHref(destination) });
                             return;
                         }
                         resolvePostAuthLanding({

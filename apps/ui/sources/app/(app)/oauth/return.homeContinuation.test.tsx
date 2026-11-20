@@ -5,7 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
-import { adoptHomeProfile, getActiveServerId, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile, getActiveServerId, resetServerProfilesRuntimeForTests, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider, getCurrentAuth } from '@/auth/context/AuthContext';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -20,7 +20,7 @@ import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn(), params: {
-    provider: 'github', flow: 'auth', pending: 'provider-handle', purpose: '', admissionReference: '', accountMode: 'plain', code: 'mtls-code', error: '',
+    provider: 'github', flow: 'auth', pending: 'provider-handle', purpose: '', admissionReference: '', accountMode: 'plain', code: 'mtls-code', error: '', error_description: '',
     teamId: '', target: '',
 } }));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
@@ -39,6 +39,8 @@ const { default: MtlsCallbackScreen } = await import('../mtls');
 const { default: TeamSignInRoute } = await import('../teams/[teamId]/sign-in');
 
 beforeEach(() => {
+    restore = installLocalStorageMock().restore;
+    resetServerProfilesRuntimeForTests();
     // Observe the physical HTTP destination below the real scoped client and carrier policy.
     setRuntimeFetch(async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
@@ -57,6 +59,7 @@ afterEach(async () => {
         createdCredentialTarget = undefined;
     }
     restore?.();
+    restore = undefined;
     boundary.params.provider = 'github';
     boundary.params.flow = 'auth';
     boundary.params.pending = 'provider-handle';
@@ -65,6 +68,7 @@ afterEach(async () => {
     boundary.params.accountMode = 'plain';
     boundary.params.code = 'mtls-code';
     boundary.params.error = '';
+    boundary.params.error_description = '';
     boundary.params.teamId = '';
     boundary.params.target = '';
     vi.unstubAllGlobals();
@@ -72,7 +76,6 @@ afterEach(async () => {
 });
 
 async function mountTeamEntry() {
-    restore = installLocalStorageMock().restore;
     const fixture = createDirectoryHttpFixture();
     const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor,
         source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
@@ -159,7 +162,6 @@ it('keeps the exact Team return when handing authentication to the Home-selected
 });
 
 it.each(['access_denied', 'oauth_not_configured'])('returns a failed Team connect to its bound Team after %s', async (error) => {
-    restore = installLocalStorageMock().restore;
     const fixture = createDirectoryHttpFixture();
     const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor,
         source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
@@ -168,15 +170,21 @@ it.each(['access_denied', 'oauth_not_configured'])('returns a failed Team connec
         serverId: home.id, serverUrl: home.serverUrl });
     boundary.params.flow = 'connect';
     boundary.params.error = error;
+    boundary.params.error_description = 'provider details must stay out of the page';
     boundary.request.mockRejectedValue(new Error('A canceled connect must not finalize'));
     screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
+    if (error !== 'access_denied') {
+        await vi.waitFor(() => expect(screen!.findByTestId('oauth-external-failure')).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain(boundary.params.error_description);
+        expect(router.replace).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('oauth-external-start-again');
+    }
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith(returnTo));
     expect(await TokenStorage.getPendingExternalConnect()).toBeNull();
     expect(boundary.request).not.toHaveBeenCalled();
 });
 
 it('returns canceled fresh Team authentication to its stored Team continuation', async () => {
-    restore = installLocalStorageMock().restore;
     const fixture = createDirectoryHttpFixture();
     const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor,
         source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
@@ -204,7 +212,6 @@ it.each([
     ['a missing', undefined],
     ['an empty', ''],
 ])('rejects a Team callback with %s admission reference for its pending continuation', async (_label, returnedReference) => {
-    restore = installLocalStorageMock().restore;
     const fixture = createDirectoryHttpFixture();
     const home = await adoptHomeProfile({
         descriptor: fixture.home.connectionDescriptor,
@@ -250,19 +257,18 @@ it.each([
 
     screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
 
-    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
-        t('common.error'),
-        t('errors.oauthStateMismatch'),
-    ));
+    await vi.waitFor(() => expect(screen!.getTextContent()).toContain(t('errors.oauthStateMismatch')));
+    expect(Modal.alert).not.toHaveBeenCalled();
     expect(boundary.request).not.toHaveBeenCalled();
     expect(await TokenStorage.getPendingExternalAuth()).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('oauth-external-start-again');
     expect(router.replace).toHaveBeenCalledWith(
         `/teams/team-1/sign-in?target=${encodeURIComponent(fixture.home.connectionDescriptor.homeServerIdentityId)}`,
     );
 });
 
-it('names a dynamic provider on its OAuth return by the presentation its Home projected at start', async () => {
-    restore = installLocalStorageMock().restore;
+it('starts a fresh OAuth request on the same Home only after Start again', async () => {
     const fixture = createDirectoryHttpFixture();
     const home = await adoptHomeProfile({
         descriptor: fixture.home.connectionDescriptor,
@@ -270,11 +276,20 @@ it('names a dynamic provider on its OAuth return by the presentation its Home pr
         descriptorAuthority: 'current_connection_observation',
     });
     await setActiveServerId(home.id, { scope: 'device' });
-    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => (
-        path.startsWith('/v1/auth/external/oidc-northwind/params?')
-            ? new Response(JSON.stringify({ url: 'https://idp.northwind.example/authorize?state=northwind' }))
-            : fixture.request(endpoint, path, init)
-    ));
+    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+        if (path.startsWith('/v1/auth/external/oidc-northwind/params?')) {
+            return Response.json({ url: 'https://idp.northwind.example/authorize?state=northwind' });
+        }
+        if (path === '/v1/auth/entry') {
+            return Response.json({
+                v: 1, state: 'ready', scope: { kind: 'home' },
+                autoRedirect: null,
+                actions: [{ kind: 'authenticate', methodId: 'oidc-northwind', action: 'login', mode: 'keyless',
+                    origin: 'home', presentation: { displayName: 'Northwind Workforce', providerKind: 'oidc' } }],
+            } satisfies AuthEntryProjectionV1);
+        }
+        return fixture.request(endpoint, path, init);
+    });
     // The browser is the one boundary the start hands off to.
     const assign = vi.fn();
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -297,27 +312,28 @@ it('names a dynamic provider on its OAuth return by the presentation its Home pr
             returnTo: '/setup/wizard',
         });
         expect(assign).toHaveBeenCalledWith('https://idp.northwind.example/authorize?state=northwind');
+        assign.mockClear();
+        boundary.request.mockClear();
+        boundary.params.provider = 'oidc-northwind';
+        boundary.params.flow = 'auth';
+        boundary.params.pending = '';
+        boundary.params.error = 'oauth_not_configured';
+        boundary.params.error_description = 'private provider diagnostics';
+        screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
+        await vi.waitFor(() => expect(screen?.findByTestId('oauth-external-failure')).toBeTruthy());
+        expect(screen.getTextContent()).not.toContain(boundary.params.error_description);
+        expect(assign).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('oauth-external-start-again');
+        await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('https://idp.northwind.example/authorize?state=northwind'));
+        expect(boundary.request.mock.calls.filter(([, path]) => String(path).startsWith('/v1/auth/external/oidc-northwind/params?'))
+            .map(([endpoint]) => endpoint)).toEqual([home.serverUrl]);
     } finally {
         if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
         else delete (globalThis as { window?: unknown }).window;
     }
-
-    // A fresh load of the return route holds no Home projection: only the start's
-    // custody can name this provider the way its Home does.
-    boundary.params.provider = 'oidc-northwind';
-    boundary.params.flow = 'auth';
-    boundary.params.pending = '';
-    boundary.params.error = 'oauth_not_configured';
-    screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
-
-    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
-        t('common.error'),
-        t('friends.providerGate.notConfigured', { provider: 'Northwind Workforce' }),
-    ));
 });
 
 it.each(['oauth', 'mtls-claim', 'mtls-redirect', 'mtls-web'] as const)('presents a disabled Account on its captured Home after %s proof without committing credentials', async (flow) => {
-    restore = installLocalStorageMock().restore;
     const fixture = createDirectoryHttpFixture();
     const homeA = await adoptHomeProfile({ descriptor: { ...fixture.home.connectionDescriptor,
         homeServerIdentityId: 'srv_home_a', canonicalServerUrl: 'https://home-a.test',
@@ -353,7 +369,12 @@ it.each(['oauth', 'mtls-claim', 'mtls-redirect', 'mtls-web'] as const)('presents
             returnTo: '/setup/wizard',
         });
     }
-    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.accountDisabled', { home: homeB.serverUrl })));
+    const reason = t('errors.accountDisabled', { home: homeB.serverUrl });
+    if (flow === 'oauth') {
+        await vi.waitFor(() => expect(screen?.getTextContent()).toContain(reason));
+    } else {
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), reason));
+    }
     expect(getActiveServerId()).toBe(activeHomeA);
     expect(await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: 'srv_home_b' })).toBeNull();
     expect(getCurrentAuth()?.credentials).toBeNull();
@@ -374,7 +395,6 @@ it.each([
     boundary.params.code = 'mtls-code';
     boundary.params.accountMode = restoreRequired ? 'e2ee' : 'plain';
     boundary.params.error = provider === 'mtls' && restoreRequired ? 'restore_required' : '';
-    restore = installLocalStorageMock().restore;
     const fixture = createDirectoryHttpFixture();
     fixture.state.homes = [];
     fixture.state.preferredHomeServerIdentityId = null;

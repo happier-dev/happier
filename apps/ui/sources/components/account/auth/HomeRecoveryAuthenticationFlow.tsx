@@ -17,6 +17,7 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
 type HomeRecoveryAuthenticationFlowProps = Readonly<{
     profileRef: string;
     returnTo: string;
+    retryOAuth?: Readonly<{ providerId: string; mode?: 'keyed' | 'keyless' }>;
     onAuthenticated: () => void | Promise<void>;
     onBack: () => void;
 }>;
@@ -54,11 +55,15 @@ function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlo
     }
 
     const loginActions = catalog.actions.filter(({ action }) => action.id === 'login');
+    const retry = props.retryOAuth && loginActions.find(({ execution }) => execution.kind === 'oauth'
+        && execution.providerId === props.retryOAuth?.providerId
+        && (!props.retryOAuth?.mode || execution.mode === props.retryOAuth.mode));
     const homeLabel = resolveHomeDisplayLabel(profile, profile.id);
     if (catalog.state === 'ready' && loginActions.length > 0) {
         return <HomeAuthenticationFlow
             target={{ kind: 'saved_profile', profileRef: profile.id }}
-            actions={loginActions}
+            actions={retry ? [retry] : loginActions}
+            openChosenAction={retry !== undefined}
             transport={catalog.transport ?? undefined}
             keyChallengeV2Available={catalog.keyChallengeV2Available}
             returnTo={props.returnTo}
