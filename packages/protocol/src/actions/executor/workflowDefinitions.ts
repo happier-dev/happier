@@ -256,13 +256,18 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       return WorkflowDefinitionImportResultV1Schema.parse(parsed.ok
         ? { ...parsed, classification: 'unsaved_definition' } : parsed);
     },
-    exportDocument: async (raw: z.infer<typeof WorkflowDefinitionExportRequestV1Schema>, context?: WorkflowIngressContextV1) => {
+    exportDocument: async (raw: z.infer<typeof WorkflowDefinitionExportRequestV1Schema>, context?: WorkflowIngressContextV1, signal?: AbortSignal) => {
       const input = WorkflowDefinitionExportRequestV1Schema.parse(raw);
-      const saved = 'draft' in input ? null : await read(input);
-      const definition = 'draft' in input ? normalize(input.draft, context) : saved!.definition;
+      const saved = 'definitionId' in input ? await read({ ...input, ...(signal ? { signal } : {}) }) : null;
+      const source = 'workflow' in input
+        ? await resolveWorkflowDefinitionRefV1(input.workflow, { readPluginWorkflows, ...(signal ? { signal } : {}) })
+        : null;
+      const definition = 'draft' in input ? normalize(input.draft, context) : saved?.definition ?? source?.definition;
+      if (!definition) throw contentUnavailable('not_found');
       const document = { kind: 'happier.workflow' as const, version: 1 as const, definition };
-      return { ...(saved === null ? {} : { definitionId: saved.definitionId, revision: saved.revision, metadata: saved.metadata }),
-        document, json: serializeWorkflowDocumentJsonV1(document) };
+      const portable = { document, json: serializeWorkflowDocumentJsonV1(document) };
+      return saved === null ? portable
+        : { definitionId: saved.definitionId, revision: saved.revision, metadata: saved.metadata, ...portable };
     },
     list: async ({ limit, cursor: inputCursor, workflow, definitionId }: Readonly<{ cursor?: string; limit?: number; workflow?: string; definitionId?: string }>): Promise<WorkflowDefinitionListResultV1> => {
       const exactArtifactId = definitionId ?? (workflow !== undefined && parseWorkflowDefinitionRefV1(workflow)?.kind === 'artifact' ? workflow : undefined);

@@ -70,8 +70,10 @@ const administrativeFields: Readonly<Partial<Record<WorkflowActionIdV1, readonly
   'workflow.definition.import': [{ path: 'json', title: 'Workflow document JSON', widget: 'textarea', required: true,
     description: 'Supply the serialized ordinary Workflow document, as returned by workflow.definition.export. Import parses an unsaved definition; it does not save or start work.' }],
   'workflow.definition.export': [{ ...definitionId, required: false },
+    { path: 'workflow', title: 'Catalog Workflow reference', widget: 'text',
+      description: 'Use a built-in or plugin Workflow reference from the Run start source options to read its portable definition.' },
     { path: 'draft', title: 'Unsaved Workflow definition', widget: 'json',
-      description: 'Supply the current definition from workflow.authoring.draft.get to export without saving. Choose either draft or definitionId.' }],
+      description: 'Supply the current definition from workflow.authoring.draft.get to export without saving. Supply exactly one of definitionId, workflow, or draft.' }],
   'workflow.definition.capture': [
     { path: 'discussion', title: 'Source Discussion address', widget: 'json', required: true, description: 'The qualified Home and Discussion containing the selected authorized messages.' },
     { path: 'messageIds', title: 'Selected message ids', widget: 'json', required: true, description: 'Select exact messages from this Discussion. Capture creates an editable draft with source provenance; it does not save or run.' },

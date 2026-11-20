@@ -150,7 +150,7 @@ type DefinitionActions = Readonly<{
   delete: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.delete']['parse']>,
     caller?: WorkflowActionExecuteArgs['context']) => Promise<WorkflowActionResult>;
   importDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.import']['parse']>, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
-  exportDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.export']['parse']>, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
+  exportDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.export']['parse']>, context?: WorkflowIngressContextV1, signal?: AbortSignal) => Promise<WorkflowActionResult>;
 }>;
 
 type RunActionId = Extract<WorkflowActionIdV1, `workflow.run.${string}`>;
@@ -263,7 +263,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         return await deps.definitions.importDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context);
       }
       if (actionId === 'workflow.definition.export') {
-        return await deps.definitions.exportDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context);
+        return await deps.definitions.exportDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context, rawArgs.context.signal);
       }
       if (actionId === 'workflow.definition.create') {
         return await deps.definitions.create(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context, rawArgs.context);

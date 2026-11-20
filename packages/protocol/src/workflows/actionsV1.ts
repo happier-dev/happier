@@ -141,6 +141,10 @@ export const WorkflowValidateResultV1Schema = lazyZodSchema(() => z.strictObject
   targetValidation: z.enum(['not_requested', 'checked', 'unavailable']),
 }));
 
+const WorkflowCatalogRefV1Schema = lazyZodSchema(() => WorkflowDefinitionRefV1StringSchema.check(zMini.refine(
+  (ref) => parseWorkflowDefinitionRefV1(ref)?.kind !== 'artifact', 'Catalog sources must name a built-in or plugin workflow',
+)));
+
 export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(WorkflowAcceptedInlineSourceV1Schema, { definition: WorkflowIngressCarrierV1Schema,
     visibleTeamId: zMini.optional(preservedBoundedNfcString(191, 'Team ids')),
@@ -163,7 +167,7 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
   })),
   z.strictObject({ kind: z.literal('saved'), definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
     visibleTeamId: zMini.optional(preservedBoundedNfcString(191, 'Team ids')) }),
-  z.strictObject({ kind: z.literal('catalog'), workflow: WorkflowDefinitionRefV1StringSchema.check(zMini.refine((ref) => parseWorkflowDefinitionRefV1(ref)?.kind !== 'artifact', 'Catalog sources must name a built-in or plugin workflow')), pluginVersion: z.optional(z.string().check(z.minLength(1))) }),
+  z.strictObject({ kind: z.literal('catalog'), workflow: WorkflowCatalogRefV1Schema, pluginVersion: z.optional(z.string().check(z.minLength(1))) }),
   z.strictObject({ kind: z.literal('repo_file'), path: z.string().check(z.minLength(1)) }),
 ]));
 export const WorkflowRunStartRequestV1Schema = lazyZodSchema(() => z.strictObject({
@@ -611,6 +615,7 @@ export const WorkflowDefinitionImportResultV1Schema = lazyZodSchema(() => z.disc
 ]));
 export const WorkflowDefinitionExportRequestV1Schema = lazyZodSchema(() => z.union([
   WorkflowDefinitionGetRequestV1Schema,
+  z.strictObject({ workflow: WorkflowCatalogRefV1Schema }),
   z.strictObject({ draft: WorkflowIngressCarrierV1Schema }),
 ]));
 export const WorkflowDefinitionExportResultV1Schema = lazyZodSchema(() => z.union([

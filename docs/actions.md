@@ -6591,14 +6591,15 @@ The Workflow Action census also includes `workflow.definition.import`,
 `workflow.definition.export`, and `workflow.trigger.run_now`. Document import takes
 `{ json }` and delegates the sole `workflowDocumentV1` codec, returning an
 `unsaved_definition` carrier or its typed document failure. It never saves, starts,
-or schedules anything. Export takes either `{ definitionId }`, opening the authorized saved
-Artifact at its current revision, or `{ draft }`, containing the current unsaved
-Workflow definition snapshot (the `definition` from `workflow.authoring.draft.get`).
-Both use the same validation and document codec and return canonical `happier.workflow` JSON;
-credentials, staged media, and runtime state are not document fields. File picking
-and delivery stay platform-local. Draft export neither saves nor starts work, and
-returns `document` and `json` without a saved Artifact id, revision or metadata.
-The mounted editor's Export JSON uses this same Action.
+or schedules anything. Export accepts `{ definitionId }` for an authorized saved
+Artifact or `{ draft }` for an unsaved definition, such as the `definition` from
+`workflow.authoring.draft.get`. In 0.3 development source it also accepts
+`{ workflow }` for a built-in or plugin reference from the Run start source options.
+The catalog resolver reads the exact current definition and returns
+`content_unavailable` when the reference cannot be resolved. Each input returns
+a portable `happier.workflow` document and its canonical JSON. Only saved Artifact
+exports carry an Artifact id, revision and metadata. The mounted editor uses the
+same Action, with file picking and delivery handled by the platform.
 
 The mounted new-session composer publishes its Workflow chooser through
 `ui.current_context.read` and `ui.current_context.command.invoke`. Read the current

@@ -1844,6 +1844,8 @@ export type WorkflowsActionInputById = {
             roles?: unknown;
             finalOutput?: unknown;
         };
+    } | {
+        workflow: string;
     };
     readonly "workflow.definition.capture": {
         discussion: {

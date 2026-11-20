@@ -4,7 +4,8 @@ import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor
 import { createWorkflowActionExecutor, normalizeWorkflowActionThrownError, type WorkflowActionFailureDiagnosticV1 } from './workflowAccountActions.js';
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
-import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
+import { parseWorkflowDocumentJsonIngressV1, parseWorkflowDocumentV1 } from '../../workflows/workflowDocumentV1.js';
+import { resolveBuiltinWorkflowDefinitionV1 } from '../../workflows/builtins/catalog.js';
 import { WorkflowActionFailureV1Schema, WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
 import { bindAgentExistingExecutionRunAuthority, resolveWorkflowActionContext } from './callerContext.js';
 
@@ -221,6 +222,16 @@ describe('workflow Action refusal classification', () => {
     expect(JSON.parse(String(result.result.json))).toEqual({ kind: 'happier.workflow', version: 1, definition });
     await expect(createActionExecutor({ workflowAction: executor(true) } as unknown as ActionExecutorDeps)
       .execute('workflow.definition.export', { definitionId }, { surface: 'mcp' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+  it('exports a built-in by catalog reference for an agent without opening an Account Artifact', async () => {
+    const actions = createActionExecutor({ workflowAction: executor(false, new Error('unexpected_artifact_read')) } as unknown as ActionExecutorDeps);
+    const builtin = resolveBuiltinWorkflowDefinitionV1('plan-with-a-panel');
+    if (!builtin) throw new Error('missing_builtin_fixture');
+    const document = parseWorkflowDocumentV1({ kind: 'happier.workflow', version: 1, definition: builtin.definition });
+    const result = await actions.execute('workflow.definition.export', { workflow: 'builtin:plan-with-a-panel' }, { surface: 'agent' });
+    expect(result).toMatchObject({ ok: true, result: { document, json: expect.any(String) } });
+    await expect(actions.execute('workflow.definition.export', { workflow: 'builtin:no-such-workflow' }, { surface: 'agent' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
   });
   it('exports an unsaved mounted draft through the same Action codec without reading or saving an Artifact', async () => {

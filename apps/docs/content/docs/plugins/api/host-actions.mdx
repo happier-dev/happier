@@ -26947,7 +26947,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `definitionId` (select): Saved workflow — Use the saved definitionId returned by workflow.definition.list or workflow.definition.get.
-- `draft` (json): Unsaved Workflow definition — Supply the current definition from workflow.authoring.draft.get to export without saving. Choose either draft or definitionId.
+- `workflow` (text): Catalog Workflow reference — Use a built-in or plugin Workflow reference from the Run start source options to read its portable definition.
+- `draft` (json): Unsaved Workflow definition — Supply the current definition from workflow.authoring.draft.get to export without saving. Supply exactly one of definitionId, workflow, or draft.
 
 ## `workflow.definition.get`
 
