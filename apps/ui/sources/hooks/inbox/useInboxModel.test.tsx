@@ -75,6 +75,7 @@ import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageN
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { InboxPluginSessionLines } from '@/components/inbox/InboxPluginSessionLines';
 import { InboxContent } from '@/components/inbox/InboxContent';
+import { InboxDismissRowMenu } from '@/components/inbox/InboxRowMenu';
 import { createArtifactReadBatchHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture, seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -85,6 +86,10 @@ import { recordMachineRequestFailed, recordMachineRequestSucceeded } from '@/syn
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { TRIAGE_PLUGIN } from '@happier-dev/plugins-triage';
+import { REVIEW_TRIAGE_SOURCE_V1, TRIAGE_APP_PAGE_LOCAL_ID_V1, reviewTriageRouteV1,
+    TriageReadAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
@@ -1818,15 +1823,56 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } finally { await screen.unmount(); vi.useRealTimers(); }
     });
 
-    it('snoozes a recipient notice through the Action front door and reopens it after clearing', async () => {
+    it('snoozes actual Review-source attention through its mounted reminder and the Action front door', async () => {
         listRuns.mockResolvedValue(page([]));
-        const artifact = createAccountNoticeArtifactFixture({ header: { type: 'decision' } });
+        const source = await createPluginTestkit({ manifest: TRIAGE_PLUGIN.manifest, module: TRIAGE_PLUGIN,
+            services: { actions: {
+                // Review facts and selected Artifact headers cross the host Action transport boundary.
+                execute: async (actionId: string) => {
+                    if (actionId === 'reviews.list') return { items: [{ reviewId: 'review-later', subjectKind: 'comparison',
+                        projectSourceId: null, workflowId: null, sourceKind: 'direct', state: 'completed',
+                        currentRoundOrdinal: 2, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+                        counts: { total: 1, needsDecision: 0 }, needsYou: {
+                        reviewId: 'review-later', roundOrdinal: 2, reason: 'review_needs_you', needsYou: true,
+                        requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true,
+                    } }], cursor: null };
+                    if (actionId === 'artifact.list') return { items: [{ artifactId: 'review-later',
+                        header: { kind: 'review.v1', v: 1, reviewId: 'review-later', title: 'Review from its source' },
+                        headerVersion: 1, ownerAccountId: 'account-a',
+                        access: 'owner', publicAudience: 'none', seq: 1, createdAt: 1, updatedAt: 2 }] };
+                    throw new Error(`Unexpected Review source host Action ${actionId}`);
+                },
+            } as unknown as import('@happier-dev/plugin-sdk').PluginServices['actions'] } });
+        let attention: ReturnType<typeof TriageReadAttentionResultV1Schema.parse>;
+        try {
+            attention = TriageReadAttentionResultV1Schema.parse(await source.invokeAction('internal/reviews/read-attention-v1', {
+                v: 1, instance: { v: 1, instance: { source: REVIEW_TRIAGE_SOURCE_V1,
+                    sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' },
+                    binding: { purpose: 'reviews', source: 'accountData' }, localInstanceKey: 'reviews',
+                    configuration: { v: 1, token: 'happier-reviews-v1' } },
+            }));
+        } finally { await source.dispose(); }
+        expect(attention.kind).toBe('page');
+        if (attention.kind !== 'page') throw new Error('Expected Review attention');
+        const notice = attention.items[0]!;
+        expect(notice).toMatchObject({ localRef: { entryId: 'review-later' }, type: 'decision', resolved: false,
+            reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' } });
+        // Notification persistence is the process boundary. Keep the real source's output and route.
+        const artifact = createAccountNoticeArtifactFixture({ header: { title: notice.title, type: notice.type,
+            resolved: notice.resolved, reviewAttention: notice.reviewAttention,
+            source: { kind: 'plugin', pluginId: REVIEW_TRIAGE_SOURCE_V1.pluginId, itemId: 'review-later-notice' },
+            page: { pageId: TRIAGE_APP_PAGE_LOCAL_ID_V1, subPath: reviewTriageRouteV1(notice.localRef.entryId) },
+        } });
         const other = createAccountNoticeArtifactFixture({ id: 'other-recipient', ownerAccountId: 'account-b', header: { type: 'decision' } });
         seedArtifacts({ [artifact.id]: artifact, [other.id]: other });
-        const screen = await renderModel();
+        const screen = await renderModel(<MountedInboxContent />);
         const remindAt = Date.now() + 3_600_000;
         try {
-            await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, remindAt); });
+            const row = model!.items.find(item => item.focus.id === artifact.id)!;
+            const reminder = screen.findAllByType(InboxDismissRowMenu)
+                .find(node => node.props.testID === `inbox.item.${row.key}.dismiss`)!.props.reminder;
+            expect(reminder.entry.header.page).toEqual(artifact.header!.page);
+            await act(async () => { await reminder.onSetReminder(remindAt); });
             expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates', remindAt });
             expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).toMatchObject({ remindAt });
             expect(decodePlainArtifactStoredContent(artifactStore.read(other.id)!.header)).not.toHaveProperty('remindAt');
