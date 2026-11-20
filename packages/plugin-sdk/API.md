@@ -2316,6 +2316,7 @@
 | `./machine-provisioners` | `defineMachineProvisionerReconciliationSchemas` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerSchemas` | value | any |
 | `./machine-provisioners` | `isMachineProvisionerCreateRefusal` | value | any |
+| `./machine-provisioners` | `isMachineProvisionerGuestHomeOnControllerHost` | value | any |
 | `./machine-provisioners` | `managedMachineResizeRequiresRestartV1` | value | any |
 | `./machine-provisioners` | `observeMachineProvisionerNativeRead` | value | any |
 | `./machine-provisioners` | `prepareMachineProvisionerStoredSchemas` | value | any |

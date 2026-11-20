@@ -1,7 +1,7 @@
 import { quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
-import { compareMachineHosts, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isMachineProvisionerGuestHomeOnControllerHost, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerSizeV1Schema, requiresMachineProvisionerEffectReviewV1, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
@@ -263,7 +263,7 @@ export function createDevcontainerProvider(input: Readonly<{
     return await inspectContainer(resource.containerId, resource, resource.managedMachineId) === null;
   }
   async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId, guestHome?: MachineProvisionerGuestHomeV1) {
-    const homeOnControllerHost = compareMachineHosts(guestHome?.hostIdentity?.homeMachineHost, guestHome?.hostIdentity?.controllerMachineHost);
+    const homeOnControllerHost = isMachineProvisionerGuestHomeOnControllerHost(guestHome);
     let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
     let setupCleanupConfirmed = false;
     const settleFailedSetup = async (nativeResourceId?: string): Promise<never> => {
