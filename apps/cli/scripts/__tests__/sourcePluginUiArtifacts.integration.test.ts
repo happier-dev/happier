@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { buildUniversalPluginUiArtifacts } from '../../../../packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts';
+import { sourcePluginUiBuildOptions } from '../../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
 import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempDir';
 import { readGeneratedPluginUiArtifactsManifest } from '../../src/plugins/install/ui/generatedArtifacts';
 import { publishBundledPluginArtifactsAfterWorkspaceBuild } from '../buildSharedDeps.mjs';
@@ -9,6 +12,23 @@ import { bundledPluginManifestAssetRelativePath } from '../build-owned/bundledPl
 import { writeBundledPluginSourceInputs, FIXTURE_PNPM_WORKSPACE_YAML } from './testkit/packageLayoutSandbox';
 
 describe('source CLI Plugin UI preparation with the real compiler', () => {
+  it('compiles the bundled Supabase Account entry without a retained artifact', async () => {
+    const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+    const outputDir = createTempDirSync('happier Supabase Account artifacts-');
+    try {
+      const directory = 'deployment-supabase';
+      const { manifest } = await buildUniversalPluginUiArtifacts(
+        join(repoRoot, 'packages/plugins', directory),
+        join(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)),
+        { ...await sourcePluginUiBuildOptions({ repoRoot }), outputDir },
+      );
+      expect(manifest.entries).toContainEqual(expect.objectContaining({
+        artifactId: 'account-runtime', tier: 'reactNative',
+        executable: expect.objectContaining({ exports: expect.arrayContaining(['activateAccount']) }),
+      }));
+    } finally { removeTempDirSync(outputDir); }
+  });
+
   it('publishes executable graphs from CLI declarations on a cold checkout without packaged manifests', async () => {
     const repoRoot = createTempDirSync('happier source CLI plugin UI-');
     try {

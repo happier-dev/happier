@@ -10,3 +10,4 @@ export {
 export { createPostgresqlObservationNormalizer, maskPostgresqlObservationError, postgresqlCaptureUrl, type PostgresqlObservation, type PostgresqlObservationValue, type PostgresqlCaptureUrl } from './observation.js';
 export { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
 export { compilePostgresqlSetupV1, decodePostgresqlSetupV1, type PostgresqlSetupFactsV1 } from './setup.js';
+export { fitDatabaseOperationResult } from '../resultEnvelope.js';

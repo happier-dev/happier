@@ -4,9 +4,8 @@ import {
     type DatabaseDescriptorV1,
     type DatabaseManagedDeploymentTargetV1,
 } from '@happier-dev/plugin-sdk/database';
-import { fitDatabaseOperationResult } from '@happier-dev/databases';
 import {
-  admitPostgresqlWorkbenchStatement, decodePostgresqlObjectRowsV1, postgresqlParameter,
+  admitPostgresqlWorkbenchStatement, decodePostgresqlObjectRowsV1, fitDatabaseOperationResult, postgresqlParameter,
   PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
 } from '@happier-dev/databases/postgresql';
 import { openSupabaseReadOnlyTransport } from './transport.js';
