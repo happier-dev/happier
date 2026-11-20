@@ -1,3 +1,4 @@
+import { readApprovalProfileCatalogInvalidation, type ApprovalProfileCatalogInvalidation } from '@/settings/profiles/hydrateProfileCatalog';
 import { createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity, sameAccountEncryptionIdentity,
     waitForAccountEncryptionObservation, type AccountE2eeCustody, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
@@ -52,6 +53,7 @@ type Observation = Readonly<{
     readWitness(signal?: AbortSignal, options?: Readonly<{ requireLiveObservation?: true; refresh?: true }>): Promise<AccountEncryptionCurrentnessResponse>;
     isCurrent(expected: AccountEncryptionIdentity): boolean;
     subscribeAccountSettings(listener: (event: RequesterAccountSettingsObservation) => void): () => void;
+    subscribeApprovalProfiles(listener: (change: ApprovalProfileCatalogInvalidation) => void, isDemanded: () => boolean): () => void;
     subscribeSessionFollowRules(listener: (change?: RequesterSessionFollowRuleInvalidation) => void): () => void;
     subscribeRunFollowAvailability(listener: (change: RunFollowAvailability) => void): () => void;
     subscribeConnectedAccounts(listener: (event: RequesterConnectedAccountObservation) => void): () => void;
@@ -237,10 +239,11 @@ export function isRequesterAccountEncryptionCurrentnessObserved(scope: Scope, ex
 /** The incumbent follow readers consume Account, Session and Share rows. */
 const FOLLOW_CHANGE_KINDS: ReadonlySet<string> = new Set(['account', 'session', 'share']);
 
-function isAccountWakeOutsideFollowKinds(body: unknown, machineAvailabilityDemanded: boolean): boolean {
+function isAccountWakeOutsideFollowKinds(body: unknown, machineAvailabilityDemanded: boolean, approvalProfilesDemanded: boolean): boolean {
     const kinds = body && typeof body === 'object' && 'changeKinds' in body ? body.changeKinds : undefined;
     return Array.isArray(kinds) && kinds.length > 0 && kinds.every(kind => typeof kind === 'string'
-        && !FOLLOW_CHANGE_KINDS.has(kind) && !(machineAvailabilityDemanded && kind === 'machine'));
+        && !FOLLOW_CHANGE_KINDS.has(kind) && !(machineAvailabilityDemanded && kind === 'machine')
+        && !(approvalProfilesDemanded && kind === 'artifact'));
 }
 
 export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Observation {
@@ -266,6 +269,12 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
         subscribeAccountSettings(listener) {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
             const release = owned.subscribeAccountSettings(listener);
+            subscriptions.add(release);
+            return () => { subscriptions.delete(release); release(); };
+        },
+        subscribeApprovalProfiles(listener, isDemanded) {
+            if (released) throw new AccountEncryptionCurrentnessUnavailableError();
+            const release = owned.subscribeApprovalProfiles(listener, isDemanded);
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
@@ -346,6 +355,10 @@ function createObservation(scope: Scope): SharedObservation {
         serverBaseUrl: scope.serverBaseUrl, readToken: () => activeToken });
     let supervisor: ManagedConnectionSupervisor | undefined;
     const settingsListeners = new Set<(event: RequesterAccountSettingsObservation) => void>();
+    const approvalProfileListeners = new Map<(change: ApprovalProfileCatalogInvalidation) => void, () => boolean>();
+    const publishApprovalProfiles = (change: ApprovalProfileCatalogInvalidation) => {
+        for (const [listener, isDemanded] of approvalProfileListeners) if (isDemanded()) listener(change);
+    };
     let settingsEvent: RequesterAccountSettingsObservation | null = null;
     const followListeners = new Set<(change?: RequesterSessionFollowRuleInvalidation) => void>();
     const runAvailabilityListeners = new Set<(change: RunFollowAvailability) => void>();
@@ -412,8 +425,13 @@ function createObservation(scope: Scope): SharedObservation {
     const publishConnectedAccounts = (event: RequesterConnectedAccountObservation) => {
         for (const listener of connectedAccountListeners) listener(event);
     };
+    const hasApprovalProfileDemand = () => {
+        for (const isDemanded of approvalProfileListeners.values()) if (isDemanded()) return true;
+        return false;
+    };
     const hasFollowDemand = () => followListeners.size > 0 || sourceListeners.size > 0 || connectedAccountListeners.size > 0
-        || inventoryListeners.size > 0 || environmentAccessListeners.size > 0 || runAvailabilityListeners.size > 0;
+        || inventoryListeners.size > 0 || environmentAccessListeners.size > 0 || runAvailabilityListeners.size > 0
+        || hasApprovalProfileDemand();
     const publishSettings = (event: RequesterAccountSettingsObservation) => {
         // Reconnect invalidates existing publications. A newly admitted holder
         // already bootstrapped Settings after its fresh witness and must not
@@ -424,6 +442,8 @@ function createObservation(scope: Scope): SharedObservation {
     const invalidate = () => { lifetime.abort(); lifetime = new AbortController(); followCursorAcknowledged = false; currentness.invalidate(); };
     /** One classification of a consumed Account feed page for every follow reader. */
     const classifyFollowPage = (changes: readonly ChangeEntry[], page: FollowPageEffects) => {
+        const approvalProfiles = readApprovalProfileCatalogInvalidation(changes);
+        if (approvalProfiles) publishApprovalProfiles(approvalProfiles);
         if (changes.some(change => change.kind === 'account'
             && readSessionFollowChangeHintV1(change.hint) !== null)) publishFollow();
         for (const change of changes) {
@@ -533,6 +553,7 @@ function createObservation(scope: Scope): SharedObservation {
                         // A gap/failed classification cannot preserve a trusted cached rule set.
                         publishFollow(true);
                         publishSource(null);
+                        publishApprovalProfiles({});
                         publishConnectedAccounts({ resetQuotaSchedule: true });
                         if (result.status === 'cursor-gone') {
                             page.recoveringReceivers = true;
@@ -601,7 +622,7 @@ function createObservation(scope: Scope): SharedObservation {
                         // plugin availability claims) carries nothing here; the cursor stays where it is,
                         // and the next relevant wake reads from it. Unrouted wakes stay coarse.
                         // An attached same-process feed owner reads this wake and hands its page over.
-                        if (feedOwners === 0 && parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body, runAvailabilityListeners.size > 0)) {
+                        if (feedOwners === 0 && parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body, runAvailabilityListeners.size > 0, hasApprovalProfileDemand())) {
                             syncFollowChanges(Number.isSafeInteger(parsed.data.seq) && parsed.data.seq >= 0
                                 ? parsed.data.seq : undefined);
                         }
@@ -652,6 +673,7 @@ function createObservation(scope: Scope): SharedObservation {
                 connected = true; invalidate(); currentness.connected({ refresh: false }); publishInventory({ kind: 'connected' });
                 publishEnvironmentAccess({ kind: 'reset' });
                 publishSettings({ kind: 'reconnected' }); publishFollow(true); publishSource(null);
+                publishApprovalProfiles({});
                 // Initial attachment already has its caller's cold demand.
                 if (reconnected) publishRunAvailability({ kind: 'reconnected' });
                 publishConnectedAccounts({ resetQuotaSchedule: true }); syncFollowChanges();
@@ -711,6 +733,12 @@ function createObservation(scope: Scope): SharedObservation {
             settingsListeners.add(listener);
             if (settingsEvent) listener(settingsEvent);
             return () => { settingsListeners.delete(listener); };
+        },
+        subscribeApprovalProfiles(listener, isDemanded) {
+            const alreadyDemanded = hasFollowDemand();
+            approvalProfileListeners.set(listener, isDemanded);
+            if (!alreadyDemanded) syncFollowChanges();
+            return () => { approvalProfileListeners.delete(listener); };
         },
         subscribeSessionFollowRules(listener) {
             const alreadyDemanded = hasFollowDemand();
@@ -818,6 +846,7 @@ function createObservation(scope: Scope): SharedObservation {
             publishInventory({ kind: 'disconnected' });
             publishSettings({ kind: 'disconnected' });
             settingsListeners.clear();
+            approvalProfileListeners.clear();
             followListeners.clear();
             runAvailabilityListeners.clear();
             sourceListeners.clear();

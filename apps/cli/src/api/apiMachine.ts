@@ -301,10 +301,9 @@ import { hydrateSavedSecretCatalog } from "@/settings/secrets/savedSecretCatalog
 import { createExecutionRunAccountSettingsSnapshotResolver } from './machine/resolveExecutionRunAccountSettingsSnapshot';
 import { changesRequireSavedSecretCatalogRefresh } from '@/settings/secrets/savedSecretCatalogChangeInvalidation';
 import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
-import { refreshDemandedActiveProfileCatalog, refreshDemandedActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { refreshDemandedActiveProfileCatalog, refreshDemandedActiveApprovalProfileCatalog, readApprovalProfileCatalogInvalidation } from '@/settings/profiles/hydrateProfileCatalog';
 import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1 } from '@happier-dev/protocol/changes';
 import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
-import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { prepareActivePromptLibraryRecord, readActiveMachineSkillInstallArtifactIds, refreshDemandedActivePromptLibraryCatalog,
     type MachineSkillInstallCatalogDemand } from '@/settings/prompts/hydratePromptLibraryCatalog';
@@ -7100,8 +7099,7 @@ export class ApiMachineClient {
                     && isProfileCatalogAccountChangeEntityIdV1(change.entityId)
                     || change.kind === 'artifact' && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint),
                         [launchProfileArtifactSharingAdapterV1.kind]));
-                const approvalProfileChanges = changes.filter(change => change.kind === 'artifact'
-                    && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), [APPROVAL_PROFILE_ARTIFACT_KIND_V1]));
+                const approvalProfileChange = readApprovalProfileCatalogInvalidation(changes);
                 const hasPromptLibraryRowChange = changes.some((change) => change.kind === 'account'
                     && parsePromptLibraryPhysicalKeyV1(change.entityId) !== null);
                 const machineSkillInstalls = this.lifecycleDependencies.machineSkillInstalls;
@@ -7192,11 +7190,9 @@ export class ApiMachineClient {
                     await refreshDemandedActiveProfileCatalog({ token: this.token, signal });
                     signal.throwIfAborted();
                 }
-                if (reason !== 'live' || approvalProfileChanges.length > 0) {
+                if (reason !== 'live' || approvalProfileChange) {
                     await refreshDemandedActiveApprovalProfileCatalog({ token: this.token, signal,
-                        ...(reason === 'live' && approvalProfileChanges.every(change =>
-                            !artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), []))
-                            ? { artifactIds: [...new Set(approvalProfileChanges.map(change => change.entityId))] } : {}) });
+                        ...(reason === 'live' ? approvalProfileChange : {}) });
                     signal.throwIfAborted();
                 }
                 const sourceSnapshotBeforeSettings = getActiveAccountSettingsSnapshot();

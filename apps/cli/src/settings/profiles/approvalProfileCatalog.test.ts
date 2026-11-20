@@ -251,3 +251,158 @@ it('keeps held policy while Home is unreachable and refuses an unavailable cold 
     await expect(refreshActiveApprovalProfileCatalog({ credentials })).rejects.toThrow();
   });
 });
+
+
+it('publishes a changed approval profile into the retained requester Account before the next admission', async () => {
+  const { createProjectSessionRuntimeFixture } = await import('@/daemon/testkit/projectSessionRuntimeFixture');
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`, encryption: null };
+  let revision = 1;
+  let deliveredCursor = 0;
+  let profileReads = 0;
+  const changes: import('@happier-dev/protocol/changes').ChangeEntry[] = [];
+  const row = () => ({ id: 'own-profile', ownerAccountId: 'requester', access: 'owner', encryptionMode: 'plain',
+    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: revision, bodyVersion: revision,
+    seq: revision, createdAt: 1, updatedAt: revision,
+    header: encodePlainArtifactStoredContent({ kind: 'approval-profile.v1', name: 'Deploy review' }),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'approval-profile.v1', profile: {
+      name: 'Deploy review', actions: { 'deployments.deploy': { approvalRequiredSurfaces: revision === 1 ? ['agent'] : [] } },
+      ...(revision === 2 ? { approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } } : {}),
+    } }) }) });
+  const fixture = await createProjectSessionRuntimeFixture({ credentials, readAdditionalHttpResponse: async (url, request) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/v2/changes') {
+      deliveredCursor = changes.length;
+      return { status: 200, data: {
+        changes: changes.filter(change => change.cursor > Number(parsed.searchParams.get('after') ?? 0)),
+        nextCursor: deliveredCursor,
+      } };
+    }
+    if (parsed.pathname === '/v1/artifacts/own-profile') {
+      expect(parsed.origin).toBe(fixture.bootstrap.serverHttpBaseUrl);
+      expect(request?.headers?.Authorization === `Bearer ${credentials.token}`).toBe(true);
+      profileReads++;
+      return { status: 200, data: { ...row(), publicAudience: 'none' } };
+    }
+    if (parsed.pathname === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [{ ...row(), body: undefined }]) };
+    return undefined;
+  } });
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body, request) => {
+    expect(new URL(String(url)).origin).toBe(fixture.bootstrap.serverHttpBaseUrl);
+    expect(request?.headers?.Authorization === `Bearer ${credentials.token}`).toBe(true);
+    profileReads++;
+    return artifactReadResponse(body, id => id === 'own-profile' ? row() : null);
+  });
+  setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'another-Account-and-Home',
+    settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+  const ambient = getActiveAccountSettingsSnapshot();
+  const operationContext = fixture.bootstrap.savedSecretOperationContext;
+  await refreshActiveApprovalProfileCatalog({ credentials, operationContext });
+  expect(operationContext.readSnapshot()?.approvalProfileCatalog?.[0]?.revision.bodyVersion).toBe(1);
+  expect(deliveredCursor).toBe(0);
+  revision = 2;
+  changes.push({ cursor: 1, kind: 'artifact', entityId: 'own-profile', changedAt: 2,
+    hint: { artifactKinds: ['v1:other:approval-profile.v1'] } });
+  fixture.channel.server.emit('update', { id: 'profile-body-edit', seq: 1, createdAt: 2,
+    body: { t: 'account-change', changeKinds: ['artifact'], entityIds: ['own-profile'] } });
+  await vi.waitFor(async () => {
+    expect(await fixture.bootstrap.ensureAccountSettingsCurrent()).toBe(true);
+    expect(operationContext.readSnapshot()?.approvalProfileCatalog?.[0]?.revision.bodyVersion).toBe(2);
+  });
+  const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'picked-own-profile',
+    savedSecretOperationContext: operationContext, serverHttpBaseUrl: fixture.bootstrap.serverHttpBaseUrl });
+  expect(await deps.readApprovalProfile?.('own-profile', { surface: 'agent' })).toMatchObject({
+    profile: { approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } },
+    resolution: { status: 'available', requestedId: 'own-profile' },
+  });
+  const reads = profileReads;
+  changes.push({ cursor: 2, kind: 'artifact', entityId: 'unrelated', changedAt: 3,
+    hint: { artifactKinds: ['v1:other:unrelated'] } });
+  fixture.channel.server.emit('update', { id: 'unrelated-artifact', seq: 2, createdAt: 3,
+    body: { t: 'account-change', changeKinds: ['artifact'], entityIds: ['unrelated'] } });
+  await vi.waitFor(() => expect(deliveredCursor).toBe(2));
+  await fixture.bootstrap.ensureAccountSettingsCurrent();
+  expect(profileReads).toBe(reads);
+  expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
+  await fixture.bootstrap.dispose();
+  revision = 3;
+  changes.push({ cursor: 3, kind: 'artifact', entityId: 'own-profile', changedAt: 4,
+    hint: { artifactKinds: ['v1:other:approval-profile.v1'] } });
+  await fixture.channel.hintAccountChange(3);
+  expect(profileReads).toBe(reads);
+  expect(operationContext.readSnapshot()).toBeNull();
+});
+
+
+it('keeps an Artifact wake received while a requester catalog commit awaits Home currentness', async () => {
+  const { createProjectSessionRuntimeFixture } = await import('@/daemon/testkit/projectSessionRuntimeFixture');
+  const { createInvocationSavedSecretOperationContextV1 } = await import('@/settings/secrets/savedSecretOperationContext');
+  const { acquireRequesterAccountEncryptionCurrentness, sameRequesterAccountEncryptionCurrentness } = await import('@/api/client/accountEncryptionCurrentnessObservation');
+  const { fetchAccountEncryptionCurrentnessFromServer } = await import('@/api/client/accountEncryptionCurrentness');
+  const { createRequesterApprovalProfilePublication } = await import('./hydrateProfileCatalog');
+  let revision = 1;
+  let holdCurrentness = false;
+  let bodyReads = 0;
+  let entered!: () => void;
+  const currentnessEntered = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const currentnessResponse = new Promise<void>(resolve => { release = resolve; });
+  const changes: import('@happier-dev/protocol/changes').ChangeEntry[] = [];
+  let deliveredCursor = 0;
+  const currentness = { mode: 'plain' as const, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
+  const row = () => ({ id: 'picked', ownerAccountId: 'requester', access: 'owner', encryptionMode: 'plain',
+    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: revision, bodyVersion: revision,
+    seq: revision, createdAt: 1, updatedAt: revision,
+    header: encodePlainArtifactStoredContent({ kind: 'approval-profile.v1', name: `Review ${revision}` }),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: `Review ${revision}` } }) }) });
+  const fixture = await createProjectSessionRuntimeFixture({ readAdditionalHttpResponse: async url => {
+    const parsed = new URL(url);
+    if (parsed.pathname.endsWith('/currentness') && holdCurrentness) {
+      holdCurrentness = false;
+      entered();
+      await currentnessResponse;
+      return { status: 200, data: currentness };
+    }
+    if (parsed.pathname === '/v2/changes') {
+      deliveredCursor = changes.length;
+      return { status: 200, data: { changes, nextCursor: deliveredCursor } };
+    }
+    if (parsed.pathname === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [{ ...row(), body: undefined }]) };
+    return undefined;
+  } });
+  vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+    const selected = row();
+    bodyReads++;
+    if (bodyReads === 1) holdCurrentness = true;
+    return artifactReadResponse(body, id => id === 'picked' ? selected : null);
+  });
+  const credentials = fixture.bootstrap.credentials;
+  const serverHttpBaseUrl = fixture.bootstrap.serverHttpBaseUrl;
+  const context = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createInvocationSavedSecretOperationContextV1({ credentials,
+    serverHttpBaseUrl, snapshot: fixture.bootstrap.accountSettingsContext,
+    // Home HTTP is the delayed boundary; the actual context commit and catalog loop stay real.
+    isCurrent: async signal => sameRequesterAccountEncryptionCurrentness(currentness,
+      await fetchAccountEncryptionCurrentnessFromServer({ token: credentials.token, serverBaseUrl: serverHttpBaseUrl, signal })),
+  }));
+  const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'requester', token: credentials.token, serverBaseUrl: serverHttpBaseUrl });
+  const publication = createRequesterApprovalProfilePublication({ observation, operationContext: context, signal: fixture.signal });
+  try {
+    const first = refreshActiveApprovalProfileCatalog({ credentials, operationContext: context, signal: fixture.signal });
+    await currentnessEntered;
+    expect(bodyReads).toBe(1);
+    revision = 2;
+    changes.push({ cursor: 1, kind: 'artifact', entityId: 'picked', changedAt: 2,
+      hint: { artifactKinds: ['v1:other:approval-profile.v1'] } });
+    fixture.channel.server.emit('update', { id: 'commit-overlap', seq: 1, createdAt: 2,
+      body: { t: 'account-change', changeKinds: ['artifact'], entityIds: ['picked'] } });
+    await vi.waitFor(() => expect(deliveredCursor).toBe(1));
+    release();
+    await first;
+    expect(await publication.ensureCurrent()).toBe(true);
+    expect(context.readSnapshot()?.approvalProfileCatalog?.[0]?.profile.name).toBe('Review 2');
+  } finally {
+    release();
+    publication.dispose();
+    context.withdrawCatalog();
+    await observation.dispose();
+  }
+});

@@ -35,6 +35,7 @@ import type { ExecuteSpawnSessionRequestParams } from '../startup/executeSpawnSe
 import type { startDaemonConnectedServiceRuntime } from '../startup/startDaemonRuntimeBootstrap';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
+import { createRequesterApprovalProfilePublication } from '@/settings/profiles/hydrateProfileCatalog';
 import { createRequesterAccountSettingsPublication } from '@/settings/accountSettings/requesterAccountSettingsPublication';
 import type { ConnectedServiceQualifiedAuthGroupApi } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { QualifiedConnectedAccountEstablishedRuntimeOwner } from '../connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
@@ -489,10 +490,13 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       machineAdmission,
       snapshot: accountSettingsContext, serverHttpBaseUrl: input.boundary.serverHttpBaseUrl, isCurrent });
     const settingsPublication = createRequesterAccountSettingsPublication({ observation: accountObservation, currentness, operationContext: savedSecretOperationContext });
+    const approvalProfilePublication = createRequesterApprovalProfilePublication({ observation: accountObservation,
+      operationContext: savedSecretOperationContext, signal: lifetime.signal });
     const dispose = async () => {
       live = false;
       lifetime.abort();
       settingsPublication.dispose();
+      approvalProfilePublication.dispose();
       savedSecretOperationContext.withdrawCatalog();
       await savedSecretOperationContext.isCurrent();
       await observation?.dispose();
@@ -541,7 +545,8 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       attribution, ...(homeServerIdentityId ? { homeServerIdentityId } : {}),
       serverHttpBaseUrl: input.boundary.serverHttpBaseUrl, accountEncryptionMode: currentness.mode, accountSettingsContext,
       savedSecretOperationContext, isCurrent, dispose, getBoundSessionId: () => bound?.sessionId ?? null, bindSession, bindExistingSession,
-      ensureAccountSettingsCurrent: settingsPublication.ensureCurrent, subscribeAccountSettings: settingsPublication.subscribe,
+      ensureAccountSettingsCurrent: async signal => await settingsPublication.ensureCurrent(signal)
+        && await approvalProfilePublication.ensureCurrent(signal), subscribeAccountSettings: settingsPublication.subscribe,
       subscribeSessionFollowRules: accountObservation.subscribeSessionFollowRules,
       subscribeConnectedAccounts: accountObservation.subscribeConnectedAccounts,
       subscribeSessionFollowSources: accountObservation.subscribeSessionFollowSources,

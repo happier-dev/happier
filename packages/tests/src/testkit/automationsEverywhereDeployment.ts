@@ -6,12 +6,14 @@ import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machi
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { createOwnServerDockerBoundary } from '../../../../apps/cli/src/deployments/targets/ownServer/ownServerDeployment.testkit';
+import type { TeamSetupFFixture } from './teamSetupF';
 
 /** Real CLI Actions and enrolled daemon with only external Docker substituted.
  * F2/F4 share actual deployment operands rather than fabricating admission or receipts. */
 export async function startAutomationsEverywhereDeploymentFixture(testDir: string, options?: Readonly<{
   volumeBackup?: boolean;
   observeAutomationWriteFailures?: boolean;
+  daemonEnv?: NonNullable<Parameters<TeamSetupFFixture['enrollDaemon']>[1]>['env'];
 }>) {
   const { startTeamSetupFFixture } = await import('./teamSetupF');
   // Docker alone is an external substitute. Its real executable is inherited
@@ -24,6 +26,7 @@ export async function startAutomationsEverywhereDeploymentFixture(testDir: strin
   try {
     const actor = await fixture.createAccount('deployer');
     const machine = await fixture.enrollDaemon(actor, { env: {
+      ...options?.daemonEnv,
       HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_SERVER_URL: fixture.actionServerApiUrl,
       PATH: `${toolsDir}${delimiter}${process.env.PATH ?? ''}`,
     } });

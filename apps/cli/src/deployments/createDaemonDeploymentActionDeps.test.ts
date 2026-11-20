@@ -94,8 +94,9 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectDeploymentReadAdmissionV1,
     projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { prepareRequesterAccountActionContext, projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -1245,7 +1246,7 @@ describe('installed deployment storage and target composition', () => {
         if (mode === 'e2ee') expect(JSON.stringify(documents.get(id))).not.toContain('providerResourceId');
     });
 
-    it.each(['build', 'member', 'missing envelope', 'quota transition', 'pending transition', 'storage transition', 'thrown storage transition', 'private transition', 'thrown private transition'] as const)('dispatches the admitted %s without reopening the sender receipt', async scenario => {
+    it.each(['build', 'member', 'native Session member', 'missing custody', 'missing envelope', 'quota transition', 'pending transition', 'storage transition', 'thrown storage transition', 'private transition', 'thrown private transition'] as const)('dispatches the admitted %s without reopening the sender receipt', async scenario => {
         const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const kind = scenario === 'build' ? 'build' : 'member';
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
@@ -1376,6 +1377,28 @@ describe('installed deployment storage and target composition', () => {
             serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://dispatch.test', ownCredentials: credentials,
             isCurrent: async () => true, createExecutor: () => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps }) });
         if (!requester) throw new Error('Expected admitted requester custody');
+        let dispatchAuthorization = scenario === 'missing custody' ? authorization : requester.authorization;
+        if (scenario === 'native Session member') {
+            // The real Session issuer owns transport custody without an installed ingress Settings lifetime.
+            const nativeHttpAuthorization = await projectExternalActionRequesterHttpAuthorization({
+                authorization: { ...authorization, binding: { ...authorization.binding,
+                    sessionActionSource: { machineId: 'machine-a', installationId: 'installation-a' },
+                    sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'native-session', starterDepth: 0, turnDepth: 0 },
+                        sourceTurnId: 'turn', callerPermissionMode: null, requestId: envelope.requestId } } },
+                serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://dispatch.test', target,
+                installationId: 'installation-a', privateKey: keys.secretKey, isCurrent: async () => true,
+            });
+            if (!nativeHttpAuthorization) throw new Error('Expected native Session Home HTTP projection');
+            const nativeAuthorization = await projectRequesterAccountActionAuthorization({ authorization: nativeHttpAuthorization,
+                serverIdentityId: 'home', bootstrap: { credentials, serverHttpBaseUrl: 'https://dispatch.test',
+                    isCurrent: async () => true, getBoundSessionId: () => 'native-session',
+                    attribution: { serverId: 'home', accountId: 'owner', machineId: 'machine-a', installationId: 'installation-a' } },
+            });
+            if (!nativeAuthorization) throw new Error('Expected native Session transport custody');
+            dispatchAuthorization = nativeAuthorization;
+            expect(readRequesterAccountActionTransportContext(dispatchAuthorization)).not.toBeNull();
+            expect(readRequesterAccountActionContext(dispatchAuthorization)).toBeNull();
+        }
         try {
             const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind, actionId: 'deployments.deploy', input,
                 deploymentId: receipt.deployment.id, actionOperationId: receipt.deployment.actionOperationId,
@@ -1384,9 +1407,14 @@ describe('installed deployment storage and target composition', () => {
                 ...(kind === 'member' ? { phase: 'activate', selectedDeploymentId: receipt.deployment.id } : {}) });
             expect(await isReviewedDeploymentChild({ authorization: requester.authorization, envelope,
                 actionId: 'deployments.deploy', machineId: child.machineId, params: child })).toBe(true);
-            const settled = await deps.deploymentAction('deployments.deploy', input, { externalActionExecutionAuthorization: requester.authorization,
+            const settled = await deps.deploymentAction('deployments.deploy', input, { externalActionExecutionAuthorization: dispatchAuthorization,
                 ...(scenario === 'missing envelope' ? {} : { originalActionEnvelope: envelope }), externalActionTarget: target,
                 operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } });
+            if (scenario === 'missing custody') {
+                expect(settled).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
+                expect(childLookups).toEqual([]);
+                return;
+            }
             if (scenario === 'missing envelope') {
                 expect(settled).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
                 expect(childLookups).toEqual([]);
@@ -1400,7 +1428,7 @@ describe('installed deployment storage and target composition', () => {
                 }
                 return;
             }
-            if (scenario !== 'build' && scenario !== 'member') {
+            if (scenario !== 'build' && scenario !== 'member' && scenario !== 'native Session member') {
                 expect(settled).toMatchObject(scenario === 'quota transition' ? {
                     ok: false, errorCode: 'quota_exceeded', details: { budget: 'document', limitBytes: 1, usedBytes: 2 },
                 } : { ok: false, errorCode: 'outcome_unknown',

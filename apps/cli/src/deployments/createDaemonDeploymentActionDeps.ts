@@ -87,7 +87,7 @@ import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { ExternalActionInstalledMachineUnavailableSchema, readExternalActionInstalledMachineResult,
     readReviewedActionOperationCancelAddress } from '@/api/externalActionExecutionAuthorization';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
-import { readRequesterAccountActionContext, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { captureRequesterCurrentnessRefusal } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -435,7 +435,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const sendChild = async (job: DeploymentChildRpcV1, context: ActionExecutorContext): Promise<unknown> => {
         await assertCurrent(context);
         const authorization = context.externalActionExecutionAuthorization;
-        const requester = readRequesterAccountActionContext(authorization);
+        const requester = readRequesterAccountActionTransportContext(authorization);
         const identity = readInstallationIdentityIfExistsSync();
         if (!authorization || !requester || !identity || !context.originalActionEnvelope) {
             logger.warn('[Deployment] child dispatch refused', {

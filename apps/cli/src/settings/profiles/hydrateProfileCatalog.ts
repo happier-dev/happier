@@ -1,4 +1,8 @@
 import { $ZodError } from 'zod/v4/core';
+import { waitForAccountEncryptionObservation } from '@happier-dev/sync-client';
+import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1, type ChangeEntry } from '@happier-dev/protocol/changes';
+import type { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { logger } from '@/ui/logger';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { StoredCredentials } from '@/persistence';
@@ -13,7 +17,7 @@ import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/acco
 import { loadAiLaunchProfileArtifacts } from '@happier-dev/protocol/profiles/read';
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { loadReadableApprovalProfilesV1, listReadableApprovalProfilesV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, loadReadableApprovalProfilesV1, listReadableApprovalProfilesV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { commitActiveApprovalProfileCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { beginActiveProfileCatalogRefresh, commitActiveAccountSettingsSnapshot, commitActiveProfileCatalog, getActiveAccountSettingsSnapshot,
@@ -177,8 +181,47 @@ export async function refreshDemandedActiveProfileCatalog(input: Readonly<{ toke
   await refreshCapturedProfileCatalog({ credentials, signal: input.signal }, true);
 }
 
-const pendingApprovalProfiles = new Map<string, Promise<readonly ReadableApprovalProfileV1[]>>();
-const reobserveApprovalProfilesAfterPending = new Set<string>();
+export type ApprovalProfileCatalogInvalidation = Readonly<{ artifactIds?: readonly string[] }>;
+
+/** Shared Artifact kind routing for active and requester-owned approval catalogs. */
+export function readApprovalProfileCatalogInvalidation(changes: readonly ChangeEntry[]): ApprovalProfileCatalogInvalidation | null {
+  const changed = changes.filter(change => change.kind === 'artifact'
+    && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), [APPROVAL_PROFILE_ARTIFACT_KIND_V1]));
+  if (!changed.length) return null;
+  return changed.every(change => !artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), []))
+    ? { artifactIds: [...new Set(changed.map(change => change.entityId))] } : {};
+}
+
+const pendingApprovalProfiles = new Map<string | SavedSecretOperationContextV1, Promise<readonly ReadableApprovalProfileV1[]>>();
+const reobserveApprovalProfilesAfterPending = new Set<string | SavedSecretOperationContextV1>();
+
+/** The retained requester consumes the same Account feed into its own opened catalog. */
+export function createRequesterApprovalProfilePublication(input: Readonly<{
+  observation: Pick<ReturnType<typeof acquireRequesterAccountEncryptionCurrentness>, 'subscribeApprovalProfiles'>;
+  operationContext: SavedSecretOperationContextV1;
+  signal: AbortSignal;
+}>) {
+  const context = input.operationContext;
+  const isDemanded = () => context.readSnapshot()?.approvalProfileCatalog !== undefined || pendingApprovalProfiles.has(context);
+  const release = input.observation.subscribeApprovalProfiles(change => {
+    void refreshActiveApprovalProfileCatalog({ credentials: context.credentials, operationContext: context,
+      signal: input.signal, reobserve: true, ...change }).catch(() => {
+      if (!input.signal.aborted) logger.warn('Requester approval profile publication unavailable.');
+    });
+  }, isDemanded);
+  return Object.freeze({
+    async ensureCurrent(signal?: AbortSignal) {
+      const readerSignal = signal ? AbortSignal.any([signal, input.signal]) : input.signal;
+      let observed: ReturnType<typeof pendingApprovalProfiles.get>;
+      do {
+        observed = pendingApprovalProfiles.get(context);
+        if (observed) await waitForAccountEncryptionObservation(observed, readerSignal);
+      } while (pendingApprovalProfiles.has(context) && observed !== pendingApprovalProfiles.get(context));
+      return !readerSignal.aborted && context.readSnapshot() !== null;
+    },
+    dispose: release,
+  });
+}
 
 /** Opened approval profiles share the existing Account lifetime and Artifact transport. */
 export function refreshActiveApprovalProfileCatalog(input: Readonly<{
@@ -197,8 +240,8 @@ export function refreshActiveApprovalProfileCatalog(input: Readonly<{
     const current = () => !input.signal?.aborted && read()?.source !== 'none' && read()?.scopeKey === scopeKey
       && (context !== undefined || getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken);
     if (!current()) return [];
-    const key = `${scopeKey}:${lifetimeToken}`;
-    const existing = context ? undefined : pendingApprovalProfiles.get(key);
+    const key = context ?? `${scopeKey}:${lifetimeToken}`;
+    const existing = pendingApprovalProfiles.get(key);
     if (existing) {
       if (input.reobserve || input.artifactIds) reobserveApprovalProfilesAfterPending.add(key);
       return existing;
@@ -226,16 +269,21 @@ export function refreshActiveApprovalProfileCatalog(input: Readonly<{
           throw error;
         }
         if (!current()) return [];
-        if (!context && reobserveApprovalProfilesAfterPending.has(key)) {
+        if (reobserveApprovalProfilesAfterPending.has(key)) {
           artifactIds = undefined;
           continue;
         }
         const committed = context ? await context.commitApprovalProfileCatalog(catalog)
           : commitActiveApprovalProfileCatalog({ scopeKey, lifetimeToken, catalog });
+        // Private publication may await Home; retain any wake received during that commit.
+        if (reobserveApprovalProfilesAfterPending.has(key)) {
+          artifactIds = undefined;
+          continue;
+        }
         return committed ? read()?.approvalProfileCatalog ?? [] : [];
       }
     })();
-    if (!context) pendingApprovalProfiles.set(key, work);
+    pendingApprovalProfiles.set(key, work);
     try { return await work; }
     finally { if (pendingApprovalProfiles.get(key) === work) {
       pendingApprovalProfiles.delete(key);
