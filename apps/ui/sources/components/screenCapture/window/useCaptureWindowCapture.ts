@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
+import { formatStepNotes, isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 import { NativeCaptureError, cancelNativeCapture, commitNativeCapture, readCaptureSourcePng, retryNativeCapture, subscribeNativeCapture,
     loadNativeRecordingDocument, readNativeCaptureErrorCode, writePreparedCapturePng, type NativeCaptureResult, type NativePreparedPng,
     type NativeCaptureErrorCode, type NativeCaptureSnapshot, type NativeCaptureSessionTarget,
@@ -271,8 +271,10 @@ export function useCaptureWindowCapture(): CaptureWindowCapture {
         if (view.aborted) return { ok: false, errorCode: 'operation_unavailable' };
         if (!flattened.ok) return { ok: false, errorCode: flattened.reason };
         try {
+            // The numbered comments become the prepared still's words here, once, beside its pixels: every
+            // delivery ingress (this window, an agent's screenCapture Action, New Session) sends them from native.
             const prepared = await writePreparedCapturePng(captureRef, flattened.png,
-                { hasMarks: !isEmptyEdit(document), includeWindowText: disclosure.includeWindowText });
+                { hasMarks: !isEmptyEdit(document), includeWindowText: disclosure.includeWindowText }, formatStepNotes(document));
             return view.aborted ? { ok: false, errorCode: 'operation_unavailable' }
                 : { ok: true, prepared, png: flattened.png };
         } catch (error) {

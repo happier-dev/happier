@@ -63,7 +63,9 @@ describe('image marks public owner', () => {
     const removed = applyImageMarksOperations(doc, [{ kind: 'mark.remove', id: 'b' }]);
     expect(formatStepNotes(removed, { firstNumber: 4, label: 'Numbered marks on [Image #2]' }))
       .toBe('Numbered marks on [Image #2]:\n4. Move this group under Input\n5. List the microphones\n   not only System default');
-    // Numbers alone already sit on the picture: no note, no words.
-    expect(formatStepNotes({ ...doc, marks: [{ id: 'b', kind: 'step', at: { x: 2, y: 2 }, color: 'red', size: 'm', note: '  ' }] })).toBeNull();
+    // Numbers alone still reach the agent as steps, in order; only a picture without steps has no words.
+    expect(formatStepNotes({ ...doc, marks: [{ id: 'b', kind: 'step', at: { x: 2, y: 2 }, color: 'red', size: 'm', note: '  ' }] }))
+      .toBe('Numbered marks:\n1. (no note)');
+    expect(formatStepNotes({ ...doc, marks: [doc.marks[1]!] })).toBeNull();
   });
 });

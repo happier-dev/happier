@@ -43,7 +43,7 @@ const marked = (
 });
 
 describe('picture numbered comments on send', () => {
-  it('sends each noted picture as [Image #N] and its numbered list after the person text, and nothing else', () => {
+  it('sends every picture with numbered steps (bare ones too) as its numbered list after the person text, and nothing else', () => {
     const drafts = [
       picture('plain'),
       picture('bare', marked([undefined])),
@@ -51,16 +51,11 @@ describe('picture numbered comments on send', () => {
       picture('browser', marked(['Already in the marks document']), true),
     ];
     expect(appendPictureStepNotes('Enter should queue.  ', drafts)).toBe(
-      'Enter should queue.\n\nNumbered marks on [Image #3]:\n1. Steer here\n2. (no note)',
+      'Enter should queue.\n\nNumbered marks on [Image #2]:\n1. (no note)\n\nNumbered marks on [Image #3]:\n1. Steer here\n2. (no note)',
     );
     expect(
       appendPictureStepNotes('', [picture('noted', marked(['Only this']))]),
     ).toBe('Numbered marks on [Image #1]:\n1. Only this');
-    expect(
-      appendPictureStepNotes('Unchanged', [
-        picture('plain'),
-        picture('bare', marked([undefined])),
-      ]),
-    ).toBe('Unchanged');
+    expect(appendPictureStepNotes('Unchanged', [picture('plain'), picture('unmarked', marked([]))])).toBe('Unchanged');
   });
 });

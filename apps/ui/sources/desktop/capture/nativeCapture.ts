@@ -48,6 +48,8 @@ export type NativeRecordingFrameInput = Readonly<{ timeMs: number; bytes: Uint8A
 export type NativeCaptureDeliveryState = Readonly<{
     inUse: boolean;
     disclosure: NativeCaptureDisclosure | null;
+    /** The words committed with the prepared still (its numbered comments); absent when it has none. */
+    preparedNote?: string | null;
     windowText: NativeCaptureWindowText | null;
     preparedRecording: NativePreparedRecording | null;
 }>;
@@ -158,8 +160,9 @@ export async function readCaptureSourcePng(captureRef: string): Promise<Uint8Arr
 }
 /** The existing capture source reader also serves owned video bytes. */
 export const readCaptureSource = readCaptureSourcePng;
-export const writePreparedCapturePng = (captureRef: string, bytes: Uint8Array, disclosure: NativeCaptureDisclosure): Promise<NativePreparedPng> =>
-    invoke('desktop_capture_write_prepared_png', { captureRef, bytes: Array.from(bytes), disclosure });
+export const writePreparedCapturePng = (captureRef: string, bytes: Uint8Array, disclosure: NativeCaptureDisclosure,
+    note: string | null = null): Promise<NativePreparedPng> =>
+    invoke('desktop_capture_write_prepared_png', { captureRef, bytes: Array.from(bytes), disclosure, note });
 export const retainPreparedCapturePng = (captureRef: string): Promise<NativeCaptureResult> =>
     invoke('desktop_capture_retain_prepared_png', { captureRef });
 export async function readPreparedCapturePng(captureRef: string): Promise<Uint8Array> {

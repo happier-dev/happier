@@ -15,12 +15,14 @@ type CaptureDeliveryContext = Readonly<{
     disclosure: Readonly<{ hasMarks?: boolean; includeWindowText: boolean }> | null;
     windowText?: Readonly<{ text: string; name: string }>;
     readWindowText?: () => Promise<Readonly<{ text: string; name: string }> | undefined>;
+    /** The words committed with the prepared still (its numbered comments), sent beside it by every ingress. */
+    note?: string;
     inUse: boolean;
 }>;
 export type StillDeliveryRecord = CaptureDeliveryContext & Readonly<{ image: CaptureDeliveryImage }>;
 export type CaptureDeliveryRecord = StillDeliveryRecord
     | (CaptureDeliveryContext & Readonly<{ recording: RecordingDeliverySource }>);
-export type StillDelivery = Pick<CaptureDeliveryContext, 'windowText' | 'readWindowText'> & Readonly<{ image: CaptureDeliveryImage }>;
+export type StillDelivery = Pick<CaptureDeliveryContext, 'windowText' | 'readWindowText' | 'note'> & Readonly<{ image: CaptureDeliveryImage }>;
 export type RecordingDelivery = Readonly<{ recording: RecordingDeliverySource }>;
 
 /** Retain before reading so staged and restored bytes have one immutable source. */
@@ -42,7 +44,7 @@ export function resolveCaptureDelivery(record: CaptureDeliveryRecord, context: P
     if ('recording' in record) return { recording: record.recording };
     if (!record.disclosure) return failure('capture_not_prepared');
     if (record.disclosure.hasMarks !== false && record.image.kind !== 'prepared') return failure('capture_not_prepared');
-    return { image: record.image,
+    return { image: record.image, ...(record.note ? { note: record.note } : {}),
         ...(record.disclosure.includeWindowText && record.windowText ? { windowText: record.windowText } : {}),
         ...(record.disclosure.includeWindowText && record.readWindowText ? { readWindowText: record.readWindowText } : {}) };
 }
@@ -59,7 +61,7 @@ export async function readPreparedCaptureDelivery(captureRef: string): Promise<C
     if (result.kind === 'video') return { captureRef, inUse: state.inUse, disclosure: state.disclosure,
         recording: { result, prepared: state.preparedRecording } };
     const windowText = captureWindowTextAttachment(state.windowText);
-    return { captureRef, inUse: state.inUse, disclosure: state.disclosure,
+    return { captureRef, inUse: state.inUse, disclosure: state.disclosure, ...(state.preparedNote ? { note: state.preparedNote } : {}),
         ...(windowText ? { windowText } : {}), image: { kind: 'prepared', name: leafFolderName(result.path) ?? 'Capture.png',
             readBytes: () => readPreparedCapturePng(captureRef), readForDraft: () => readCaptureImageForDraft(captureRef) } };
 }

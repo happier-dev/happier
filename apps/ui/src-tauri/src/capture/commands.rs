@@ -313,8 +313,10 @@ pub async fn desktop_capture_read_source_png(state: State<'_, CaptureState>, cap
     let state = state.inner().clone(); blocking(move || state.read_source(&capture_ref)).await
 }
 #[tauri::command]
-pub async fn desktop_capture_write_prepared_png(state: State<'_, CaptureState>, capture_ref: String, bytes: Vec<u8>, disclosure: CaptureDisclosure) -> Result<PreparedPng, CaptureError> {
-    let state = state.inner().clone(); blocking(move || state.0.files.lock().unwrap().write_prepared_png(&capture_ref, &bytes, disclosure)).await
+pub async fn desktop_capture_write_prepared_png(state: State<'_, CaptureState>, capture_ref: String, bytes: Vec<u8>, disclosure: CaptureDisclosure,
+    note: Option<String>) -> Result<PreparedPng, CaptureError> {
+    let state = state.inner().clone();
+    blocking(move || state.0.files.lock().unwrap().write_prepared_png_with_note(&capture_ref, &bytes, disclosure, note)).await
 }
 #[tauri::command]
 pub async fn desktop_capture_retain_prepared_png(state: State<'_, CaptureState>, capture_ref: String) -> Result<CaptureResult, CaptureError> {

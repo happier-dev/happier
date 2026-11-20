@@ -307,6 +307,24 @@ fn retained_prepared_pixels_survive_new_exports_and_parent_discard() {
 }
 
 #[test]
+fn prepared_note_travels_with_its_pixels_through_reopen_and_is_replaced_by_the_next_export() {
+    let root = tempfile::tempdir().unwrap();
+    let mut files = CaptureFiles::default();
+    let source = files.write_png(root.path(), &png(1)).unwrap();
+    let steps = "Numbered marks:\n1. Steer is the wrong default\n2. (no note)".to_string();
+    files.write_prepared_png_with_note(&source.capture_ref, &png(11), TEXT_OFF, Some(steps.clone())).unwrap();
+    assert_eq!(files.prepared_note(&source.capture_ref).unwrap(), Some(steps.clone()));
+    drop(files);
+    let mut reopened = CaptureFiles::default();
+    let again = reopened.open_library_png(root.path(), &source.path).unwrap();
+    assert_eq!(reopened.prepared_note(&again.capture_ref).unwrap(), Some(steps));
+    reopened.write_prepared_png(&again.capture_ref, &png(22), TEXT_OFF).unwrap();
+    assert_eq!(reopened.prepared_note(&again.capture_ref).unwrap(), None, "new pixels never pair with an older note");
+    reopened.discard(&again.capture_ref).unwrap();
+    assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with("-note.txt")));
+}
+
+#[test]
 fn prepared_pixels_are_kept_beside_source_and_discard_only_removes_owned_files() {
     let root = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();

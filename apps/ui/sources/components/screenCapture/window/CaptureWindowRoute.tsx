@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useDesktopOverlayTransparentDocumentBackground } from '@/activity/adapters/desktop/ui/useDesktopOverlayTransparentDocumentBackground';
 import { showRecentCapturePicker } from '@/components/screenCapture/recent/RecentCaptureModal';
 import { isEmptyEdit, useImageAnnotator, useImageAnnotatorState } from '@/components/ui/media/annotation';
-import { formatStepNotes } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 import { hideCaptureWindow, presentCaptureWindow, setCaptureWindowFloating } from '@/desktop/capture/captureWindowHost';
 import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
@@ -283,13 +282,10 @@ function StillCaptureEditor(props: Readonly<{
         prepare: async () => {
             const disclosure = await text.prepareDisclosure();
             if (held.signal?.aborted) return { ok: false, cause: t('screenCapture.window.flattenFailed') };
-            const document = annotator.store.getState().document;
-            const prepared = await held.prepare(document, disclosure);
+            const prepared = await held.prepare(annotator.store.getState().document, disclosure);
             if (!prepared.ok || held.signal?.aborted) return { ok: false, cause: t('screenCapture.window.flattenFailed') };
             setPreparedPng(prepared.png);
-            // The numbered comments travel as words after the person's note, numbered as on the picture.
-            const steps = formatStepNotes(document);
-            return { ok: true, note: steps ? [note.trim(), steps].filter(Boolean).join('\n') : note };
+            return { ok: true, note };
         },
         prepareCopy: async () => {
             const prepared = await held.prepare(annotator.store.getState().document, { includeWindowText: text.disclosure.included });

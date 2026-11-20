@@ -6,6 +6,8 @@ struct OwnedCapture {
     result: CaptureResult,
     prepared: Option<PathBuf>,
     disclosure: Option<CaptureDisclosure>,
+    /// The words committed with the prepared pixels (a still's numbered comments), for every delivery ingress.
+    note: Option<String>,
     recording: Option<PreparedRecording>,
     derivatives: Vec<String>,
     window_text: Arc<Mutex<super::window_text::WindowText>>,
@@ -61,6 +63,10 @@ fn prepared_path(source: &Path) -> PathBuf {
 
 fn disclosure_path(source: &Path) -> PathBuf {
     source.with_file_name(format!("{}-disclosure.json", source.file_stem().unwrap().to_string_lossy()))
+}
+
+fn note_path(source: &Path) -> PathBuf {
+    source.with_file_name(format!("{}-note.txt", source.file_stem().unwrap().to_string_lossy()))
 }
 
 fn remove_if_present(path: &Path) -> Result<(), CaptureError> {
@@ -259,7 +265,7 @@ impl CaptureFiles {
     fn adopt_result(&mut self, result: CaptureResult, prepared: Option<PathBuf>) -> CaptureResult {
         let window_text = Arc::new(Mutex::new(super::window_text::WindowText::new(None, result.source.clone(), super::CancelSignal::default())));
         self.files.insert(result.capture_ref.clone(), CaptureFile::Ready(OwnedCapture {
-            result: result.clone(), prepared, disclosure: None, window_text, recording: None, derivatives: Vec::new(),
+            result: result.clone(), prepared, disclosure: None, note: None, window_text, recording: None, derivatives: Vec::new(),
         }));
         result
     }
@@ -289,8 +295,16 @@ impl CaptureFiles {
         };
         let prepared = prepared_path(&path);
         let prepared = (disclosure.is_some() && prepared.is_file()).then_some(prepared);
+        let note = match fs::read_to_string(note_path(&path)) {
+            Ok(note) => Some(note),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return Err(CaptureError::FileIo),
+        };
         let result = self.adopt(capture_ref, path, size, bytes.len() as u64, prepared);
-        self.ready_mut(&result.capture_ref)?.disclosure = disclosure;
+        let owned = self.ready_mut(&result.capture_ref)?;
+        owned.disclosure = disclosure;
+        // A note only stands with a committed disclosure, like the prepared pixels it travels with.
+        owned.note = if owned.disclosure.is_some() { note } else { None };
         Ok(result)
     }
 
@@ -348,21 +362,37 @@ impl CaptureFiles {
         Ok(self.ready(capture_ref)?.disclosure)
     }
 
+    pub fn prepared_note(&self, capture_ref: &str) -> Result<Option<String>, CaptureError> {
+        Ok(self.ready(capture_ref)?.note.clone())
+    }
+
     pub fn write_prepared_png(&mut self, capture_ref: &str, bytes: &[u8], disclosure: CaptureDisclosure) -> Result<PreparedPng, CaptureError> {
+        self.write_prepared_png_with_note(capture_ref, bytes, disclosure, None)
+    }
+
+    /// The prepared note is the words that travel with these pixels (a still's numbered comments); it is
+    /// replaced with them, so a delivery never pairs new pixels with an older note.
+    pub fn write_prepared_png_with_note(&mut self, capture_ref: &str, bytes: &[u8], disclosure: CaptureDisclosure,
+        note: Option<String>) -> Result<PreparedPng, CaptureError> {
         let owned = self.ready_mut(capture_ref)?;
         owned.prepared = None;
         owned.disclosure = None;
+        owned.note = None;
         // Invalidate the previous decision before attempting another export. A
         // failed write cannot authorize old prepared pixels after library reopen.
         let record_path = disclosure_path(&owned.result.path);
         remove_if_present(&record_path)?;
+        let words_path = note_path(&owned.result.path);
+        remove_if_present(&words_path)?;
         let pixel_size = png_size(bytes)?;
         let path = prepared_path(&owned.result.path);
         complete_write(path.parent().unwrap(), &path, bytes)?;
+        if let Some(note) = note.as_deref() { complete_write(words_path.parent().unwrap(), &words_path, note.as_bytes())?; }
         let record = serde_json::to_vec(&disclosure).map_err(|_| CaptureError::FileIo)?;
         complete_write(record_path.parent().unwrap(), &record_path, &record)?;
         owned.prepared = Some(path.clone());
         owned.disclosure = Some(disclosure);
+        owned.note = note;
         Ok(PreparedPng { capture_ref: capture_ref.into(), path, pixel_size, byte_size: bytes.len() as u64,
             mime_type: "image/png".into() })
     }
@@ -398,7 +428,7 @@ impl CaptureFiles {
             CaptureFile::Ready(owned) => &owned.result.path,
         };
         // Also remove an older completed prepared output after a failed newer write.
-        for path in [prepared_path(source), disclosure_path(source), source.clone()] {
+        for path in [prepared_path(source), disclosure_path(source), note_path(source), source.clone()] {
             remove_if_present(&path)?;
         }
         self.files.remove(capture_ref);

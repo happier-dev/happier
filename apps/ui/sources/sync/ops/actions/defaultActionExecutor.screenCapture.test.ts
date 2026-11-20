@@ -60,6 +60,7 @@ describe('screen capture through the default executor and native adapter', () =>
     const emitted: unknown[] = [];
     let windowTextRefusal: 'blurred_capture' | 'capture_in_use' | null = null;
     let disclosure: NativeCaptureDisclosure | null = null;
+    let preparedNote: string | null = null;
     let cachedWindowText: NativeCaptureWindowText | null = null;
     let extractedWindowText: NativeCaptureWindowText;
     let openedTarget: unknown;
@@ -85,7 +86,7 @@ describe('screen capture through the default executor and native adapter', () =>
         commands.length = 0; preparedMissing = false; inUse = true; settleFailed = false; openedTarget = undefined; windowTextRefusal = null;
         discardFailed = false; events.clear(); emitted.length = 0; nativeWindowLabel = null;
         restoredWindows = [];
-        disclosure = { hasMarks: true, includeWindowText: false }; cachedWindowText = null;
+        disclosure = { hasMarks: true, includeWindowText: false }; cachedWindowText = null; preparedNote = null;
         extractedWindowText = { status: 'unavailable', reason: 'no_window_context', source: null };
         // The desktop invoke is the OS/file boundary; Action, adapter and draft owners are real.
         const secureStorage = createDesktopSecureStorageBoundary();
@@ -96,7 +97,7 @@ describe('screen capture through the default executor and native adapter', () =>
             commands.push(command);
             if (command === 'desktop_capture_start') return { status: 'completed', operationRef: 1, result: captured };
             if (command === 'desktop_capture_read_state') return { status: 'idle' };
-            if (command === 'desktop_capture_read_delivery_state') return { inUse, disclosure, windowText: cachedWindowText };
+            if (command === 'desktop_capture_read_delivery_state') return { inUse, disclosure, preparedNote, windowText: cachedWindowText };
             if (command === 'desktop_capture_read_result') return captured;
             if (command === 'desktop_capture_discard') {
                 if (discardFailed) throw 'file_io';
@@ -218,6 +219,18 @@ describe('screen capture through the default executor and native adapter', () =>
             { surface: 'ui', serverId: target.serverId })).toMatchObject({ ok: false, errorCode: reason });
         expect(commands).toEqual(['desktop_capture_window_text']);
         expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(target))).toHaveLength(0);
+    });
+
+    it('delivers a prepared still’s numbered notes, bare steps included, through an Action without the Capture window', async () => {
+        // The Capture window committed these words with the prepared pixels; any later ingress reads them from native.
+        inUse = false;
+        preparedNote = 'Numbered marks:\n1. Steer is the wrong default\n2. (no note)\n3. Queue should come first';
+        expect(await createDefaultActionExecutor().execute('screenCapture.addToDraft', {
+            captureRef: captured.captureRef, session: target,
+        }, { surface: 'ui', serverId: target.serverId })).toMatchObject({ ok: true, result: { imageNumber: 1 } });
+        expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: target.sessionId })?.text)
+            .toContain('Numbered marks:\n1. Steer is the wrong default\n2. (no note)\n3. Queue should come first');
+        expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(target))).toHaveLength(1);
     });
 
     it('keeps prepared-missing typed and never falls back to original pixels', async () => {

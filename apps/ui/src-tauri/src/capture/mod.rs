@@ -80,6 +80,8 @@ pub enum CaptureSnapshot {
 pub struct CaptureDeliveryState {
     pub in_use: bool,
     pub disclosure: Option<CaptureDisclosure>,
+    /// The words committed with the prepared still (its numbered comments), read by every delivery ingress.
+    pub prepared_note: Option<String>,
     pub window_text: Option<happier_desktop_native::capture::window_text::WindowTextOutcome>,
     pub prepared_recording: Option<happier_desktop_native::capture::files::PreparedRecording>,
 }
@@ -313,11 +315,12 @@ impl CaptureState {
         drop(op);
         let files = self.0.files.lock().unwrap();
         let disclosure = files.disclosure(capture_ref)?;
+        let prepared_note = files.prepared_note(capture_ref)?;
         let prepared_recording = files.prepared_recording(capture_ref)?;
         let text = files.window_text(capture_ref)?;
         drop(files);
         let window_text = text.lock().unwrap().settled();
-        Ok(CaptureDeliveryState { in_use, disclosure, window_text, prepared_recording })
+        Ok(CaptureDeliveryState { in_use, disclosure, prepared_note, window_text, prepared_recording })
     }
     pub fn window_text_for_read(&self, capture_ref: &str, capture_preview: bool)
         -> Result<Arc<Mutex<happier_desktop_native::capture::window_text::WindowText>>, CaptureError> {

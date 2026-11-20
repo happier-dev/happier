@@ -469,7 +469,15 @@ describe('Capture window native source and prepared export', () => {
         expect(raster.outputs[0]).not.toEqual(sourcePixels);
         expect(raster.encodeCount()).toBe(1);
         expect(calls.at(-1)).toEqual({ command: 'desktop_capture_write_prepared_png', args: { captureRef: 'capture', bytes: [9, 8, 7],
-            disclosure: { hasMarks: true, includeWindowText: false } } });
+            disclosure: { hasMarks: true, includeWindowText: false }, note: null } });
+        // Numbered steps become the prepared still's words once, here, so every later delivery ingress sends them.
+        await act(async () => {
+            await hook.getCurrent().prepare({ v: 1, image: { width: 6, height: 4, scale: 1 }, marks: [
+                { id: 'noted', kind: 'step', at: { x: 1, y: 1 }, color: 'red', size: 'm', note: 'Steer is the wrong default' },
+                { id: 'bare', kind: 'step', at: { x: 3, y: 2 }, color: 'red', size: 'm' },
+            ] }, { includeWindowText: false });
+        });
+        expect(calls.at(-1)?.args?.note).toBe('Numbered marks:\n1. Steer is the wrong default\n2. (no note)');
         await hook.unmount();
         expect(events.listeners.size).toBe(0);
     });

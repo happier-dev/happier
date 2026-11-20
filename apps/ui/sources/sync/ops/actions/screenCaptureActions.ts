@@ -86,7 +86,8 @@ export async function prepareCaptureDelivery(delivery: StillDelivery | Recording
     const windowText = delivery.windowText ?? await delivery.readWindowText?.();
     return { copyImage: bytes, items: [{ kind: 'image', source: { kind: 'memory', bytes, name: delivery.image.name, mimeType: 'image/png',
         ...(savedFile ? { savedFile } : {}),
-        ...(delivery.image.previewUri ? { previewUri: delivery.image.previewUri } : {}) } }],
+        ...(delivery.image.previewUri ? { previewUri: delivery.image.previewUri } : {}) },
+        ...(delivery.note ? { note: delivery.note } : {}) }],
         ...(windowText ? { windowText } : {}) };
 }
 
@@ -221,7 +222,7 @@ export async function readNativeCaptureDelivery(captureRef: string,
             readWindowText: async () => captureWindowTextAttachment(await readNativeCaptureWindowText(captureRef)) };
     }
     const windowText = captureWindowTextAttachment(state.windowText);
-    return { captureRef, inUse: state.inUse, disclosure: state.disclosure,
+    return { captureRef, inUse: state.inUse, disclosure: state.disclosure, ...(state.preparedNote ? { note: state.preparedNote } : {}),
         ...(windowText ? { windowText } : {}),
         image: { kind: 'prepared', name: leafFolderName(result.path) ?? 'Capture.png',
             readBytes: () => readPreparedCapturePng(captureRef), readForDraft: () => readCaptureImageForDraft(captureRef) } };
