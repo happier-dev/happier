@@ -150,6 +150,8 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = ${JSON.stringify(locator
     assert.match(bytes, new RegExp(directory));
   }
   const first = await lstat(manifestAt(tree));
+  // Keep the incumbent selected while the replacement prepares, as a reload does.
+  await writeFile(fixture.path('stacks/qa/source-runtime/selected-daemon.json'), JSON.stringify({ entrypoint: daemon.entrypoint }));
   const { daemon: again } = await prepare('daemon');
   assert.equal((await lstat(manifestAt(dirname(dirname(again.cliDir))))).ino, first.ino,
     'unchanged daemon trees inherit one prepared base graph');
