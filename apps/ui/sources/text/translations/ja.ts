@@ -18806,6 +18806,8 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `${line} 行目: ${message}`,
             unknownKeys: "認識されないフィールドがあります",
             unknownKeysBody: ({ keys }: { keys: string }) => `Happier は ${keys} を無視し、ファイルにはそのまま残します。`,
+            target: { title: "変更の保存先", repository: "このリポジトリ", repositoryBody: ".happier/project.json を開く全員に反映されます", personal: "自分だけ", personalBody: "リポジトリと共有セットアップの上に重ねられ、共有されません", personalUnavailable: "このチェックアウトはまだプロジェクトにありません", personalNote: "自分だけ · 共有されません", personalFailed: "個人用セットアップを開けませんでした" },
+            environment: { title: "環境変数名", body: "このセットアップに必要な名前です。値はこのコンピューターに残ります。", action: "変数名をインポート", empty: "まだ名前はありません", none: "このチェックアウトに .env.example はありません", secret: "シークレット", value: "値", failed: ".env.example を読み込めませんでした" },
             toolchain: "ツール",
             toolchainBody: "このプロジェクトのエージェント、ターミナル、スクリプト、サービスはすべてこれらのツールを使用します。ファイルを読んで検出しており、セットアップが承認されるまで何も評価されません。",
             toolsFrom: "ツールの提供元",

@@ -124,6 +124,8 @@ export function useProjectManifestDocument(input: ProjectManifestDocumentInput) 
     }
   }, [model, importing, environmentImport, client, input.inheritedRequirements]);
   const save = React.useCallback(() => model ? model.save() : Promise.resolve(null), [model]);
+  // A settled import with no offer means this checkout has no example file to read names from.
+  const environmentImportChecked = selectedImport !== null && !importing && selectedImport.error === null;
   return { target, model, loading, error, canEditPersonal: personal !== null,
-    environmentImport, importing, selectTarget, reloadPersonal, importEnvironmentNames, save };
+    environmentImport, environmentImportChecked, importing, selectTarget, reloadPersonal, importEnvironmentNames, save };
 }

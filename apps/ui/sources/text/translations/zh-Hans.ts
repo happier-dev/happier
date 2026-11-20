@@ -18512,6 +18512,8 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `第 ${line} 行：${message}`,
             unknownKeys: "部分字段无法识别",
             unknownKeysBody: ({ keys }: { keys: string }) => `Happier 会忽略 ${keys}，并在文件中保留它们。`,
+            target: { title: "更改保存到", repository: "此仓库", repositoryBody: "打开 .happier/project.json 的所有人都会获得", personal: "仅自己", personalBody: "叠加在仓库和共享设置之上，永不共享", personalUnavailable: "此检出尚未加入项目", personalNote: "仅自己 · 永不共享", personalFailed: "无法打开你的个人设置" },
+            environment: { title: "环境变量名", body: "此设置需要的名称。值保留在这台电脑上。", action: "导入变量名", empty: "尚无名称", none: "此检出中没有 .env.example", secret: "密钥", value: "值", failed: "无法读取 .env.example" },
             toolchain: "工具",
             toolchainBody: "此项目的每个代理、终端、脚本和服务都使用这些工具。通过读取文件检测；在设置获批前不会评估任何内容。",
             toolsFrom: "工具来源",

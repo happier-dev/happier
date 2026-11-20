@@ -269,6 +269,7 @@ export function ProjectScriptsBody({
         tools={read.value.tools}
         seedFromDetection={editor.seed}
         initialMode={editor.mode}
+        inheritedRequirements={readInheritedRequirements(read.value)}
         onBack={() => setEditor(null)}
         onSaved={retry}
       />
@@ -1613,6 +1614,12 @@ const ProjectSetupHeaderMenu = React.memo(function ProjectSetupHeaderMenu(
     />
   );
 });
+
+/** The names the effective setup already declares; a names-only import never shadows them. */
+function readInheritedRequirements(inspection: Parameters<typeof readProjectEffectiveDefinition>[0]) {
+  const effective = readProjectEffectiveDefinition(inspection);
+  return effective.kind === 'available' ? effective.value.effectiveManifest?.environmentVariables : undefined;
+}
 
 const styles = StyleSheet.create((theme) => ({
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

@@ -22291,6 +22291,8 @@ const enProjects = {
       lineError: ({ line, message }: { line: number; message: string }) => `Line ${line}: ${message}`,
       unknownKeys: "Some fields aren’t recognized",
       unknownKeysBody: ({ keys }: { keys: string }) => `Happier ignores ${keys} and keeps them in the file.`,
+      target: { title: "Save changes to", repository: "This repository", repositoryBody: "Everyone who opens .happier/project.json gets them", personal: "Just for you", personalBody: "Layered over the repository and shared setup, never shared", personalUnavailable: "This checkout isn’t in a Project yet", personalNote: "Just for you · never shared", personalFailed: "Couldn’t open your personal setup" },
+      environment: { title: "Environment names", body: "Names this setup needs. Values stay on this computer.", action: "Import variable names", empty: "No names yet", none: "No .env.example in this checkout", secret: "Secret", value: "Value", failed: "Couldn’t read .env.example" },
       toolchain: "Tools",
       toolchainBody: "Every agent, terminal, script and service for this project uses these tools. Found by reading files; nothing is evaluated until setup is approved.",
       toolsFrom: "Tools from",

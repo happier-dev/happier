@@ -7,7 +7,6 @@ import {
   projectSharedSetupChangeRowsV1,
   type ProjectSharedSetupChangeRowV1,
 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
-import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { Modal } from '@/modal';
@@ -23,11 +22,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import {
-  useProjectAccountRows,
-  useProjectAccountWorkspaceRef,
-} from '@/sync/domains/workspaces/projectAccountRows';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import {
   listProjectSetupEffect,
@@ -42,6 +36,7 @@ import type {
   ProjectSharedSetupUpdateRequest,
 } from './projectSetupConsentDecision';
 import { useProjectSharedSetupReview } from './useProjectSharedSetupReview';
+import { useProjectSetupRow } from './useProjectSetupRow';
 import type { ProjectSharedSetupReviewSnapshot } from './projectSharedSetupReview';
 
 type Decide = (
@@ -99,35 +94,6 @@ export function openProjectSharedSetupUpdate(
   });
 }
 
-/** The Project row a setup choice is written to: this checkout's Project and that row's revision. */
-function useProjectSetupRow(workspace: WorkspaceAddressV1) {
-  const workspaceRef = useProjectAccountWorkspaceRef(workspace.workspaceId, workspace.serverId);
-  const projectKey = workspaceRef ? projectWorkspaceRefV1(workspaceRef).projectKey : null;
-  const revision = useProjectAccountRows(
-    (rows): ProjectSharedSetupUpdateRequest['expectedRevision'] | null =>
-      projectKey
-        ? (rows?.organizations.find(
-            (row) =>
-              row.key.projectKey === projectKey &&
-              areServerProfileIdentifiersEquivalent(
-                row.key.serverId,
-                workspace.serverId,
-              ),
-          )?.revision ?? 'absent')
-        : null,
-  );
-  return React.useMemo(
-    () =>
-      projectKey && revision !== null
-        ? {
-            projectRef: { serverId: workspace.serverId, projectKey },
-            expectedRevision: revision,
-          }
-        : null,
-    [projectKey, revision, workspace.serverId],
-  );
-}
-
 function ProjectSharedSetupUpdateModal(
   props: CustomModalInjectedProps & ProjectSharedSetupUpdateInput,
 ) {
@@ -156,7 +122,8 @@ function ProjectSharedSetupUpdateBody(
     }>,
 ) {
   const review = useProjectSharedSetupReview(props.workspace, props.binding, {
-    ...props.row,
+    projectRef: props.row.projectRef,
+    expectedRevision: props.row.expectedRevision,
     sourceId: props.sourceId,
   });
   const controller = review.controller;

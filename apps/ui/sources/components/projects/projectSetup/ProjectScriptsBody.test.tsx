@@ -692,6 +692,29 @@ describe('ProjectScriptsBody setup affordance', () => {
     expect(shared.calls.filter(call => call.actionId === 'projects.inspect' && call.input.read.kind === 'detail')).toHaveLength(detailReads);
   });
 
+  it('edits a setup just for you and imports .env.example names into it, never writing the repository file (A U2)', async () => {
+    isolateManifestDrafts();
+    shared.organizations = [{ key: { kind: 'project-organization', serverId: workspace.serverId, projectKey: 'w1' },
+      revision: 4, value: { pinned: true } }];
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      environmentImport: { kind: 'environment', file: '.env.example', diagnostics: [],
+        requirements: [{ name: 'STRIPE_TEST_KEY', kind: 'config', required: false }] } };
+    const screen = await render('page', 'scripts.edit');
+    await screen.pressByTestIdAsync('scripts.edit');
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.target:personal')).toBeTruthy());
+    await screen.pressByTestIdAsync('project-manifest-editor.target:personal');
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.environment.import')).toBeTruthy());
+    await screen.pressByTestIdAsync('project-manifest-editor.environment.import');
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.environment:STRIPE_TEST_KEY')).toBeTruthy());
+    await screen.pressByTestIdAsync('project-manifest-editor.save');
+    // The personal setup is a private Artifact the Project row points at; the repository file is never written.
+    await vi.waitFor(() => expect(shared.organizations[0]?.value.setupContent).toBeDefined());
+    expect(shared.organizations[0]?.value.pinned).toBe(true);
+    // Stored plain content is base64 envelope bytes; the imported name is in the saved setup, never a value.
+    expect(artifacts.list().map(artifact => Buffer.from(String(artifact.body), 'base64').toString()).join('\n')).toContain('STRIPE_TEST_KEY');
+    expect(shared.calls.filter(call => call.actionId === 'projects.manifest.update')).toHaveLength(0);
+  });
+
   it.each(['available', 'missing'] as const)('reserves cold authoring provenance and reads only its exact Session once per mount, with no idle reads (%s)', async availability => {
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [] };
     const borrowers = countReadBorrowers(sessionParts.readSessionParts, params => params.sessionIds);

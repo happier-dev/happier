@@ -18895,6 +18895,8 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `Riga ${line}: ${message}`,
             unknownKeys: "Alcuni campi non sono riconosciuti",
             unknownKeysBody: ({ keys }: { keys: string }) => `Happier ignora ${keys} e li conserva nel file.`,
+            target: { title: "Salva le modifiche in", repository: "Questo repository", repositoryBody: "Chi apre .happier/project.json le riceve", personal: "Solo per te", personalBody: "Sopra il repository e la configurazione condivisa, mai condiviso", personalUnavailable: "Questo checkout non è ancora in un progetto", personalNote: "Solo per te · mai condiviso", personalFailed: "Impossibile aprire la tua configurazione personale" },
+            environment: { title: "Nomi di ambiente", body: "Nomi richiesti da questa configurazione. I valori restano su questo computer.", action: "Importa nomi delle variabili", empty: "Ancora nessun nome", none: "Nessun .env.example in questo checkout", secret: "Segreto", value: "Valore", failed: "Impossibile leggere .env.example" },
             toolchain: "Strumenti",
             toolchainBody: "Ogni agente, terminale, script e servizio di questo progetto usa questi strumenti. Rilevati leggendo i file; nulla viene valutato prima che la configurazione sia approvata.",
             toolsFrom: "Strumenti da",

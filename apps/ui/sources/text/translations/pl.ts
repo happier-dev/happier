@@ -18718,6 +18718,8 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `Wiersz ${line}: ${message}`,
             unknownKeys: "Niektóre pola nie są rozpoznawane",
             unknownKeysBody: ({ keys }: { keys: string }) => `Happier ignoruje ${keys} i zachowuje je w pliku.`,
+            target: { title: "Zapisuj zmiany w", repository: "To repozytorium", repositoryBody: "Każdy, kto otworzy .happier/project.json, je otrzyma", personal: "Tylko dla ciebie", personalBody: "Nałożone na repozytorium i wspólną konfigurację, nigdy nieudostępniane", personalUnavailable: "Ten checkout nie należy jeszcze do projektu", personalNote: "Tylko dla ciebie · nigdy nieudostępniane", personalFailed: "Nie udało się otworzyć twojej konfiguracji" },
+            environment: { title: "Nazwy zmiennych środowiskowych", body: "Nazwy potrzebne tej konfiguracji. Wartości zostają na tym komputerze.", action: "Importuj nazwy zmiennych", empty: "Brak nazw", none: "Brak .env.example w tym checkoucie", secret: "Sekret", value: "Wartość", failed: "Nie udało się odczytać .env.example" },
             toolchain: "Narzędzia",
             toolchainBody: "Każdy agent, terminal, skrypt i usługa tego projektu korzysta z tych narzędzi. Wykryte przez odczyt plików; nic nie jest wykonywane, dopóki konfiguracja nie zostanie zatwierdzona.",
             toolsFrom: "Narzędzia z",

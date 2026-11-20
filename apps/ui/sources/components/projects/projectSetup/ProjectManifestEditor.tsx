@@ -26,21 +26,25 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import { Typography } from '@/constants/Typography';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
-import {
-  createProjectManifestEditorModel,
-  type ProjectManifestEditorModel,
-} from './projectManifestEditorModel';
+import type { ProjectManifestEditorModel } from './projectManifestEditorModel';
 import type { ProjectManifestActionClient } from './projectManifestActionClient';
 import { getProjectManifestImportSelection } from './projectManifestImportSelection';
 import { ProjectManifestForm, type ProjectManifestFormSection } from './ProjectManifestForm';
 import type { ProjectDefinitionInspection } from './useProjectDefinitionInspection';
 import { useProjectManifestEditorSnapshot } from './useProjectManifestEditorSnapshot';
+import { useProjectManifestDocument } from './useProjectManifestDocument';
+import { useProjectSetupRow } from './useProjectSetupRow';
 
 // These are unrequested picker choices, never evidence that discovery completed or found nothing.
 const UNREQUESTED_DETECTION: ProjectDefinitionDetectionV1 = {
@@ -60,6 +64,8 @@ export type ProjectManifestEditorProps = Readonly<{
   /** Create project file: the draft starts from the available, unambiguous found references. */
   seedFromDetection: boolean;
   initialMode: 'form' | 'raw';
+  /** Requirements the effective setup already declares; an import never shadows them. */
+  inheritedRequirements?: readonly EnvVarRequirement[];
   onBack: () => void;
   onSaved: () => void;
 }>;
@@ -70,31 +76,27 @@ export type ProjectManifestEditorProps = Readonly<{
  * never updates the Scripts shell.
  */
 export function ProjectManifestEditor(props: ProjectManifestEditorProps) {
-  const { client, definition } = props;
-  // One model per mounted editor; the host keys the editor by checkout and Account, and newer reads
-  // arrive through receiveDefinition rather than recreating the draft.
-  const [model] = React.useState(() =>
-    createProjectManifestEditorModel({
-      workspace: props.workspace,
-      expectedAccountId: props.accountId,
-      definition,
-      actions: {
-        update: (request) =>
-          client.update({
-            expectedBasis: request.expectedBasis,
-            bytes: request.bytes,
-          }),
-      },
-    }),
-  );
-  React.useEffect(() => {
-    model.receiveDefinition(definition);
-  }, [model, definition]);
+  // One document per mounted editor; the host keys the editor by checkout and Account, and newer reads
+  // arrive through receiveDefinition rather than recreating the draft. The document owns which target
+  // (repository file or personal setup) is edited; each target's model owns its draft and CAS save.
+  // The selected Account's Project row; without one, only the repository file can be edited.
+  const row = useProjectSetupRow(props.workspace);
+  const personal = React.useMemo(() => row
+    ? { projectRef: row.projectRef, revision: row.expectedRevision, organization: row.organization } : null, [row]);
+  const document = useProjectManifestDocument({
+    workspace: props.workspace,
+    accountId: props.accountId,
+    client: props.client,
+    repositoryDefinition: props.definition,
+    personal,
+    inheritedRequirements: props.inheritedRequirements,
+  });
+  const repository = document.target === 'repository' ? document.model : null;
   const seeded = React.useRef(false);
   React.useEffect(() => {
-    if (!props.seedFromDetection || seeded.current) return;
+    if (!repository || !props.seedFromDetection || seeded.current) return;
     seeded.current = true;
-    const draft = model.getSnapshot().draft;
+    const draft = repository.getSnapshot().draft;
     if (
       draft.status !== 'valid' ||
       Object.keys(draft.manifest.scripts ?? {}).length > 0
@@ -103,7 +105,7 @@ export function ProjectManifestEditor(props: ProjectManifestEditorProps) {
     for (const candidate of getProjectManifestImportSelection(
       props.importCandidates,
     ).selected) {
-      model.importNative({
+      repository.importNative({
         usage: candidate.usage,
         ...(candidate.usage === 'setup'
           ? {}
@@ -111,18 +113,153 @@ export function ProjectManifestEditor(props: ProjectManifestEditorProps) {
         source: candidate.source,
       });
     }
-  }, [model, props.importCandidates, props.seedFromDetection]);
+  }, [repository, props.importCandidates, props.seedFromDetection]);
+  const initialMode = React.useRef(false);
   React.useEffect(() => {
-    if (props.initialMode === 'raw') model.setMode('raw');
-  }, [model, props.initialMode]);
-  return <ProjectManifestEditorLeaf {...props} model={model} />;
+    if (!repository || initialMode.current) return;
+    initialMode.current = true;
+    if (props.initialMode === 'raw') repository.setMode('raw');
+  }, [repository, props.initialMode]);
+  return document.model
+    ? <ProjectManifestEditorLeaf {...props} model={document.model} document={document} />
+    : <ProjectManifestEditorPendingTarget {...props} document={document} />;
+}
+
+type ProjectManifestDocument = ReturnType<typeof useProjectManifestDocument>;
+
+/** Where saves go: the repository file everyone gets, or a setup only this Account uses (plan A U2). */
+function ProjectManifestEditorTarget(props: Readonly<{ document: ProjectManifestDocument; disabled?: boolean }>) {
+  const { document } = props;
+  const options = React.useMemo(() => [
+    { id: 'repository' as const, label: t('projects.scripts.editor.target.repository'),
+      description: t('projects.scripts.editor.target.repositoryBody') },
+    { id: 'personal' as const, label: t('projects.scripts.editor.target.personal'),
+      description: t('projects.scripts.editor.target.personalBody'),
+      ...(document.canEditPersonal ? {} : { unavailableReason: t('projects.scripts.editor.target.personalUnavailable') }) },
+  ], [document.canEditPersonal]);
+  return (
+    <ItemGroup>
+      <SegmentedChoiceItem
+        title={t('projects.scripts.editor.target.title')}
+        options={options}
+        value={document.target}
+        disabled={props.disabled}
+        onChange={(next) => { document.selectTarget(next); }}
+        testIDPrefix="project-manifest-editor.target"
+      />
+    </ItemGroup>
+  );
+}
+
+/**
+ * The names a setup needs (plan A §4): imported from `.env.example` as names only, never values.
+ * Values stay on this computer and are bound where the launch resolves them.
+ */
+function ProjectManifestEnvironmentSection(props: Readonly<{
+  document: ProjectManifestDocument;
+  requirements: readonly EnvVarRequirement[];
+  disabled: boolean;
+}>) {
+  const { document } = props;
+  const none = document.environmentImportChecked && document.environmentImport === null;
+  return (
+    <ItemGroup
+      title={t('projects.scripts.editor.environment.title')}
+      description={t('projects.scripts.editor.environment.body')}
+      action={
+        <RoundButton
+          size="small"
+          display="inverted"
+          title={t('projects.scripts.editor.environment.action')}
+          testID="project-manifest-editor.environment.import"
+          loading={document.importing}
+          disabled={props.disabled || document.importing}
+          onPress={() => { void document.importEnvironmentNames(); }}
+        />
+      }
+    >
+      {document.error && !document.loading ? (
+        <SurfaceStateCard size="line" kind="unavailable" title={t('projects.scripts.editor.environment.failed')}
+          diagnosticCode={document.error} testID="project-manifest-editor.environment.error" />
+      ) : null}
+      {props.requirements.length === 0 ? (
+        <Item
+          testID="project-manifest-editor.environment.empty"
+          title={none ? t('projects.scripts.editor.environment.none') : t('projects.scripts.editor.environment.empty')}
+          showChevron={false}
+        />
+      ) : props.requirements.map((requirement) => (
+        <Item
+          key={requirement.name}
+          testID={`project-manifest-editor.environment:${requirement.name}`}
+          title={requirement.name}
+          titleStyle={styles.mono}
+          subtitle={[
+            requirement.kind === 'secret' ? t('projects.scripts.editor.environment.secret') : t('projects.scripts.editor.environment.value'),
+            requirement.required ? t('projects.scripts.environment.required') : t('projects.scripts.environment.optional'),
+          ].join(' · ')}
+          showChevron={false}
+        />
+      ))}
+    </ItemGroup>
+  );
+}
+
+/** The personal target before its setup is read, or when it can't be: the same page, with its state. */
+function ProjectManifestEditorPendingTarget(
+  props: ProjectManifestEditorProps & Readonly<{ document: ProjectManifestDocument }>,
+) {
+  const { document } = props;
+  const { theme } = useUnistyles();
+  const columnMaxWidth = useLayoutMaxWidth();
+  return (
+    <View style={styles.page}>
+      <ItemList testID="project-manifest-editor.scroll">
+        <View testID="project-manifest-editor">
+          <HappierPageHeader
+            title={t('projects.scripts.editor.title')}
+            description={
+              <Text style={[styles.headerNote, { color: theme.colors.text.secondary }]}>
+                {t('projects.scripts.editor.target.personalNote')}
+              </Text>
+            }
+            showTitle
+            columnMaxWidthPx={columnMaxWidth}
+            renderText={renderPageHeaderText}
+            renderBack={(style) => (
+              <View style={style as StyleProp<ViewStyle>}>
+                <IconButton
+                  testID="project-manifest-editor.back"
+                  iconName="caret-left"
+                  variant="plain"
+                  accessibilityLabel={t('projects.scripts.editor.back')}
+                  onPress={props.onBack}
+                />
+              </View>
+            )}
+          />
+          <ProjectManifestEditorTarget document={document} />
+          {document.loading ? (
+            <SurfaceStateCard kind="loading" title={t('projects.scripts.definition.inspecting')}
+              testID="project-manifest-editor.personal.loading" />
+          ) : (
+            <SurfaceStateCard kind="unavailable" title={t('projects.scripts.editor.target.personalFailed')}
+              diagnosticCode={document.error ?? undefined}
+              action={{ label: t('common.retry'), onPress: document.reloadPersonal }}
+              testID="project-manifest-editor.personal.error" />
+          )}
+        </View>
+      </ItemList>
+    </View>
+  );
 }
 
 function ProjectManifestEditorLeaf(
   props: ProjectManifestEditorProps &
-    Readonly<{ model: ProjectManifestEditorModel }>,
+    Readonly<{ model: ProjectManifestEditorModel; document: ProjectManifestDocument }>,
 ) {
-  const { model } = props;
+  const { model, document } = props;
+  const personal = document.target === 'personal';
   const phone = useDeviceType() === 'phone';
   const snapshot = useProjectManifestEditorSnapshot(model);
   const columnMaxWidth = useLayoutMaxWidth();
@@ -197,9 +334,11 @@ function ProjectManifestEditorLeaf(
         title={t('projects.scripts.editor.title')}
         description={
           <Text style={[styles.headerNote, { color: theme.colors.text.secondary }]}>
-            <Text style={[styles.headerNote, styles.mono]}>.happier/project.json</Text>
-            {' · '}
-            {snapshot.dirty ? t('projects.scripts.editor.unsavedNote') : t('projects.scripts.editor.fileNote')}
+            {personal ? t('projects.scripts.editor.target.personalNote') : (
+              <Text style={[styles.headerNote, styles.mono]}>.happier/project.json</Text>
+            )}
+            {personal && !snapshot.dirty ? null : ' · '}
+            {snapshot.dirty ? t('projects.scripts.editor.unsavedNote') : personal ? null : t('projects.scripts.editor.fileNote')}
           </Text>
         }
         // The editor lives inside the Scripts page, so its back and actions stay in the body on
@@ -234,6 +373,7 @@ function ProjectManifestEditorLeaf(
           </View>
         }
       />
+      <ProjectManifestEditorTarget document={document} disabled={snapshot.saving} />
       {conflict ? (
         <AttentionBanner
           testID="project-manifest-editor.conflict"
@@ -331,6 +471,13 @@ function ProjectManifestEditorLeaf(
           sectionBack={!barHostsBack}
         />
       )}
+      {raw || (phone && section) ? null : (
+        <ProjectManifestEnvironmentSection
+          document={document}
+          requirements={snapshot.draft.status === 'valid' ? snapshot.draft.manifest.environmentVariables ?? NO_REQUIREMENTS : NO_REQUIREMENTS}
+          disabled={snapshot.saving}
+        />
+      )}
     </View>
   );
   // The editor is a page of its own on every host: the JSON view fills it, the Form scrolls in it. On a
@@ -365,6 +512,8 @@ function describeDiagnostic(
     message: diagnostic.message,
   });
 }
+
+const NO_REQUIREMENTS: readonly EnvVarRequirement[] = Object.freeze([]);
 
 const styles = StyleSheet.create(() => ({
   fill: { flexGrow: 1 },
