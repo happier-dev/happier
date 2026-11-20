@@ -26,6 +26,7 @@ export function resolveMachinePickerPresence(
     nowMs: number | undefined,
     scope: MachineReachabilityScope | null | undefined,
     resolveScopeId?: ProfileScopeResolver,
+    observedReachability?: ReturnType<typeof resolveMachineReachability>,
 ): MachinePickerPresence {
     const revokedAt = typeof machine.revokedAt === 'number' ? machine.revokedAt : 0;
     if (Number.isFinite(revokedAt) && revokedAt > 0) {
@@ -36,7 +37,7 @@ export function resolveMachinePickerPresence(
         return { status: 'replaced', selectable: false };
     }
 
-    const reachability = resolveMachineReachability(scope, machine, nowMs, resolveScopeId);
+    const reachability = observedReachability ?? resolveMachineReachability(scope, machine, nowMs, resolveScopeId);
     if (reachability === 'unknown') return { status: 'unknown', selectable: false };
     if (reachability === 'unreachable') {
         return { status: 'offline', selectable: false,

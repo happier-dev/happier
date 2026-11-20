@@ -11,8 +11,6 @@ import {
 import { useHomeViewSelectionSettings } from '@/hooks/server/useHomeViewSelectionSettings';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useManagedMachineInventory } from './managed/useManagedMachineInventory';
-import { useMachinePresets } from './managed/useMachinePresets';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export type MachinesSettingsViewModel = {
@@ -26,14 +24,11 @@ export type MachinesSettingsViewModel = {
     visibleMachineGroups: ReturnType<typeof useActiveSelectionMachineGroups>['visibleMachineGroups'];
     managedByServerId: ReturnType<typeof useManagedMachineInventory>['machinesByServerId'];
     managedInventory: ReturnType<typeof useManagedMachineInventory>;
-    presetsByServerId: ReturnType<typeof useMachinePresets>['presetsByServerId'];
-    presetInventory: ReturnType<typeof useMachinePresets>;
-    reachabilityRevision: ReturnType<typeof useMachineReachabilityRevision>;
+    visibleServerIds: readonly string[];
 };
 
-export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
+export function useMachinesSettingsGroups() {
     const presented = useLayoutPresentationActive();
-    const reachabilityRevision = useMachineReachabilityRevision(presented);
     // Machine facts only: live resources are read per machine by their own owners (row summaries, attention,
     // the index's host facts), so a resource publication does not rebuild every Machines surface.
     const allMachines = useActiveMachineFacts(true, presented);
@@ -67,15 +62,20 @@ export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
         },
     });
 
-    const managedServerIds = React.useMemo(() => activeSelectionMachineGroups.visibleMachineGroups.map(group => group.serverId),
-        [activeSelectionMachineGroups.visibleMachineGroups]);
-    const managedInventory = useManagedMachineInventory(managedServerIds, undefined, undefined, true);
-    const presetInventory = useMachinePresets(managedServerIds);
+    return {
+        ...activeSelectionMachineGroups,
+        activeServerId: activeServerSnapshot.serverId,
+        activeMachineListStatus: machineListStatusByServerId[activeServerSnapshot.serverId] ?? 'loading',
+        allMachines,
+    };
+}
 
-    const isLoadingMachines = React.useMemo(() => {
-        const status = machineListStatusByServerId[activeServerSnapshot.serverId] ?? 'loading';
-        return allMachines.length === 0 && (status === 'loading' || managedInventory.loading);
-    }, [activeServerSnapshot.serverId, allMachines.length, machineListStatusByServerId, managedInventory.loading]);
+export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
+    const activeSelectionMachineGroups = useMachinesSettingsGroups();
+    const { activeServerId, activeMachineListStatus, allMachines, visibleMachineGroups } = activeSelectionMachineGroups;
+    const visibleServerIds = React.useMemo(() => visibleMachineGroups.map(group => group.serverId), [visibleMachineGroups]);
+    const managedInventory = useManagedMachineInventory(visibleServerIds, undefined, undefined, true);
+    const isLoadingMachines = allMachines.length === 0 && (activeMachineListStatus === 'loading' || managedInventory.loading);
 
     const managedFirstAnswerPending = managedInventory.firstAnswerPending;
 
@@ -91,7 +91,7 @@ export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
     }, [activeSelectionMachineGroups.visibleMachineGroups]);
 
     return {
-        activeServerId: activeServerSnapshot.serverId,
+        activeServerId,
         allMachines,
         hasMachines: activeSelectionMachineGroups.hasAnyVisibleMachines || Object.values(managedInventory.machinesByServerId).some(rows => rows.length > 0),
         isLoadingMachines,
@@ -101,8 +101,6 @@ export function useMachinesSettingsViewModel(): MachinesSettingsViewModel {
         visibleMachineGroups: activeSelectionMachineGroups.visibleMachineGroups,
         managedByServerId: managedInventory.machinesByServerId,
         managedInventory,
-        presetsByServerId: presetInventory.presetsByServerId,
-        presetInventory,
-        reachabilityRevision,
+        visibleServerIds,
     };
 }

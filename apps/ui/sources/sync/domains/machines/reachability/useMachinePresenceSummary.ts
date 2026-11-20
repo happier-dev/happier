@@ -2,16 +2,17 @@ import * as React from 'react';
 import type { CliUpdateFacts } from '@happier-dev/protocol/machines/cliUpdateFacts';
 
 import { getStorage } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveServerScopedMachines, resolveServerScopedMachineInventory, resolveServerScopedMachineInventoryKeys, selectMachineInventoryRowsById } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, subscribeServerProfiles, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
-import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { selectVisibleMachineInventory } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import {
-    isMachineReachable,
+    readMachineRequestReachabilityObservation,
     resolveMachineReachability,
     resolveMachineFleetPresence,
     partitionMachineFleetPresence,
@@ -77,20 +78,28 @@ export function useMachinePresenceSummaries(
     const hasMachine = ids.some(Boolean);
     const scope = useMachinePresenceScope(hasMachine ? targetServerId : null, hasMachine ? suppliedLifetime : null);
     const cached = React.useRef<readonly MachinePresenceSummary[]>([]);
-    const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
-        if (!hasMachine) return ids.map(() => null);
-        const state = store.getState();
-        const activeServerId = getActiveServerSnapshot().serverId;
-        const serverId = targetServerId || activeServerId;
-        // Resolve Home inventory once, not once for each requested Machine.
-        const machines = serverId ? resolveServerScopedMachines({
-            serverId, activeServerId,
-            get activeMachines() { return Object.values(state.machines); },
-            machineListByServerId: state.machineListByServerId,
-            machineListStatusByServerId: state.machineListStatusByServerId,
-        }, resolveScopeId) : null;
-        return serverId ? selectMachineInventoryRowsById(machines, ids)
-            : ids.map(id => id ? state.machines[id] ?? null : null);
+    const readMachines = React.useMemo(() => {
+        let inventory: readonly Machine[] | null | undefined;
+        let selected: readonly (Machine | null)[] = [];
+        return (resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
+            if (!hasMachine) return ids.map(() => null);
+            const state = store.getState();
+            const activeServerId = getActiveServerSnapshot().serverId;
+            const serverId = targetServerId || activeServerId;
+            if (!serverId) return ids.map(id => id ? state.machines[id] ?? null : null);
+            const machines = resolveServerScopedMachines({
+                serverId, activeServerId,
+                get activeMachines() { return Object.values(state.machines); },
+                machineListByServerId: state.machineListByServerId,
+                machineListStatusByServerId: state.machineListStatusByServerId,
+            }, resolveScopeId);
+            // Subscription reconciliation and the summary consume the same selected rows.
+            if (machines !== inventory) {
+                inventory = machines;
+                selected = selectMachineInventoryRowsById(machines, ids);
+            }
+            return selected;
+        };
     }, [store, targetServerId, ids, hasMachine]);
     const readSnapshot = React.useCallback((nowMs: number): readonly MachinePresenceSummary[] => {
         const resolveScopeId = captureServerProfileScopeResolver();
@@ -118,6 +127,66 @@ export function useMachinePresenceSummaries(
     }, [readMachines, scope, ids, targetServerId]);
     const targets = React.useMemo(() => [{ serverId: targetServerId, machineIds: ids }], [targetServerId, ids]);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, areEqual);
+}
+
+type PresenceMachine = Parameters<typeof isMachineOnline>[0];
+type ChangedActivityRows = ReadonlySet<PresenceMachine>;
+
+function createFleetPresenceRowReader(scope: ReturnType<typeof useMachinePresenceScope>) {
+    type Row = Parameters<typeof resolveMachineFleetPresence>[1] & Parameters<typeof isMachineSelectableForFleet>[1];
+    const rows = new WeakMap<Row, Readonly<{
+        activity: ReturnType<typeof readMachineActivity>;
+        requestFailed: boolean;
+        scopeId: string;
+        deadline: number | null;
+        presence: MachineFleetPresence;
+        executionEligible: boolean;
+    }>>();
+    return (machine: Row, nowMs: number, resolveScopeId: ProfileScopeResolver, changedActivity?: ChangedActivityRows) => {
+        const previous = rows.get(machine);
+        const beforeExpiry = previous && (previous.deadline === null || nowMs < previous.deadline);
+        if (beforeExpiry && changedActivity && !changedActivity.has(machine)) return previous;
+        const activity = readMachineActivity(machine);
+        const scopeId = resolveScopeId(scope?.serverId);
+        const requestFailed = readMachineRequestReachabilityObservation(scope, machine.id, undefined, resolveScopeId)?.outcome === 'failed';
+        if (beforeExpiry && previous.activity === activity && previous.scopeId === scopeId
+            && previous.requestFailed === requestFailed) return previous;
+        const presence = resolveMachineFleetPresence(scope, machine, nowMs, resolveScopeId);
+        const next = {
+            activity,
+            requestFailed,
+            scopeId,
+            deadline: readMachineStatusNextRefreshAtMs(machine, nowMs),
+            presence,
+            executionEligible: isMachineSelectableForFleet(scope, machine, nowMs, resolveScopeId, presence.reachability),
+        };
+        rows.set(machine, next);
+        return next;
+    };
+}
+
+/** The active map is only enumerated on a new inventory, even when many clocks advance. */
+function createVisiblePresenceInventoryReader(store: ReturnType<typeof getStorage>, targetServerId: string | null) {
+    let records: ReturnType<typeof store.getState>['machines'] | undefined;
+    let activeRows: readonly Machine[] = [];
+    return (resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
+        const state = store.getState();
+        const readActive = () => {
+            if (records !== state.machines) {
+                records = state.machines;
+                activeRows = Object.values(state.machines);
+            }
+            return activeRows;
+        };
+        const machines = targetServerId ? resolveServerScopedMachines({
+            serverId: targetServerId,
+            activeServerId: getActiveServerSnapshot().serverId,
+            get activeMachines() { return readActive(); },
+            machineListByServerId: state.machineListByServerId,
+            machineListStatusByServerId: state.machineListStatusByServerId,
+        }, resolveScopeId) ?? [] : readActive();
+        return selectVisibleMachineInventory(machines);
+    };
 }
 
 export type MachineCliUpdateFact = Readonly<{
@@ -175,47 +244,54 @@ export function useMachineCliUpdateFacts(
     const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
     const scope = useMachinePresenceScope(targetServerId, suppliedLifetime);
     const cached = React.useRef<MachineCliUpdateFactsSnapshot>({ machineIds: [], facts: [] });
-    const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
-        const state = store.getState();
-        const machines = targetServerId ? resolveServerScopedMachines({
-            serverId: targetServerId,
-            activeServerId: getActiveServerSnapshot().serverId,
-            get activeMachines() { return Object.values(state.machines); },
-            machineListByServerId: state.machineListByServerId,
-            machineListStatusByServerId: state.machineListStatusByServerId,
-        }, resolveScopeId) ?? [] : Object.values(state.machines);
-        return machines.filter(isMachineVisibleForSelection);
-    }, [store, targetServerId]);
-    const readSnapshot = React.useCallback((nowMs: number): MachineCliUpdateFactsSnapshot => {
-        const resolveScopeId = captureServerProfileScopeResolver();
-        const machines = readMachines(resolveScopeId).sort((left, right) => left.id.localeCompare(right.id));
-        const previous = cached.current;
-        const previousById = new Map(previous.facts.map(fact => [fact.id, fact]));
-        const facts = machines.map((machine): MachineCliUpdateFact => {
-            const before = previousById.get(machine.id);
-            const metadataPresent = Boolean(machine.metadata);
-            const platform = machine.metadata?.platform ?? null;
-            const happyCliVersion = machine.metadata?.happyCliVersion || null;
-            const cliUpdate = projectCliUpdateFacts(machine.metadata?.cliUpdate ?? null, before?.cliUpdate ?? null);
-            const connection = resolveMachineFleetPresence(scope, machine, nowMs, resolveScopeId);
-            const fleetPresence = before?.fleetPresence?.member === connection.member && before.fleetPresence.online === connection.online
-                && before.fleetPresence.reachability === connection.reachability ? before.fleetPresence : connection;
-            const online = fleetPresence.online;
-            const executionEligible = isMachineSelectableForFleet(scope, machine, nowMs, resolveScopeId);
-            return before && before.metadataPresent === metadataPresent && before.platform === platform
-                && before.happyCliVersion === happyCliVersion && before.cliUpdate === cliUpdate && before.online === online
-                && before.fleetPresence === fleetPresence && before.executionEligible === executionEligible
-                ? before : { id: machine.id, metadataPresent, platform, happyCliVersion, cliUpdate, online, fleetPresence, executionEligible };
-        });
-        const idsChanged = facts.length !== previous.machineIds.length
-            || facts.some((fact, index) => fact.id !== previous.machineIds[index]);
-        if (idsChanged || facts.some((fact, index) => fact !== previous.facts[index])) {
-            cached.current = {
-                machineIds: idsChanged ? facts.map(fact => fact.id) : previous.machineIds,
-                facts,
-            };
-        }
-        return cached.current;
+    const readMachines = React.useMemo(() => createVisiblePresenceInventoryReader(store, targetServerId), [store, targetServerId]);
+    const readSnapshot = React.useMemo(() => {
+        type Rows = ReturnType<typeof readMachines>;
+        const readConnection = createFleetPresenceRowReader(scope);
+        const projected = new WeakMap<Rows[number], Readonly<{ connection: ReturnType<typeof readConnection>; fact: MachineCliUpdateFact }>>();
+        let observedRows: Rows | undefined;
+        let orderedRows: Rows = [];
+        return (nowMs: number, changedActivity?: ChangedActivityRows): MachineCliUpdateFactsSnapshot => {
+            const resolveScopeId = captureServerProfileScopeResolver();
+            const machines = readMachines(resolveScopeId);
+            const previous = cached.current;
+            const previousById = observedRows !== machines ? new Map(previous.facts.map(fact => [fact.id, fact])) : undefined;
+            if (observedRows !== machines) {
+                observedRows = machines;
+                orderedRows = [...machines].sort((left, right) => left.id.localeCompare(right.id));
+            }
+            const facts = orderedRows.map((machine, index): MachineCliUpdateFact => {
+                const connection = readConnection(machine, nowMs, resolveScopeId, changedActivity);
+                const retained = projected.get(machine);
+                if (retained?.connection === connection) return retained.fact;
+                const before = retained?.fact ?? (previousById ? previousById.get(machine.id) : previous.facts[index]);
+                const metadata = machine.metadata;
+                const metadataPresent = Boolean(metadata);
+                const platform = metadata?.platform ?? null;
+                const happyCliVersion = metadata?.happyCliVersion || null;
+                const cliUpdate = projectCliUpdateFacts(metadata?.cliUpdate ?? null, before?.cliUpdate ?? null);
+                const presence = connection.presence;
+                const fleetPresence = before?.fleetPresence.member === presence.member && before.fleetPresence.online === presence.online
+                    && before.fleetPresence.reachability === presence.reachability ? before.fleetPresence : presence;
+                const online = fleetPresence.online;
+                const { executionEligible } = connection;
+                const fact = before && before.metadataPresent === metadataPresent && before.platform === platform
+                    && before.happyCliVersion === happyCliVersion && before.cliUpdate === cliUpdate && before.online === online
+                    && before.fleetPresence === fleetPresence && before.executionEligible === executionEligible
+                    ? before : { id: machine.id, metadataPresent, platform, happyCliVersion, cliUpdate, online, fleetPresence, executionEligible };
+                projected.set(machine, { connection, fact });
+                return fact;
+            });
+            const idsChanged = previousById !== undefined && (facts.length !== previous.machineIds.length
+                || facts.some((fact, index) => fact.id !== previous.machineIds[index]));
+            if (idsChanged || facts.some((fact, index) => fact !== previous.facts[index])) {
+                cached.current = {
+                    machineIds: idsChanged ? facts.map(fact => fact.id) : previous.machineIds,
+                    facts,
+                };
+            }
+            return cached.current;
+        };
     }, [readMachines, scope]);
     const targets = React.useMemo(() => [{ serverId: targetServerId }], [targetServerId]);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
@@ -252,26 +328,21 @@ const EMPTY_MEMBERSHIP: MachinePresenceMembership = { onlineMachineIds: [], sele
 function createMachinePresenceMembershipSource(store: ReturnType<typeof getStorage>, targetServerId: string | null,
     scope: ReturnType<typeof useMachinePresenceScope>) {
     let cached = EMPTY_MEMBERSHIP;
-    const readMachines = (resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
-        const state = store.getState();
-        const activeMachines = Object.values(state.machines);
-        const machines = targetServerId ? resolveServerScopedMachines({
-            serverId: targetServerId,
-            activeServerId: getActiveServerSnapshot().serverId,
-            activeMachines,
-            machineListByServerId: state.machineListByServerId,
-            machineListStatusByServerId: state.machineListStatusByServerId,
-        }, resolveScopeId) ?? [] : activeMachines;
-        return machines.filter(isMachineVisibleForSelection);
-    };
-    const readSnapshot = (nowMs: number) => {
+    const readMachines = createVisiblePresenceInventoryReader(store, targetServerId);
+    const readConnection = createFleetPresenceRowReader(scope);
+    const readSnapshot = (nowMs: number, changedActivity?: ChangedActivityRows) => {
         const resolveScopeId = captureServerProfileScopeResolver();
         const machines = readMachines(resolveScopeId);
-        const onlineMachineIds = machines.filter(machine => isMachineReachable(scope, machine, nowMs, resolveScopeId))
-            .map(machine => machine.id).sort((left, right) => left.localeCompare(right));
-        const selectableMachineIds = machines.filter(machine => isMachineSelectableForFleet(scope, machine, nowMs, resolveScopeId))
-            .map(machine => machine.id).sort((left, right) => left.localeCompare(right));
-        const { counts } = partitionMachineFleetPresence(machines, machine => resolveMachineFleetPresence(scope, machine, nowMs, resolveScopeId));
+        const onlineMachineIds: string[] = [];
+        const selectableMachineIds: string[] = [];
+        const { counts } = partitionMachineFleetPresence(machines, machine => {
+            const { presence, executionEligible } = readConnection(machine, nowMs, resolveScopeId, changedActivity);
+            if (presence.online === true) onlineMachineIds.push(machine.id);
+            if (executionEligible) selectableMachineIds.push(machine.id);
+            return presence;
+        });
+        onlineMachineIds.sort((left, right) => left.localeCompare(right));
+        selectableMachineIds.sort((left, right) => left.localeCompare(right));
         const previous = cached;
         const onlineChanged = onlineMachineIds.length !== previous.onlineMachineIds.length
             || onlineMachineIds.some((id, index) => id !== previous.onlineMachineIds[index]);
@@ -393,8 +464,8 @@ function samePresenceInputs(left: readonly unknown[], right: readonly unknown[])
 
 /** One pushed presence source for React and imperative mounted Resource owners. */
 export function createMachinePresenceSnapshotSource<T>(
-    readMachines: () => readonly (Parameters<typeof isMachineOnline>[0] | null)[],
-    readSnapshot: (nowMs: number) => T,
+    readMachines: () => readonly (PresenceMachine | null)[],
+    readSnapshot: (nowMs: number, changedActivity?: ChangedActivityRows) => T,
     targets: readonly MachinePresenceTarget[],
     areEqual?: (left: T, right: T) => boolean,
     readDemandedInputs?: (nowMs: number) => readonly unknown[],
@@ -412,14 +483,24 @@ export function createMachinePresenceSnapshotSource<T>(
     let readInputs = createPresenceInputReader(observedTargets, activeServerId);
     let revision = 0;
     let cached: Readonly<{ inputs: readonly unknown[]; revision: number; value: T; demandedInputs?: readonly unknown[] }> | undefined;
+    let pendingActivity: Set<PresenceMachine> | undefined;
+    const invalidate = (changedActivity?: ChangedActivityRows) => {
+        if (!changedActivity) pendingActivity = undefined;
+        else if (cached?.revision === revision) pendingActivity = new Set(changedActivity);
+        else if (pendingActivity) for (const row of changedActivity) pendingActivity.add(row);
+        revision += 1;
+    };
     const getSnapshot = () => {
         const inputs = readInputs(store.getState());
-        if (cached && cached.revision === revision && samePresenceInputs(cached.inputs, inputs)) return cached.value;
+        const sameInputs = cached && samePresenceInputs(cached.inputs, inputs);
+        if (sameInputs && cached?.revision === revision) return cached.value;
+        const changedActivity = sameInputs ? pendingActivity : undefined;
+        pendingActivity = undefined;
         // Sample wall time only at an observed input/request transition.
         const nowMs = Date.now();
         const demandedInputs = readDemandedInputs?.(nowMs);
         const nextValue = cached && demandedInputs && cached.demandedInputs && samePresenceInputs(cached.demandedInputs, demandedInputs)
-            ? cached.value : readSnapshot(nowMs);
+            ? cached.value : readSnapshot(nowMs, changedActivity);
         const previous = cached ?? published;
         const value = previous && areEqual?.(previous.value, nextValue) ? previous.value : nextValue;
         cached = { inputs, revision, value, demandedInputs };
@@ -435,7 +516,7 @@ export function createMachinePresenceSnapshotSource<T>(
         listeners.add(listener);
         if (detach) {
             // Like a fresh attachment, re-sample what may have moved since this subscriber's render read.
-            revision += 1;
+            invalidate();
             listener();
             return () => release(listener);
         }
@@ -451,77 +532,108 @@ export function createMachinePresenceSnapshotSource<T>(
     const attach = (listener: () => void) => {
         const token = {};
         let inputs = readInputs(store.getState());
-        let observedMachines: ReturnType<typeof readMachines> = [];
-        let stopActivity = () => {};
-        const refresh = (rebindActivity = false, machines = readMachines()) => {
-            if (rebindActivity) {
-                observedMachines = machines;
-                observeActivity(machines);
+        const subscriptions = new Map<PresenceMachine, () => void>();
+        const changed = new Set<PresenceMachine>();
+        const deadlines = new Map<PresenceMachine, number>();
+        const refresh = () => {
+            if (changed.size) {
+                const nowMs = Date.now();
+                for (const machine of changed) {
+                    const deadline = subscriptions.has(machine) ? readMachineStatusNextRefreshAtMs(machine, nowMs) : null;
+                    if (deadline === null) deadlines.delete(machine);
+                    else deadlines.set(machine, deadline);
+                }
+                changed.clear();
+                scheduleDeadline(nowMs);
             }
-            let nextDeadline: number | null = null;
-            const nowMs = Date.now();
-            for (const machine of machines) {
-                const deadline = machine ? readMachineStatusNextRefreshAtMs(machine, nowMs) : null;
-                if (deadline !== null) nextDeadline = nextDeadline === null ? deadline : Math.min(nextDeadline, deadline);
-            }
-            if (nextDeadline === null) sessionListRuntimeClock.clearWake(token);
-            else sessionListRuntimeClock.requestWake(token, nextDeadline);
             listener();
         };
+        const scheduleDeadline = (nowMs: number) => {
+            let nextDeadline = Number.POSITIVE_INFINITY;
+            for (const [machine, deadline] of deadlines) {
+                if (deadline <= nowMs) deadlines.delete(machine);
+                else nextDeadline = Math.min(nextDeadline, deadline);
+            }
+            if (nextDeadline === Number.POSITIVE_INFINITY) sessionListRuntimeClock.clearWake(token);
+            else sessionListRuntimeClock.requestWake(token, nextDeadline);
+        };
         const onActivity = () => {
-            revision += 1;
+            // A structural publication in the same arrival may already have
+            // consumed these clocks. The batch still wakes each source once.
+            if (changed.size === 0) return;
+            invalidate(changed);
             refresh();
         };
-        const observeActivity = (machines: ReturnType<typeof readMachines>) => {
-            stopActivity();
-            const stops = machines.flatMap(machine => machine ? [subscribeMachineActivity(machine, onActivity)] : []);
-            stopActivity = () => { for (const stop of stops) stop(); };
+        const reconcileActivity = () => {
+            const current = new Set(readMachines().filter((machine): machine is PresenceMachine => machine !== null));
+            for (const [machine, stop] of subscriptions) {
+                if (current.has(machine)) continue;
+                stop();
+                subscriptions.delete(machine);
+                changed.add(machine);
+            }
+            for (const machine of current) {
+                if (subscriptions.has(machine)) continue;
+                subscriptions.set(machine, subscribeMachineActivity(machine, onActivity, () => { changed.add(machine); }));
+                changed.add(machine);
+            }
+            refresh();
         };
         const stopStore = store.subscribe(state => {
             const next = readInputs(state);
             if (samePresenceInputs(inputs, next)) return;
             inputs = next;
-            refresh(true);
+            invalidate();
+            reconcileActivity();
         }, { machines: true, machineListByServerId: true, machineListStatusByServerId: true,
             machinePresenceByServerId: true, machinePresenceById: true });
         const stopRequests = subscribeMachineRequestReachability(change => {
             if (change && !observedTargets.some(target => target.machineIds?.length !== 0
                 && areServerProfileIdentifiersEquivalent(target.serverId?.trim() || activeServerId, change.scope.serverId)
                 && (!target.machineIds || !change.machineIds || target.machineIds.some(id => change.machineIds!.includes(id))))) return;
-            revision += 1;
+            invalidate();
             refresh();
         });
         const stopClock = sessionListRuntimeClock.subscribeWake(token, () => {
-            revision += 1;
+            invalidate();
+            scheduleDeadline(Date.now());
             refresh();
         });
         const rebind = () => {
             activeServerId = getActiveServerSnapshot().serverId;
             readInputs = createPresenceInputReader(observedTargets, activeServerId);
             inputs = readInputs(store.getState());
-            revision += 1;
-            refresh(true);
+            invalidate();
+            reconcileActivity();
         };
         const stopHome = subscribeActiveServer(rebind);
         const stopProfiles = subscribeServerProfiles(rebind);
         const stopMembership = subscribeToMembership?.(() => {
-            revision += 1;
-            const machines = readMachines();
-            refresh(!samePresenceInputs(observedMachines, machines), machines);
+            invalidate();
+            reconcileActivity();
         });
         // A request or activity may move after React's render read but before
         // subscription (or while unsubscribed). Re-sample once after attaching.
-        revision += 1;
-        refresh(true);
-        return () => { stopMembership?.(); stopStore(); stopRequests(); stopActivity(); stopClock(); stopHome(); stopProfiles(); };
+        invalidate();
+        reconcileActivity();
+        return () => {
+            stopMembership?.();
+            stopStore();
+            stopRequests();
+            changed.clear();
+            for (const stop of subscriptions.values()) stop();
+            stopClock();
+            stopHome();
+            stopProfiles();
+        };
     };
     return { getSnapshot, subscribe };
 }
 
 /** React reads one immutable projection until one of its subscribed sources moves. */
 export function useMachinePresenceSnapshot<T>(
-    readMachines: () => readonly (Parameters<typeof isMachineOnline>[0] | null)[],
-    readSnapshot: (nowMs: number) => T,
+    readMachines: () => readonly (PresenceMachine | null)[],
+    readSnapshot: (nowMs: number, changedActivity?: ChangedActivityRows) => T,
     targets: readonly MachinePresenceTarget[],
     areEqual?: (left: T, right: T) => boolean,
     /** Select demanded source facts before running a more expensive projection. */

@@ -360,7 +360,14 @@ describe('preset collection and history through Actions', () => {
             presented = true;
             await hook.rerender();
             expect(hook.getCurrent().machineRows[0]?.title).toBe('Current machine 5');
-            expect(hook.getCurrent().reachabilityRevision).toBe(readMachineRequestReachabilityRevision());
+            const afterRestore = renders;
+            const restoredReachability = readMachineRequestReachabilityRevision();
+            await act(async () => {
+                recordMachineRequestSucceeded({ serverId: 'srv_history', accountId: 'owner', machineId: machine.id,
+                    observedAtMs: observedAtMs + 6 });
+            });
+            expect(readMachineRequestReachabilityRevision()).toBeGreaterThan(restoredReachability);
+            expect(renders).toBe(afterRestore);
             presented = false;
             await hook.rerender();
             await act(async () => storage.setState({ profileScope: null, machines: {}, machineListByServerId: {} }));
@@ -995,15 +1002,14 @@ describe('preset collection and history through Actions', () => {
         harness.answer(serverId, '/v1/machines/managed/actions/list', { respondAfter: new Promise<void>(() => {}) });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture(setupOnly)] } });
         const { useMachinesSettingsViewModel } = await import('../machinesSettingsViewModel');
-        const rendered = await renderHook(() => useMachinesSettingsViewModel());
-        await waitForHomeGovernance(() => expect(Object.values(rendered.getCurrent().presetInventory.statesByServerId))
-            .toEqual([expect.objectContaining({ loading: false })]));
-        expect(Object.values(rendered.getCurrent().presetInventory.statesByServerId)).toEqual([
-            expect.objectContaining({ loading: false, error: null, value: [createPlainManagedMachinePresetFixture(setupOnly).opened] }),
-        ]);
-        expect(Object.values(rendered.getCurrent().presetsByServerId).flat()).toEqual([createPlainManagedMachinePresetFixture(setupOnly).opened]);
-        expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
-        await rendered.unmount();
+        const rendered = await renderHook(() => useMachinePresets(useMachinesSettingsViewModel().visibleServerIds));
+        try {
+            await waitForHomeGovernance(() => expect(Object.values(rendered.getCurrent().statesByServerId)).toEqual([
+                expect.objectContaining({ loading: false, error: null, value: [createPlainManagedMachinePresetFixture(setupOnly).opened] }),
+            ]));
+            expect(Object.values(rendered.getCurrent().presetsByServerId).flat()).toEqual([createPlainManagedMachinePresetFixture(setupOnly).opened]);
+            expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
+        } finally { await rendered.unmount(); }
     });
     it('settles a failed server preset read without waiting for a controller', async () => {
         const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example', serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });

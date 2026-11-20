@@ -89,7 +89,9 @@ function observeInventoryChanges(demand: InventoryDemand) {
         for (const reader of demand.readers.values()) {
             if (!reader.isCurrent() || reader.serverId !== serverId || reader.isAwaitingApproval()) continue;
             const entry = reader.get();
-            if ((entry.managedId ? event.machineResourcesAffect : event.managedMachineInventoryAffect) === false) continue;
+            if (entry.managedId
+                ? event.managedMachineChangedIds === undefined && event.machineResourcesAffect === false
+                : event.managedMachineInventoryAffect === false) continue;
             const key = JSON.stringify([entry.accountId, entry.homeId]);
             const group = groups.get(key) ?? [];
             group.push(reader);

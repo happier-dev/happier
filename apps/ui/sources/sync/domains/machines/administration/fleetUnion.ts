@@ -1,6 +1,6 @@
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import type { ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
-import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
+import type { MachineFleetPresence, MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 
@@ -18,8 +18,9 @@ export function resolveFleetMachineAvailability(
     machine: FleetMachine,
     nowMs?: number,
     resolveScopeId?: ProfileScopeResolver,
+    observedReachability?: MachineFleetPresence['reachability'],
 ): 'locked' | ReturnType<typeof resolveMachinePickerPresence>['status'] {
-    return machine.availability?.kind === 'locked' ? 'locked' as const : resolveMachinePickerPresence(machine, nowMs, scope, resolveScopeId).status;
+    return machine.availability?.kind === 'locked' ? 'locked' as const : resolveMachinePickerPresence(machine, nowMs, scope, resolveScopeId, observedReachability).status;
 }
 
 /** Administration's machine membership policy; retained inventory is not execution authority. */
@@ -28,8 +29,10 @@ export function isMachineSelectableForFleet(
     machine: FleetMachine,
     nowMs?: number,
     resolveScopeId?: ProfileScopeResolver,
+    observedReachability?: MachineFleetPresence['reachability'],
 ): boolean {
-    return isFleetMemberCurrent({ observation: 'live', availability: resolveFleetMachineAvailability(scope, machine, nowMs, resolveScopeId) });
+    return isFleetMemberCurrent({ observation: 'live',
+        availability: resolveFleetMachineAvailability(scope, machine, nowMs, resolveScopeId, observedReachability) });
 }
 
 /** Exact snapshot admission shared by all plugin supplies, without interpreting release facts. */

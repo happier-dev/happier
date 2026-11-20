@@ -7,7 +7,7 @@ import { useActiveMachineFacts, useLaunchSelectionMachines, useMachineListByServ
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { useMachineCliUpdateFacts, useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 beforeEach(async () => { await selectActiveTestHomeForTests(); });
@@ -87,10 +87,17 @@ it('projects one settled presence snapshot for a 171-clock arrival burst on a 19
         project.mockClear();
         await act(async () => store.getState().applyMachineActivityUpdates(updates, options));
         expect(project).not.toHaveBeenCalled();
+        let unchangedDeadlineReads = 0;
+        for (const row of readMachines().filter(row => row.id !== rows[0]!.id)) {
+            const version = row.presenceProtocolVersion;
+            Object.defineProperty(row, 'presenceProtocolVersion', { configurable: true,
+                get: () => { unchangedDeadlineReads++; return version; } });
+        }
         await act(async () => store.getState().applyMachineActivityUpdates([
             { ...updates[0], active: false, activeAt: now + 2 },
         ], options));
         expect(hook.getCurrent()[0]).toMatchObject({ active: false, activeAt: now + 2 });
+        expect(unchangedDeadlineReads).toBe(0);
         await act(async () => store.getState().applyMachineActivityUpdates([
             { ...updates[0], active: true, activeAt: now + 2 },
         ], options));
@@ -99,6 +106,42 @@ it('projects one settled presence snapshot for a 171-clock arrival burst on a 19
             { ...updates[0], active: true, activeAt: now + 3 },
         ], options));
         expect(hook.getCurrent()[0]).toMatchObject({ active: true, activeAt: now + 3 });
+    } finally {
+        await hook.unmount();
+        store.setState(previous);
+    }
+});
+
+it('keeps settled CLI facts shared when one of 196 Machines answers', async () => {
+    const store = getStorage();
+    const previous = store.getState();
+    const serverId = getActiveServerSnapshot().serverId;
+    const options = { sourceServerId: serverId };
+    const now = Date.now();
+    const rows = Array.from({ length: 196 }, (_, index) => createMachineFixture({
+        id: `cli-facts-${String(index).padStart(3, '0')}`, active: true, activeAt: now, presenceProtocolVersion: 1,
+    }));
+    store.getState().applyMachines(rows, true, options);
+    store.getState().markMachineListSettled(serverId);
+    const hook = await renderHook(() => useMachineCliUpdateFacts(serverId));
+    try {
+        const before = hook.getCurrent();
+        expect(before.facts).toHaveLength(rows.length);
+        let unchangedFactReads = 0;
+        for (const row of store.getState().machineListByServerId[serverId]!.slice(1)) {
+            const metadata = row.metadata;
+            Object.defineProperty(row, 'metadata', { configurable: true,
+                get: () => { unchangedFactReads++; return metadata; } });
+        }
+        await act(async () => store.getState().applyMachineActivityUpdates([
+            { id: rows[0]!.id, active: false, activeAt: now + 1 },
+        ], options));
+        const after = hook.getCurrent();
+        expect(after.facts[0]).toMatchObject({ id: rows[0]!.id, online: false, executionEligible: false });
+        expect(after.facts[0]).not.toBe(before.facts[0]);
+        expect(after.machineIds).toBe(before.machineIds);
+        expect(after.facts.slice(1).every((fact, index) => fact === before.facts[index + 1])).toBe(true);
+        expect(unchangedFactReads).toBe(0);
     } finally {
         await hook.unmount();
         store.setState(previous);

@@ -27,6 +27,7 @@ import { defineProtocolObject, defineProtocolString } from '@happier-dev/protoco
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { storage } from '@/sync/domains/state/storageStore';
+import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
 
 installApprovalCommonModuleMocks();
 const { t } = await import('@/text');
@@ -44,6 +45,27 @@ function managedUiApprovalSettings(actionIds: readonly ('machines.managed.list' 
 }
 
 describe('managed Machine inventory', () => {
+    it('reads the fleet inventory without acquiring presets for its rows', async () => {
+        const homeId = 'srv_fleet_catalog_demand';
+        const homes = await serveAccountHomes({
+            homes: [{ key: 'a', serverUrl: 'https://fleet-catalog-demand.test', serverIdentityId: homeId, accountId: 'owner' }],
+            route: request => {
+                if (request.path === '/v1/machines/managed/actions/list') return Response.json({ machines: [] });
+                if (request.path === '/v1/machines/presets/list') return Response.json({ presets: [] });
+                return undefined;
+            },
+        });
+        const fleet = await renderHook(() => useMachinesSettingsViewModel());
+        try {
+            await waitForHomeGovernance(() => expect(fleet.getCurrent().managedInventory.entries[homes.homes.a!.id]?.status).toBe('ready'));
+            await flushHookEffects();
+            expect(homes.requests.filter(request => request.path.startsWith('/v1/machines/presets/')).map(request => request.path)).toEqual([]);
+        } finally {
+            await fleet.unmount();
+            await homes.dispose();
+        }
+    });
+
     it('keeps Home presence badges quiet through managed name edits and updates them on archival', async () => {
         const homeId = 'srv_chrome_counts';
         const accountId = 'owner';
@@ -432,7 +454,7 @@ describe('managed Machine inventory', () => {
             await act(async () => { await detail.getCurrent().refresh(); });
             await flushHookEffects({ cycles: 30 });
             expect(detail.getCurrent().machinesByServerId[serverId]?.[0]).toMatchObject({ allocation: 'confirmed-absent' });
-            expect(rows().find(row => row.managedId === managed.id)).toMatchObject({ online: false, status: 'offline', presence: t('managedPower.resourceAbsent') });
+            expect(rows().find(row => row.managedId === managed.id)).toMatchObject({ online: false, status: 'offline', presence: t('managedPower.ended') });
             expect(rows().filter(row => row.online)).toHaveLength(61);
             expect([...counters.entries()].filter(([key]) => !key.endsWith(':guest-0') && !key.endsWith(':removed'))
                 .reduce((sum, [, counter]) => sum + counter.read().renders, 0)).toBe(0);
@@ -452,7 +474,7 @@ describe('managed Machine inventory', () => {
                 observation: { observedAt: 4, availability: 'absent' } };
             await act(async () => publishHomeAccountChange(serverId, [managed.id], { source: 'socket', machineResourcesAffect: true }));
             await waitForHomeGovernance(() => expect(rows().find(row => row.managedId === managed.id))
-                .toMatchObject({ online: false, status: 'offline', presence: t('managedPower.resourceAbsent') }));
+                .toMatchObject({ online: false, status: 'offline', presence: t('managedPower.ended') }));
             expect([...counters.entries()].filter(([key]) => !key.endsWith(':guest-0') && !key.endsWith(':removed'))
                 .reduce((sum, [, counter]) => sum + counter.read().renders, 0)).toBe(0);
         } finally {

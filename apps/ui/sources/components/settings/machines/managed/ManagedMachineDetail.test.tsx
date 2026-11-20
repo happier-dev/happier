@@ -2462,6 +2462,13 @@ describe('managed Machine detail', () => {
         const archived = ManagedMachineFullV1Schema.parse({ ...machine, archivedAt: 10, intentRevision: 8,
             cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } });
         const retired: unknown[] = [];
+        let settledDetailReads = 0;
+        const realExecute = createFrontDoorActionExecute(createDefaultActionExecutor());
+        const executeAction: typeof realExecute = Object.assign(async (...args: Parameters<typeof realExecute>) => {
+            // Count read starts at the Action boundary. An aborted read can be canceled before HTTP.
+            if (args[0] === 'machines.managed.get' && retired.length) settledDetailReads += 1;
+            return realExecute(...args);
+        }, { confirmed: realExecute.confirmed, prepare: realExecute.prepare });
         const nativeActions: string[] = [];
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
@@ -2494,7 +2501,7 @@ describe('managed Machine detail', () => {
             return Response.json({ error: 'not_found' }, { status: 404 });
         });
         const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
-            executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} />);
+            executeAction={executeAction} />);
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(screen.tree.findAll(node => ['managed-machine.progress:remove', 'managed-machine.remove'].includes(node.props?.testID)
@@ -2557,6 +2564,7 @@ describe('managed Machine detail', () => {
         expect(nativeActions).not.toContain('machines.managed.inspect');
         expect(nativeActions).not.toContain('machines.managed.retire');
         expect(screen.findByTestId('managed-machine.approval')).toBeNull();
+        expect(settledDetailReads).toBe(1);
     });
     it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager'] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-candidates.test', scope: 'tab' });

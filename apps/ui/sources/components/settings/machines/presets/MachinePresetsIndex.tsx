@@ -32,7 +32,7 @@ import {
 } from '../collection/machineCollectionModel';
 import { useMachineCollection } from '../collection/useMachineCollection';
 import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
-import { useMachinePresetRowCommands, type MachinePresetQueryState } from '../managed/useMachinePresets';
+import { useMachinePresets, useMachinePresetRowCommands, type MachinePresetQueryState } from '../managed/useMachinePresets';
 import { buildManagedMachineConfigurationRoute } from '../managed/managedMachineConfigurationRoute';
 import { hasOpenedManagedMachinePresetCreationV1, isOpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from './presetTable';
@@ -52,8 +52,9 @@ const NO_MANAGED: readonly ManagedMachineV1[] = Object.freeze([]);
  */
 export function MachinePresetsIndex() {
   const viewModel = useMachinesSettingsViewModel();
+  const presetInventory = useMachinePresets(viewModel.visibleServerIds);
   const teamNamesByServerId = useMachinePresetTeamNames(
-    viewModel.presetsByServerId,
+    presetInventory.presetsByServerId,
   );
   const collection = useMachineCollection({
     groups: viewModel.visibleMachineGroups,
@@ -61,7 +62,7 @@ export function MachinePresetsIndex() {
     managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
     query: '',
     managedByServerId: viewModel.managedByServerId,
-    presetsByServerId: viewModel.presetsByServerId,
+    presetsByServerId: presetInventory.presetsByServerId,
     teamNamesByServerId,
   });
   // In use (MACH-PRESETS-DATA-1119): machines Happier created from a cloud preset, plus the hosts whose Isolation added
@@ -73,21 +74,21 @@ export function MachinePresetsIndex() {
       const managedSettled = managedEntries?.[group.serverId]?.status === 'ready';
       const cloud = projectManagedPresetAllocationCounts(viewModel.managedByServerId?.[group.serverId] ?? NO_MANAGED);
       const sandboxes = projectSandboxPresetHostCounts(group.machines);
-      for (const preset of viewModel.presetsByServerId?.[group.serverId] ?? []) {
+      for (const preset of presetInventory.presetsByServerId?.[group.serverId] ?? []) {
         const count = (cloud.get(preset.id)?.allocated ?? 0) + (sandboxes.counts.get(preset.id) ?? 0);
         if (count > 0 || (managedSettled && sandboxes.complete)) result.set(machinePresetCollectionRowKey({ serverId: group.serverId, presetId: preset.id }), count);
       }
     }
     return result;
-  }, [managedEntries, viewModel.managedByServerId, viewModel.presetsByServerId, viewModel.visibleMachineGroups]);
+  }, [managedEntries, viewModel.managedByServerId, presetInventory.presetsByServerId, viewModel.visibleMachineGroups]);
   return (
     <MachinePresetsPage
       inUseByKey={inUseByKey}
       sections={collection.presetSections}
-      states={viewModel.presetInventory?.statesByServerId}
+      states={presetInventory.statesByServerId}
       grouped={viewModel.showMachinesGroupedByServer}
       activeServerId={viewModel.activeServerId}
-      refresh={viewModel.presetInventory?.refresh}
+      refresh={presetInventory.refresh}
     />
   );
 }

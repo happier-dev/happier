@@ -26,6 +26,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useMachinesSettingsViewModel, type MachinesSettingsViewModel } from '../machinesSettingsViewModel';
+import { useMachinePresets } from '../managed/useMachinePresets';
 import { MachinePoolsSection } from '../sections/MachinePoolsSection';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
@@ -308,6 +309,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const openFleetPage = (page: 'updates' | 'activity' | 'presets') => door === 'settings'
         ? openSection(machineFleetPageHref(page))
         : openHref(router, machineFleetPageHref(page), replaceConfiguration, `MachineCollectionList.${page}`);
+    const presetInventory = useMachinePresets(viewModel.visibleServerIds);
     const selectedKey = rail ? resolveSelectedMachineCollectionKey(pathname, { serverId: readParam(params.serverId) }) : null;
 
     const [query, setQuery] = React.useState(() => readLastVisitedMachine()?.query ?? '');
@@ -316,9 +318,9 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedByServerId: viewModel.managedByServerId,
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
-        presetsByServerId: viewModel.presetsByServerId,
+        presetsByServerId: presetInventory.presetsByServerId,
     }), [viewModel.visibleMachineGroups, viewModel.showMachinesGroupedByServer, viewModel.managedByServerId,
-        viewModel.managedFirstAnswerPending, viewModel.presetsByServerId]);
+        viewModel.managedFirstAnswerPending, presetInventory.presetsByServerId]);
     const total = unfiltered.count;
     const searchable = total > SEARCH_THRESHOLD;
     const collection = useMachineCollection({
@@ -327,7 +329,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
         query: searchable ? query : '',
         managedByServerId: viewModel.managedByServerId,
-        presetsByServerId: viewModel.presetsByServerId,
+        presetsByServerId: presetInventory.presetsByServerId,
     });
 
     React.useEffect(() => {
@@ -456,7 +458,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     // Presets open their own table (lab ideas-1118-platform scene 7): one row here, counting the active presets, as
     // Updates and Activity open their pages. The page lists each Home's presets, their images and their notices.
     const presetCount = collection.presetSections.reduce((sum, section) => sum + section.rows.length, 0);
-    const presetsRow = viewModel.presetInventory ? (
+    const presetsRow = (
         <Item
             rowRole="catalogRow"
             testID="settings.machines.presets"
@@ -474,7 +476,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             pressableStyle={rail ? collectionListStyles.row : undefined}
             onPress={() => openFleetPage('presets')}
         />
-    ) : null;
+    );
     const managedReadApprovals = viewModel.visibleMachineGroups.map(group => <ManagedMachineReadApprovalNotice
         key={group.serverId} serverId={group.serverId} entry={viewModel.managedInventory?.entries[group.serverId]}
         testID={`settings.machines.managed.approval.${group.serverId}`} />);
@@ -585,8 +587,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             </CollectionRowOrder>
             <CollectionRowOrder followed precedesSelected={selectedKey === 'updates'}>{defaultsRow}</CollectionRowOrder>
             <CollectionRowOrder followed precedesSelected={selectedKey === 'activity'}>{updatesRow}</CollectionRowOrder>
-            <CollectionRowOrder followed={presetsRow !== null} precedesSelected={selectedKey === 'presets'}>{activityRow}</CollectionRowOrder>
-            {presetsRow ? <CollectionRowOrder followed={false} precedesSelected={false}>{presetsRow}</CollectionRowOrder> : null}
+            <CollectionRowOrder followed={true} precedesSelected={selectedKey === 'presets'}>{activityRow}</CollectionRowOrder>
+            <CollectionRowOrder followed={false} precedesSelected={false}>{presetsRow}</CollectionRowOrder>
             {renderManagedReadFailures()}
             {managedReadApprovals}
             {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. A first group

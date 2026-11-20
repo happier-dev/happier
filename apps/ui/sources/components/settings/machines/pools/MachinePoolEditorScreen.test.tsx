@@ -14,6 +14,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { SelectionListStep } from '@/components/ui/selectionList';
@@ -1316,7 +1317,19 @@ describe('MachinePoolEditorScreen', () => {
     });
 
     it('asks for an exact Home when the searchable create route has no Home parameter', async () => {
+        const serverUrl = 'https://machine-pools-chooser.test';
+        const homeId = 'srv_pools_editor_chooser';
+        await upsertAndActivateServer({ serverUrl, name: 'Machine Pools Chooser' });
+        await setServerProfileIdentityForUrl(serverUrl, homeId);
+        boundaries.serverId = homeId;
+        accountSettingsBoundary = createAccountSettingsHttpBoundary({
+            serverUrl,
+            initialAccounts: [{ accountId: 'account-a', snapshot: {
+                content: { t: 'plain', v: accountSettings }, version: accountSettingsVersion,
+            } }],
+        });
         boundaries.pools = [];
+        await getServerFeaturesSnapshot({ serverId: homeId, force: true });
         await act(async () => publishBoundaryState());
         const [{ MachinePoolEditorRoute }, { NavigationTitleChromeProvider }] = await Promise.all([
             import('./MachinePoolEditorScreen'),
@@ -1342,6 +1355,8 @@ describe('MachinePoolEditorScreen', () => {
 
         expect(boundaries.setParams).toHaveBeenCalledWith({ serverId: boundaries.serverId });
         expect(boundaries.create).not.toHaveBeenCalled();
+        expect(boundaries.request.mock.calls.map(([url]) => new URL(url).pathname)
+            .filter(path => path.startsWith('/v1/machines/managed/') || path.startsWith('/v1/machines/presets/'))).toEqual([]);
     });
 
     it('retries exact-Home feature discovery from the chooser without navigating or mutating', async () => {

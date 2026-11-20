@@ -446,7 +446,15 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             }
             onSucceeded?.(result);
             if (actionId !== 'machines.managed.references.get') {
-                publishHomeAccountChange(props.serverId);
+                publishHomeAccountChange(props.serverId, [machine.id], {
+                    changeKinds: ['account'],
+                    accountSettingsAffects: false,
+                    profileCatalogAffects: false,
+                    publicProfileAffects: false,
+                    machineResourcesAffect: false,
+                    managedMachineInventoryAffect: true,
+                    managedMachineChangedIds: [machine.id],
+                });
                 operationRefreshThroughAction.current = true;
                 refreshOperation();
                 refreshPolicyParent();
@@ -500,9 +508,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 if (shouldReleaseManagedMachinePendingOnApproval(actionId)) release();
                 return false;
             }
-            const succeeded = complete(outcome.result);
-            if (succeeded && !awaitingApproval && actionId !== 'machines.managed.references.get') props.onChanged();
-            return succeeded;
+            return complete(outcome.result);
         } catch (error) {
             fail(readActionErrorCodeV1(error) ?? 'managed_request_failed',
                 { failureCause: projectActionFailureCauseV1(error),

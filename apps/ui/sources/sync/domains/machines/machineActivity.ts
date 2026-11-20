@@ -12,7 +12,7 @@ export type MachineActivityPublication = Readonly<{
     projections: readonly (MachineActivityFacts | null | undefined)[];
 }>;
 type ActivitySlice = MachineActivityState;
-type ActivitySubscription = Readonly<{ listener: () => void }>;
+type ActivitySubscription = Readonly<{ listener: () => void; markChanged?: () => void }>;
 // Only listeners are indexed. Presence and its answer live on the Machine record.
 const activitySubscriptions = new WeakMap<ActivitySlice, Set<ActivitySubscription>>();
 function subscriptions(slice: ActivitySlice): Set<ActivitySubscription> {
@@ -115,9 +115,9 @@ function joinActivityProjection(slice: ActivitySlice, projection: MachineActivit
     if (!existing) projection.activity = slice;
 }
 
-export function subscribeMachineActivity(machine: MachineActivityFacts, listener: () => void): () => void {
+export function subscribeMachineActivity(machine: MachineActivityFacts, listener: () => void, markChanged?: () => void): () => void {
     const slice = ensureActivitySlice(machine);
-    const subscription: ActivitySubscription = { listener };
+    const subscription: ActivitySubscription = { listener, markChanged };
     subscriptions(slice).add(subscription);
     return () => { subscriptions(resolveActivitySlice(slice)).delete(subscription); };
 }
@@ -147,7 +147,10 @@ export function publishMachineActivities(publications: Iterable<MachineActivityP
         }
         slice.value = { active: activity.active, activeAt: activity.activeAt };
         slice.answered = true;
-        for (const subscription of subscriptions(slice)) listeners.add(subscription.listener);
+        for (const subscription of subscriptions(slice)) {
+            subscription.markChanged?.();
+            listeners.add(subscription.listener);
+        }
     }
     if (presenceChanged) presenceRevision += 1;
     // Every projection observes the same committed fact before any reader wakes.

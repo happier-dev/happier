@@ -38,7 +38,7 @@ import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machineP
 import { describeMachinePoolAvailability, resolveMachinePoolMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
 import { createMachinePoolEditorTierState, isMachinePoolHomeOffline, isMachinePoolRefreshFailed, moveMachinePoolEditorTier, normalizeMachinePoolEditorMembers, normalizeMachinePoolEditorTierState } from './machinePoolEditorModel';
 import { useApprovalArtifact } from '@/components/approvals/useApprovalArtifact';
-import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
+import { useMachinesSettingsGroups } from '../machinesSettingsViewModel';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -798,13 +798,13 @@ function MachinePoolRouteUnavailable() {
 function MachinePoolHomeChooserScreen() {
     const router = useRouter();
     const navigation = useNavigation();
-    const viewModel = useMachinesSettingsViewModel();
-    const projections = useMachinePoolProjections(viewModel.visibleMachineGroups);
+    const { visibleMachineGroups } = useMachinesSettingsGroups();
+    const projections = useMachinePoolProjections(visibleMachineGroups);
 
     return <ItemList>
         <SettingsPageHeader title={t('machinePools.newPoolTitle')} description={t('machinePools.benefit')} />
         <ItemGroup title={t('homeGovernance.chooseHome')}>
-            {viewModel.visibleMachineGroups.map((group, index) => {
+            {visibleMachineGroups.map((group, index) => {
                 const projection = projections[index];
                 const signedOut = isMachinePoolHomeOffline(group.status)
                     || isMachinePoolHomeOffline(projection?.status ?? 'loading');
@@ -842,7 +842,7 @@ function MachinePoolHomeChooserScreen() {
                     }}
                 />;
             })}
-            {viewModel.visibleMachineGroups.length === 0 ? <Item
+            {visibleMachineGroups.length === 0 ? <Item
                 testID="settings.machinePools.home.empty"
                 title={t('common.unavailable')}
                 mode="info"
