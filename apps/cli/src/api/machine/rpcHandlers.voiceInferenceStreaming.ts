@@ -72,14 +72,14 @@ export function registerMachineVoiceInferenceStreamingRpcHandlers(params: Readon
     );
   });
 
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK, async (raw: unknown) => {
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK, async (raw, context) => {
     const parsed = DaemonVoiceInferenceSttStreamChunkRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return invalidParameters(DaemonVoiceInferenceSttStreamChunkResponseSchema);
     }
     return parseVoiceInferenceResponse(
       DaemonVoiceInferenceSttStreamChunkResponseSchema,
-      await streamManager.appendCompatibilityChunk(parsed.data),
+      await streamManager.appendCompatibilityChunk(parsed.data, context?.contentMode === 'e2ee'),
     );
   });
 

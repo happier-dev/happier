@@ -548,6 +548,8 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     // Plain PCM for a keyed stream is refused before native intake.
     await expect(manager.appendPcm16Bytes({ ...stream, seq: 1, pcm16Bytes: new Uint8Array([0, 0, 1, 0]) }))
       .resolves.toMatchObject({ ok: false, error: 'daemon_voice_inference_stream_encryption_required' });
+    await expect(manager.appendCompatibilityChunk({ ...stream, seq: 1, pcm16Base64: 'AAABAA==' }))
+      .resolves.toMatchObject({ ok: false, error: 'daemon_voice_inference_stream_encryption_required' });
     expect(appendPcm16).toHaveBeenCalledOnce();
     // The transcript-bearing finish arrives through the E2EE Machine RPC.
     await expect(manager.finish({ ...stream, finalSeq: 0 })).resolves.toMatchObject({ ok: true, ackSeq: 0, finalText: '' });

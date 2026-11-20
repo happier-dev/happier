@@ -3298,9 +3298,11 @@ compatibility path do. Owner ruling 2026-10-31 "Voice relay audio encryption".
 - **Frame sealing.** Each tunnel data payload is AES-256-GCM under that key. The nonce
   derives from direction and the stream's strictly contiguous sequence. The AAD binds
   `streamId` and `generation` once.
-- **Daemon admission.** For a keyed stream, the daemon accepts only the next sequence. It
-  refuses unauthenticated, replayed or plain bytes before native intake. Daemon replies,
-  including partial transcripts, are sealed the same way. The transcript-bearing finish
+- **Daemon admission.** The daemon authenticates the next tunnel frame with the stream
+  key and seals its reply with that key. Compatibility chunks and replies use the E2EE
+  Machine RPC envelope. The stream manager admits those chunks using the content mode
+  of each authenticated RPC and reorders them before contiguous PCM intake. It refuses
+  plaintext PCM for a keyed stream before native intake. The transcript-bearing finish
   travels on the E2EE control RPC.
 - **Plain Accounts.** No key is issued and frames are plain PCM, as on the RPC
   compatibility path.

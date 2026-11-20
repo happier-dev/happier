@@ -101,13 +101,16 @@ export type VoiceInferenceSpeechStreamManager = Readonly<{
     signal?: AbortSignal,
     options?: Readonly<{ issueStreamKey?: boolean }>,
   ) => Promise<DaemonVoiceInferenceSttStreamStartResponse>;
-  appendCompatibilityChunk: (input: DaemonVoiceInferenceSttStreamChunkRequest) => Promise<DaemonVoiceInferenceSttStreamChunkResponse>;
+  appendCompatibilityChunk: (
+    input: DaemonVoiceInferenceSttStreamChunkRequest,
+    e2eeContentOpened?: boolean,
+  ) => Promise<DaemonVoiceInferenceSttStreamChunkResponse>;
   appendPcm16Bytes: (input: Readonly<{
     streamId: string;
     generation: number;
     seq: number;
     pcm16Bytes: Uint8Array;
-    streamKeyOpened?: true;
+    e2eeContentOpened?: boolean;
     voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
   }>) => Promise<DaemonVoiceInferenceSttStreamChunkResponse>;
   /** One tunnel data payload: sealed bytes for a keyed stream, raw PCM otherwise. */
@@ -552,7 +555,7 @@ export function createVoiceInferenceSpeechStreamManager(
           generation: session.generation,
           seq: input.seq,
           pcm16Bytes: plaintext,
-          streamKeyOpened: true,
+          e2eeContentOpened: true,
           voiceMediaApplicationAuthority: input.voiceMediaApplicationAuthority,
         });
         return sealAes256GcmBytes({
@@ -571,14 +574,14 @@ export function createVoiceInferenceSpeechStreamManager(
         }
       }
     },
-    appendCompatibilityChunk: async (input) => {
+    appendCompatibilityChunk: async (input, e2eeContentOpened) => {
       const pcm = decodePcm16Base64(input.pcm16Base64);
       if (!pcm) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
       }
       const session = getSession(input.streamId, input.generation);
-      if (!session || session.state !== 'open' || session.streamKey || input.seq <= session.admittedSeq) {
-        return await manager.appendPcm16Bytes({ ...input, pcm16Bytes: pcm });
+      if (!session || session.state !== 'open' || (session.streamKey && !e2eeContentOpened) || input.seq <= session.admittedSeq) {
+        return await manager.appendPcm16Bytes({ ...input, pcm16Bytes: pcm, e2eeContentOpened });
       }
       const pending = session.compatibilityChunks.get(input.seq);
       if (pending) {
@@ -599,6 +602,7 @@ export function createVoiceInferenceSpeechStreamManager(
       // Independent RPC admission can finish in a different order at either
       // Home or daemon. Reorder only this compatibility ingress, under the
       // stream's existing credit/expiry/cleanup owner, before contiguous admission.
+      // Every RPC queued for a keyed stream has already opened its E2EE content.
       let next: CompatibilityChunk | undefined;
       while (session.state === 'open' && (next = session.compatibilityChunks.get(session.admittedSeq + 1))) {
         const chunk = next;
@@ -606,7 +610,9 @@ export function createVoiceInferenceSpeechStreamManager(
         session.compatibilityChunks.delete(seq);
         session.pendingFrames -= 1;
         session.pendingBytes -= next.pcm.byteLength;
-        void manager.appendPcm16Bytes({ streamId: input.streamId, generation: input.generation, seq, pcm16Bytes: next.pcm })
+        void manager.appendPcm16Bytes({
+          streamId: input.streamId, generation: input.generation, seq, pcm16Bytes: chunk.pcm, e2eeContentOpened,
+        })
           .then(chunk.resolve, error => chunk.resolve(errorResponse(error)));
       }
       return await result;
@@ -630,7 +636,7 @@ export function createVoiceInferenceSpeechStreamManager(
       ) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_application_authority_mismatch');
       }
-      if (session.streamKey && input.streamKeyOpened !== true) {
+      if (session.streamKey && input.e2eeContentOpened !== true) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_encryption_required');
       }
       if (input.seq <= session.ackSeq) {

@@ -187,7 +187,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     }
   });
 
-  it('drains compatibility PCM in sequence when RPC authorization settles out of order', async () => {
+  it.each(['plain', 'e2ee'] as const)('drains %s compatibility PCM when RPC authorization settles out of order', async (encryptionMode) => {
     const received: number[] = [];
     const worker = await createWorker({
       createStreamingTranscriptionSession: async () => ({
@@ -202,27 +202,36 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     const secondAdmission = new Promise<void>(resolve => { observeSecond = resolve; });
     // Home authorization is a real network boundary; registration, RPC decoding,
     // stream ordering, worker dispatch and strict response consumers stay real.
+    const key = new Uint8Array(32).fill(7);
     const manager = new RpcHandlerManager({
-      scopePrefix: 'voice-inference-test', encryptionMode: 'plain', logger: () => {},
+      scopePrefix: 'voice-inference-test', encryptionMode, logger: () => {},
+      ...(encryptionMode === 'e2ee' ? { encryptionKey: key, encryptionVariant: 'legacy' as const } : {}),
       authorizeRequest: async ({ params }) => {
-        const chunk = DaemonVoiceInferenceSttStreamChunkRequestSchema.parse(params);
-        if (chunk.seq === 0) await firstAdmission;
+        const chunk = DaemonVoiceInferenceSttStreamChunkRequestSchema.safeParse(params);
+        if (!chunk.success) return { ok: true };
+        if (chunk.data.seq === 0) await firstAdmission;
         else observeSecond();
         return { ok: true };
       },
     });
-    registrations.push(registerMachineVoiceInferenceStreamingRpcHandlers({ rpcHandlerManager: manager, voiceInferenceWorker: worker }));
-    const started = DaemonVoiceInferenceSttStreamStartResponseSchema.parse(await manager.invokeLocal(
+    const registerHandlers = (rpcHandlerManager: RpcHandlerManager) => {
+      registrations.push(registerMachineVoiceInferenceStreamingRpcHandlers({ rpcHandlerManager, voiceInferenceWorker: worker }));
+    };
+    const client = encryptionMode === 'e2ee'
+      ? createEncryptedRpcTestClient({ scopePrefix: 'voice-inference-test', manager, encryptionKey: key, registerHandlers })
+      : null;
+    if (!client) registerHandlers(manager);
+    const call = (method: string, payload: unknown) => client
+      ? client.call(method, payload)
+      : manager.handleRequest({ method: `voice-inference-test:${method}`, params: payload });
+    const started = DaemonVoiceInferenceSttStreamStartResponseSchema.parse(await call(
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
       { requestId: 'reordered-authorization', packId, language: 'en', streamingMode: 'runtime' },
     ));
-    expect(started.ok).toBe(true);
-    if (!started.ok) throw new Error('Stream did not start');
-    const append = (seq: number) => manager.handleRequest({
-      method: `voice-inference-test:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK}`,
-      params: DaemonVoiceInferenceSttStreamChunkRequestSchema.parse({
-        streamId: started.streamId, generation: started.generation, seq, pcm16Base64: 'AAABAA==',
-      }),
+    if (!started.ok) throw new Error(started.error);
+    expect(Boolean(started.streamKeyBase64Url)).toBe(encryptionMode === 'e2ee');
+    const append = (seq: number) => call(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK, {
+      streamId: started.streamId, generation: started.generation, seq, pcm16Base64: 'AAABAA==',
     });
     const first = append(0);
     const second = append(1);
@@ -235,7 +244,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     expect(replies.map(reply => DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(reply)))
       .toMatchObject([{ ok: true }, { ok: true }]);
     expect(received).toEqual([0, 1]);
-    expect(DaemonVoiceInferenceSttStreamFinishResponseSchema.parse(await manager.invokeLocal(
+    expect(DaemonVoiceInferenceSttStreamFinishResponseSchema.parse(await call(
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH,
       { streamId: started.streamId, generation: started.generation, finalSeq: 1 },
     ))).toMatchObject({ ok: true, finalText: 'heard in order' });
