@@ -400,7 +400,14 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     const summaries = (deltaRange && priorDaily && changedDate ? (async () => {
         deltaEntries = await readDailyRange(deltaRange);
         const previous = priorDaily.summaries.find(day => day.dayStartAtMs === changedDate.startAtMs);
-        const precedingSnapshot = priorDaily.summaries.findLast(day => day.dayStartAtMs < changedDate.startAtMs)?.lastSnapshot;
+        let precedingSnapshot: ProviderAccountUsageSnapshotV1 | undefined;
+        for (let index = priorDaily.summaries.length - 1; index >= 0; index -= 1) {
+            const day = priorDaily.summaries[index];
+            if (day && day.dayStartAtMs < changedDate.startAtMs) {
+                precedingSnapshot = day.lastSnapshot;
+                break;
+            }
+        }
         if (!deltaEntries.length) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
         // The stored day did not change. Fold the newly admitted exact suffix over its retained facts for this view.
         return { missingDays: [], coverage: new Map<number, DayHistoryEvidence>(), summaries: [buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: changedDate.startAtMs,
