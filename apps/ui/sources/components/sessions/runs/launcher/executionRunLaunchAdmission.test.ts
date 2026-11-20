@@ -16,13 +16,13 @@ import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
-import nacl from 'tweetnacl';
 
 import { createDeferred, createMachineFixture, createPlainMachineRowFixture, createPlainAccountEncryptionCurrentnessFixture, createRenderCommitCounter, createSessionFixture, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { isConcurrentOrdinarySessionListHome, startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -32,12 +32,12 @@ import { Modal } from '@/modal';
 import { createPluginActionInputSelectionHostApiHandler } from '@/components/plugins/surfaces/pluginActionInputSelectionHostApi';
 import type { ConnectSheetContentProps } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamCapabilitiesFixture, teamCredentialDisplayNameFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
-import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS, BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
-import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createProviderModelProjectionFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -45,6 +45,7 @@ import { resetTeamsDirectoryEngineForTests } from '@/sync/engine/teams/teamsDire
 import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { ensureSessionDraftRepositoryHydrated } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import '@/sync/syncEngine';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
@@ -71,6 +72,8 @@ const boundary = vi.hoisted(() => ({
 }));
 let restoreExecutorModuleLoader: (() => void) | undefined;
 let homeHarness: ReturnType<typeof createHomeGovernanceHarness> | undefined;
+let reviewInventoryBoundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
+let mountedConcurrentHome = false;
 
 // Secure persistence, Home HTTP/RPC and native styling are replaced boundaries.
 // Admission, exact scope retirement, credential policy, Action execution and resume are real.
@@ -137,32 +140,28 @@ const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation:
     agentsById: { claude: { id: 'claude', title: 'Claude', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude,
         providerRequirements: BUNDLED_CANONICAL_AGENT_DECLARATIONS.claude?.providerRequirements,
         capabilities: { surfaces: [], sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
-    } }, actionsById: {}, familiesById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] });
+    } }, actionsById: {}, familiesById: { providers: { family: 'providers', entriesById: Object.fromEntries(
+        Object.values(BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS).map(row => [row.contributionKey, {
+            id: row.contributionKey, pluginId: row.contributionKey.split('/')[0],
+            provenance: row.provenance, sourceKind: 'bundled', definition: row.definition,
+        }]),
+    ) } }, resourcesById: {}, settingsById: {}, diagnostics: [] });
 
 const supportedCapabilities = capabilityResponse({ secretReferenceOverlay: true, runScopedAgentBindings: true });
 const supportedDescribeCapabilities = describeCapabilityResponse({ secretReferenceOverlay: true, runScopedAgentBindings: true });
-
-const launchInstallation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(12));
 
 /** Home HTTP remains below the real requester admission and resume owners. */
 function installLaunchHomeHttpBoundary(request?: RuntimeFetch) {
     setRuntimeFetch(createSessionReadBatchFetchBoundary(async (url, init) => {
         const handled = await request?.(url, init);
         if (handled && handled.status !== 404) return handled;
+        const inventoryResponse = await reviewInventoryBoundary?.handle(new URL(String(url)), init);
+        if (inventoryResponse) return inventoryResponse;
         const path = new URL(String(url)).pathname;
         if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
             return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
         }
-        if (path === '/v1/actions/review.engines.list') {
-            const { ExternalActionRequestEnvelopeSchema } = await import('@happier-dev/protocol/actions/externalActionApi');
-            const request = ExternalActionRequestEnvelopeSchema.parse(JSON.parse(String(init?.body)));
-            return Response.json({ v: 1, actionId: 'review.engines.list', requestId: request.requestId,
-                execution: { ok: true, result: { items: [ReviewEngineListItemSchema.parse({
-                    engineId: 'claude', label: 'Claude', enabled: true, capabilities: { structuredNarration: true },
-                })] } } });
-        }
-        const machine = { ...createPlainMachineRowFixture({ id: 'launch-machine', accountId: boundary.accountId }),
-            installationPublicKey: Buffer.from(launchInstallation.publicKey).toString('base64') };
+        const machine = reviewInventoryBoundary?.machine ?? createPlainMachineRowFixture({ id: 'launch-machine', accountId: boundary.accountId });
         if (path === '/v1/machines') return Response.json([machine]);
         if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
             id => id === machine.id ? machine : null);
@@ -189,13 +188,28 @@ function activeProfileCatalog(profile: ReturnType<typeof AIBackendProfileSchema.
             migratedLogicalRevision: 1, inventory: [{ kind: 'account_row', id: profile.id, revision: 1 }] } } };
 }
 
-async function launchFixture() {
+async function launchFixture(options: Readonly<{ interactive?: boolean }> = {}) {
     homeHarness = createHomeGovernanceHarness();
     const serverId = await homeHarness.addHome({ serverUrl: 'https://launch-admission.example.test', name: 'Launch test Home',
         serverIdentityId: 'srv_launch_admission', accountId: boundary.accountId, currentAccount: true, active: false });
     const profile = getServerProfileById(serverId);
     if (!profile) throw new Error('Launch fixture Home identity was not admitted');
     const home = { id: resolveServerProfileScopeIdForIdentifier(serverId), profileId: serverId, serverUrl: profile.serverUrl };
+    reviewInventoryBoundary = await createExternalActionAccountHttpBoundary({
+        serverUrl: home.serverUrl, serverIdentityId: 'srv_launch_admission', accountId: boundary.accountId,
+        machineId: 'launch-machine', actionId: 'review.engines.list', tokenEpoch: 0, requesterInvocation: 'none',
+        execute: () => ({ sessionId: null, items: [ReviewEngineListItemSchema.parse({
+            engineId: 'claude', label: 'Claude', enabled: true, capabilities: { structuredNarration: true },
+        })] }),
+    });
+    if (options.interactive) {
+        // Mounted pickers consume the secondary Home's Account-owned corpus.
+        // A bare scoped row has no retained Account owner and is correctly retired.
+        await homeHarness.selectHomes([serverId]);
+        startConcurrentSessionCacheSync();
+        mountedConcurrentHome = true;
+        await vi.waitFor(() => expect(isConcurrentOrdinarySessionListHome(home.id)).toBe(true));
+    }
     const requestedServerIds = [home.id];
     const bindingHook = await renderHook(() => useServerCredentialAccountScopeBindings(requestedServerIds));
     const accountLifetime = bindingHook.getCurrent().get(home.id);
@@ -209,9 +223,9 @@ async function launchFixture() {
             flavor: 'claude', claudeSessionId: 'retained-vendor-session',
         },
     });
-    const machine = createMachineFixture({ id: 'launch-machine', metadata: {
+    const machine = createHydratedPlainMachineFixture({ id: 'launch-machine', accountId: boundary.accountId, machine: { activeAt: Date.now(), metadata: {
         host: 'test-host', platform: 'linux', happyCliVersion: '0.0.0-test', homeDir: '/work', happyHomeDir: '/work/.happier',
-    } });
+    } } });
     storage.setState({
         // The focused Account is deliberately another Account. Exact resume must
         // retain the chooser's credential scope instead of borrowing this one.
@@ -230,6 +244,7 @@ async function launchFixture() {
         readinessOperationId: 'review-selection',
     } satisfies Parameters<typeof admitExecutionRunLaunchTarget>[0];
     installLaunchHomeHttpBoundary();
+    await publishMachineInventoryForTest(accountLifetime.scope, [machine]);
     return { home, bindingHook, input, session, machine };
 }
 
@@ -249,6 +264,7 @@ beforeEach(() => {
     resetProfileCatalogEngineForTests();
     resetProfileCatalogSnapshotsForTests();
     boundary.accountId = 'launch-account';
+    reviewInventoryBoundary = undefined;
     boundary.rpc.mockReset();
     boundary.sessionRpc.mockReset();
     boundary.frames.length = 0;
@@ -262,6 +278,8 @@ afterEach(async () => {
     restoreExecutorModuleLoader?.();
     restoreExecutorModuleLoader = undefined;
     standardCleanup();
+    if (mountedConcurrentHome) stopConcurrentSessionCacheSync();
+    mountedConcurrentHome = false;
     await homeHarness?.reset();
     homeHarness = undefined;
     resetRuntimeFetch();
@@ -279,7 +297,7 @@ describe('real execution Run launch admission', () => {
             machines: { [machine.id]: { ...machine, active: true, activeAt: Date.now() } },
             machineListByServerId: { [home.id]: [{ ...machine, active: true, activeAt: Date.now() }] },
         });
-        observeMachinePresenceForTest(input.accountLifetime.scope, [machine.id]);
+        await publishMachineInventoryForTest(input.accountLifetime.scope, [{ ...machine, active: true, activeAt: Date.now() }]);
         boundary.rpc.mockResolvedValue(supportedCapabilities);
         const counter = createRenderCommitCounter();
         const hook = await renderHook(() => {
@@ -566,9 +584,9 @@ describe('real execution Run launch admission', () => {
             requirements: { secretReferenceOverlay: false, teamCredentialModel: false } })).resolves.toBeUndefined();
     });
 
-    it.each(['Triage host selection', 'comparison Run form'] as const)('composes %s with real Secret and Team controls, consent and stopped Session resume', async (entry) => {
+    it.each(['Triage host selection', 'Review composition', 'comparison Run form'] as const)('composes %s with real Secret and Team controls, consent and stopped Session resume', async (entry) => {
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
-        const { input, home, session, machine } = await launchFixture();
+        const { input, home, session, machine } = await launchFixture({ interactive: true });
         const profile = AIBackendProfileSchema.parse({ id: 'review-profile', name: 'Review profile',
             envVarRequirements: [{ name: 'OPENAI_API_KEY', required: true, kind: 'secret' }] });
         const secret = { id: formatSharedSavedSecretRefV1('review-secret'), name: 'Review key', kind: 'apiKey',
@@ -587,19 +605,19 @@ describe('real execution Run launch admission', () => {
             expectedResourceRevision: 3, deliveryMode: 'brokered', agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }), modelId: 'shared-review-model',
         });
         const teamResource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: teamModel.resourceId, teamId: teamModel.teamId, displayName: 'Shared review provider', resourceRevision: 3,
+            id: teamModel.resourceId, teamId: teamModel.teamId, displayName: teamCredentialDisplayNameFixture('Shared review provider'), resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'team_visibility_required',
             providerModels: [{ selection: teamModel, descriptor: { id: teamModel.modelId, name: 'Shared review model' },
                 application: { agentTargetKey: teamModel.agentTargetKey,
-                    implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
-                    endpointTemplateId: 'responses', protocol: 'openai-responses' },
-                compatibility: projectProviderModelSourceStateV1({ endpoint: { id: 'responses', protocol: 'openai-responses',
+                    implementationIdentity: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+                    endpointTemplateId: 'anthropic', protocol: 'anthropic' },
+                compatibility: projectProviderModelSourceStateV1({ endpoint: { id: 'anthropic', protocol: 'anthropic',
                     capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } } },
                     { id: teamModel.modelId, name: 'Shared review model' }),
                 sourceRevision: 'source-1', availability: 'available' }],
             sourcePresentation: { kind: 'provider', provider: {
-                identity: { pluginId: 'happier.provider.openai', localId: 'openai' }, definitionRevision: 1 } },
+                identity: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, definitionRevision: 1 } },
         });
         const httpRequests: { path: string; authorization: string | null }[] = [];
         // D23: neither the recipient nor the custodian has experimental consent stored.
@@ -641,13 +659,17 @@ describe('real execution Run launch admission', () => {
             machines: { [machine.id]: { ...machine, activeAt: Date.now() } },
             machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now() }] },
         });
-        observeMachinePresenceForTest(input.accountLifetime.scope, [machine.id]);
+        await publishMachineInventoryForTest(input.accountLifetime.scope, [{ ...machine, activeAt: Date.now() }]);
         applyProfileCatalogSnapshot(input.accountLifetime.scope, activeProfileCatalog(profile), true);
         await ensureSessionDraftRepositoryHydrated(input.accountLifetime.scope);
         const readiness = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async (request) => {
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return supportedCapabilities;
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return supportedDescribeCapabilities;
+            if (request.method === RPC_METHODS.CAPABILITIES_INVOKE) return { ok: true, result: {
+                availableModels: [{ id: 'native-review-model', name: 'Native review model' }],
+                supportsFreeform: false, source: 'dynamic', observedAt: Date.now(),
+            } };
             if (request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return createProviderModelProjectionFixture({
                 agentTargetKey: teamModel.agentTargetKey, groups: [],
                 teamCredentialResources: DaemonProviderModelProjectionRequestV1Schema.parse(request.payload).teamCredentialResources ?? [],
@@ -678,14 +700,18 @@ describe('real execution Run launch admission', () => {
         });
         if (!handler) throw new Error('Review selection handler was not admitted');
         let settled = false;
-        const selecting = entry === 'Triage host selection'
+        const composition = entry === 'Review composition';
+        const compositionSteps = [{ kind: 'review', reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Inspect correctness' },
+            { kind: 'review', reviewers: [{ kind: 'person', principal: { kind: 'account', accountId: 'requested-person' }, required: true }], instructions: 'Approve the result' }];
+        const selecting = entry !== 'comparison Run form'
             ? Promise.resolve(handler({ version: 1, requestId: 'review-selection', surface: {
                 pluginId: 'acme.triage', contributionId: 'pull-request', surfaceId: 'review-selection',
                 placement: 'appSurface', platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [],
             }, method: 'selectActionInput', payload: {
-                hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
+                hostAction: { action: 'review.start', projection: composition ? 'composition' : 'executionRunLaunch' },
                 sessionId: session.id, serverId: home.id,
-                draft: { reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the selected comparison' },
+                draft: { reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the selected comparison',
+                    ...(composition ? { steps: compositionSteps, then: 'report' } : {}) },
             } })).then((result) => { settled = true; return result; }) : null;
         const started = createDeferred<void>();
         const screen = selecting
@@ -709,16 +735,27 @@ describe('real execution Run launch admission', () => {
             expect(boundary.rpc.mock.calls.some(([request]) =>
                 request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toBe(false);
         }
+        if (entry !== 'Triage host selection') {
+            await screen.pressByTestIdAsync('review-start-advanced:header');
+        }
+        await waitForHomeGovernance(async () => {
+            await act(async () => {});
+            expect(screen.findByTestId('execution-run-secret-overlay-edit'), screen.getTextContent()).not.toBeNull();
+        });
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
         const secretPresentation = presentations.at(-1);
         const resolveSecret = secretPresentation?.props?.onResult as ConnectSheetContentProps['onResult'] | undefined;
         expect(resolveSecret).toBeTypeOf('function');
         await act(async () => resolveSecret?.({ kind: 'selected', secretRef: secret.id }));
-        if (!selecting) {
+        if (entry !== 'Triage host selection') {
+            await waitForHomeGovernance(async () => {
+                await act(async () => {});
+                expect(screen.findByTestId(`contextual-start-change:${teamModel.agentTargetKey}`), screen.getTextContent()).not.toBeNull();
+            });
             await screen.pressByTestIdAsync(`contextual-start-change:${teamModel.agentTargetKey}`);
         }
         const teamOptionTestId = `model-picker-overlay-option:${sessionModelSelectionKey(teamModel)}`;
-        await vi.waitFor(async () => {
+        await waitForHomeGovernance(async () => {
             await act(async () => {});
             expect(screen.findByTestId(teamOptionTestId), JSON.stringify({ httpRequests: httpRequests.map(request => ({
                 path: request.path, authenticated: request.authorization !== null,
@@ -732,22 +769,25 @@ describe('real execution Run launch admission', () => {
         });
         const submit = () => screen.root.findAll(node => ['session-composer-send', 'new-session-composer-send'].includes(node.props.testID)
             && typeof node.props.onPress === 'function').at(-1);
-        await vi.waitFor(async () => { await act(async () => {});
-            expect(submit()?.props.disabled, screen.getTextContent()).toBe(false);
+        await waitForHomeGovernance(async () => { await act(async () => {});
+            expect(submit()?.props.disabled, JSON.stringify({ text: screen.getTextContent(),
+                requests: httpRequests.map(request => request.path), methods: boundary.rpc.mock.calls.map(([request]) => request.method) })).toBe(false);
         });
         await act(async () => { submit()?.props.onPress(); });
-        await vi.waitFor(() => expect(boundary.rpc.mock.calls.some(([request]) =>
-            request.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE)).toBe(true));
-        expect(settled).toBe(false);
-        expect(boundary.sessionRpc.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
-        expect(boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)?.[0])
-            .toMatchObject({ machineId: machine.id, serverId: home.id, serverUrl: home.serverUrl,
-                token: createAccountTokenForTests('launch-account', { currentAccount: true }),
-                payload: { sessionId: session.id, resume: 'retained-vendor-session' } });
-        await act(async () => {
-            storage.setState((state) => ({ sessions: { ...state.sessions, [session.id]: { ...state.sessions[session.id]!, active: true } } }));
-            readiness.resolve({ status: 'success', sessionId: session.id });
-        });
+        if (!composition) {
+            await vi.waitFor(() => expect(boundary.rpc.mock.calls.some(([request]) =>
+                request.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE)).toBe(true));
+            expect(settled).toBe(false);
+            expect(boundary.sessionRpc.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
+            expect(boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)?.[0])
+                .toMatchObject({ machineId: machine.id, serverId: home.id, serverUrl: home.serverUrl,
+                    token: createAccountTokenForTests('launch-account', { currentAccount: true }),
+                    payload: { sessionId: session.id, resume: 'retained-vendor-session' } });
+            await act(async () => {
+                storage.setState((state) => ({ sessions: { ...state.sessions, [session.id]: { ...state.sessions[session.id]!, active: true } } }));
+                readiness.resolve({ status: 'success', sessionId: session.id });
+            });
+        }
         const credentials = {
             secretReferenceOverlay: { v: 1, bindings: { OPENAI_API_KEY: { ref: secret.id, revision: 1 } } },
             teamCredentialModel: teamModel,
@@ -755,10 +795,24 @@ describe('real execution Run launch admission', () => {
                 resourceId: teamModel.resourceId, expectedResourceRevision: teamModel.expectedResourceRevision },
         };
         if (selecting) {
-            expect(await selecting).toEqual({ kind: 'executionRunLaunch', input: credentials });
+            const selected = await selecting;
+            if (composition) {
+                expect(selected).toMatchObject({ kind: 'reviewComposition', input: {
+                    instructions: 'Review the selected comparison', then: 'report',
+                    secretReferenceOverlay: credentials.secretReferenceOverlay,
+                    steps: [{ ...compositionSteps[0], reviewers: [{ kind: 'engine', engineId: 'claude',
+                        teamCredentialModel: teamModel,
+                        teamCredentialSessionBindingConsent: credentials.teamCredentialSessionBindingConsent }] }, compositionSteps[1]],
+                } });
+                expect(boundary.rpc.mock.calls.some(([request]) =>
+                    request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)).toBe(false);
+                expect(JSON.stringify([...boundary.rpc.mock.calls, ...boundary.sessionRpc.mock.calls]))
+                    .not.toContain('"review.start"');
+            } else expect(selected).toEqual({ kind: 'executionRunLaunch', input: credentials });
             expect(boundary.sessionRpc.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
         } else {
-            await vi.waitFor(async () => { await act(async () => {}); expect(settled, screen.getTextContent()).toBe(true); });
+            await waitForHomeGovernance(async () => { await act(async () => {}); expect(settled, JSON.stringify({ text: screen.getTextContent(),
+                requests: httpRequests.map(request => request.path), methods: boundary.rpc.mock.calls.map(([request]) => request.method) })).toBe(true); });
             await started.promise;
             expect(boundary.sessionRpc.mock.calls.find(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)?.[0]).toMatchObject({ sessionId: session.id, serverId: home.id,
                 method: SESSION_RPC_METHODS.EXECUTION_RUN_START, payload: { ...credentials, intent: 'review',

@@ -3,6 +3,7 @@ import { PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1, PLUGIN_UI_HOST_API_VERSION_V1 }
 
 import { PLUGIN_UI_HOST_METHODS_V1, PluginUiExecuteActionRequestV1Schema, PluginUiHostApiSurfaceContextV1Schema, PluginUiSelectActionInputResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { getActionSpec } from '@happier-dev/protocol';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import {
     type PluginUiHostApiSurfaceContextV1,
     type PluginUiHostApiWireEnvelopeV1,
@@ -1865,16 +1866,23 @@ describe('plugin UI domain client transport adapter', () => {
         expect('action' in selected).toBe(false);
     });
 
-    it('returns review credential selection without creating an executable Action', async () => {
-        const selectedInput = {
+    it.each(['executionRunLaunch', 'composition'] as const)('returns Review %s selection without creating an executable Action', async (projection) => {
+        const credentials = {
             secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'personal-secret' } } },
         };
-        const request = {
-            hostAction: { action: 'review.start' as const, projection: 'executionRunLaunch' as const },
+        const selectedInput = projection === 'composition' ? ReviewStartInputSchema.parse({
+            reviewers: [{ kind: 'person', principal: { kind: 'account', accountId: 'reviewer-account' }, required: true }],
+            instructions: 'Review this change', then: 'report', ...credentials,
+        }) : credentials;
+        const kind = projection === 'composition' ? 'reviewComposition' : 'executionRunLaunch';
+        const seed = {
             sessionId: 'session-1',
             serverId: 'server-1',
             draft: { reviewers: [{ kind: 'engine' as const, engineId: 'reviewer' }], instructions: 'Review this change' },
         };
+        const request = projection === 'composition'
+            ? { ...seed, hostAction: { action: 'review.start' as const, projection } }
+            : { ...seed, hostAction: { action: 'review.start' as const, projection } };
         let receive: ((message: unknown) => void) | undefined;
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         const api = await createPluginUiHostApiClientFromTransport({
@@ -1893,7 +1901,7 @@ describe('plugin UI domain client transport adapter', () => {
                             identity,
                             requestId: message.requestId,
                             method: message.method,
-                            result: { kind: 'executionRunLaunch', input: selectedInput },
+                            result: { kind, input: selectedInput },
                         }));
                     }
                 },
@@ -1904,7 +1912,7 @@ describe('plugin UI domain client transport adapter', () => {
             },
         });
         const selected = await api.selectActionInput(request);
-        expect(selected).toEqual({ kind: 'executionRunLaunch', input: selectedInput });
+        expect(selected).toEqual({ kind, input: selectedInput });
         expect(sent.filter((message) => message.kind === 'request'))
             .toEqual([expect.objectContaining({ method: 'selectActionInput', payload: request })]);
         expect('action' in selected).toBe(false);

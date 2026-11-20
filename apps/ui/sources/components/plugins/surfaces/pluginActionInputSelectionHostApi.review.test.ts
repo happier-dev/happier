@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginUiHostApiRequestEnvelopeV1, PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { Modal } from '@/modal';
 // Load the real Run body during collection; module transformation is outside selector settlement.
@@ -18,7 +19,7 @@ function reviewRequest(): PluginUiHostApiRequestEnvelopeV1 {
     }, method: 'selectActionInput', payload: {
         hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
         sessionId: 'prepared-session', serverId: 'session-home',
-        draft: { engineIds: ['claude'], instructions: 'Review the selected PR' },
+        draft: { reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the selected PR' },
     } };
 }
 const anchor = { kind: 'rect', rect: { left: 20, top: 30, width: 80, height: 32 } } as const;
@@ -33,6 +34,25 @@ function mount() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('host review launch selection lifecycle', () => {
+    it('returns the complete mixed Review composition without invoking the Review Action', async () => {
+        const selection = { kind: 'reviewComposition', input: ReviewStartInputSchema.parse({
+            reviewers: [{ kind: 'person', principal: { kind: 'account', accountId: 'requested-person' }, required: true },
+                { kind: 'engine', engineId: 'claude' }],
+            steps: [{ kind: 'review', reviewers: [{ kind: 'person', principal: { kind: 'account', accountId: 'requested-person' }, required: true }], instructions: 'Approve the result' }],
+            instructions: 'Review the selected PR', then: 'report',
+        }) };
+        vi.spyOn(Modal, 'show').mockImplementation(config => {
+            const props = config.props as { onResolve: (result: typeof selection) => void };
+            props.onResolve(selection);
+            return 'review-modal';
+        });
+        vi.spyOn(Modal, 'hide').mockImplementation(() => {});
+        const request = reviewRequest();
+        request.payload = { hostAction: { action: 'review.start', projection: 'composition' },
+            sessionId: 'prepared-session', serverId: 'session-home', draft: { instructions: 'Review the selected PR' } };
+        expect(await mount().handler(request)).toEqual(selection);
+    });
+
     it('refuses an unbound source Account before native presentation', async () => {
         const show = vi.spyOn(Modal, 'show').mockImplementation((config) => {
             config.onRequestClose?.();

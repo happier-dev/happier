@@ -79,7 +79,7 @@ import {
   PluginUiTargetedContributionOperationV1Schema,
 } from './targetedContributions.js';
 import { SessionServerStartSpawnDraftV1Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
-import { ReviewStartInputFieldsSchema } from '../../reviews/reviewStart.js';
+import { ReviewStartInputFieldsSchema, ReviewStartInputSchema } from '../../reviews/reviewStart.js';
 import {
   SessionAwarenessLifecycleV1Schema,
   SessionAwarenessOperationalPrimaryV1Schema,
@@ -696,7 +696,7 @@ const PluginUiSelectActionInputSessionHostActionV1Schema = lazyZodSchema(() => z
 }));
 const PluginUiSelectActionInputReviewHostActionV1Schema = lazyZodSchema(() => z.strictObject({
   action: z.literal('review.start'),
-  projection: z.literal('executionRunLaunch'),
+  projection: z.enum(['executionRunLaunch', 'composition']),
 }));
 const PluginUiSelectActionInputSessionAddressHostActionV1Schema = lazyZodSchema(() => z.strictObject({
   action: z.literal('session.transcript.get'),
@@ -962,13 +962,20 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
     candidates: z.array(PluginUiSessionPlacementCandidateV1Schema),
   }),
   z.strictObject({
-    hostAction: PluginUiSelectActionInputReviewHostActionV1Schema,
+    hostAction: z.strictObject({ action: z.literal('review.start'), projection: z.literal('executionRunLaunch') }),
     sessionId: z.string().check(z.minLength(1)),
     serverId: z.optional(z.string().check(z.minLength(1))),
     draft: z.strictObject({
       reviewers: ReviewStartInputFieldsSchema.shape.reviewers,
       instructions: ReviewStartInputFieldsSchema.shape.instructions,
     }),
+  }),
+  z.strictObject({
+    hostAction: z.strictObject({ action: z.literal('review.start'), projection: z.literal('composition') }),
+    sessionId: z.string().check(z.minLength(1)),
+    serverId: z.optional(z.string().check(z.minLength(1))),
+    /** An incomplete authoring seed; the completed result uses the canonical start schema. */
+    draft: PluginUiJsonObjectV1Schema,
   }),
 ]));
 export type PluginUiSelectActionInputHostRequestV1 =
@@ -1037,6 +1044,7 @@ export const PluginUiSelectActionInputResultV1Schema = lazyZodSchema(() => z.dis
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,
   PluginUiSelectActionInputExecutionRunLaunchV1Schema,
+  z.strictObject({ kind: z.literal('reviewComposition'), input: ReviewStartInputSchema }),
   z.strictObject({ kind: z.literal('cancelled') }),
 ]));
 export type PluginUiSelectActionInputResultV1 =

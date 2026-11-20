@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { View } from 'react-native';
 
 import { Modal } from '@/modal';
@@ -12,20 +11,21 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
-import type { ReviewExecutionRunLaunchSelection } from './useReviewExecutionRunLaunchOptions';
+import type { ReviewInputSelection, ReviewInputSelectionProjection } from './useReviewExecutionRunLaunchOptions';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
 
-type LaunchSelection = ReviewExecutionRunLaunchSelection;
-export type ReviewExecutionRunLaunchSelectionRequest = Readonly<{
+type LaunchSelection = ReviewInputSelection;
+export type ReviewInputSelectionRequest = Readonly<{
     anchor?: PopoverAnchor;
     sessionId: string;
     serverId: string;
-    draft: Readonly<{ reviewers: readonly ReviewReviewerSelectionV1[]; instructions: string }>;
+    draft: Readonly<Record<string, unknown>>;
+    projection: ReviewInputSelectionProjection;
     isCurrent: () => boolean;
 }>;
 
-/** The shared Run body returns credentials; its existing admission never invokes review.start. */
-export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjectedProps & ReviewExecutionRunLaunchSelectionRequest & Readonly<{
+/** Both no-invoke projections use the existing Review authoring body and modal lifecycle. */
+export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjectedProps & ReviewInputSelectionRequest & Readonly<{
     onResolve: (selection: LaunchSelection | null) => void;
 }>) {
     const { onResolve, setChrome } = props;
@@ -41,14 +41,15 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
     }), [footer, props.anchor]));
     return <View testID="review-execution-run-launch-selection" style={{ maxHeight: '100%', flexShrink: 1 }}>
         <SessionInteractiveExecutionRunDraftView sessionId={props.sessionId} serverId={props.serverId}
-            intent="review" initialActionInput={props.draft} initialText={props.draft.instructions}
-            credentialSelectionOnly selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
+            intent="review" initialActionInput={props.draft}
+            initialText={typeof props.draft.instructions === 'string' ? props.draft.instructions : undefined}
+            reviewSelectionProjection={props.projection} selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
             onRunStarted={() => {}} />
     </View>;
 }
 
 /** Native/modal lifecycle boundary; dismissal never admits a review or carries a readiness receipt. */
-export function presentReviewExecutionRunLaunchSelection(request: ReviewExecutionRunLaunchSelectionRequest) {
+export function presentReviewExecutionRunLaunchSelection(request: ReviewInputSelectionRequest) {
     let modalId = '';
     let settled = false;
     let hideAfterShow = false;

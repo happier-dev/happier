@@ -215,6 +215,30 @@ occurrence; without it, execution is unavailable. Approval follows the shared
 Action settings, not an invented UI caller identity. These are unreleased 0.3
 contracts: rebuild the Action artifact with the matching host and SDK.
 
+### Choose a Review composition (0.3 development)
+
+Use the shared Review composer when the person needs to choose reviewers, steps,
+options and credentials before your Action continues:
+
+```ts
+const selection = await ui.selectActionInput({
+  hostAction: { action: 'review.start', projection: 'composition' },
+  sessionId,
+  serverId,
+  draft: { instructions: 'Review the selected change' },
+});
+if (selection.kind === 'reviewComposition') {
+  // Retain the complete input for your existing Review start Action.
+  const reviewInput = selection.input;
+}
+```
+
+The seed may be incomplete; the returned input satisfies the canonical Review
+start contract, including mixed Agent and person reviewers and authored steps.
+Choosing it starts no Review and does not resume the Session. Closing the composer
+returns cancellation. Use `projection: 'executionRunLaunch'` when you need only
+credential selection; that projection keeps its existing execution-target admission.
+
 ## Open an editable authoring draft (development)
 
 In current **0.3 development** source, `session.authoring.open` opens the

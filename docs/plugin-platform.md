@@ -2954,6 +2954,15 @@ receives its own admission. Plugins cannot supply that snapshot or an unrelated
 tuple. Account retirement and cancellation close the picker. These are development
 source contracts, pending package and loaded-runtime validation.
 
+In unreleased 0.3 source, `selectActionInput({hostAction:{action:'review.start',
+projection:'composition'},sessionId,serverId,draft})` opens the shared Review
+composer with an incomplete JSON seed. Submission returns
+`{kind:'reviewComposition',input}` validated by the canonical `ReviewStartInputSchema`,
+including the authored roster, steps and options. It does not invoke `review.start`
+or resume the Session. Native dismissal or Account retirement cancels through
+the existing selection lifecycle. The separate `executionRunLaunch` projection
+retains its credential-only result and existing execution-target admission.
+
 The unreleased notification destination selection uses the same finite form
 owner: `selectActionInput({hostAction:{action:'notifications.notify_me',
 projection:'notificationDestination'},channelId?,target?})`. Without `channelId`, the

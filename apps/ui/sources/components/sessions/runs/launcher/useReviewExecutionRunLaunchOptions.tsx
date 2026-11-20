@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
-import type { PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiSelectActionInputHostActionV1, PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
 import { useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
@@ -17,17 +17,22 @@ import { applyExecutionRunChildSelection, clearExecutionRunChildSelection } from
 import { useReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
 import { t } from '@/text';
 
-export type ReviewExecutionRunLaunchSelection = Extract<PluginUiSelectActionInputResultV1, { kind: 'executionRunLaunch' }>;
+export type ReviewInputSelectionProjection = Extract<PluginUiSelectActionInputHostActionV1, { action: 'review.start' }>['projection'];
+export type ReviewInputSelection = Extract<PluginUiSelectActionInputResultV1, { kind: 'executionRunLaunch' | 'reviewComposition' }>;
 
-/** Settles the existing credential chooser without invoking the review Action. */
-export async function admitReviewExecutionRunLaunchSelection(params: Readonly<{
+/** Complete authoring settles before execution admission; the credential chooser retains its admission. */
+export async function settleReviewInputSelection(params: Readonly<{
     launcher: ReturnType<typeof useExecutionRunLaunchContext>;
     draft: Record<string, unknown>;
     operationId: string;
     isCurrent: () => boolean;
-}>): Promise<ReviewExecutionRunLaunchSelection | null> {
+    projection: ReviewInputSelectionProjection;
+}>): Promise<ReviewInputSelection | null> {
     if (!params.isCurrent()) return null;
     const admitted = ReviewStartInputSchema.parse(params.draft);
+    if (params.projection === 'composition') {
+        return params.launcher.accountLifetime?.isCurrent() ? { kind: 'reviewComposition', input: admitted } : null;
+    }
     const engines = admitted.reviewers.filter(reviewer => reviewer.kind === 'engine');
     const selected = engines.length === 1 ? { ...admitted, ...engines[0] } : admitted;
     await params.launcher.admitExactTarget({

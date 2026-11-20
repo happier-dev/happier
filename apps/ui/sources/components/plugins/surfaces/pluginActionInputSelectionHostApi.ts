@@ -245,7 +245,8 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                             '@/components/sessions/runs/launcher/reviewExecutionRunLaunchSelection'
                         );
                         const presentation = presentReviewExecutionRunLaunchSelection({ sessionId: parsed.data.sessionId,
-                            serverId, draft: parsed.data.draft, isCurrent: input.isCurrent, anchor: input.anchor });
+                            serverId, draft: parsed.data.draft, projection: parsed.data.hostAction.projection,
+                            isCurrent: input.isCurrent, anchor: input.anchor });
                         const cancel = () => presentation.close();
                         signal?.addEventListener('abort', cancel, { once: true });
                         if (signal?.aborted) cancel();
