@@ -418,6 +418,37 @@ test('firstOpen.02.F6 | firstOpen.03.F12 | firstOpen.F12.inviteOutcomes remember
     await expect(page.getByTestId('welcome-decision-panel')).toBeVisible();
 });
 
+test('firstOpen.F15.notices keeps Login available during a Home outage and retries discovery once', async ({ page }) => {
+    let homeAvailable = false;
+    const discovery = /^https?:\/\/[^/]+\/v1\/(features|auth\/entry)(\?.*)?$/;
+    await page.route(discovery, async route => {
+        if (homeAvailable) await route.continue();
+        else await route.abort('connectionrefused');
+    });
+    const features = countRequests(page, '/v1/features', 'GET');
+    const entry = countRequests(page, '/v1/auth/entry', 'POST');
+    try {
+        await openApp(page);
+        const welcome = page.getByTestId('welcome-decision-panel').and(page.locator(':not([aria-hidden="true"])'));
+        const notice = welcome.getByTestId('welcome-auth-blocked');
+        const login = welcome.getByTestId('welcome-scan-existing-home');
+        await expect(notice).toBeVisible({ timeout: 60_000 });
+        await expect(login).toBeVisible();
+
+        const before = { features: features.value(), entry: entry.value() };
+        homeAvailable = true;
+        await welcome.getByTestId('welcome-auth-blocked-retry').press('Enter');
+        await expect(welcome.getByTestId('welcome-primary-start')).toBeVisible();
+        await expect(notice).toBeHidden();
+        await expect(login).toBeVisible();
+        expect(features.value() - before.features).toBe(1);
+        expect(entry.value() - before.entry).toBe(1);
+    } finally {
+        features.stop();
+        entry.stop();
+    }
+});
+
 test('firstOpen.04.F1 and firstOpen.04.F2 keep a double-click on the Approve step and return focus on Back', async ({ page }) => {
     await openApp(page);
     await waitForWelcomeMethods(page);
