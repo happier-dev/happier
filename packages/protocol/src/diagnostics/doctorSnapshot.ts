@@ -58,6 +58,7 @@ export type DoctorSnapshotDaemonCredentialState = z.infer<typeof DoctorSnapshotD
  */
 export const DoctorSnapshotDaemonRuntimeConvergenceSchema = lazySchema(() => z.object({
   controlReachable: z.boolean(),
+  daemonStarting: z.boolean().optional(),
   serviceOwnsRunningDaemon: z.boolean(),
   machineIdMatches: z.boolean(),
   cliVersionMatches: z.boolean(),
