@@ -14,7 +14,6 @@ import { resolveBrowserSurfacePlatform } from '@/components/browser/surfaces/use
 import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 
 export type UseServicesOpenInBrowserInput = Readonly<{
     /**
@@ -59,10 +58,6 @@ export function useServicesOpenInBrowser(
     const pane = useAppPaneScope(input.scopeId);
     const openDetailsTab = pane.openDetailsTab;
     const platform = resolveBrowserSurfacePlatform();
-    const localServicePreviewState = useLocalServicePreviewState({
-        machineId: input.machineId,
-        serverId: input.serverId,
-    });
     const onAfterOpen = input.onAfterOpen;
     const onAfterDetailsOpen = input.onAfterDetailsOpen;
     const postOpen = React.useRef({ onAfterOpen, onAfterDetailsOpen });
@@ -82,7 +77,6 @@ export function useServicesOpenInBrowser(
         openDetailsTab,
         scope: input.scope,
         platform,
-        localServicePreviewState,
         localServiceAddressScope: input.machineId ? { machineId: input.machineId,
             ...(input.sessionId ? { sessionId: input.sessionId } : {}) } : undefined,
     }, { register: input.scope !== 'sessionDetails' });

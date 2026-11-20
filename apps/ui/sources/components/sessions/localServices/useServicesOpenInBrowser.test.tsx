@@ -154,7 +154,11 @@ describe('useServicesOpenInBrowser', () => {
     });
     beforeEach(async () => {
         actionPolicy = {};
-        const features = createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } });
+        const features = createRootLayoutFeaturesResponse({ features: {
+            browser: { enabled: true },
+            localServices: { enabled: true, inventory: { enabled: true }, managed: { enabled: true },
+                launcher: { enabled: true }, actions: { enabled: true }, preview: { enabled: true } },
+        } });
         // The real preview Action crosses Home HTTP with its sealed requester. Only the
         // remote Machine response is supplied here; custody and Action admission stay real.
         const previewBoundary = await createExternalActionAccountHttpBoundary({

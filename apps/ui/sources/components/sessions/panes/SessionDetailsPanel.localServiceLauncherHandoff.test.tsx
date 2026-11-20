@@ -9,16 +9,23 @@ vi.mock('@react-navigation/native', async () => (
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock()
 ));
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ActionIdSchema, RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveLocalServiceDomainActionRpcBinding, parseLocalServiceDomainActionRpcRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigReadResponseV1Schema } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { DaemonLocalServicePreviewSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { LocalServiceLauncherSnapshot } from '@/sync/domains/local/services/launch';
 
 import { createSessionFixture, createMachineFixture, createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createExternalActionAccountHttpBoundary, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { storage } from '@/sync/domains/state/storageStore';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 
@@ -74,25 +81,11 @@ const currentServicePreview = () => accessUnavailable ? { ...servicePreview, acc
     accessUnavailableReasonCode: 'preview_private_route_unavailable' as const } : servicePreview;
 const previewSnapshot = () => ({ v: 1, machineId: 'machine-a', generatedAt: 3_000, refreshState: 'idle',
     resources: [serviceResource], previews: [currentServicePreview()], diagnostics: [] });
-const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-a',
-    features: () => createRootLayoutFeaturesResponse({ features: { browser: { enabled: true, viewTargets: { enabled: true } } } }),
-    request: async (input, init) => {
-        const path = new URL(String(input)).pathname;
-        if (reopenService && path === '/v1/local-services/preview/preview-reopen/access') {
-            if (accessUnavailable) return Response.json({ error: 'preview_private_route_unavailable' }, { status: 503 });
-            const { LocalServicePreviewServerAccessV1Schema } = await import('@happier-dev/protocol/local/services/preview/nativeDirect');
-            return Response.json(LocalServicePreviewServerAccessV1Schema.parse({ v: 1, kind: 'server_preview',
-                previewId: serviceTarget.targetId, machineId: serviceTarget.machineId, accessUrl: servicePreview.accessUrl,
-                expiresAt: Date.now() + 60_000 }));
-        }
-        if (reopenService && path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'browser.workspace.open': ['ui'] } },
-        } } });
-        if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a',
-            ...(offlineMachine ? { machine: offlineMachine } : {}) })]);
-        return createPlainMachineReadHttpResponseFixture(path, init, 'account-a', offlineMachine ?? undefined);
-    },
-    rpc: async (method, _input, machineId) => {
+// The Home Action transport seals requester context to the installed Machine, then the
+// receiving boundary forwards the opened native input to this suite's daemon boundary.
+const installationPublicKey = await servedMachineActionRelayInstallationPublicKey();
+const actionBoundaries = new Map<string, Promise<Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>>>();
+async function replyToMachineRpc(method: string, _input: unknown, machineId: string): Promise<unknown> {
     if (method.includes('localServices.')) serviceMethods.push(method);
     if (method.includes('localServices.')) serviceRequests.push({ method, input: _input });
     if (firstStart && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START) {
@@ -124,7 +117,61 @@ const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-a',
         };
     }
     throw new RpcError('Unsupported fixture RPC', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
-} });
+}
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-a',
+    credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
+    features: () => createRootLayoutFeaturesResponse({ features: {
+        browser: { enabled: true, viewTargets: { enabled: true } },
+        localServices: { enabled: true, inventory: { enabled: true }, managed: { enabled: true },
+            launcher: { enabled: true }, actions: { enabled: true }, preview: { enabled: true } },
+    } }),
+    request: async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`) {
+            return Response.json(WorkspaceExecutionConfigReadResponseV1Schema.parse({ status: 'absent' }));
+        }
+        if (reopenService && path === '/v1/local-services/preview/preview-reopen/access') {
+            if (accessUnavailable) return Response.json({ error: 'preview_transport_unavailable',
+                reasonCode: 'preview_private_route_unavailable' }, { status: 503 });
+            const { LocalServicePreviewServerAccessV1Schema } = await import('@happier-dev/protocol/local/services/preview/nativeDirect');
+            return Response.json(LocalServicePreviewServerAccessV1Schema.parse({ v: 1, kind: 'server_preview',
+                previewId: serviceTarget.targetId, machineId: serviceTarget.machineId, accessUrl: servicePreview.accessUrl,
+                expiresAt: Date.now() + 60_000 }));
+        }
+        if (reopenService && path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'browser.workspace.open': ['ui'] } },
+        } } });
+        const actionPath = /^\/v1\/actions\/([^/]+)(?:\/execution-authorization)?$/.exec(path);
+        if (actionPath) {
+            const actionId = ActionIdSchema.parse(actionPath[1]);
+            let boundary = actionBoundaries.get(actionId);
+            if (!boundary) {
+                boundary = createExternalActionAccountHttpBoundary({ serverUrl: new URL(String(input)).origin,
+                    serverIdentityId: runtime.serverIdentityId, accountId: 'account-a', machineId: 'machine-a',
+                    actionId, tokenEpoch: 0,
+                    execute: async actionInput => {
+                        const runtimeId = RuntimeActionIdV1Schema.parse(actionId);
+                        const binding = resolveLocalServiceDomainActionRpcBinding(runtimeId);
+                        const parsed = parseLocalServiceDomainActionRpcRequest(runtimeId, actionInput);
+                        const method = getActionSpec(actionId).bindings?.rpcMethod;
+                        if (!method) throw new Error('Expected a native Machine Action');
+                        const result = await replyToMachineRpc(method, parsed?.success ? parsed.data : actionInput, 'machine-a');
+                        return binding && 'snapshotResponseSchema' in binding ? binding.snapshotResponseSchema.parse(result).snapshot : result;
+                    },
+                });
+                actionBoundaries.set(actionId, boundary);
+            }
+            return (await boundary).handle(new URL(String(input)), init);
+        }
+        const readMachine = (id: string) => ({ ...createPlainMachineRowFixture({ id, accountId: 'account-a',
+            ...(offlineMachine ? { machine: offlineMachine } : {}) }), installationPublicKey });
+        if (path === '/v1/machines') return Response.json([readMachine('machine-a')]);
+        if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body, readMachine);
+        const exactMachine = /^\/v1\/machines\/([^/]+)$/.exec(path);
+        return exactMachine ? Response.json({ machine: readMachine(decodeURIComponent(exactMachine[1]!)) }) : null;
+    },
+    rpc: replyToMachineRpc,
+});
 beforeEach(() => {
     Object.assign(viewport, { width: 1440, height: 1000 });
     reopenService = false;
@@ -133,6 +180,7 @@ beforeEach(() => {
     nativeRunning = false;
     offlineMachine = null;
     startReply = createDeferred<void>();
+    actionBoundaries.clear();
     serviceMethods.length = 0;
     serviceRequests.length = 0;
     inventoryRead = createDeferred<void>();
@@ -184,6 +232,7 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
         const { AppPaneScopeHost } = await import('@/components/appShell/panes/AppPaneScopeHost');
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
         const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
+        const { SessionRightSidebarProvider } = await import('./SessionRightPanel');
         const { createSessionPaneScopeId } = await import('./sessionPaneScopeId');
         const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
         const { readRegisteredBrowserRuntimeWorkspaceOpeningAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
@@ -193,7 +242,8 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
         function SessionPane() {
             scopeId = useRegisterSessionPaneDriver('session-a', runtime.serverId);
             pane = useAppPaneScope(scopeId);
-            return <AppPaneScopeHost scopeId={scopeId} main={<View testID="cold-session-chat" />} />;
+            return <AppPaneScopeHost scopeId={scopeId} main={<View testID="cold-session-chat" />}
+                wrapScopeContent={content => <SessionRightSidebarProvider sessionId="session-a" scopeId={scopeId}>{content}</SessionRightSidebarProvider>} />;
         }
         function ChatSurface() {
             scopeId = createSessionPaneScopeId('session-a', runtime.serverId);
@@ -201,7 +251,11 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             return <SessionCockpitSurfaceScreen catalog={resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false })}
                 sessionId="session-a" scopeId={scopeId} surface="chat" experience="classic" routeServerId={runtime.serverId} />;
         }
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() })],
+        const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a',
+            machine: { active: true, activeAt: Date.now(),
+                daemonState: { localServices: { v: 1, state: 'ready', runningCount: 0 } } } });
+        publishMachineActivity(machine, machine, []);
+        storage.getState().applyMachines([machine],
             false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
         storage.getState().applySessions([createSessionFixture({ id: 'session-a', serverId: runtime.serverId,
             metadata: { path: '/repo', host: 'test', machineId: 'machine-a' } })]);
@@ -221,7 +275,9 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
                     target: { kind: 'externalUrl', targetId: 'cold-localhost', url: 'http://localhost:5173/' },
                 }, { surface: 'ui', authority: 'present_user', serverId: runtime.serverId, expectedAccountId: 'account-a' });
             });
-            expect(result).toMatchObject({ ok: true, result: { status: 'dispatched', outcome: 'workspaceTab' } });
+            const refusalCode = typeof result === 'object' && result !== null && 'errorCode' in result
+                && typeof result.errorCode === 'string' ? result.errorCode : undefined;
+            expect(result, refusalCode).toMatchObject({ ok: true, result: { status: 'dispatched', outcome: 'workspaceTab' } });
             await expect.poll(() => pane.scopeState?.details.tabs.map(tab => tab.kind)).toEqual(['browser-view']);
             expect(pane.scopeState?.details.tabs[0]).toMatchObject({
                 resource: { engineOverride: 'embedded', target: { kind: 'localServicePreview', targetId: serviceTarget.targetId } },
@@ -255,8 +311,11 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             return <SessionCockpitSurfaceScreen catalog={resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false })}
                 sessionId="session-a" scopeId={scopeId} surface="chat" experience="classic" routeServerId={runtime.serverId} />;
         }
-        const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now(),
-            daemonStateVersion: 1, daemonState: { status: 'running', pid: 17, localServices: { v: 1, state: 'ready', runningCount: 0 } } });
+        const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a', machine: {
+            active: true, activeAt: Date.now(), daemonStateVersion: 1,
+            daemonState: { status: 'running', pid: 17, localServices: { v: 1, state: 'ready', runningCount: 0 } },
+        } });
+        publishMachineActivity(machine, machine, []);
         storage.getState().applyMachines([machine], false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
         storage.getState().applySessions([createSessionFixture({ id: 'session-a', serverId: runtime.serverId,
             metadata: { path: '/repo', host: 'test', machineId: machine.id } })]);
@@ -269,7 +328,8 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             await expect.poll(() => screen.findAllByTestId(`${rowId}-start`).length).toBeGreaterThan(0);
             expect(screen.findByType(MultiPaneHost).props.layout.right).toBe('docked');
             await screen.pressByTestIdAsync(`${rowId}-start`);
-            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START).length).toBe(1);
+            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START).length,
+                { message: screen.getTextContent() }).toBe(1);
             expect(pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'services' });
             await act(async () => {
                 nativeRunning = true;
@@ -302,7 +362,10 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             accountLifetime: captureActiveServerAccountScopeLifetime(), platform: 'web', projectionPhase: 'current', interactionEnabled: true } as const;
         const session = createSessionFixture({ id: 'session-a', serverId: runtime.serverId,
             metadata: { path: '/repo', host: 'test', machineId: 'machine-a' } });
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() })]);
+        const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a',
+            machine: { active: true, activeAt: Date.now() } });
+        publishMachineActivity(machine, machine, []);
+        storage.getState().applyMachines([machine], false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
         storage.getState().applySessions([session]);
         storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
             approvalWaivedSurfaces: { 'browser.workspace.open': ['ui'] } }) });
@@ -352,7 +415,10 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
     it.each(['session', 'workspace'] as const)('keeps Local-services reads and watches closed for a file-only %s Details owner', async owner => {
         const { createBrowserLaunchpadDetailsTab } = await import('@/components/browser/surfaces');
         const session = createSessionFixture({ id: 'session-a', serverId: runtime.serverId });
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-a' })]);
+        const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a',
+            machine: { active: true, activeAt: Date.now() } });
+        publishMachineActivity(machine, machine, []);
+        storage.getState().applyMachines([machine], false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
         storage.getState().applySessions([{ ...session, metadata: { ...session.metadata!, machineId: 'machine-a' } }]);
         const screen = await renderScreen(<runtime.Wrapper>{owner === 'session'
             ? <RegisteredSessionDetails sessionId="session-a" routeServerId={runtime.serverId} scopeId="session:session-a" />
@@ -366,15 +432,15 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
 
             const browser = createBrowserLaunchpadDetailsTab();
             await act(async () => runtime.pane.openDetailsTab(browser, { intent: 'pinned' }));
-            // Declaration hydration is independent of the inventory scan. A duplicate
-            // Browser bootstrap would issue another launcher read before this reply.
+            // Browser demand reads its scoped launcher once and parks that projection,
+            // without acquiring the broad Machine inventory observation.
             await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT).length,
                 { message: JSON.stringify(serviceRequests.filter(request => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT)) }).toBe(1);
-            expect(serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH)).toEqual([]);
-            inventoryRead.resolve();
-            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length).toBe(1);
-            // The first completed inventory scan reconciles that declaration exactly once.
-            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT).length).toBe(2);
+            const launcherWatches = () => serviceRequests.filter(request => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH
+                && request.input !== null && typeof request.input === 'object' && 'launcherProjection' in request.input);
+            await expect.poll(() => launcherWatches().length).toBe(1);
+            expect(serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)).toEqual([]);
+            expect(serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH)).toHaveLength(1);
             await expect.poll(() => getLocalServicePreviewState({ machineId: 'machine-a', serverId: runtime.serverId,
                 accountId: runtime.accountScope?.accountId }))
                 .toMatchObject({ generatedAt: 3_000, refreshState: 'idle' });
@@ -384,8 +450,8 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             await flushHookEffects();
             expect(serviceMethods).toEqual(hiddenMethods);
             await act(async () => runtime.pane.setActiveDetailsTab(browser.key));
-            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length).toBe(2);
-            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT).length).toBe(3);
+            await expect.poll(() => launcherWatches().length).toBe(2);
+            await expect.poll(() => serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT).length).toBe(2);
         } finally { inventoryRead.resolve(); await screen.unmount(); }
     });
     it.each([true, false])('honors supplied launcher state and explicit null without ambient reads (rows: %s)', async supplied => {
