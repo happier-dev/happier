@@ -477,6 +477,40 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it('keeps a single choice\'s mark at the card\'s top end with its operation under it; the mark chooses, the operation does not', async () => {
+    // Owner 2026-11-20 (Which Home): the "…" of a saved Home pushed the check to the middle of the card.
+    const onChange = vi.fn();
+    const onMenu = vi.fn();
+    const address = 'https://leeroy-mbp.tailfce179.ts.net:8443';
+    const mount = mountThroughReactNativeWeb(<HappierSelectionTiles
+      density="compact" maximumColumns={2} footerPlacement="trailing" accessibilityLabel="Homes" testIdPrefix="home" value="b" onChange={onChange}
+      options={[{ id: 'a', title: 'This Home', subtitle: address, subtitleTruncation: 'middle' }, { id: 'b', title: 'Happier Cloud', subtitle: 'Find your Homes' }]}
+      renderOptionFooter={({ option }) => option.id === 'a' ? <button data-testid="menu:a" onClick={() => onMenu(option.id)}>…</button> : null}
+      colors={TILE_COLORS}
+      renderText={({ text }) => <span>{text}</span>}
+      renderGlyph={() => null}
+    />);
+    try {
+      const choice = mount.container.querySelector<HTMLElement>('[data-testid="home:a"]')!;
+      const menu = mount.container.querySelector<HTMLElement>('[data-testid="menu:a"]')!;
+      expect(choice.contains(menu)).toBe(false);
+      // The card's end column: the mark first (top), the operation after it (foot).
+      const column = choice.parentElement!.lastElementChild as HTMLElement;
+      expect(column.contains(menu)).toBe(true);
+      const mark = column.firstElementChild as HTMLElement;
+      expect(mark.contains(menu)).toBe(false);
+      await act(async () => { menu.click(); });
+      expect(onMenu).toHaveBeenCalledWith('a');
+      expect(onChange).not.toHaveBeenCalled();
+      await act(async () => { mark.click(); });
+      expect(onChange).toHaveBeenLastCalledWith('a');
+      // The address stays one line that gives up its middle; the choice still names all of it.
+      expect(choice.getAttribute('aria-label')).toContain(address);
+      expect(choice.textContent).toContain(address);
+      expect([...choice.querySelectorAll('span')].filter((span) => address.includes(span.textContent ?? '') && span.textContent !== address)).toHaveLength(2);
+    } finally { mount.unmount(); }
+  });
+
   it('spaces card tiles by their named gap role, regular unless a group asks for tight', () => {
     // Themes B3P: phone option rows stand 8 apart; every other card group keeps the regular 10.
     const gapOf = (tileGap?: 'regular' | 'tight') => {

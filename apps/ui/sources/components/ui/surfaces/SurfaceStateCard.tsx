@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -42,6 +43,7 @@ export type SurfaceStateAction = HappierSurfaceStateAction;
 
 /** A notice's round recovery: the phone toolbar's well size, so it reads as an object on the line, not a glyph. */
 const NOTICE_ROUND_ACTION_PX = HAPPIER_ICON_BUTTON_WELL_SIZE;
+const NOTICE_ROUND_ACTION_WELL_STYLE = { width: NOTICE_ROUND_ACTION_PX, height: NOTICE_ROUND_ACTION_PX, borderRadius: NOTICE_ROUND_ACTION_PX / 2 } as const;
 
 const DEFAULT_ICONS: Partial<Record<SurfaceStateKind, IconName>> = {
     empty: 'tray',
@@ -408,7 +410,9 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
             <DisclosedCodeText testID={testID ? `${testID}-details-code` : undefined} align={align === 'center' ? 'center' : undefined}>{detail}</DisclosedCodeText>
         ),
         pressedFill: theme.colors.surface.pressed,
+        // The notice's round button is an Element on its page: glass over an atmosphere, solid elsewhere.
         renderRoundAction: ({ action, glyph, testID: actionTestID }) => (
+            <GlassSurface surfaceGroup="card" nested finishRole={null} style={NOTICE_ROUND_ACTION_WELL_STYLE}>
             <IconButton
                 testID={actionTestID}
                 size={NOTICE_ROUND_ACTION_PX}
@@ -419,6 +423,7 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
                 busy={action.busy}
                 onPress={(event) => { void action.onPress(event); }}
             />
+            </GlassSurface>
         ),
     }), [animationEnabled, disclosure, testID, theme, title]);
 }

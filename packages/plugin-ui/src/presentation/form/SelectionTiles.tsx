@@ -18,7 +18,8 @@ import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow } from '../layout/pageMetr
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import { HAPPIER_FIELD_BOX_METRICS } from './FieldBox.js';
 import { HAPPIER_RADIO_MARK_METRICS, resolveHappierRadioMarkStyle } from './RadioMark.js';
-import { useHappierMaterialColorResolver } from '../layout/Surface.js';
+import { HappierMaterialSurface, useContainingHappierMaterialRole, useHappierMaterialColorResolver, type HappierMaterialSurfaceRender } from '../layout/Surface.js';
+import { splitForWebMiddleEllipsis, HAPPIER_MIDDLE_ELLIPSIS_STYLE } from '../text/middleEllipsis.js';
 import { usePageWindow } from '../collection/pageCollectionVirtualizer.js';
 import { useOptionalPluginUiScrollActivityTracker, type PluginUiScrollActivityTracker } from '../../presentationHost/scrollActivity.js';
 
@@ -51,10 +52,15 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
   disabled?: boolean;
   badge?: string;
   /**
-   * Card tiles: a quiet fact about this option right now ("Showing now"), at the card's top end where a chosen
-   * card's check stands; it is part of the tile's accessible name.
+   * Card tiles: a quiet fact about this option right now ("Showing now", "Unreachable"): one quiet line under its
+   * description, never a pill beside the name; it is part of the tile's accessible name.
    */
   status?: string;
+  /**
+   * Card tiles: `middle` keeps the description on one line and gives up its middle (an address, a path or an id has
+   * no word to wrap at, so it never breaks mid-word); the tile still announces all of it.
+   */
+  subtitleTruncation?: 'middle';
   /**
    * Card tiles: what this option's footer (`renderOptionFooter`) says, in words. The tile cannot read a rendered
    * footer, so its facts join the tile's accessible name only through this ("Runs on Cloudflare Pages, Free $0.00 a month").
@@ -155,6 +161,8 @@ export type HappierSelectionTilesTextRenderer = (input: Readonly<{
   /** The card group is `density="compact"`. */
   compact: boolean;
   numberOfLines: number;
+  /** One line that gives up its middle where the platform draws a middle ellipsis (native); the web draws two runs. */
+  ellipsizeMode?: 'middle';
 }>) => ReactNode;
 
 /**
@@ -182,6 +190,11 @@ type HappierSelectionTilesRendering<I extends string> = Readonly<{
   colors: HappierSelectionTilesColors;
   renderText: HappierSelectionTilesTextRenderer;
   renderGlyph: HappierSelectionTilesGlyphRenderer<I>;
+  /**
+   * Card variant: the adapter's Elements material for a card tile's frame (a plugin host supplies its own through the
+   * presentation host). Over an atmosphere it is glass; anywhere else the tile keeps its exact solid paint.
+   */
+  renderMaterialSurface?: HappierMaterialSurfaceRender;
 }>;
 
 type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSelectionTilesRendering<I> & Readonly<{
@@ -929,6 +942,13 @@ function CardTileFrame(props: Readonly<{
   style: ComponentProps<typeof View>['style'];
   hoverBorderColor: string | null;
   onLayout?: (event: { nativeEvent: { layout: { height: number } } }) => void;
+  /**
+   * The frame is an Element on its page (a separate tile, not a sheet's cell): it stands on the Elements material,
+   * glass over an atmosphere and its exact solid paint elsewhere. On a floating plane it keeps its own surface
+   * (a tile reads lighter than its dialog, journey-deploy, owner 11-16), so it never stacks glass on glass.
+   */
+  material: boolean;
+  renderMaterialSurface?: HappierMaterialSurfaceRender;
   children: (hover: CardTileHoverHandlers) => ReactNode;
 }>): ReactElement {
   const [hovered, setHovered] = useState(false);
@@ -936,10 +956,20 @@ function CardTileFrame(props: Readonly<{
     onHoverIn: () => setHovered(true),
     onHoverOut: () => setHovered(false),
   }), []);
+  const onFloatingPlane = useContainingHappierMaterialRole() === 'floating';
+  const style = [props.style, CARD_PAINT_TRANSITION, hovered && props.hoverBorderColor ? { borderColor: props.hoverBorderColor } : null];
+  if (props.material && !onFloatingPlane) {
+    return (
+      <HappierMaterialSurface materialRole="card" gradient={null} renderMaterialSurface={props.renderMaterialSurface}
+        {...(props.onLayout ? { onLayout: props.onLayout } : {})} style={style}>
+        {props.children(hover)}
+      </HappierMaterialSurface>
+    );
+  }
   return (
     <View
       {...(props.onLayout ? { onLayout: props.onLayout } : {})}
-      style={[props.style, CARD_PAINT_TRANSITION, hovered && props.hoverBorderColor ? { borderColor: props.hoverBorderColor } : null]}
+      style={style}
     >
       {props.children(hover)}
     </View>
@@ -1070,6 +1100,19 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         const tileTestID = option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined);
         // A trailing footer shares the tile's line with the choice, which takes the room the footer leaves.
         const trailing = props.footerPlacement === 'trailing' && !sheet && footer != null && footer !== false;
+        // A choice's mark keeps the tile's top end beside a trailing footer (option F): the footer stands under it, so
+        // an operation ("…") never pushes the check off the corner.
+        const markBeside = trailing && props.selectionMark !== 'outline';
+        const selectionMark = sheet && !(selected && props.selectionMode === 'multiple')
+          ? <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />
+          : props.selectionMark === 'outline' ? null
+          // A single choice shows every card's mark: an empty ring that becomes the filled check (option F),
+          // one size, so choosing changes only the outline and the mark.
+          : props.selectionMode !== 'multiple' ? <CardChoiceMark selected={selected} colors={props.colors} renderGlyph={props.renderGlyph} />
+          : selected ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null;
+        const subtitleText = (role: 'cardSubtitle') => option.subtitleTruncation === 'middle'
+          ? renderMiddleTruncatedTileText(props.renderText, { role, text: option.subtitle!, selected, compact })
+          : props.renderText({ role, text: option.subtitle!, selected, compact, numberOfLines: props.subtitleLines ?? 4 });
         const previewSize = hasPreview && props.previewWidth !== undefined
           ? { width: props.previewWidth, height: props.previewWidth / (props.previewAspectRatio ?? props.previewWidth / VISUAL_PREVIEW_HEIGHT_PX) }
           : null;
@@ -1080,6 +1123,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
             onLayout={onHeight === undefined ? undefined : (event) => onHeight(option.id, event.nativeEvent.layout.height)}
             // A sheet's cells have no outline of their own; a chosen card keeps its selection ink under the pointer.
             hoverBorderColor={sheet || selected || disabled ? null : props.colors.actionBorderHovered}
+            material={!sheet}
+            renderMaterialSurface={props.renderMaterialSurface}
             style={sheet ? [
               styles.sheetCell,
               tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
@@ -1092,6 +1137,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               ownWidthStyle,
               { borderColor },
               trailing ? styles.tileTrailing : null,
+              markBeside ? styles.tileMarkBeside : null,
             ]}
           >
             {(hover) => (<>
@@ -1118,6 +1164,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               style={({ pressed }) => [
                 styles.tilePressable,
                 compact ? styles.tileCompact : null,
+                compact && subtitleLine ? styles.tileCompactDescribed : null,
                 // One tile per line has no row to keep even: each takes its own content's height.
                 fittedColumns === 1 && !sheet ? styles.tileSingleColumn : null,
                 compact && !subtitleLine ? styles.tileCompactWithoutSubtitle : null,
@@ -1153,7 +1200,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                       ) : null}
                     </View>
                     {below ? null : hasSubtitle
-                      ? props.renderText({ role: 'cardSubtitle', text: option.subtitle!, selected, compact, numberOfLines: props.subtitleLines ?? 4 })
+                      ? subtitleText('cardSubtitle')
                       : anySubtitle ? (
                         // An empty line of the description's height: no text, so the tile's name stays its own.
                         <View pointerEvents="none" aria-hidden style={{ minHeight: resolveHappierTypeScale(
@@ -1167,28 +1214,35 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                     )}
                   </View>
                 </View>
-                <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
-                  {/* A tile marks only the chosen card, with a check beside its ink outline (lab f1src), or by the outline
-                      alone (`selectionMark="outline"`); a sheet's cells keep the one single-choice mark (`RadioMark`)
-                      that a table's or a list's radio draws. */}
-                  {sheet && !(selected && props.selectionMode === 'multiple')
-                    ? <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />
-                    : props.selectionMark === 'outline' ? null
-                    // A single choice shows every card's mark: an empty ring that becomes the filled check (option F),
-                    // one size, so choosing changes only the outline and the mark.
-                    : props.selectionMode !== 'multiple' ? <CardChoiceMark selected={selected} colors={props.colors} renderGlyph={props.renderGlyph} />
-                    : selected ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
-                </View>
+                {markBeside ? null : (
+                  <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
+                    {/* A tile marks only the chosen card, with a check beside its ink outline (lab f1src), or by the outline
+                        alone (`selectionMark="outline"`); a sheet's cells keep the one single-choice mark (`RadioMark`)
+                        that a table's or a list's radio draws. */}
+                    {selectionMark}
+                  </View>
+                )}
               </View>
               {below && (hasSubtitle || option.status) ? (
                 <View testID={tileTestID ? `${tileTestID}:description` : undefined} style={styles.bodyBelow}>
-                  {hasSubtitle ? props.renderText({ role: 'cardSubtitle', text: option.subtitle!, selected, compact, numberOfLines: props.subtitleLines ?? 4 }) : null}
+                  {hasSubtitle ? subtitleText('cardSubtitle') : null}
                   {option.status ? <View aria-hidden>{props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 })}</View> : null}
                 </View>
               ) : null}
             </SelectionTilePressable>
-            {footer != null && footer !== false ? (
-              <View style={trailing ? [styles.footerTrailing, compact ? styles.footerTrailingCompact : null] : [styles.footer, compact ? styles.footerCompact : null, below ? (compact ? styles.footerBelowCompact : styles.footerBelow) : null,
+            {markBeside ? (
+              <View style={[styles.markColumn, compact ? styles.markColumnCompact : null]}>
+                {/* The mark is part of the choice: pressing it chooses, as the rest of the card does; the card's own
+                    press target carries its name, state and keyboard. */}
+                <Pressable {...hover} accessible={false} focusable={false} tabIndex={-1} aria-hidden disabled={disabled}
+                  onPress={() => { if (!disabled) handleToggle(props, option.id); }} style={{ opacity: pressOpacity(disabled, false) }}>
+                  {selectionMark}
+                </Pressable>
+                {footer}
+              </View>
+            ) : footer != null && footer !== false ? (
+              <View style={trailing ? [styles.footerTrailing, compact ? styles.footerTrailingCompact : null] : [styles.footer, compact ? styles.footerCompact : null, compact && subtitleLine ? styles.footerCompactDescribed : null,
+                below ? (compact ? (subtitleLine ? { paddingLeft: CARD_COMPACT_DESCRIBED_PADDING_PX } : styles.footerBelowCompact) : styles.footerBelow) : null,
                 // Beside a preview the text column starts after it: the footer action takes the name's edge.
                 !below && hasPreview ? styles.footerBesidePreview : null]}>
                 {footer}
@@ -1262,6 +1316,27 @@ function SelectionTilePressable({ hitReach, style, children, ...rest }: Omit<Com
       {hitArea.frame}
       {children}
     </Pressable>
+  );
+}
+
+/** A described compact card's inset on every side (the lab's option F choices). */
+const CARD_COMPACT_DESCRIBED_PADDING_PX = 14;
+
+/**
+ * One line that gives up its middle in the tiles' own text renderer. The web draws only a tail ellipsis, so it is two
+ * runs there (the head shrinks, the tail stays); native asks the platform for its middle ellipsis.
+ */
+function renderMiddleTruncatedTileText(
+  renderText: HappierSelectionTilesTextRenderer,
+  input: Readonly<{ role: HappierSelectionTileTextRole; text: string; selected: boolean; compact: boolean }>,
+): ReactNode {
+  const split = Platform.OS === 'web' ? splitForWebMiddleEllipsis(input.text) : null;
+  if (split === null) return renderText({ ...input, numberOfLines: 1, ellipsizeMode: 'middle' });
+  return (
+    <View style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.row as ViewStyle}>
+      <View style={{ flexShrink: split.headStyle.flexShrink, minWidth: 0 }}>{renderText({ ...input, text: split.head, numberOfLines: 1 })}</View>
+      <View style={{ flexShrink: split.tailStyle.flexShrink, minWidth: 0 }}>{renderText({ ...input, text: split.tail, numberOfLines: 1 })}</View>
+    </View>
   );
 }
 
@@ -1438,6 +1513,12 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       paddingVertical: 8,
       minHeight: 48,
     },
+    // A compact card that describes itself (option F's choices) breathes like the lab's cards: its text clear of the
+    // outline on every side rather than packed to a dense grid's field box.
+    tileCompactDescribed: {
+      paddingHorizontal: CARD_COMPACT_DESCRIBED_PADDING_PX,
+      paddingVertical: CARD_COMPACT_DESCRIBED_PADDING_PX,
+    },
     tileSingleColumn: {
       minHeight: 0,
     },
@@ -1491,6 +1572,10 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       minHeight: 0,
       flexGrow: 0,
     },
+    footerCompactDescribed: {
+      paddingLeft: CARD_COMPACT_DESCRIBED_PADDING_PX + CARD_ICON_BOX_PX.compact + 10,
+      paddingRight: CARD_COMPACT_DESCRIBED_PADDING_PX,
+    },
     footerBelow: {
       paddingLeft: 12,
     },
@@ -1508,6 +1593,22 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     tilePressableTrailing: {
       flex: 1,
       minWidth: 0,
+    },
+    // The mark stands at the card's top end and the trailing operation under it, at the card's foot.
+    tileMarkBeside: {
+      alignItems: 'stretch',
+    },
+    markColumn: {
+      alignItems: 'flex-end',
+      justifyContent: 'space-between',
+      gap: 6,
+      paddingTop: 14,
+      paddingRight: 12,
+      paddingBottom: 8,
+    },
+    markColumnCompact: {
+      paddingTop: CARD_COMPACT_DESCRIBED_PADDING_PX,
+      paddingRight: CARD_COMPACT_DESCRIBED_PADDING_PX,
     },
     footerTrailing: {
       paddingRight: 12,

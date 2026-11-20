@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { useGlyphFieldTap } from '@/components/atmosphere/glyph/useHomeGlyphField';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { GlassAtmosphereScope } from '@/components/ui/glass/glassRuntimeEnvironment';
 
 import { WelcomeAtmosphere } from './WelcomeAtmosphere';
 import { WorkflowPanel, type WorkflowPanelPresentation } from './WorkflowPanel';
@@ -88,6 +89,8 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 nativeTap={tap}
                 quietColumn={measureColumn ? quietColumn : null}
             />
+            {/* The column's Elements (choices, the command line, wells and pills) stand on that atmosphere: glass. */}
+            <GlassAtmosphereScope behind="band">
             <WorkflowPanel
                 variant={compact ? 'mobile' : 'desktop'}
                 isWelcomeStep={props.isWelcomeStep}
@@ -108,6 +111,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                     {props.children}
                 </SurfaceStateSizeProvider>
             </WorkflowPanel>
+            </GlassAtmosphereScope>
         </View>
     );
 });

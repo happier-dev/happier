@@ -15,7 +15,7 @@ import { getGlassViewComponent, useLiquidGlassAvailable } from './liquidGlass';
 import { resolveGlassCapability } from './resolveGlassCapability';
 import { GLASS_BLUR_INTENSITY, GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassSurfaceMaterial, type FloatingSurfaceRole, type GlassFloatingCoat, type GlassSurfaceGroup } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
-import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
+import { useGlassAtmosphereScoped, useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { resolveGlassSurfaceSolidPaint, resolveGlassSurfaceCoatPaint, resolveGlassSurfacePaintLayers, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
 import { useGlassMaterialColorResolver } from './useGlassSurfaceColor';
 import { fixedThemePaint, tokenThemePaint } from '@/theme/profiles/themePaint';
@@ -165,6 +165,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const reduceTransparency = useReduceTransparency();
     const settings = useGlassMaterialSettings();
     const runtimeEnvironment = useGlassRuntimeEnvironment();
+    const atmosphereScoped = useGlassAtmosphereScoped();
     const group = props.surfaceGroup ?? 'floating';
     const resolveMaterialColor = useGlassMaterialColorResolver(group, props.plane === true);
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
@@ -391,6 +392,11 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         [`--happier-glass-${group}-nested-opacity`]: innerMaterial.opacity < 1 ? '0%' : '100%',
         [`--happier-glass-${group}-plane-background-color`]: material.opacity < 1
             && resolveGlassSurfacePlaneMaterial(settings, group, runtimeEnvironment).opacity === 0 ? 'transparent' : 'initial',
+        // A scoped atmosphere (`GlassAtmosphereScope`) is not the window's: this surface carries its own group values.
+        ...(atmosphereScoped ? {
+            [`--happier-glass-${group}-opacity`]: `${material.opacity * 100}%`,
+            [`--happier-glass-${group}-blur`]: `${GLASS_BLUR_RADIUS_PX[material.blur as keyof typeof GLASS_BLUR_RADIUS_PX]}px`,
+        } : null),
     } as unknown as ViewStyle;
     const reachesPastEdges = frosted && group === 'floating';
     // A clipping surface stays a clip, not a scroll container: its frost layer reaches past the box, and with a hidden

@@ -301,6 +301,29 @@ describe('web glass material', () => {
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the web card draft');
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#221c1c')).toHaveLength(1);
     });
+    // Owner 2026-11-20: the signed-out column's Elements stand on the welcome planet drawn inside the shell, not behind
+    // the window. They are glass there, with their own blur and coat, while the window's material stays as it was.
+    it('frosts Elements over an atmosphere scoped to a subtree, with their own group values, and keeps them solid under Reduce Transparency', async () => {
+        const { GlassRuntimeEnvironmentProvider, GlassAtmosphereScope } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const card = <GlassSurface testID="card" surfaceGroup="card" nested finishRole={null} solidColor="#fafafa">{null}</GlassSurface>;
+        const scene = (scoped: boolean, reduceTransparency = false) => <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'none', reduceTransparency }}>
+                {scoped ? <GlassAtmosphereScope behind="band">{card}</GlassAtmosphereScope> : card}
+            </GlassRuntimeEnvironmentProvider>
+        </GlassMaterialSettingsProvider>;
+        const screen = await renderScreen(scene(true));
+        expect(screen.findAll(hasBackdrop)).toHaveLength(1);
+        const root = flattenTestStyle(screen.findHostByTestId('card')!.props.style) as Record<string, unknown>;
+        expect(root['--happier-glass-card-blur']).toBe('24px');
+        expect(Number.parseFloat(String(root['--happier-glass-card-opacity']))).toBeLessThan(100);
+        await screen.update(scene(false));
+        expect(screen.findAll(hasBackdrop)).toHaveLength(0);
+        await screen.update(scene(true, true));
+        expect(screen.findAll(hasBackdrop)).toHaveLength(0);
+        expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#fafafa')).toHaveLength(1);
+    });
     // Owner 2026-11-16 (desktop app, light): frosted cards and the composer showed ink ramps along their edges,
     // while menus, whose frosted layer is shaped by a clip, stayed clean. Every frosted layer takes that clip.
     it('shapes a frosted Element\'s material by its own rounded clip, as floating glass is shaped', async () => {

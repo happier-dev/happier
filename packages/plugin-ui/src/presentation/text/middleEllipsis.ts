@@ -15,7 +15,8 @@ export function splitForWebMiddleEllipsis(value: string): Readonly<{ head: strin
 }
 
 function splitAtMiddle(value: string): Readonly<{ head: string; tail: string; headStyle: MiddleEllipsisHeadStyle; tailStyle: MiddleEllipsisTailStyle }> | null {
-  const slash = value.lastIndexOf('/');
+  // An address's scheme slashes ("https://") are not a path: its host is cut like any other word run.
+  const slash = /^[a-z][a-z\d+.-]*:\/\//iu.test(value) ? -1 : value.lastIndexOf('/');
   if (slash > 0 && slash < value.length - 1) {
     const root = value.indexOf('/', value.startsWith('/') ? 1 : value.indexOf('/') + 1);
     // A file name or a long folder name keeps the old promise (the end stays whole at any width).

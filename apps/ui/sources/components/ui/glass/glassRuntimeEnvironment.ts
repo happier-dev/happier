@@ -48,6 +48,28 @@ export function GlassEnvironmentHold(props: Readonly<{ presented: boolean; carri
     return React.createElement(GlassScopedEnvironment.Provider, { value: published.current }, props.children);
 }
 
+/**
+ * An atmosphere drawn inside one subtree rather than behind the window (the signed-out planet and field under the
+ * welcome column): Elements in that subtree stand on it, so they take their glass there, while the window's page,
+ * chrome and native backing stay exactly as the window decides. Reduce Transparency and every other input stay live.
+ */
+export function GlassAtmosphereScope(props: Readonly<{ behind: AtmosphereBehind; children: React.ReactNode }>) {
+    const live = useGlassRuntimeEnvironment();
+    const scoped = React.useMemo(() => ({ ...live, atmosphereBehind: props.behind }), [live, props.behind]);
+    return React.createElement(GlassAtmosphereScoped.Provider, { value: true },
+        React.createElement(GlassScopedEnvironment.Provider, { value: scoped }, props.children));
+}
+
+const GlassAtmosphereScoped = React.createContext(false);
+
+/**
+ * Inside a `GlassAtmosphereScope` the document's material variables describe the window, not this subtree: a surface
+ * there publishes its own group's values on its root for its paint and its descendants.
+ */
+export function useGlassAtmosphereScoped(): boolean {
+    return React.useContext(GlassAtmosphereScoped);
+}
+
 const GlassAtmosphereToneSetter = React.createContext<(value: GlassAtmosphereTone | undefined) => void>(() => {});
 export const GlassAtmosphereToneSetterProvider = GlassAtmosphereToneSetter.Provider;
 

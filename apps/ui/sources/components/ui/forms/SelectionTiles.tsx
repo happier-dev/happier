@@ -17,6 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
+import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { projectPluginUiHostPalette, projectPluginUiTheme, readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensity';
@@ -47,8 +48,10 @@ export interface SelectionTile<T extends string> {
     mark?: React.ReactNode;
     disabled?: boolean;
     badge?: string;
-    /** Card tiles: a quiet fact about the option right now ("Showing now"), where a chosen card's check stands. */
+    /** Card tiles: a quiet fact about the option right now ("Showing now"), one quiet line under its description. */
     status?: string;
+    /** Card tiles: `middle` keeps an address, path or id description on one line that gives up its middle. */
+    subtitleTruncation?: 'middle';
     /** Card tiles: what the option's footer says, in words, for the tile's accessible name. */
     footerLabel?: string;
     /**
@@ -172,13 +175,13 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         divider: theme.colors.border.subtle,
     }), [theme]);
 
-    const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines }) => (
+    const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines, ellipsizeMode }) => (
         <Text style={[
             textStyle(styles, role, selected, compact),
             // Tile text wraps at word boundaries and is never auto-hyphenated ("ac-count"); RNW's break-word
             // still splits a single word only when it is wider than the whole text column.
             Platform.OS === 'web' && (role === 'visualLabel' || role === 'visualSublabel') ? WEB_VISUAL_TEXT_WRAPPING : null,
-        ]} numberOfLines={numberOfLines}>{text}</Text>
+        ]} numberOfLines={numberOfLines} {...(ellipsizeMode ? { ellipsizeMode } : null)}>{text}</Text>
     ), [styles]);
 
     const options = props.options;
@@ -206,6 +209,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         </HappierUiTypographyProvider>;
     }
     return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} renderOptionFooter={footer ? renderOptionFooter : undefined}
+        renderMaterialSurface={renderThemeMaterialSurface}
         renderOptionAccessory={accessory ? renderOptionAccessory : undefined} />;
 }
 

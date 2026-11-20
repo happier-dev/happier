@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StepRowWayButton } from '@/components/onboarding/unauthShell/stepBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
@@ -17,6 +18,8 @@ import { WelcomeActionAdmissionContext } from './WelcomeActionList';
 
 const CARD_INSET = 18;
 const CARD_BORDER = 1;
+const CARD_RADIUS = 14;
+const PILL_RADIUS = 20;
 /** Where a card's title starts, so a heading over a group of cards and quiet rows shares their edge. */
 export const WELCOME_ACTION_TEXT_INSET = CARD_INSET + CARD_BORDER;
 
@@ -92,8 +95,9 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
         return (
             <View
                 testID={props.testID}
-                style={[styles.card, { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default }]}
+                style={[styles.card, { borderColor: theme.colors.border.default }]}
             >
+                <WelcomeActionGround fill={theme.colors.surface.base} radius={CARD_RADIUS} />
                 <View testID={`${props.testID}-text`} style={[styles.textBlock, styles.unavailableText]}>
                     <Text testID={`${props.testID}-title`} style={[styles.title, { color: theme.colors.text.primary }]}>{props.title}</Text>
                     {props.subtitle ? <Text testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: theme.colors.text.secondary }]}>{props.subtitle}</Text> : null}
@@ -137,15 +141,20 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                                 ? { backgroundColor: 'transparent', borderColor: 'transparent' }
                             : row
                                 ? { backgroundColor: hovered ? theme.colors.surface.pressed : 'transparent', borderColor: 'transparent' }
-                            : pill
-                                ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.base, borderColor: theme.colors.border.default }
-                            : button
-                                ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.elevated, borderColor: 'transparent' }
-                                : { backgroundColor: hovered ? theme.colors.surface.elevated : theme.colors.surface.base, borderColor: theme.colors.border.default },
+                            // A pill, a button and a card are Elements: their ground is drawn by the material below.
+                            : { borderColor: pill || !button ? theme.colors.border.default : 'transparent' },
                         focusRingStyle({ focused, color: theme.colors.border.focus }),
                         pressFeedback.animatedStyle,
                     ]}
                 >
+                    {primary || link || row ? null : (
+                        <WelcomeActionGround
+                            fill={pill ? (hovered ? theme.colors.surface.pressed : theme.colors.surface.base)
+                                : button ? (hovered ? theme.colors.surface.pressed : theme.colors.surface.elevated)
+                                : hovered ? theme.colors.surface.elevated : theme.colors.surface.base}
+                            radius={pill ? PILL_RADIUS : button ? theme.borderRadius.md : CARD_RADIUS}
+                        />
+                    )}
                     {button && pending ? <ActivitySpinner color={foreground} /> : button && props.iconName ? (
                         <Icon testID={`${props.testID}-icon`} name={props.iconName} size={pill ? 16 : 20}
                             color={pill ? theme.colors.text.secondary : foreground} />
@@ -191,6 +200,16 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
 });
 
 /**
+ * An Element's ground: on the welcome atmosphere it is glass (the planet and field read through it), under Reduce
+ * Transparency and anywhere without an atmosphere it is exactly this solid fill. The material owner decides which.
+ */
+function WelcomeActionGround(props: Readonly<{ fill: string; radius: number }>) {
+    return <GlassSurface surfaceGroup="card" nested finishRole={null} solidColor={props.fill}
+        // Inside the frame's hairline (a child paints over its parent's border), its corners concentric with the frame's.
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: props.radius - CARD_BORDER, pointerEvents: 'none' }} />;
+}
+
+/**
  * One way in on the ways row (direction A, owner 2026-11-19): a round mark without a caption; its title is the
  * tooltip on hover and focus and its accessible name, its subtitle the hint. Admitted like every welcome action.
  */
@@ -224,7 +243,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     card: {
         minHeight: 66,
         borderWidth: CARD_BORDER,
-        borderRadius: 14,
+        borderRadius: CARD_RADIUS,
         paddingHorizontal: CARD_INSET,
         paddingVertical: theme.space.s10,
         flexDirection: 'row',
@@ -246,7 +265,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     pill: {
         alignSelf: 'center',
         minHeight: 40,
-        borderRadius: 20,
+        borderRadius: PILL_RADIUS,
         paddingVertical: 0,
         paddingHorizontal: theme.space.s16,
     },

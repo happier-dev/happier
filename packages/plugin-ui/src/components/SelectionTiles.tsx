@@ -131,7 +131,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
   const typography = useOptionalHappierUiTypography();
   // The tiles' type scale is the shared owner's; this adapter adds the host's face per weight
   // and the theme's colours, exactly as Happier core's tile adapter does.
-  const renderText = useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines }) => {
+  const renderText = useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines, ellipsizeMode }) => {
     const tileText = resolveHappierSelectionTileText(role, { selected, compact });
     const color = role === 'visualSublabel'
       ? theme.colors.mutedText
@@ -141,6 +141,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
     return (
       <HappierText
         numberOfLines={numberOfLines}
+        {...(ellipsizeMode ? { ellipsizeMode } : null)}
         style={[
           resolveHappierTextStepStyle(resolveHappierTypeScale(tileText.role, Platform.OS, tileText.emphasis), typography),
           role === 'visualLabel' || role === 'visualSublabel' ? { textAlign: 'center' as const } : null,

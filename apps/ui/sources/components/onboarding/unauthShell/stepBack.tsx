@@ -3,6 +3,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -17,6 +18,7 @@ export const UNAUTH_BACK_TEST_ID = 'unauth-shell-back-chevron';
 export const STEP_ROW_BUTTON_PX = 44;
 /** Their glyph: the default icon step, so a well reads as a quiet mark rather than a filled tile (lab: 20 px). */
 const STEP_ROW_GLYPH_PX = ICON_SIZE.md;
+const STEP_ROW_WELL_STYLE = { width: STEP_ROW_BUTTON_PX, height: STEP_ROW_BUTTON_PX, borderRadius: STEP_ROW_BUTTON_PX / 2 } as const;
 
 /**
  * One round well on a step's row: Back and every way beside it are the same object (direction A, owner 2026-11-19),
@@ -25,7 +27,13 @@ const STEP_ROW_GLYPH_PX = ICON_SIZE.md;
 export function StepRowWayButton(
   props: Readonly<Omit<React.ComponentProps<typeof IconButton>, 'size' | 'iconSize' | 'variant'>>,
 ) {
-  return <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX} variant="outlined" />;
+  // The well stands on the welcome atmosphere as an Element: glass over the planet and field, its exact solid paint
+  // under Reduce Transparency. Its fill and hover take that material's inner step through the shared resolver.
+  return (
+    <GlassSurface surfaceGroup="card" nested finishRole={null} style={STEP_ROW_WELL_STYLE}>
+      <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX} variant="outlined" />
+    </GlassSurface>
+  );
 }
 
 type StepBackSlot = Readonly<{

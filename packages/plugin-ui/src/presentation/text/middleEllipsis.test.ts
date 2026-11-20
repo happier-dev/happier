@@ -25,6 +25,16 @@ describe('splitForWebMiddleEllipsis', () => {
       tailStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail });
   });
 
+  it('cuts an address inside its host, keeping its scheme and port ends visible ("https://leeroy-mb…ts.net:8443")', () => {
+    const address = 'https://leeroy-mbp.tailfce179.ts.net:8443';
+    const split = splitForWebMiddleEllipsis(address)!;
+    expect(`${split.head}${split.tail}`).toBe(address);
+    expect(split.head.startsWith('https://')).toBe(true);
+    expect(split.head.length).toBeGreaterThan('https://'.length);
+    expect(split.tail.endsWith(':8443')).toBe(true);
+    expect(split).toMatchObject({ headStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.head, tailStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail });
+  });
+
   it('keeps the parent that tells same-name paths apart: the root stays and the rest gives up its start (#18)', () => {
     const paths = ['/tmp/happier-qa-usage-acct-1030-agent-20261030/claude', '/tmp/happier-qa-usage-acct-1031-20261031/claude'];
     const splits = paths.map(path => splitForWebMiddleEllipsis(path)!);

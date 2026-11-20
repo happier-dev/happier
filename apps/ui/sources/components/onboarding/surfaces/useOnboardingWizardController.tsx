@@ -640,6 +640,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 icon: 'link',
                 title: profile.name,
                 subtitle: toServerUrlDisplay(profile.serverUrl),
+                // An address has no word to wrap at: one line that gives up its middle (owner 2026-11-20).
+                subtitleTruncation: 'middle',
                 status: blocked ? t('common.blocked') : unavailable ? t('common.unreachable') : undefined,
                 menuActions: [
                     ...((unavailable || blocked) ? [{
