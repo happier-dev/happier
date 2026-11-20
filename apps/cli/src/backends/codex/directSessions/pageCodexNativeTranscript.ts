@@ -8,6 +8,7 @@ import { projectCodexNativeHistoryItem } from '../appServer/session/projectCodex
 import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
 import { mapCodexProjectedEventsToDirectMessages } from './mapCodexRolloutLineToDirectMessages';
 import { measureDirectTranscriptItemBytes } from './codexDirectTranscriptProjection';
+import { readCodexNativeHistoryTimestamps } from './readCodexNativeHistoryTimestamps';
 import { lazySchema } from '@happier-dev/protocol';
 
 const TailSchema = lazySchema(() => z.object({ position: z.string().nullable(), anchor: z.string().nullable(), fingerprint: z.string().nullable() }));
@@ -44,6 +45,7 @@ function fingerprint(entry: Entry): string { return createHash('sha256').update(
 export async function pageCodexNativeTranscript(params: Readonly<{
   client: Pick<CodexAppServerClient, 'request'>;
   home: string;
+  sqliteHome: string;
   remoteSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
@@ -92,6 +94,7 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       // A previously partial live item may settle in place; emit its same stable ids again.
       if (params.direction === 'newer' && fingerprint(prior) !== state.fingerprint) { state.skip -= 1; state.offset = 0; }
     }
+    let indexedDates: Map<string, number> | undefined;
     const items: DirectTranscriptRawMessageV1[] = [];
     let bytes = 0;
     let index = state.skip;
@@ -103,6 +106,15 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       const messages = mapCodexProjectedEventsToDirectMessages({ projected,
         createdAtMs: entry.startedAtMs ?? entry.completedAtMs ?? 0,
         idForIndex: action => `codex:native:${params.remoteSessionId}:${key}:${action}` });
+      if (messages.length > 0 && entry.startedAtMs === null && entry.completedAtMs === null) {
+        indexedDates ??= readCodexNativeHistoryTimestamps({ sqliteHome: params.sqliteHome,
+          threadId: params.remoteSessionId, items: page.data
+            .filter(candidate => candidate.startedAtMs === null && candidate.completedAtMs === null)
+            .map(candidate => ({ turnId: candidate.turnId, itemId: candidate.item.id as string })) });
+        const createdAtMs = indexedDates.get(key);
+        if (createdAtMs === undefined) throw new Error('Codex native history omitted the original message timestamp');
+        for (const message of messages) message.createdAtMs = createdAtMs;
+      }
       if (params.direction === 'older') messages.reverse();
       if (offset > messages.length) throw new Error('Codex native history changed its partial item');
       for (; offset < messages.length; offset += 1) {

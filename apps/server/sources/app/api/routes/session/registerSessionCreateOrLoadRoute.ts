@@ -39,6 +39,8 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 agentState: z.string().nullish(),
                 dataEncryptionKey: z.string().nullish(),
                 encryptionMode: z.enum(["e2ee", "plain"]).optional(),
+                sourceCreatedAtMs: z.number().int().min(0).optional(),
+                sourceUpdatedAtMs: z.number().int().min(0).optional(),
             })
         },
         preHandler: app.authenticate
@@ -153,7 +155,15 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         ? "plain"
                         : requestedOrAccountOrDefault;
 
-            const createdAt = new Date();
+            const now = Date.now();
+            // Importing a historical conversation is not new conversation activity.
+            // Apply source dates only on creation; loading/resuming an existing row
+            // still records current intent and never rewinds its publisher fence.
+            const meaningfulActivityAtMs = Math.min(now, request.body.sourceUpdatedAtMs ?? now);
+            const createdAt = new Date(Math.min(
+                meaningfulActivityAtMs,
+                request.body.sourceCreatedAtMs ?? meaningfulActivityAtMs,
+            ));
             const created = await tx.session.create({
                 data: {
                     accountId: userId,
@@ -162,7 +172,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     metadata,
                     agentState: agentState ?? null,
                     createdAt,
-                    meaningfulActivityAt: createdAt,
+                    meaningfulActivityAt: new Date(meaningfulActivityAtMs),
                     dataEncryptionKey:
                         effectiveEncryptionMode === "plain"
                             ? undefined

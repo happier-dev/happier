@@ -50,6 +50,62 @@ describe("session create/load before publisher registration (SQLite integration)
         await harness.close();
     });
 
+    it("preserves imported source dates in storage and listing without replacing them on reuse", async () => {
+        const app = createTestApp();
+        const account = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
+        const token = await auth.createToken(account.id);
+        const headers = { authorization: `Bearer ${token}` };
+        const sourceCreatedAtMs = Date.parse("2025-01-02T12:00:00.000Z");
+        const sourceUpdatedAtMs = Date.parse("2025-02-03T12:00:00.000Z");
+        const payload = {
+            tag: `history-${randomUUID()}`, metadata: "{}", encryptionMode: "e2ee",
+            sourceCreatedAtMs, sourceUpdatedAtMs,
+        };
+        const response = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload });
+        expect(response.statusCode).toBe(200);
+        const id = response.json().session.id as string;
+        const stored = await db.session.findUniqueOrThrow({ where: { id } });
+        expect(stored.createdAt.getTime()).toBe(sourceCreatedAtMs);
+        expect(stored.meaningfulActivityAt?.getTime()).toBe(sourceUpdatedAtMs);
+        expect(stored.active).toBe(false);
+        const listed = await app.inject({ method: "GET", url: "/v1/sessions", headers });
+        expect(listed.json().sessions).toContainEqual(expect.objectContaining({
+            id, createdAt: sourceCreatedAtMs, meaningfulActivityAt: sourceUpdatedAtMs,
+        }));
+
+        const resumed = await app.inject({
+            method: "POST", url: "/v1/sessions", headers,
+            payload: { ...payload, sourceCreatedAtMs: 1, sourceUpdatedAtMs: 2 },
+        });
+        expect(resumed.statusCode).toBe(200);
+        const afterResume = await db.session.findUniqueOrThrow({ where: { id } });
+        expect(afterResume.createdAt.getTime()).toBe(sourceCreatedAtMs);
+        expect(afterResume.meaningfulActivityAt!.getTime()).toBeGreaterThan(sourceUpdatedAtMs);
+        expect(afterResume.lastActiveAt).toEqual(stored.lastActiveAt);
+    }, 120_000);
+
+    it.each([
+        { sourceUpdatedAtMs: Date.parse("2025-02-03T12:00:00.000Z") },
+        { sourceCreatedAtMs: Number.MAX_SAFE_INTEGER, sourceUpdatedAtMs: Number.MAX_SAFE_INTEGER },
+    ])("uses the source activity date when creation is absent and clamps future dates: %j", async (dates) => {
+        const app = createTestApp();
+        const account = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
+        const token = await auth.createToken(account.id);
+        const before = Date.now();
+        const response = await app.inject({
+            method: "POST", url: "/v1/sessions",
+            headers: { authorization: `Bearer ${token}` },
+            payload: { tag: `history-${randomUUID()}`, metadata: "{}", ...dates },
+        });
+        expect(response.statusCode).toBe(200);
+        const session = response.json().session;
+        const expected = Math.min(dates.sourceUpdatedAtMs, Date.now());
+        expect(session.meaningfulActivityAt).toBeLessThanOrEqual(expected);
+        expect(session.meaningfulActivityAt).toBeGreaterThanOrEqual(Math.min(dates.sourceUpdatedAtMs, before));
+        expect(session.createdAt).toBe(session.meaningfulActivityAt);
+        expect(session.active).toBe(false);
+    });
+
     it("keeps a created row inactive through a rejected socket and makes exact registration the sole positive transition", async () => {
         const app = createTestApp();
         const account = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });

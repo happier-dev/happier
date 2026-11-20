@@ -285,6 +285,8 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                 providerId: selectedProviderId,
                 remoteSessionId: candidate.remoteSessionId,
                 ...(candidate.title ? { titleHint: candidate.title } : {}),
+                ...(candidate.createdAtMs !== undefined ? { sourceCreatedAtMs: candidate.createdAtMs } : {}),
+                sourceUpdatedAtMs: candidate.updatedAtMs,
                 ...(readDirectBrowseCandidatePath(candidate.details) ? { directoryHint: readDirectBrowseCandidatePath(candidate.details)! } : {}),
                 ...linkEnsureExtras,
                 source: effectiveSource,

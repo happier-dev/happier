@@ -2,6 +2,7 @@ import type { DirectSessionsSource } from '@happier-dev/protocol';
 import { DirectSessionsProviderUnavailableError, type DirectSessionTranscriptPage } from '@/backends/directSessions/providerOps';
 import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
 import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
+import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
 import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
 import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
 import { pageCodexRolloutStreams, readAfterCodexRolloutStreams } from './codexDirectTranscriptStreamPaging';
@@ -55,7 +56,7 @@ export async function readCodexDirectTranscript(params: Readonly<{
         affinity: { home: params.source.kind === 'codexHome' ? params.source.home : 'user', homePath: home } });
       const reset = Boolean(params.cursor && params.cursor !== 'tail' && !nativeCursor);
       const page = await withCodexAppServerClient({ processEnv, run: client => pageCodexNativeTranscript({
-        ...params, client, home, hasPaginatedRollout, cursor: nativeCursor ? params.cursor : undefined,
+        ...params, client, home, sqliteHome: resolveConfiguredCodexSqliteHome(processEnv), hasPaginatedRollout, cursor: nativeCursor ? params.cursor : undefined,
         tailOnly: params.follow && (!nativeCursor || params.cursor === 'tail'),
       }) });
       return reset ? { ...page, items: [], truncated: true, truncationReason: 'source_discontinuity' } : page;

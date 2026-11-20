@@ -393,6 +393,8 @@ export async function getOrCreateSessionByTag(params: Readonly<{
   tag: string;
   metadata: Record<string, unknown>;
   agentState: Record<string, unknown> | null;
+  sourceCreatedAtMs?: number;
+  sourceUpdatedAtMs?: number;
 }>): Promise<{ session: RawSessionRecord; created: boolean }> {
   const serverUrl = resolveServerHttpBaseUrl();
 
@@ -424,6 +426,8 @@ export async function getOrCreateSessionByTag(params: Readonly<{
     metadata: metadataPayload,
     agentState: agentStatePayload,
     dataEncryptionKey: dataEncryptionKeyPayload,
+    ...(params.sourceCreatedAtMs !== undefined ? { sourceCreatedAtMs: params.sourceCreatedAtMs } : {}),
+    ...(params.sourceUpdatedAtMs !== undefined ? { sourceUpdatedAtMs: params.sourceUpdatedAtMs } : {}),
     ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
   }, {
     headers: {

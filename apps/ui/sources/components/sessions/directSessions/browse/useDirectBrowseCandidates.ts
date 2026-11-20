@@ -8,6 +8,7 @@ export type DirectBrowseCandidate = Readonly<{
     remoteSessionId: string;
     title?: string;
     updatedAtMs: number;
+    createdAtMs?: number;
     activity?: DirectSessionActivityV1;
     details?: Record<string, unknown>;
 }>;
@@ -128,6 +129,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 remoteSessionId: candidate.remoteSessionId,
                 title: candidate.title,
                 updatedAtMs: candidate.updatedAtMs,
+                createdAtMs: candidate.createdAtMs,
                 activity: candidate.activity,
                 details: candidate.details,
             })) satisfies readonly DirectBrowseCandidate[];

@@ -696,6 +696,8 @@ export async function ensureDirectSessionLink(params: Readonly<{
   titleHint?: string | null;
   directoryHint?: string | null;
   nowMs?: () => number;
+  sourceCreatedAtMs?: number;
+  sourceUpdatedAtMs?: number;
 }>): Promise<{ sessionId: string; created: boolean; tag: string }> {
   const nowMs = params.nowMs ?? (() => Date.now());
 
@@ -801,6 +803,8 @@ export async function ensureDirectSessionLink(params: Readonly<{
     tag,
     metadata,
     agentState: null,
+    sourceCreatedAtMs: params.sourceCreatedAtMs,
+    sourceUpdatedAtMs: params.sourceUpdatedAtMs,
   });
 
   return { sessionId: session.id, created: true, tag };
