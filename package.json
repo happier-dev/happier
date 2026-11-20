@@ -173,7 +173,8 @@
     "release:publish:manifests": "node scripts/pipeline/release/publish-manifests.mjs",
     "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test --test-concurrency=1 scripts/release/*.test.mjs scripts/release/*/*.test.mjs scripts/pipeline/**/*.test.mjs",
     "release:sync:installers": "node scripts/pipeline/release/sync-installers.mjs",
-    "release:check:installers": "node scripts/pipeline/release/sync-installers.mjs --check"
+    "release:check:installers": "node scripts/pipeline/release/sync-installers.mjs --check",
+    "prepare": "husky"
   },
   "workspaces": {
     "packages": [
@@ -231,8 +232,10 @@
     "**/@fastify/otel/minimatch/brace-expansion": "5.0.12"
   },
   "devDependencies": {
+    "@gglint/cli": "0.5.1",
     "@sentry/cli": "^3.2.2",
     "@typescript/native": "npm:typescript@7.0.2",
+    "husky": "9.1.7",
     "sharp": "^0.35.5",
     "typescript": "5.9.3",
     "vite": "7.3.2"
