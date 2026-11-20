@@ -16377,6 +16377,7 @@ const italian: TeamsTranslationRoot = {
         newMembers: {
             title: 'Cosa ricevono i nuovi membri',
             description: 'Con cosa iniziano le persone che entrano in questo Team. Ogni scelta viene salvata subito.',
+            preview: 'Anteprima come membro',
             repositories: {
                 title: 'Repository',
                 description: ({ team }: { team: string }) => `Fonti condivise con ${team}. Una copia locale già presente viene usata così com’è.`,
@@ -16384,6 +16385,7 @@ const italian: TeamsTranslationRoot = {
                 emptyTitle: 'Ancora nessuna fonte condivisa',
                 emptyBody: 'Condividi la fonte di un progetto con il team per offrirla qui.',
                 loadFailed: 'Impossibile leggere le fonti condivise con questo Team',
+                share: ({ team }: { team: string }) => `Condividi una sorgente con ${team}`,
             },
             firstTask: {
                 title: 'Primo compito suggerito',
@@ -16391,6 +16393,18 @@ const italian: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `Allegato a ${source}`,
                 emptyTitle: 'Nessun primo compito suggerito',
                 emptyBody: 'I nuovi membri iniziano con il composer vuoto.',
+                choose: 'Scegli un’attività',
+                chooseSource: 'Quale repository?',
+                remove: 'Rimuovi',
+                removeFrom: ({ source }: { source: string }) => `Rimuovi la prima attività da ${source}`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} è solo tua, quindi chi entra in ${team} non può leggerla.`,
+            },
+            keys: {
+                title: 'Chiavi',
+                description: ({ team }: { team: string }) => `Chiavi che ${team} condivide con i membri. Le sessioni le usano; nessuno vede il valore.`,
+                emptyTitle: 'Nessuna chiave condivisa',
+                emptyBody: ({ team }: { team: string }) => `Condividi una chiave con ${team} perché i membri la usino senza vederla.`,
+                share: 'Condividi una chiave',
             },
         },
         tabs: {
@@ -16938,6 +16952,11 @@ const italian: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `Il preset macchina di ${team}. Un passaggio già fatto viene verificato prima e saltato.`,
                 machineRunning: ({ machine }: { machine: string }) => `Configurazione di ${machine}`,
                 toolsChooseMachine: 'Scegli una macchina per vedere ogni passaggio.',
+                previewLead: ({ team }: { team: string }) => `Ecco cosa vede chi entra in ${team} su una macchina nuova. Qui non viene eseguito nulla.`,
+                previewMachineTitle: 'Macchina',
+                previewMachine: 'La macchina del nuovo membro',
+                closePreview: 'Chiudi anteprima',
+                previewNote: 'Un’anteprima. Qui non viene eseguito né salvato nulla.',
                 toolsFailed: ({ machine }: { machine: string }) => `Impossibile verificare i passaggi su ${machine}`,
                 repositoriesTitle: 'Repository',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Clonati su ${machine}, poi parte la prima configurazione di ciascuno.`,

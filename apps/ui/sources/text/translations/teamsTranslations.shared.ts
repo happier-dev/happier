@@ -253,6 +253,7 @@ export const english = {
         newMembers: {
             title: 'What new members get',
             description: 'What people who join this Team start with. Each choice saves as you make it.',
+            preview: 'Preview as a member',
             repositories: {
                 title: 'Repositories',
                 description: ({ team }: { team: string }) => `Sources shared with ${team}. A checkout someone already has is used as it is.`,
@@ -260,6 +261,7 @@ export const english = {
                 emptyTitle: 'No sources shared yet',
                 emptyBody: 'Share a project’s source with the Team to offer it here.',
                 loadFailed: 'Couldn’t read the sources shared with this Team',
+                share: ({ team }: { team: string }) => `Share a source with ${team}`,
             },
             firstTask: {
                 title: 'Suggested first task',
@@ -267,6 +269,18 @@ export const english = {
                 attachedTo: ({ source }: { source: string }) => `Attached to ${source}`,
                 emptyTitle: 'No suggested first task',
                 emptyBody: 'New members start with an empty composer.',
+                choose: 'Choose a task',
+                chooseSource: 'Which repository?',
+                remove: 'Remove',
+                removeFrom: ({ source }: { source: string }) => `Remove the first task from ${source}`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} is only yours, so people who join ${team} can’t read it.`,
+            },
+            keys: {
+                title: 'Keys',
+                description: ({ team }: { team: string }) => `Keys ${team} shares with members. Sessions use them; nobody sees the value.`,
+                emptyTitle: 'No shared keys',
+                emptyBody: ({ team }: { team: string }) => `Share a key with ${team} so members can use it without seeing it.`,
+                share: 'Share a key',
             },
         },
         tabs: {
@@ -823,6 +837,11 @@ export const english = {
                 toolsDescription: ({ team }: { team: string }) => `${team}’s machine preset. A step that’s already done is checked first and skipped.`,
                 machineRunning: ({ machine }: { machine: string }) => `Setting up ${machine}`,
                 toolsChooseMachine: 'Choose a machine to see each step.',
+                previewLead: ({ team }: { team: string }) => `This is what someone joining ${team} sees on a fresh machine. Nothing here runs.`,
+                previewMachineTitle: 'Machine',
+                previewMachine: 'A new member’s own machine',
+                closePreview: 'Close preview',
+                previewNote: 'A preview. Nothing here runs or saves.',
                 toolsFailed: ({ machine }: { machine: string }) => `Couldn’t check the steps on ${machine}`,
                 repositoriesTitle: 'Repositories',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Cloned on ${machine}, then each one’s first-time setup runs.`,

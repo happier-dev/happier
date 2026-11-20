@@ -16401,6 +16401,7 @@ const polish: TeamsTranslationRoot = {
         newMembers: {
             title: 'Co dostają nowi członkowie',
             description: 'Z czym zaczynają osoby, które dołączają do tego Teamu. Każdy wybór zapisuje się od razu.',
+            preview: 'Podgląd jako członek',
             repositories: {
                 title: 'Repozytoria',
                 description: ({ team }: { team: string }) => `Źródła udostępnione zespołowi ${team}. Istniejąca kopia robocza jest używana bez zmian.`,
@@ -16408,6 +16409,7 @@ const polish: TeamsTranslationRoot = {
                 emptyTitle: 'Brak udostępnionych źródeł',
                 emptyBody: 'Udostępnij źródło projektu zespołowi, aby zaoferować je tutaj.',
                 loadFailed: 'Nie udało się odczytać źródeł udostępnionych temu Team',
+                share: ({ team }: { team: string }) => `Udostępnij źródło zespołowi ${team}`,
             },
             firstTask: {
                 title: 'Sugerowane pierwsze zadanie',
@@ -16415,6 +16417,18 @@ const polish: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `Dołączone do ${source}`,
                 emptyTitle: 'Brak sugerowanego pierwszego zadania',
                 emptyBody: 'Nowi członkowie zaczynają z pustym kompozytorem.',
+                choose: 'Wybierz zadanie',
+                chooseSource: 'Które repozytorium?',
+                remove: 'Usuń',
+                removeFrom: ({ source }: { source: string }) => `Usuń pierwsze zadanie z ${source}`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} jest tylko Twoje, więc osoby dołączające do ${team} nie mogą go przeczytać.`,
+            },
+            keys: {
+                title: 'Klucze',
+                description: ({ team }: { team: string }) => `Klucze, które ${team} udostępnia członkom. Sesje ich używają; nikt nie widzi wartości.`,
+                emptyTitle: 'Brak udostępnionych kluczy',
+                emptyBody: ({ team }: { team: string }) => `Udostępnij klucz zespołowi ${team}, aby członkowie mogli go używać bez wglądu.`,
+                share: 'Udostępnij klucz',
             },
         },
         tabs: {
@@ -16962,6 +16976,11 @@ const polish: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `Preset maszyny ${team}. Krok już wykonany jest najpierw sprawdzany i pomijany.`,
                 machineRunning: ({ machine }: { machine: string }) => `Konfigurowanie ${machine}`,
                 toolsChooseMachine: 'Wybierz maszynę, aby zobaczyć każdy krok.',
+                previewLead: ({ team }: { team: string }) => `Tak widzi to osoba dołączająca do ${team} na nowej maszynie. Nic tu się nie uruchamia.`,
+                previewMachineTitle: 'Maszyna',
+                previewMachine: 'Własna maszyna nowego członka',
+                closePreview: 'Zamknij podgląd',
+                previewNote: 'Podgląd. Nic tu się nie uruchamia ani nie zapisuje.',
                 toolsFailed: ({ machine }: { machine: string }) => `Nie udało się sprawdzić kroków na ${machine}`,
                 repositoriesTitle: 'Repozytoria',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Klonowane na ${machine}, potem uruchamia się pierwsza konfiguracja każdego z nich.`,

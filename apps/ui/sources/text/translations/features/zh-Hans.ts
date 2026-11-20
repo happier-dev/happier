@@ -16252,6 +16252,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
         newMembers: {
             title: '新成员会获得什么',
             description: '加入此 Team 的人从这些设置开始。每项选择都会立即保存。',
+            preview: '以成员身份预览',
             repositories: {
                 title: '代码仓库',
                 description: ({ team }: { team: string }) => `与 ${team} 共享的源。已有的检出会按原样使用。`,
@@ -16259,6 +16260,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 emptyTitle: '尚无共享的源',
                 emptyBody: '将项目的源与团队共享即可在此提供。',
                 loadFailed: '无法读取与此 Team 共享的源',
+                share: ({ team }: { team: string }) => `与 ${team} 共享来源`,
             },
             firstTask: {
                 title: '建议的第一个任务',
@@ -16266,6 +16268,18 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `附加到 ${source}`,
                 emptyTitle: '没有建议的第一个任务',
                 emptyBody: '新成员从空白输入框开始。',
+                choose: '选择任务',
+                chooseSource: '哪个仓库？',
+                remove: '移除',
+                removeFrom: ({ source }: { source: string }) => `从 ${source} 移除首个任务`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} 仅你可见，因此加入 ${team} 的人无法读取。`,
+            },
+            keys: {
+                title: '密钥',
+                description: ({ team }: { team: string }) => `${team} 与成员共享的密钥。会话会使用它们；没有人能看到值。`,
+                emptyTitle: '没有共享的密钥',
+                emptyBody: ({ team }: { team: string }) => `与 ${team} 共享一个密钥，成员即可在看不到值的情况下使用。`,
+                share: '共享密钥',
             },
         },
         tabs: {
@@ -16813,6 +16827,11 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `${team} 的机器预设。已完成的步骤会先检查并跳过。`,
                 machineRunning: ({ machine }: { machine: string }) => `正在设置 ${machine}`,
                 toolsChooseMachine: '选择一台机器以查看每个步骤。',
+                previewLead: ({ team }: { team: string }) => `这是加入 ${team} 的人在新机器上看到的内容。这里不会运行任何东西。`,
+                previewMachineTitle: '机器',
+                previewMachine: '新成员自己的机器',
+                closePreview: '关闭预览',
+                previewNote: '这是预览。这里不会运行或保存任何内容。',
                 toolsFailed: ({ machine }: { machine: string }) => `无法检查 ${machine} 上的步骤`,
                 repositoriesTitle: '代码库',
                 repositoriesDescription: ({ machine }: { machine: string }) => `克隆到 ${machine}，然后运行各自的首次设置。`,

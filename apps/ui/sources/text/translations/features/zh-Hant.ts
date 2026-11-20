@@ -16252,6 +16252,7 @@ const traditionalChinese: TeamsTranslationRoot = {
         newMembers: {
             title: '新成員會獲得什麼',
             description: '加入此 Team 的人從這些設定開始。每項選擇都會立即儲存。',
+            preview: '以成員身分預覽',
             repositories: {
                 title: '程式碼存放庫',
                 description: ({ team }: { team: string }) => `與 ${team} 共享的來源。已有的檢出會依原樣使用。`,
@@ -16259,6 +16260,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 emptyTitle: '尚無共享的來源',
                 emptyBody: '將專案的來源與團隊共享即可在此提供。',
                 loadFailed: '無法讀取與此 Team 共享的來源',
+                share: ({ team }: { team: string }) => `與 ${team} 共享來源`,
             },
             firstTask: {
                 title: '建議的第一個任務',
@@ -16266,6 +16268,18 @@ const traditionalChinese: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `附加到 ${source}`,
                 emptyTitle: '沒有建議的第一個任務',
                 emptyBody: '新成員從空白輸入框開始。',
+                choose: '選擇任務',
+                chooseSource: '哪個儲存庫？',
+                remove: '移除',
+                removeFrom: ({ source }: { source: string }) => `從 ${source} 移除首個任務`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} 僅你可見，因此加入 ${team} 的人無法讀取。`,
+            },
+            keys: {
+                title: '金鑰',
+                description: ({ team }: { team: string }) => `${team} 與成員共享的金鑰。工作階段會使用它們；沒有人能看到值。`,
+                emptyTitle: '沒有共享的金鑰',
+                emptyBody: ({ team }: { team: string }) => `與 ${team} 共享金鑰，成員即可在看不到值的情況下使用。`,
+                share: '共享金鑰',
             },
         },
         tabs: {
@@ -16813,6 +16827,11 @@ const traditionalChinese: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `${team} 的機器預設。已完成的步驟會先檢查並略過。`,
                 machineRunning: ({ machine }: { machine: string }) => `正在設定 ${machine}`,
                 toolsChooseMachine: '選擇一台機器以查看每個步驟。',
+                previewLead: ({ team }: { team: string }) => `這是加入 ${team} 的人在新機器上看到的內容。這裡不會執行任何東西。`,
+                previewMachineTitle: '機器',
+                previewMachine: '新成員自己的機器',
+                closePreview: '關閉預覽',
+                previewNote: '這是預覽。這裡不會執行或儲存任何內容。',
                 toolsFailed: ({ machine }: { machine: string }) => `無法檢查 ${machine} 上的步驟`,
                 repositoriesTitle: '程式庫',
                 repositoriesDescription: ({ machine }: { machine: string }) => `複製到 ${machine}，然後執行各自的首次設定。`,

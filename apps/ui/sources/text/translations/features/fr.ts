@@ -16434,6 +16434,7 @@ const french: TeamsTranslationRoot = {
         newMembers: {
             title: 'Ce que reçoivent les nouveaux membres',
             description: 'Ce avec quoi commencent les personnes qui rejoignent cette Team. Chaque choix est enregistré aussitôt.',
+            preview: 'Aperçu en tant que membre',
             repositories: {
                 title: 'Dépôts',
                 description: ({ team }: { team: string }) => `Sources partagées avec ${team}. Une copie locale déjà présente est utilisée telle quelle.`,
@@ -16441,6 +16442,7 @@ const french: TeamsTranslationRoot = {
                 emptyTitle: 'Aucune source partagée pour l’instant',
                 emptyBody: 'Partagez la source d’un projet avec l’équipe pour la proposer ici.',
                 loadFailed: 'Impossible de lire les sources partagées avec ce Team',
+                share: ({ team }: { team: string }) => `Partager une source avec ${team}`,
             },
             firstTask: {
                 title: 'Première tâche suggérée',
@@ -16448,6 +16450,18 @@ const french: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `Jointe à ${source}`,
                 emptyTitle: 'Aucune première tâche suggérée',
                 emptyBody: 'Les nouveaux membres commencent avec un compositeur vide.',
+                choose: 'Choisir une tâche',
+                chooseSource: 'Quel dépôt ?',
+                remove: 'Retirer',
+                removeFrom: ({ source }: { source: string }) => `Retirer la première tâche de ${source}`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} n’appartient qu’à vous : les personnes qui rejoignent ${team} ne peuvent pas la lire.`,
+            },
+            keys: {
+                title: 'Clés',
+                description: ({ team }: { team: string }) => `Les clés que ${team} partage avec ses membres. Les sessions les utilisent ; personne ne voit la valeur.`,
+                emptyTitle: 'Aucune clé partagée',
+                emptyBody: ({ team }: { team: string }) => `Partagez une clé avec ${team} pour que les membres l’utilisent sans la voir.`,
+                share: 'Partager une clé',
             },
         },
         tabs: {
@@ -16995,6 +17009,11 @@ const french: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `Le préréglage de machine de ${team}. Une étape déjà faite est vérifiée d’abord puis ignorée.`,
                 machineRunning: ({ machine }: { machine: string }) => `Configuration de ${machine}`,
                 toolsChooseMachine: 'Choisissez une machine pour voir chaque étape.',
+                previewLead: ({ team }: { team: string }) => `Voici ce que voit une personne qui rejoint ${team} sur une machine neuve. Rien ne s’exécute ici.`,
+                previewMachineTitle: 'Machine',
+                previewMachine: 'La machine du nouveau membre',
+                closePreview: 'Fermer l’aperçu',
+                previewNote: 'Un aperçu. Rien ne s’exécute ni ne s’enregistre.',
                 toolsFailed: ({ machine }: { machine: string }) => `Impossible de vérifier les étapes sur ${machine}`,
                 repositoriesTitle: 'Dépôts',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Clonés sur ${machine}, puis la première configuration de chacun s’exécute.`,

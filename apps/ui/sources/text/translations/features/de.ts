@@ -16192,6 +16192,7 @@ const german: TeamsTranslationRoot = {
         newMembers: {
             title: 'Was neue Mitglieder bekommen',
             description: 'Womit Personen starten, die diesem Team beitreten. Jede Auswahl wird sofort gespeichert.',
+            preview: 'Als Mitglied ansehen',
             repositories: {
                 title: 'Repositorys',
                 description: ({ team }: { team: string }) => `Mit ${team} geteilte Quellen. Ein vorhandener Checkout wird so verwendet, wie er ist.`,
@@ -16199,6 +16200,7 @@ const german: TeamsTranslationRoot = {
                 emptyTitle: 'Noch keine Quellen geteilt',
                 emptyBody: 'Teile die Quelle eines Projekts mit dem Team, um sie hier anzubieten.',
                 loadFailed: 'Die mit diesem Team geteilten Quellen konnten nicht gelesen werden',
+                share: ({ team }: { team: string }) => `Eine Quelle mit ${team} teilen`,
             },
             firstTask: {
                 title: 'Vorgeschlagene erste Aufgabe',
@@ -16206,6 +16208,18 @@ const german: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `An ${source} angehängt`,
                 emptyTitle: 'Keine vorgeschlagene erste Aufgabe',
                 emptyBody: 'Neue Mitglieder starten mit einem leeren Composer.',
+                choose: 'Aufgabe wählen',
+                chooseSource: 'Welches Repository?',
+                remove: 'Entfernen',
+                removeFrom: ({ source }: { source: string }) => `Erste Aufgabe von ${source} entfernen`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} gehört nur dir, daher können neue Mitglieder von ${team} sie nicht lesen.`,
+            },
+            keys: {
+                title: 'Schlüssel',
+                description: ({ team }: { team: string }) => `Schlüssel, die ${team} mit Mitgliedern teilt. Sitzungen nutzen sie; niemand sieht den Wert.`,
+                emptyTitle: 'Keine geteilten Schlüssel',
+                emptyBody: ({ team }: { team: string }) => `Teile einen Schlüssel mit ${team}, damit Mitglieder ihn nutzen, ohne ihn zu sehen.`,
+                share: 'Schlüssel teilen',
             },
         },
         tabs: {
@@ -16753,6 +16767,11 @@ const german: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `Das Rechner-Preset von ${team}. Ein bereits erledigter Schritt wird zuerst geprüft und übersprungen.`,
                 machineRunning: ({ machine }: { machine: string }) => `${machine} wird eingerichtet`,
                 toolsChooseMachine: 'Wähle einen Rechner, um jeden Schritt zu sehen.',
+                previewLead: ({ team }: { team: string }) => `So sieht es jemand, der ${team} auf einer neuen Maschine beitritt. Hier läuft nichts.`,
+                previewMachineTitle: 'Maschine',
+                previewMachine: 'Die eigene Maschine eines neuen Mitglieds',
+                closePreview: 'Vorschau schließen',
+                previewNote: 'Eine Vorschau. Hier läuft und speichert nichts.',
                 toolsFailed: ({ machine }: { machine: string }) => `Die Schritte auf ${machine} konnten nicht geprüft werden`,
                 repositoriesTitle: 'Repositories',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Auf ${machine} geklont, danach läuft jeweils die Ersteinrichtung.`,

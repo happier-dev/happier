@@ -16312,6 +16312,7 @@ const japanese: TeamsTranslationRoot = {
         newMembers: {
             title: '新しいメンバーが受け取るもの',
             description: 'この Team に参加した人が最初に使う設定です。選択はすぐに保存されます。',
+            preview: 'メンバーとしてプレビュー',
             repositories: {
                 title: 'リポジトリ',
                 description: ({ team }: { team: string }) => `${team} と共有しているソース。すでにあるチェックアウトはそのまま使われます。`,
@@ -16319,6 +16320,7 @@ const japanese: TeamsTranslationRoot = {
                 emptyTitle: '共有しているソースはまだありません',
                 emptyBody: 'プロジェクトのソースをチームと共有すると、ここに表示されます。',
                 loadFailed: 'この Team と共有しているソースを読み込めませんでした',
+                share: ({ team }: { team: string }) => `${team} とソースを共有`,
             },
             firstTask: {
                 title: '最初のタスクの提案',
@@ -16326,6 +16328,18 @@ const japanese: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `${source} に添付`,
                 emptyTitle: '最初のタスクの提案はありません',
                 emptyBody: '新しいメンバーは空のコンポーザーから始めます。',
+                choose: 'タスクを選択',
+                chooseSource: 'どのリポジトリ？',
+                remove: '削除',
+                removeFrom: ({ source }: { source: string }) => `${source} から最初のタスクを削除`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} はあなた専用のため、${team} に参加した人は読めません。`,
+            },
+            keys: {
+                title: 'キー',
+                description: ({ team }: { team: string }) => `${team} がメンバーと共有するキー。セッションが使用し、値は誰にも見えません。`,
+                emptyTitle: '共有キーはありません',
+                emptyBody: ({ team }: { team: string }) => `${team} とキーを共有すると、メンバーは値を見ずに使えます。`,
+                share: 'キーを共有',
             },
         },
         tabs: {
@@ -16873,6 +16887,11 @@ const japanese: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `${team} のマシンプリセット。完了済みのステップは先に確認してスキップします。`,
                 machineRunning: ({ machine }: { machine: string }) => `${machine} を設定中`,
                 toolsChooseMachine: 'マシンを選ぶと各ステップが表示されます。',
+                previewLead: ({ team }: { team: string }) => `${team} に参加した人が新しいマシンで見る画面です。ここでは何も実行されません。`,
+                previewMachineTitle: 'マシン',
+                previewMachine: '新しいメンバー自身のマシン',
+                closePreview: 'プレビューを閉じる',
+                previewNote: 'プレビューです。ここでは何も実行・保存されません。',
                 toolsFailed: ({ machine }: { machine: string }) => `${machine} のステップを確認できませんでした`,
                 repositoriesTitle: 'リポジトリ',
                 repositoriesDescription: ({ machine }: { machine: string }) => `${machine} にクローンし、それぞれの初回セットアップを実行します。`,

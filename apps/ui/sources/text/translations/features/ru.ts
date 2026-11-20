@@ -16402,6 +16402,7 @@ const russian: TeamsTranslationRoot = {
         newMembers: {
             title: 'Что получают новые участники',
             description: 'С чем начинают люди, которые присоединяются к этой Team. Каждый выбор сохраняется сразу.',
+            preview: 'Посмотреть как участник',
             repositories: {
                 title: 'Репозитории',
                 description: ({ team }: { team: string }) => `Источники, доступные ${team}. Уже существующая рабочая копия используется как есть.`,
@@ -16409,6 +16410,7 @@ const russian: TeamsTranslationRoot = {
                 emptyTitle: 'Пока нет общих источников',
                 emptyBody: 'Поделитесь источником проекта с командой, чтобы предложить его здесь.',
                 loadFailed: 'Не удалось прочитать источники, доступные этому Team',
+                share: ({ team }: { team: string }) => `Поделиться источником с ${team}`,
             },
             firstTask: {
                 title: 'Предложенная первая задача',
@@ -16416,6 +16418,18 @@ const russian: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `Прикреплена к ${source}`,
                 emptyTitle: 'Нет предложенной первой задачи',
                 emptyBody: 'Новые участники начинают с пустым редактором.',
+                choose: 'Выбрать задачу',
+                chooseSource: 'Какой репозиторий?',
+                remove: 'Убрать',
+                removeFrom: ({ source }: { source: string }) => `Убрать первую задачу из ${source}`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} доступна только вам, поэтому новые участники ${team} не смогут её прочитать.`,
+            },
+            keys: {
+                title: 'Ключи',
+                description: ({ team }: { team: string }) => `Ключи, которыми ${team} делится с участниками. Сессии их используют; значение не видит никто.`,
+                emptyTitle: 'Нет общих ключей',
+                emptyBody: ({ team }: { team: string }) => `Поделитесь ключом с ${team}, чтобы участники пользовались им, не видя его.`,
+                share: 'Поделиться ключом',
             },
         },
         tabs: {
@@ -16963,6 +16977,11 @@ const russian: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `Пресет машины ${team}. Уже выполненный шаг сначала проверяется и пропускается.`,
                 machineRunning: ({ machine }: { machine: string }) => `Настройка ${machine}`,
                 toolsChooseMachine: 'Выберите машину, чтобы увидеть каждый шаг.',
+                previewLead: ({ team }: { team: string }) => `Так это видит человек, присоединившийся к ${team}, на новой машине. Здесь ничего не запускается.`,
+                previewMachineTitle: 'Машина',
+                previewMachine: 'Собственная машина нового участника',
+                closePreview: 'Закрыть просмотр',
+                previewNote: 'Это просмотр. Здесь ничего не запускается и не сохраняется.',
                 toolsFailed: ({ machine }: { machine: string }) => `Не удалось проверить шаги на ${machine}`,
                 repositoriesTitle: 'Репозитории',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Клонируются на ${machine}, затем выполняется первичная настройка каждого.`,

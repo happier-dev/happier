@@ -16391,6 +16391,7 @@ const catalan: TeamsTranslationRoot = {
         newMembers: {
             title: 'Què reben els membres nous',
             description: 'Amb què comencen les persones que s’uneixen a aquest Team. Cada elecció es desa en fer-la.',
+            preview: 'Veure com a membre',
             repositories: {
                 title: 'Repositoris',
                 description: ({ team }: { team: string }) => `Fonts compartides amb ${team}. Una còpia local que algú ja té s’utilitza tal com és.`,
@@ -16398,6 +16399,7 @@ const catalan: TeamsTranslationRoot = {
                 emptyTitle: 'Encara no hi ha fonts compartides',
                 emptyBody: 'Comparteix la font d’un projecte amb l’equip per oferir-la aquí.',
                 loadFailed: 'No s’han pogut llegir les fonts compartides amb aquest Team',
+                share: ({ team }: { team: string }) => `Comparteix una font amb ${team}`,
             },
             firstTask: {
                 title: 'Primera tasca suggerida',
@@ -16405,6 +16407,18 @@ const catalan: TeamsTranslationRoot = {
                 attachedTo: ({ source }: { source: string }) => `Adjuntada a ${source}`,
                 emptyTitle: 'Cap primera tasca suggerida',
                 emptyBody: 'Els membres nous comencen amb el compositor buit.',
+                choose: 'Tria una tasca',
+                chooseSource: 'Quin repositori?',
+                remove: 'Treu',
+                removeFrom: ({ source }: { source: string }) => `Treu la primera tasca de ${source}`,
+                onlyYoursNote: ({ task, team }: { task: string; team: string }) => `${task} només és teva, així que qui s’uneixi a ${team} no la pot llegir.`,
+            },
+            keys: {
+                title: 'Claus',
+                description: ({ team }: { team: string }) => `Claus que ${team} comparteix amb els membres. Les sessions les fan servir; ningú no en veu el valor.`,
+                emptyTitle: 'No hi ha claus compartides',
+                emptyBody: ({ team }: { team: string }) => `Comparteix una clau amb ${team} perquè els membres la facin servir sense veure-la.`,
+                share: 'Comparteix una clau',
             },
         },
         tabs: {
@@ -16952,6 +16966,11 @@ const catalan: TeamsTranslationRoot = {
                 toolsDescription: ({ team }: { team: string }) => `El preset de màquina de ${team}. Un pas ja fet es comprova primer i s’omet.`,
                 machineRunning: ({ machine }: { machine: string }) => `S’està configurant ${machine}`,
                 toolsChooseMachine: 'Tria una màquina per veure cada pas.',
+                previewLead: ({ team }: { team: string }) => `Això és el que veu qui s’uneix a ${team} en una màquina nova. Aquí no s’executa res.`,
+                previewMachineTitle: 'Màquina',
+                previewMachine: 'La màquina del nou membre',
+                closePreview: 'Tanca la previsualització',
+                previewNote: 'Una previsualització. Aquí no s’executa ni es desa res.',
                 toolsFailed: ({ machine }: { machine: string }) => `No s’han pogut comprovar els passos a ${machine}`,
                 repositoriesTitle: 'Repositoris',
                 repositoriesDescription: ({ machine }: { machine: string }) => `Es clonen a ${machine} i després s’executa la configuració inicial de cadascun.`,
