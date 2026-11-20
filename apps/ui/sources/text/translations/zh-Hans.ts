@@ -18860,6 +18860,7 @@ settingsSession: {
           expect: "期望",
           checkFrom: "检查来源",
           checkFromWebhook: "结果通过 Webhook 送达",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `暂时无法在 ${machine} 上编辑此检查。上方显示的是已保存的值。`,
           checkEditSourceUnreachable: "无法连接已保存的事件源。",
           alertAfter: "告警条件",
           paused: "已暂停",

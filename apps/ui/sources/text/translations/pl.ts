@@ -19065,6 +19065,7 @@ settingsSession: {
           expect: "Oczekiwane",
           checkFrom: "Sprawdzaj z",
           checkFromWebhook: "Wyniki przychodzą przez webhook",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `Nie można edytować tej kontroli na maszynie ${machine}. Zapisana wartość jest widoczna powyżej.`,
           checkEditSourceUnreachable: "Nie udało się połączyć z zapisanym źródłem zdarzeń.",
           alertAfter: "Alarm po",
           paused: "Wstrzymane",

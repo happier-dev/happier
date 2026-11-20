@@ -22636,6 +22636,7 @@ const enProjects = {
         expect: "Expect",
         checkFrom: "Check from",
         checkFromWebhook: "Results arrive by webhook",
+        checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `Editing this check is unavailable on ${machine}. The saved value is shown above.`,
         checkEditSourceUnreachable: "The saved Event source couldn’t be reached.",
         alertAfter: "Alert after",
         paused: "Paused",

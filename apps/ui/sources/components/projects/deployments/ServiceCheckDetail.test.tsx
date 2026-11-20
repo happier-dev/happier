@@ -174,7 +174,7 @@ it('keeps Address editing on the Check page when the saved source needs recovery
       expect(rows).toHaveLength(1);
       expect(rows[0]?.props.mode).toBe('info');
       expect(screen.getTextContent()).toContain('https://storefront.test/health');
-      expect(screen.getTextContent()).toMatch(/saved Event source couldn’t be reached/i);
+      expect(screen.getTextContent()).toMatch(/couldn’t (?:be reached|read this check)/i);
       expect(screen.findByTestId('services.check.settings.recovery-action')).not.toBeNull();
     });
   } finally {
@@ -236,13 +236,16 @@ it('keeps saved Check settings readable with the observing Machine offline and l
   const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} />);
   try {
     await vi.waitFor(() => expect(screen.findByTestId('services.check.settings.from')).not.toBeNull());
-    for (const field of ['from', 'expect', 'alert', 'address'] as const) {
+    await screen.pressByTestIdAsync('services.check.settings.from');
+    await vi.waitFor(() => expect(screen.findByTestId('automation-event-watcher-picker')).not.toBeNull());
+    expect(screen.getTextContent()).toMatch(/choose a machine/i);
+    for (const field of ['expect', 'alert', 'address'] as const) {
       await screen.pressByTestIdAsync(`services.check.settings.${field}`);
       expect(router.push).not.toHaveBeenCalled();
       await vi.waitFor(() => {
         const row = screen.findAllByType(Item).find(item => item.props.testID === `services.check.settings.${field}`);
         expect(row?.props.mode).toBe('info');
-        expect(screen.getTextContent()).toMatch(/this machine is offline/i);
+        expect(screen.getTextContent()).toMatch(/is offline/i);
         expect(screen.findByTestId('services.check.settings.recovery-action')).not.toBeNull();
       });
     }
@@ -252,6 +255,19 @@ it('keeps saved Check settings readable with the observing Machine offline and l
     expect(screen.getTextContent()).not.toContain('happier.machine.services/health-status');
     await screen.pressByTestIdAsync('services.check.settings.recovery-action');
     expect(router.push).toHaveBeenCalledWith(machinePageHref({ door: 'rail', target: { machineId: observer.id, serverId: scope.serverId } }));
+
+    // The account read still owns the saved settings when the Machine returns but cannot serve the editor.
+    await act(async () => {
+      storage.getState().applyMachineActivityUpdates([{ id: observer.id, active: true, activeAt: Date.now() }],
+        { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    });
+    await vi.waitFor(() => {
+      const recovery = screen.findByTestId('services.check.settings.recovery');
+      expect(recovery).not.toBeNull();
+      expect(screen.getTextContent()).toContain(endpoint);
+      expect(screen.getTextContent()).toMatch(/editing this check.*unavailable.*saved value/i);
+      expect(screen.getTextContent()).toContain('tester.local');
+    });
   } finally {
     await screen.unmount();
   }

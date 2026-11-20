@@ -19353,6 +19353,7 @@ settingsSession: {
               expect: "Erwartet",
               checkFrom: "Prüfen von",
               checkFromWebhook: "Ergebnisse kommen per Webhook",
+              checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `Diese Prüfung kann auf ${machine} derzeit nicht bearbeitet werden. Oben steht der gespeicherte Wert.`,
               checkEditSourceUnreachable: "Die gespeicherte Ereignisquelle ist nicht erreichbar.",
               alertAfter: "Alarm nach",
               paused: "Pausiert",

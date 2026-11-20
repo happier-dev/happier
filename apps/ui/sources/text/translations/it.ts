@@ -19242,6 +19242,7 @@ settingsSession: {
           expect: "Atteso",
           checkFrom: "Controlla da",
           checkFromWebhook: "I risultati arrivano via webhook",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `Non puoi modificare questo controllo su ${machine}. Il valore salvato è mostrato sopra.`,
           checkEditSourceUnreachable: "Impossibile raggiungere la sorgente eventi salvata.",
           alertAfter: "Avvisa dopo",
           paused: "In pausa",

@@ -19194,6 +19194,7 @@ settingsSession: {
           expect: "Ожидается",
           checkFrom: "Проверять с",
           checkFromWebhook: "Результаты приходят через вебхук",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `Эту проверку нельзя изменить на машине ${machine}. Сохранённое значение показано выше.`,
           checkEditSourceUnreachable: "Не удалось связаться с сохранённым источником событий.",
           alertAfter: "Оповещать после",
           paused: "На паузе",

@@ -16,6 +16,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { Modal } from '@/modal';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { PluginEventAutomationComposerContent } from './PluginEventAutomationComposerContent';
 import { buildPluginEventAutomationTriggerInput } from './pluginEventAutomationDraft';
 import {
@@ -159,8 +160,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     /** Open the native setup form for a saved source as soon as its exact editor restores it. */
     savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & Readonly<{
-        chooseWatcher: boolean;
-        renderUnavailable: (retry: () => void) => React.ReactNode;
+        renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
     }>;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
@@ -191,12 +191,13 @@ export function PluginEventAutomationEditor(props: Readonly<{
     const setup = props.savedSourceSetup;
     const placement = endpointPlacement !== null && endpointPlacement.seed === currentSeed && endpointPlacement.lifetime === accountLifetime
         && accountLifetime?.isCurrent() ? endpointPlacement.machineId : null;
-    const machineId = resolvePluginEventEditorProjectionMachineId({
+    const machineId = setup?.chooseWatcher && !placement ? null : resolvePluginEventEditorProjectionMachineId({
         observation: currentObservation,
         authoringMachineId: props.authoringMachineId,
         resolvedEndpointMachineId: placement,
         selectedWatcherMachineId: currentObservation === null || setup?.chooseWatcher ? placement : null,
     });
+    const setupMachineName = useServerScopedMachineLabel(props.serverId, setup ? machineId : null);
     const projection = useDaemonMergedProjectionInputs({
         machineId,
         serverId: props.serverId,
@@ -232,27 +233,33 @@ export function PluginEventAutomationEditor(props: Readonly<{
         model.configureSource();
     }, [model.configureSource, model.sourceStatus, setup]);
     if (setup) {
-        const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp'
-            || (!setup.chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
-        if (waiting) return <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />;
-        if (setup.chooseWatcher && model.eventCatalogStatus === 'ready' && model.selectedEvent && model.sourceStatus !== 'unavailable') {
-            return <View style={styles.content}>
-                <PluginEventAutomationComposerContent model={model} watcherOnly />
-                <View style={styles.footer}>
-                    <RoundButton title={t('common.cancel')} size="small" onPress={props.onCancel} />
-                    <RoundButton title={t('common.continue')} size="small" disabled={!model.selectedWatcherOrigin}
-                        onPress={model.configureSource} />
-                </View>
-            </View>;
-        }
-        if (model.sourceStatus === 'configured') return null;
-        return setup.renderUnavailable(() => {
+        const retrySetup = () => {
             if (model.eventCatalogStatus === 'ready' && model.selectedEvent) model.configureSource();
             else {
                 nativeSetupStarted.current = false;
                 setCatalogRefresh(current => current + 1);
             }
-        });
+        };
+        if (setup.chooseWatcher && model.sourceStatus !== 'settingUp') {
+            return <View style={styles.content}>
+                <PluginEventAutomationComposerContent model={model} watcherOnly />
+                {model.selectedWatcherOrigin && (model.sourceStatus === 'unavailable' || model.eventCatalogStatus === 'unavailable')
+                    ? setup.renderUnavailable(retrySetup, setupMachineName)
+                    : model.selectedWatcherOrigin && model.eventCatalogStatus === 'loading'
+                        ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} /> : null}
+                <View style={styles.footer}>
+                    <RoundButton title={t('common.cancel')} size="small" onPress={props.onCancel} />
+                    <RoundButton title={t('common.continue')} size="small"
+                        disabled={!model.selectedWatcherOrigin || model.sourceStatus !== 'configured'}
+                        onPress={model.configureSource} />
+                </View>
+            </View>;
+        }
+        const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp'
+            || (!setup.chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
+        if (waiting) return <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />;
+        if (model.sourceStatus === 'configured') return null;
+        return setup.renderUnavailable(retrySetup, setupMachineName);
     }
     return (
         <InlinePluginEventEditor

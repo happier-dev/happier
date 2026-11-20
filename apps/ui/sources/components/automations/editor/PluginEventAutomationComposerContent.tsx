@@ -145,10 +145,12 @@ export function PluginEventAutomationComposerContent(props: Props) {
         props.model.catalogServerId ? { serverId: props.model.catalogServerId } : {});
     const watcherDisplayLabel = React.useCallback((origin: PluginMachineExecutionOriginV1): string =>
         watcherMachineNames[getPluginMachineExecutionOriginRef(origin).machineId] ?? t('machine.unnamedMachine'), [watcherMachineNames]);
-    const observationPlacementTitle = props.model.observationTransport === 'durablePush'
+    const observationPlacementTitle = props.watcherOnly ? t('projects.deployments.services.checkFrom')
+        : props.model.observationTransport === 'durablePush'
         ? t('automations.detail.event.observationPlacementTitle')
         : t('automations.detail.event.watcherTitle');
-    const chooseObservationPlacement = props.model.observationTransport === 'durablePush'
+    const chooseObservationPlacement = props.watcherOnly ? t('projects.open.chooseMachine')
+        : props.model.observationTransport === 'durablePush'
         ? t('automations.detail.event.observationPlacementTitle')
         : t('automations.form.trigger.chooseWatcher');
     const selectedEventAvailability = selectedEvent
@@ -228,12 +230,13 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 testID: `automation-event-watcher-option-${key}`,
                 label: watcherDisplayLabel(origin),
                 // The Machines picker's own reason words, ahead of the version they qualify.
-                subtitle: failure ? `${watcherFailureDetail(failure)} · ${version}` : version,
+                subtitle: props.watcherOnly ? (failure ? watcherFailureDetail(failure) : undefined)
+                    : failure ? `${watcherFailureDetail(failure)} · ${version}` : version,
                 subtitleLines: failure ? 2 : 1,
                 disabled: failure !== null,
             };
         }),
-        [props.model.watcherCandidates, watcherFailureByOrigin, watcherDisplayLabel],
+        [props.model.watcherCandidates, props.watcherOnly, watcherFailureByOrigin, watcherDisplayLabel],
     );
     // An unavailable row cannot carry its own control (a disabled row disables its secondary
     // actions), so the settings pages that fix them follow the list, once per page. A transient
@@ -248,14 +251,14 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const watcherSelectionStep = React.useMemo<SelectionListStep>(() => ({
         id: 'automation-event-watchers',
         inputPlaceholder: chooseObservationPlacement,
-        emptyStateLabel: t('automations.form.trigger.noEligibleWatchers'),
+        emptyStateLabel: props.watcherOnly ? t('runs.noMachinesAvailable') : t('automations.form.trigger.noEligibleWatchers'),
         sections: [{
             kind: 'static',
             id: 'watchers',
             options: watcherSelectionOptions,
             virtualization: 'force',
         }],
-    }), [chooseObservationPlacement, watcherSelectionOptions]);
+    }), [chooseObservationPlacement, props.watcherOnly, watcherSelectionOptions]);
     // Preserve the selected draft so the user can recover by choosing a
     // replacement source or watcher, but never make an out-of-date binding
     // look actionable while the writer is correctly refusing it.
@@ -308,11 +311,11 @@ export function PluginEventAutomationComposerContent(props: Props) {
         : null;
 
 
-    const watcherPicker = (props.model.eventCatalogStatus === 'ready' && selectedEvent)
+    const watcherPicker = props.watcherOnly || (props.model.eventCatalogStatus === 'ready' && selectedEvent)
         || watcherPickerOpen
         || (props.model.pendingEventRef && props.model.watcherCandidates.length > 0) ? (
         <>
-            <Text style={styles.fieldLabel}>{observationPlacementTitle}</Text>
+            {props.watcherOnly ? null : <Text style={styles.fieldLabel}>{observationPlacementTitle}</Text>}
             <HappierPressable
                 testID="automation-event-watcher-picker"
                 accessibilityRole="button"

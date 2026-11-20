@@ -272,6 +272,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     /** Observe submission of the native form in a direct saved-source edit. */
     savedSourceSetup?: Readonly<{
         input: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
+        chooseWatcher: boolean;
         onSettled: (settlement: Readonly<{
             kind: 'configured';
             trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>;
@@ -287,7 +288,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const machineSnapshots = useAllProfileMachineInventorySnapshots();
     const initialEditSeed = params.initialEditSeed ?? null;
-    const initialEventRef = params.initialEventRef ?? params.initialSetupSeed?.eventRef ?? null;
+    const movingSavedSource = params.savedSourceSetup?.chooseWatcher === true;
+    const initialEventRef = params.initialEventRef ?? params.initialSetupSeed?.eventRef
+        ?? (movingSavedSource ? initialEditSeed?.eventRef : null) ?? null;
     const [selectedEvent, setSelectedEvent] = React.useState<DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null>(null);
     const selectedEventRef = React.useRef(selectedEvent);
     selectedEventRef.current = selectedEvent;
@@ -514,12 +517,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         const watcherFailures: (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[] = [];
         const selectableWatchers: PluginExecutionOriginCandidateV1[] = [];
         for (const candidate of watcherCandidates) {
-            const failure = readPluginEventAutomationWatcherFailure(candidate, watcherEvent);
+            // The current Event's daemon binding belongs to its own Machine. Choose a new execution
+            // origin from Administration first; setup admits the same Event on that origin after its read.
+            const failure = readPluginEventAutomationWatcherFailure(candidate, movingSavedSource ? null : watcherEvent);
             if (failure) watcherFailures.push({ ...failure, origin: getPluginExecutionOriginCandidateOrigin(candidate) });
             else selectableWatchers.push(candidate);
         }
         return { watcherFailures, selectableWatchers };
-    }, [watcherEvent, watcherCandidates]);
+    }, [movingSavedSource, watcherEvent, watcherCandidates]);
 
     // A source seed can bind its observer to one Machine. Keep that owner's
     // settled failure visible while the ordinary editor configures that source.
@@ -651,6 +656,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         });
     }, [availabilityReader, classifyRelease, selectedWatcherOrigin, readWatcherFacts]);
 
+    const selectedMoveOrigin = movingSavedSource ? selectedWatcherOrigin : null;
     const appliedEditSeedKeyRef = React.useRef<string | null>(null);
     const editSeedKey = initialEditSeed
         ? JSON.stringify([
@@ -670,6 +676,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 : initialEditSeed.observation.watcherMaterializationRef,
             initialEditSeed.filter,
             initialEditSeed.maximumObservationAgeMs,
+            selectedMoveOrigin,
         ])
         : null;
     // Keyed on the exact persisted identities rather than the seed object, so
@@ -738,7 +745,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             : seedObservation.endpointMaterializationRef
                 ?? seededWebhookBinding?.targetMaterialization
                 ?? null;
-        const watcher = event && seededMaterializationRef
+        const watcher = !movingSavedSource && event && seededMaterializationRef
             ? watcherCandidates.find((candidate) => (
                 isPluginMachineExecutionOriginCandidateSelectable(candidate)
                 && (() => {
@@ -747,7 +754,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 })()
             )) ?? null
             : null;
-        const watcherOrigin = watcher ? getPluginExecutionOriginCandidateOrigin(watcher) : null;
+        const watcherOrigin = movingSavedSource
+            ? selectedMoveOrigin : watcher ? getPluginExecutionOriginCandidateOrigin(watcher) : null;
         const authoringDraft = event && watcherOrigin
             ? createPluginEventAutomationAuthoringDraft({
                 eligibleEvent: event,
@@ -810,7 +818,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         eventCatalogStatus,
         eligibleEvents,
         initialEditSeed,
+        movingSavedSource,
         params.onEditSeedApplied,
+        selectedMoveOrigin,
         seededWebhookBinding,
         watcherCandidates,
     ]);
@@ -1070,7 +1080,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         catalogMachineId: params.machineId,
         catalogServerId: params.serverId,
         selectedEvent,
-        pendingEventRef: !selectedEvent && !initialEditSeed && initialEventPluginId && initialEventLocalId
+        pendingEventRef: !selectedEvent && (!initialEditSeed || movingSavedSource) && initialEventPluginId && initialEventLocalId
             && accountLifetime?.isCurrent() === true
             ? { pluginId: initialEventPluginId, localId: initialEventLocalId } : null,
         selectEvent: chooseEvent,
@@ -1139,6 +1149,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         initialEditSeed,
         initialEventLocalId,
         initialEventPluginId,
+        movingSavedSource,
         selectedWatcherOrigin,
         sourceDisplayLabel,
         sourceInstanceId,

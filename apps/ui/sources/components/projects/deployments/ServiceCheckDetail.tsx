@@ -374,7 +374,7 @@ export function ServiceCheckDetail(
     {submitted?.error ? showRecovery(submitted.error.message, {
       label: t('common.retry'), onPress: () => saveSource(submitted.trigger),
     }) : submitted ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
-      : offlineObserver ? showRecovery(t('automations.detail.event.watcherMachineOffline'), {
+      : offlineObserver && editField !== 'from' ? showRecovery(t('automations.detail.event.watcherMachineOffline'), {
         label: t('runs.openMachine'),
         onPress: () => router.push(machinePageHref({ door: 'rail', target: { machineId: offlineObserver, serverId } })),
       })
@@ -387,9 +387,9 @@ export function ServiceCheckDetail(
               input: { selectedCheckId: addressEdit.checkId },
               chooseWatcher: addressEdit.field === 'from' && seed.observation.kind !== 'durablePush',
               onSettled: finishAddressSetup,
-              renderUnavailable: retry => showRecovery(t('projects.deployments.services.checkEditSourceUnreachable'), {
-                label: t('common.retry'), onPress: retry,
-              }),
+              renderUnavailable: (retry, machineName) => showRecovery(
+                t(`${k}.checkEditUnavailableOnMachine`, { machine: machineName ?? t('machine.unnamedMachine') }),
+                { label: t('common.retry'), onPress: retry }),
             }}
             onComplete={() => {}}
             onCancel={() => setAddressEdit(null)} />

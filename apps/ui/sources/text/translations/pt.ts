@@ -19346,6 +19346,7 @@ settingsSession: {
           expect: "Esperado",
           checkFrom: "Verificar a partir de",
           checkFromWebhook: "Os resultados chegam por webhook",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `Não é possível editar esta verificação em ${machine}. O valor guardado é mostrado acima.`,
           checkEditSourceUnreachable: "Não foi possível acessar a fonte de eventos salva.",
           alertAfter: "Alertar após",
           paused: "Pausado",

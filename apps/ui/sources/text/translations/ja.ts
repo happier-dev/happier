@@ -19154,6 +19154,7 @@ settingsSession: {
           expect: "期待値",
           checkFrom: "チェック元",
           checkFromWebhook: "結果は Webhook で届きます",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `${machine} ではこのチェックを編集できません。上に保存済みの値が表示されています。`,
           checkEditSourceUnreachable: "保存済みのイベントソースに接続できませんでした。",
           alertAfter: "アラートの条件",
           paused: "一時停止",

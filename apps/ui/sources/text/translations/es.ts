@@ -19240,6 +19240,7 @@ settingsSession: {
           expect: "Esperado",
           checkFrom: "Comprobar desde",
           checkFromWebhook: "Los resultados llegan por webhook",
+          checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `No se puede editar esta comprobación en ${machine}. El valor guardado se muestra arriba.`,
           checkEditSourceUnreachable: "No se pudo acceder a la fuente de eventos guardada.",
           alertAfter: "Alertar tras",
           paused: "En pausa",

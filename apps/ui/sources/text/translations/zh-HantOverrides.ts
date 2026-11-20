@@ -14046,6 +14046,7 @@ settingsSession: {
       title: "專案",
         deployments: {
             services: {
+                checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `目前無法在 ${machine} 上編輯這項檢查。上方顯示已儲存的值。`,
                 checkEditSourceUnreachable: "無法連線到已儲存的事件來源。",
             },
             databaseQuery: {
