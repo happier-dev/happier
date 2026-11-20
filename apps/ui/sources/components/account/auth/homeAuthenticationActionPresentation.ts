@@ -1,5 +1,5 @@
 import type { HomeAuthenticationExecution } from '@/auth/capabilities/authMethodCapabilities';
-import { getAuthProvider } from '@/auth/providers/registry';
+import { authProviderRegistry, getAuthProvider, normalizeProviderId } from '@/auth/providers/registry';
 import type { AuthEntryProviderPresentationV1 } from '@happier-dev/protocol/auth/entry';
 import { asIconName } from '@/components/ui/icons/asIconName';
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -65,15 +65,23 @@ export function describeHomeAuthenticationAction(input: Readonly<{
     };
 }
 
-/** An OAuth provider's mark wherever a sign-in way or its return names it: its own logo when one ships, else sign-in. */
+/** The same catalog presentation follows an external sign-in into its browser wait and return. */
+export function describeOAuthProvider(
+    providerId: string,
+    presentation?: Pick<AuthEntryProviderPresentationV1, 'displayName' | 'iconHint'>,
+): Readonly<{ providerName: string; badgeIconName?: IconName }> {
+    const provider = getAuthProvider(providerId);
+    const hint = normalizeProviderId(presentation?.iconHint);
+    const hintedProvider = hint ? authProviderRegistry.find((entry) => normalizeProviderId(entry.id) === hint) : undefined;
+    return {
+        providerName: presentation?.displayName ?? provider?.displayName ?? providerId,
+        badgeIconName: asIconName(hintedProvider?.badgeIconName) ?? asIconName(hint) ?? asIconName(provider?.badgeIconName),
+    };
+}
+
 export function oauthProviderIconName(
     providerId: string,
-    presentation?: Pick<AuthEntryProviderPresentationV1, 'iconHint' | 'providerKind'>,
+    presentation?: AuthEntryProviderPresentationV1,
 ): IconName {
-    const registeredId = presentation?.providerKind === 'github_app_identity' || presentation?.iconHint === 'github'
-        ? 'github'
-        : providerId;
-    return asIconName(getAuthProvider(registeredId)?.badgeIconName)
-        ?? asIconName(presentation?.iconHint)
-        ?? 'sign-in';
+    return describeOAuthProvider(providerId, presentation).badgeIconName ?? 'sign-in';
 }

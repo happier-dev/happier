@@ -8,7 +8,7 @@ import { AuthEntryProjectionV1Schema, type AuthEntryActionV1 } from '@happier-de
 
 
 const nativeStorage = new Map<string, string>();
-const boundary = vi.hoisted(() => ({ request: vi.fn(), openURL: vi.fn(async () => {}), platformOS: 'web' as 'web' | 'ios' }));
+const boundary = vi.hoisted(() => ({ request: vi.fn(), openURL: vi.fn(async () => {}), platformOS: 'web' as 'web' | 'ios' | 'android' }));
 
 installTokenStorageWebPlatformMocks({ reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -38,6 +38,7 @@ const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { setReducedMotionPreferenceOverride } = await import('@/hooks/ui/useReducedMotionPreference');
 const { dispatchEscapeToLayerStack } = await import('@/keyboard/escape');
 const { StepMotionStage } = await import('@/components/ui/motion/stepMotion/StepMotionStage');
+const { Icon } = await import('@/components/ui/icons/Icon');
 const { HomeAuthenticationFlow } = await import('./HomeAuthenticationFlow');
 
 function actionFromEntry(action: Extract<AuthEntryActionV1, { kind: 'authenticate' }>) {
@@ -190,12 +191,14 @@ describe('HomeAuthenticationFlow', () => {
     });
 
     it.each([
-        ['ios', 'github', false, 'GitHub'],
-        ['tauri', 'github', true, 'GitHub'],
-        ['tauri', 'acme-oidc', true, 'Acme SSO'],
-        ['tauri', 'github', false, 'GitHub'],
+        ['ios', 'github', false, 'GitHub', 'github-logo'],
+        ['ios', 'acme-oidc', false, 'Acme SSO', 'shield-check'],
+        ['android', 'vercel', false, 'Vercel', 'globe'],
+        ['tauri', 'github', true, 'GitHub', 'github-logo'],
+        ['tauri', 'acme-oidc', true, 'Acme SSO', 'shield-check'],
+        ['tauri', 'github', false, 'GitHub', 'github-logo'],
     ] as const)(
-    'opens Home sign-in on %s for %s (desktop callback negotiated: %s)', async (host, providerId, desktopCallback, displayName) => {
+    'opens Home sign-in on %s for %s (desktop callback negotiated: %s)', async (host, providerId, desktopCallback, displayName, iconHint) => {
         const invoke = vi.fn(async () => null);
         const sameTab = vi.fn();
         boundary.platformOS = host === 'tauri' ? 'web' : host;
@@ -209,7 +212,7 @@ describe('HomeAuthenticationFlow', () => {
             ...(desktopCallback ? { desktopAttemptId: 'home-attempt' } : {}),
         }));
         const action = actionFromEntry({ kind: 'authenticate', methodId: providerId, action: 'login', mode: 'keyless', origin: 'home',
-            presentation: { displayName } });
+            presentation: { displayName, iconHint } });
         const testId = `home-auth-${providerId}-login-keyless`;
         const serverUrl = 'https://home.example.test';
         const serverId = 'srv_home';
@@ -252,6 +255,7 @@ describe('HomeAuthenticationFlow', () => {
         }
         expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
         expect(screen.getTextContent()).toContain(displayName);
+        expect(screen.findByTestId('oauth-browser-wait')?.findAllByType(Icon).map((icon) => icon.props.name)).toContain(iconHint);
         expect(screen.findByTestId(testId)).toBeNull();
         expect(await TokenStorage.readPendingExternalAuthStateForServerUrl(serverUrl, { serverId }))
             .toMatchObject({ value: { provider: providerId, returnTo: '/projects/setup',

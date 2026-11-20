@@ -5,6 +5,7 @@ import type { AuthCredentialLifecycleResult, AuthCredentialPersistenceOptions } 
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { createHomeOAuthRequestContext, createTeamOAuthRequestContext } from '@/auth/providers/homeExternalAuthTarget';
 import { getAuthProvider } from '@/auth/providers/registry';
+import { describeOAuthProvider } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import type { ExternalAuthStartInput, TeamOAuthRequestContext, TeamOAuthStart } from '@/auth/providers/types';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { type AccountHomeAuthenticationContinuation, type AuthCredentials, type PendingExternalAuth, TokenStorage } from '@/auth/storage/tokenStorage';
@@ -442,8 +443,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
             if (options.signal?.aborted) return;
             if (handoff === 'system_browser') {
                 options.onBrowserHandoff?.({
-                    providerName: provider.displayName ?? providerId,
-                    badgeIconName: provider.badgeIconName,
+                    ...describeOAuthProvider(providerId, request.method.presentation),
                     cancel: async () => {
                         await TokenStorage.clearPendingExternalAuth({ ...callbackTarget, removeExact: pending }).catch(() => false);
                     },

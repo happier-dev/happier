@@ -473,11 +473,14 @@ describe('oauth/[provider] return (keyless)', () => {
         });
     });
 
-    it('names a failed managed GitHub sign-in and offers Back to the originating Home', async () => {
+    it.each([
+        [{ displayName: 'GitHub', iconHint: 'github', providerKind: 'github_app_identity' }, 'github-logo'],
+        [{ displayName: 'Acme SSO', iconHint: 'shield-check', providerKind: 'oidc' }, 'shield-check'],
+    ] as const)('uses the catalog mark for a failed $0.displayName sign-in and offers Back to the originating Home', async (presentation, icon) => {
         const provider = 'e031151c-a419-4cc1-93ca-50d0a51f06a1';
         setPendingExternalAuthState({
             ...oauthDefaultHome, provider, proof: 'proof', mode: 'keyless', returnTo: '/setup/wizard',
-            presentation: { displayName: 'GitHub', iconHint: 'github', providerKind: 'github_app_identity' },
+            presentation,
         });
         localSearchParamsMock.mockReturnValue({
             provider, flow: 'auth', error: 'missing_access_token', error_description: 'unsafe provider text',
@@ -486,7 +489,7 @@ describe('oauth/[provider] return (keyless)', () => {
         await runWithOAuthScreen(async (tree) => {
             const [failure] = tree.root.findAllByProps({ testID: 'oauth-external-failure' });
             expect(failure).toBeDefined();
-            expect(failure.findAllByType(StepMark).map((mark) => mark.props.iconName)).toContain('github-logo');
+            expect(failure.findAllByType(StepMark).map((mark) => mark.props.iconName)).toContain(icon);
             const result = JSON.stringify(tree.toJSON());
             expect(result).not.toContain(t('errors.operationFailed'));
             expect(result).not.toContain('unsafe provider text');
