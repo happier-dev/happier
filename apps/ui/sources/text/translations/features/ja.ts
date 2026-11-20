@@ -8875,7 +8875,6 @@ const machineDetailPageTranslations = { ja: translated({
                     empty: ({ machine }: { machine: string }) => `${machine} にはまだありません。`,
                     emptyTitle: ({ machine }: { machine: string }) => `作業を ${machine} から切り離す`,
                     emptyReason: ({ machine }: { machine: string }) => `サンドボックスは、セッション、ボット、オートメーションに ${machine} 内の専用マシンを用意します。共有しない限り、あなたのものは何も入りません。`,
-                    nativeUnavailable: "エージェント自身のサンドボックスは使えません",
                     missingType: "このサンドボックスの種類はここではもう設定されていません。",
                     presetUnavailable: "プリセットを利用できません",
                     checkFailed: "これらのサンドボックスの種類を確認できませんでした。",

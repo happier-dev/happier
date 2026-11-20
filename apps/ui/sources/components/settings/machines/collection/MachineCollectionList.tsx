@@ -208,6 +208,8 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
                 testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
                 title={row.titleParts.name}
                 titleQualifier={row.titleParts.hint}
+                // One line with or without a qualifier: a wrapping name ("Docker container") drew under its end word.
+                titleLines={1}
                 detail={liveSummary ? undefined : railWord ?? undefined}
                 subtitle={liveSummary ? (
                     <MachineResourceLiveDemand

@@ -8815,7 +8815,6 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                     empty: ({ machine }: { machine: string }) => `${machine} 上還沒有。`,
                     emptyTitle: ({ machine }: { machine: string }) => `讓工作與 ${machine} 隔開`,
                     emptyReason: ({ machine }: { machine: string }) => `沙盒為工作階段、機器人或自動化在 ${machine} 內提供專屬機器，除非你分享，否則不包含你的任何內容。`,
-                    nativeUnavailable: "無法使用代理自己的沙箱",
                     missingType: "此沙箱類型已不在這裡設定。",
                     presetUnavailable: "預設無法使用",
                     checkFailed: "無法檢查這些沙箱類型。",

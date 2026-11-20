@@ -8916,7 +8916,6 @@ const machineDetailPageTranslations = { pt: translated({
                     empty: ({ machine }: { machine: string }) => `Nenhum ainda em ${machine}.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Mantenha o trabalho separado de ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Um sandbox dá a sessões, bots ou automações a própria máquina dentro de ${machine}, sem nada seu a menos que você compartilhe.`,
-                    nativeUnavailable: "Sandbox próprio do agente não disponível",
                     missingType: "Este tipo de sandbox não está mais configurado aqui.",
                     presetUnavailable: "Preset indisponível",
                     checkFailed: "Não foi possível verificar estes tipos de sandbox.",

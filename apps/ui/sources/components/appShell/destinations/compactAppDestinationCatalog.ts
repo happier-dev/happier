@@ -407,10 +407,11 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     {
         // One Machines page with two doors (R1): this rail door opens it beside the machine list, without
         // the Settings column; Settings → Machines is the other door. The rail's footer Machines icon is
-        // this destination's control (its popover), so no second rail icon is drawn.
+        // this destination's control (its popover), so no second rail icon is drawn. Presets is a record table the page
+        // opens, not a fleet page: a phone keeps its Back to Machines (round 18).
         id: 'machines', titleKey: 'settings.machines', icon: 'desktop', placement: { kind: 'rail', region: 'account' },
         column: 'machines', activation: 'navigate', routePath: '/machines',
-        currentRoutePatterns: ['/machines/[...rest]'], mainScreenRoutePaths: ['/machines/updates', '/machines/activity', '/machines/presets'], railControl: 'footer',
+        currentRoutePatterns: ['/machines/[...rest]'], mainScreenRoutePaths: ['/machines/updates', '/machines/activity'], railControl: 'footer',
         workspaceNavigationIdentity: { resourceParam: 'id', scopeParams: ['serverId'] },
     },
     {

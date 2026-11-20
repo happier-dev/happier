@@ -8953,7 +8953,6 @@ const machineDetailPageTranslations = { ru: translated({
                     empty: ({ machine }: { machine: string }) => `На ${machine} пока нет.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Держите работу отдельно от ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Песочница даёт сессиям, ботам или автоматизациям собственную машину внутри ${machine}, без ваших данных, если вы ими не поделитесь.`,
-                    nativeUnavailable: "Своя песочница агента недоступна",
                     missingType: "Этот тип песочницы здесь больше не настроен.",
                     presetUnavailable: "Пресет недоступен",
                     checkFailed: "Не удалось проверить эти типы песочниц.",

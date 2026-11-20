@@ -8815,7 +8815,6 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     empty: ({ machine }: { machine: string }) => `${machine} 上还没有。`,
                     emptyTitle: ({ machine }: { machine: string }) => `让工作与 ${machine} 隔开`,
                     emptyReason: ({ machine }: { machine: string }) => `沙盒为会话、机器人或自动化在 ${machine} 内提供专属机器，除非你分享，否则不包含你的任何内容。`,
-                    nativeUnavailable: "不支持智能体自己的沙盒",
                     missingType: "此沙盒类型已不在这里设置。",
                     presetUnavailable: "预设不可用",
                     checkFailed: "无法检查这些沙盒类型。",

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
-import { Redirect, useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
+import { Redirect, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -13,7 +13,7 @@ import { ManagedMachineSections, useManagedMachineHeaderIdentity } from './Manag
 import { useAdmittedManagedMachineRow, useManagedMachineInventory } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
-import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { machinePageHref, machinesIndexHref } from '@/components/machines/page/machinePageHref';
 import { projectManagedMachineDetailRead } from './managedMachineDetailPresentation';
 import { managedMachineEnrolledDetailId } from './managedCreationPresentation';
 import { useManagedMachineRouteScope } from './useManagedMachineRouteScope';
@@ -41,6 +41,7 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
     const { theme } = useUnistyles();
     const layout = useHappierCollectionLayout();
     const door = useMachinesDoor();
+    const router = useRouter();
     const serverId = resolveServerProfileScopeIdForIdentifier(props.serverId) || props.serverId;
     const serverIds = React.useMemo(() => serverId && props.managedId ? [serverId] : [], [serverId, props.managedId]);
     const inventory = useManagedMachineInventory(serverIds, props.managedId || undefined, props.executeAction);
@@ -68,6 +69,8 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
     const showMachine = Boolean(machine && !forbidden);
     const showHeaderIdentity = Boolean(headerMachine && !forbidden);
     const loading = inventory.loading && !machine;
+    // A confirmed-absent machine says it is gone and leads back to Machines; a Retry can't bring it back (MB-3).
+    const gone = detailRead.missing && !forbidden && !loading;
     const reason = forbidden || accountState?.resolution.kind === 'signed_out'
         ? t('managedMachines.detail.readRefused') : detailRead.missing
             ? t('managedMachines.detail.missing') : t('managedMachines.detail.loadFailed');
@@ -76,16 +79,17 @@ function ManagedMachineDetailBody(props: ManagedMachineDetailProps) {
         // A pending read claims nothing: the neutral machine header (as a machine page while it loads) until
         // the record or its list row names it; the "Created machine" copy belongs only to a settled failed read.
         header={{ title: showHeaderIdentity ? identity!.name
-                : loading ? t('machineDetailPage.placeholderTitle') : t('managedMachines.detail.unreadTitle'), leading: mark,
+                : loading ? t('machineDetailPage.placeholderTitle') : gone ? t('managedMachines.detail.goneTitle') : t('managedMachines.detail.unreadTitle'), leading: mark,
             description: showHeaderIdentity ? identity?.description ?? undefined
-                : loading ? undefined : t('managedMachines.detail.creationDescription'),
+                : loading || gone ? undefined : t('managedMachines.detail.creationDescription'),
             meta: [{ key: 'home', text: homeName }, ...(showHeaderIdentity ? identity?.meta ?? [] : [])] }}
         /* The sections own the receipt beside them, with Stop and Delete at its foot. */
         receipt={null}>
         <ManagedMachineReadApprovalNotice serverId={serverId} entry={entry} />
         {!showMachine ? <SurfaceStateCard testID="managed-machine.read-state" kind={loading ? 'loading' : forbidden ? 'denied' : 'unavailable'}
             title={loading ? t('common.loading') : reason} diagnosticCode={entry?.errorCode}
-            action={loading ? undefined : { label: t('common.retry'), onPress: () => { setActionError(null); inventory.refresh(); } }} /> : <>
+            action={loading ? undefined : gone ? { label: t('managedMachines.detail.backToMachines'), onPress: () => router.push(machinesIndexHref(door) as never) }
+                : { label: t('common.retry'), onPress: () => { setActionError(null); inventory.refresh(); } }} /> : <>
             <ManagedMachineSections machine={machine!} serverId={serverId} executeAction={executeAction}
                 binding={inventory.bindings.get(serverId)} current={entry?.status === 'ready'}
                 onChanged={inventory.refresh} onDenied={setActionError}

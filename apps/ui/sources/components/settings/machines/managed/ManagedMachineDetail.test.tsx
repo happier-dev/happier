@@ -4892,6 +4892,16 @@ describe('managed Machine detail', () => {
         await flushHookEffects({ cycles: 25 });
         expect(screen.getTextContent()).toContain(t(code === 'managed_not_found' ? 'managedMachines.detail.missing' : 'managedMachines.detail.loadFailed'));
         expect(screen.getTextContent()).not.toContain(t(code === 'managed_not_found' ? 'managedMachines.detail.loadFailed' : 'managedMachines.detail.missing'));
+        // MB-3: a confirmed-gone machine names itself gone and leads back to Machines; a Retry can't bring it back.
+        const header = screen.tree.findByType(ManagedReceiptPageLayout).props.header;
+        const state = screen.tree.findAll(node => node.props.testID === 'managed-machine.read-state' && 'action' in node.props)[0];
+        if (code === 'managed_not_found') {
+            expect(header.title).toBe(t('managedMachines.detail.goneTitle'));
+            expect(header.description).toBeUndefined();
+            expect(state?.props.action?.label).toBe(t('managedMachines.detail.backToMachines'));
+        } else {
+            expect(state?.props.action?.label).toBe(t('common.retry'));
+        }
         expect(listReads).toBe(0);
         await screen.unmount();
     });

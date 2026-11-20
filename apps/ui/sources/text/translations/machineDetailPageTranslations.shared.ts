@@ -62,7 +62,6 @@ export const english = {
                 empty: ({ machine }: { machine: string }) => `None yet on ${machine}.`,
                 emptyTitle: ({ machine }: { machine: string }) => `Keep work apart from ${machine}`,
                 emptyReason: ({ machine }: { machine: string }) => `A sandbox gives sessions, bots or automations their own machine inside ${machine}, with nothing of yours unless you share it.`,
-                nativeUnavailable: "Agent’s own sandbox not available",
                 missingType: "This sandbox type isn’t set up here anymore.",
                 presetUnavailable: "Preset unavailable",
                 checkFailed: "Couldn’t check these sandbox types.",

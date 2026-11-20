@@ -382,11 +382,8 @@ function MachineIsolationSandboxesTable(
         preset: entry.preset ?? null,
         title: entry.name,
         ...(entry.running === undefined ? {} : { inUse: entry.running }),
-        ...(entry.missingType
-          ? { note: t('machineDetailPage.isolation.sandboxes.missingType') }
-          : entry.supportsAgentNativeSandbox === false
-            ? { note: t('machineDetailPage.isolation.sandboxes.nativeUnavailable') }
-            : {}),
+        // The Agent's own sandbox row above says which types can't offer it; the row keeps to what this type is.
+        ...(entry.missingType ? { note: t('machineDetailPage.isolation.sandboxes.missingType') } : {}),
       })),
     [props.entries],
   );

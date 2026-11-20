@@ -849,7 +849,9 @@ describe('resolveCurrentAppDestination', () => {
         }
         // Pages a main screen pushes, an entry inside a column, and routes no destination claims keep their Back.
         for (const sub of ['/boards/board-1', '/discussions/d-1', '/artifacts/artifact-1', '/friends/search', '/plugins/listing', '/machines/m-1',
-            '/plugins/acme.notes/notes/history/1', '/external/browse', '/plugins/bots', '/new/pick/server', '/settings/appearance']) {
+            '/plugins/acme.notes/notes/history/1', '/external/browse', '/plugins/bots', '/new/pick/server', '/settings/appearance',
+            // Presets is a record collection the Machines page opens: on a phone it keeps its Back to Machines (round 18).
+            '/machines/presets']) {
             expect([sub, root(sub)]).toEqual([sub, false]);
         }
     });

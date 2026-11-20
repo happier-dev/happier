@@ -8952,7 +8952,6 @@ const machineDetailPageTranslations = { pl: translated({
                     empty: ({ machine }: { machine: string }) => `Jeszcze żadnej na ${machine}.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Oddziel pracę od ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Sandbox daje sesjom, botom lub automatyzacjom własną maszynę wewnątrz ${machine}, bez niczego twojego, chyba że to udostępnisz.`,
-                    nativeUnavailable: "Własna piaskownica agenta niedostępna",
                     missingType: "Ten typ piaskownicy nie jest już tu skonfigurowany.",
                     presetUnavailable: "Ustawienie wstępne niedostępne",
                     checkFailed: "Nie udało się sprawdzić tych typów piaskownic.",
