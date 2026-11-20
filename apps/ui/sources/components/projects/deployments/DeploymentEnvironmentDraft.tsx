@@ -76,7 +76,7 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
-import { DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
+import { DeploymentOwnMachineCost, DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
 import { describeDeploymentPlatformRefusal } from './deploymentPlatformRefusal';
 import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
@@ -108,6 +108,8 @@ export type DeploymentDraftStep = 'where' | 'configure' | 'review';
 /** What a stepped host needs to frame the current step: its facts for the summary, and the step's one action. */
 export type DeploymentDraftFrame = Readonly<{
   step: DeploymentDraftStep;
+  /** Where's Continue is disabled for want of an answering Machine: what it waits for, for the host's footer. */
+  waitingFor?: string | null;
   /** The answered Where: a platform's name or the Machine's. */
   runsOn: Readonly<{ kind: 'machine' | 'platform'; title: string | null }> | null;
   /** The Project's repository and branch, once its Source is read. */
@@ -507,6 +509,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     const whereRepositoryId = whereRepository?.id;
     // Where continues only on a Machine that answers (whereErr): an away one says so in its tile instead.
     const whereReady = chosen !== null && answers(chosen) && platformDefinitionAccepted;
+    // Every deploy, a platform's too, runs from an answering Machine; without one Where says so where Continue is.
+    const whereWaitingFor = draftStep === 'where' && platformDefinitionAccepted && (chosen === null || !answers(chosen))
+      ? t('newApp.deploy.waitMachine') : null;
     const pressStep = useEventCallback(() => {
       if (draftStep !== 'where') { void save(); return; }
       if (!whereReady) return;
@@ -543,6 +548,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const frame = React.useMemo((): DeploymentDraftFrame => ({
       step: draftStep,
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
+      waitingFor: whereWaitingFor,
       source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
       ownServerSourceCompose: catalogProvidesCompose ? { kind: 'catalogTemplate' }
         : generatesComposeFromImage ? { kind: 'generatedFromImage' }
@@ -554,7 +560,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       refused: draftStep === 'review' && !partial && refusal?.kind === 'refused',
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, sourceNote, branch, rootCompose, whereRepositoryId,
+    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, sourceTitle, sourceNote, branch, rootCompose, whereRepositoryId,
       catalogProvidesCompose, generatesComposeFromImage, appName, partial, refusal, primary.title, primary.disabled,
       primary.loading, primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
@@ -678,7 +684,10 @@ export const DeploymentEnvironmentDraft = React.memo(
                 ? <DeploymentTargetPlansForAccount account={platformAccount} plans={platformTarget.plans} platform={platformTarget.title}
                   columns={!props.phone} phone={props.phone} testID="project-deployments.draft.cost.plans" />
                 : <DeploymentTargetPlans plans={platformTarget.plans} platform={platformTarget.title} columns={!props.phone}
-                  phone={props.phone} testID="project-deployments.draft.cost.plans" />) : undefined} />
+                  phone={props.phone} testID="project-deployments.draft.cost.plans" />)
+                : reviewPlan?.runsOn.kind === 'machine'
+                  ? <DeploymentOwnMachineCost machine={reviewPlan.runsOn.machine} testID="project-deployments.draft.cost.ownMachine" />
+                  : undefined} />
           ) : null;
     // What making this platform resource means, in the platform's own words (deploy auto-mode U8, e.g. a Pages source
     // is final at creation): one field from its inspect, shown before Create.

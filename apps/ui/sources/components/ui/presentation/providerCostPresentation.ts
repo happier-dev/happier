@@ -63,6 +63,14 @@ export function formatDeclaredPlanSource(source: Readonly<{ url: string; checked
   return t('managedMachines.price.checked', { provider: sourceName(source.url) ?? source.url, time }).replace(` ${time}`, `\u00a0${time}`);
 }
 
+/**
+ * A deploy onto a Machine the person already has adds no bill of its own (journey-deploy revM "No extra cost"). No owner
+ * publishes a deploy's usage estimate, so none is said.
+ */
+export function presentOwnMachineDeployCost(machine: string): Readonly<{ value: string; detail: string }> {
+  return { value: t('newApp.deploy.plan.ownMachineCost'), detail: t('newApp.deploy.plan.ownMachineCostDetail', { machine }) };
+}
+
 /** A declared plan's price (Protocol ProviderAmountV1), said like any provider price: "$20.00 a month". */
 export function formatDeclaredPlanPrice(price: ProviderAmountV1): string {
   return `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`;

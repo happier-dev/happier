@@ -222,6 +222,9 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(screen.findByTestId('project-deployments.draft.defaults.builder')).toBeNull();
       expect(screen.findByTestId('project-deployments.draft.defaults.controller')).toBeNull();
       expect(screen.findByTestId('project-deployments.draft.defaults.retention')).not.toBeNull();
+      // Cost on a Machine the person already has: "No extra cost" through the cost presenter, with no invented usage
+      // estimate (journey-deploy revM; DESIGN-ACCEPT-2 R-b).
+      expect(screen.findByTestId('project-deployments.draft.cost.ownMachine')).not.toBeNull();
       // Review says what Happier creates and what happens next, from the operands it prepared (journey-deploy revM):
       // a new Project and its Environment are saved, then the person deploys from the Environment.
       expect(screen.findByTestId('project-deployments.draft.creates.project')).not.toBeNull();
@@ -394,10 +397,13 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       // The away Machine says so inside its tile, and Where cannot continue on it.
       expect(screen.findByTestId('project-deployments.draft.machineAway')).not.toBeNull();
       expect(frames[frames.length - 1]!.primary.disabled).toBe(true);
+      // A disabled Continue says what it waits for, for the host's footer (DESIGN-ACCEPT-2 W7).
+      expect(frames[frames.length - 1]!.waitingFor).toBeTruthy();
       const machineField = screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')!;
       await act(async () => machineField.props.onSelectMachine({ id: 'runtime' }));
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(frames[frames.length - 1]!.primary.disabled).toBe(false); });
       expect(screen.findByTestId('project-deployments.draft.machineAway')).toBeNull();
+      expect(frames[frames.length - 1]!.waitingFor ?? null).toBeNull();
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });

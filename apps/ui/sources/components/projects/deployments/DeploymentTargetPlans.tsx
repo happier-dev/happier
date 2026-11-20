@@ -8,7 +8,7 @@ import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/componen
 import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { formatDeclaredPlanPrice, formatDeclaredPlanSource } from '@/components/ui/presentation/providerCostPresentation';
+import { formatDeclaredPlanPrice, formatDeclaredPlanSource, presentOwnMachineDeployCost } from '@/components/ui/presentation/providerCostPresentation';
 import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
@@ -132,6 +132,18 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
           )}
         </Popover>
       ) : null}
+    </View>
+  );
+}
+
+/** Review's Cost for a deploy onto the person's own Machine: the cost owner's headline and why (journey-deploy revM). */
+export function DeploymentOwnMachineCost(props: Readonly<{ machine: string; testID: string }>) {
+  const { theme } = useUnistyles();
+  const cost = presentOwnMachineDeployCost(props.machine);
+  return (
+    <View testID={props.testID} style={styles.plan}>
+      <Text variant="body" emphasis="medium" style={{ color: theme.colors.text.primary }}>{cost.value}</Text>
+      <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{cost.detail}</Text>
     </View>
   );
 }
