@@ -1,3 +1,8 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
+
 import { expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
@@ -80,14 +85,76 @@ it.each([false, true])('excludes multiline exception content from the real phase
   const error = new Error('private message\n    at /CREDENTIAL_SENTINEL.js:7:9');
   if (unproven) error.stack = '    at /UNPROVEN_SENTINEL.js:1:2';
   try {
-    refuseExternalActionPhase('requester_settings', 'machine', error);
+    const failure = refuseExternalActionPhase('requester_settings', 'machine', error);
     expect(JSON.stringify(log.mock.calls)).not.toContain('SENTINEL');
-    expect(log.mock.calls).toEqual(expect.arrayContaining([
-      [expect.any(String), expect.objectContaining({ stackFrames: unproven ? [] : expect.arrayContaining([
-        expect.objectContaining({ file: expect.stringContaining('externalActionPhase.test.ts') }),
-      ]) })],
-    ]));
+    const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+    expect(log.mock.calls).toEqual([['[external-action-phase]', {
+      machineId: 'machine', phase: failure.phase, message: failure.message, ...diagnostic,
+    }]]);
+    if (unproven) expect(diagnostic.stackFrames).toEqual([]);
+    else expect(diagnostic.stackFrames[0]?.file).toContain('externalActionPhase.test.ts');
   } finally { log.mockRestore(); }
+});
+
+it.each([
+  { kind: 'module_link', source: "import { missingBinding } from './dependency.mjs';" },
+  { kind: 'module_parse', source: 'export const invalid = ;' },
+])('keeps only location metadata for a native ESM $kind failure', async ({ kind, source }) => {
+  const scratchPath = '.project/tmp/COORD/phase-error-location-1120';
+  const scratch = fileURLToPath(new URL(`../../../../../${scratchPath}/`, import.meta.url));
+  await mkdir(scratch, { recursive: true });
+  const dir = await mkdtemp(join(scratch, 'modules-'));
+  const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  try {
+    const importer = join(dir, 'importer.mjs');
+    await writeFile(importer, `${source} // PRIVATE_SOURCE_COMMENT`);
+    await writeFile(join(dir, 'dependency.mjs'), 'export const presentBinding = 1;');
+    // Keep import() outside the Vite transform to exercise the native loader.
+    const loader = join(dir, 'load.cjs');
+    await writeFile(loader, 'module.exports = () => import("./importer.mjs");');
+    const nativeImport: () => Promise<unknown> = createRequire(import.meta.url)(loader);
+    const error = await new Promise<unknown>((resolve, reject) => {
+      void nativeImport().then(() => reject(new Error('Expected ESM failure')), resolve);
+    });
+    expect(readUnexpectedActionErrorDiagnosticV1(error)).toMatchObject({ errorClass: 'SyntaxError', stackFrames: [] });
+    const failure = refuseExternalActionPhase('approval.execute', 'machine', error);
+    expect(failure).toEqual({ ok: false, phase: 'approval.execute', errorClass: 'SyntaxError',
+      message: 'External Action phase threw (details redacted)' });
+    expect(log.mock.calls[0]?.[1]).toMatchObject({
+      message: failure.message, stackFrames: [],
+      errorLocation: kind === 'module_link' ? { kind, file: `${scratchPath}/${basename(dir)}/importer.mjs`,
+        missingExport: 'missingBinding', line: 1, column: 10 } : { kind },
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/PRIVATE_SOURCE_COMMENT|The requested module|file:\/\/|import \{/);
+  } finally {
+    log.mockRestore();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it('keeps payload excerpts from a real JSON.parse failure out of a frameless phase log', () => {
+  const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+  const payload = 'PRIVATE_TOKEN_827fecc1';
+  const previous = Error.stackTraceLimit;
+  try {
+    Error.stackTraceLimit = 1; // Keep the native JSON.parse frame alone.
+    try {
+      JSON.parse(payload);
+      throw new Error('Expected JSON.parse failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyntaxError);
+      expect(readUnexpectedActionErrorDiagnosticV1(error).stackFrames).toEqual([]);
+      const failure = refuseExternalActionPhase('approval.execute', 'machine', error);
+      expect(log.mock.calls).toEqual([['[external-action-phase]', {
+        machineId: 'machine', phase: failure.phase, message: 'External Action phase threw (details redacted)',
+        errorClass: 'SyntaxError', errorCode: null, httpStatus: null, stackFrames: [],
+      }]]);
+    }
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/PRIVATE|TOKEN|827fecc1/);
+  } finally {
+    Error.stackTraceLimit = previous;
+    log.mockRestore();
+  }
 });
 
 it('joins contributed stages by the RPC UUID and preserves thrown values without logging them', async () => {

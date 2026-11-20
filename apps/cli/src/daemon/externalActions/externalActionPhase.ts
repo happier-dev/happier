@@ -1,6 +1,9 @@
 import { logger } from '@/ui/logger';
 import { isWebLatencyTraceEnabled, timeApprovalPhase } from './webLatencyTrace';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { existsSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
@@ -9,6 +12,7 @@ import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from
 import type { PluginHttpTraceDiagnostic } from '@happier-dev/cli-common/plugins/http';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { resolveCliRuntimeRootPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 
 const innerStageContext = new AsyncLocalStorage<Readonly<{ actionId: string; rootRequestId: string }>>();
 
@@ -131,6 +135,64 @@ export type ExternalActionPhaseFailure = Readonly<{
   executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' }>;
 }>;
 
+type ModuleSourceLocation = Readonly<{ file: string; line: number; column?: number }>;
+type PhaseErrorLocation =
+  | Readonly<{ kind: 'module_link'; missingExport: string } & ModuleSourceLocation>
+  | Readonly<{ kind: 'module_parse' } & Partial<ModuleSourceLocation>>;
+
+function readSourcePosition(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/** Node can prefix an ESM loader stack with a source location and a source excerpt. */
+function readModuleSourceLocation(sourcePrelude: string): ModuleSourceLocation | undefined {
+  const pointer = /^(file:\/\/\/[^\r\n]+?):(\d+)(?::(\d+))?\r?\n/u.exec(sourcePrelude);
+  if (!pointer) return undefined;
+  const url = new URL(pointer[1]);
+  if (url.search || url.hash) return undefined;
+  const packageRoot = resolveCliRuntimeRootPath();
+  const workspaceRoot = resolve(packageRoot, '../..');
+  const root = relative(workspaceRoot, packageRoot) === ['apps', 'cli'].join(sep)
+    && existsSync(resolve(workspaceRoot, 'pnpm-workspace.yaml')) ? workspaceRoot : packageRoot;
+  const localPath = relative(root, fileURLToPath(url));
+  const segments = localPath.split(sep);
+  if (isAbsolute(localPath) || segments.some(segment => segment === '.' || segment === '..'
+    || !/^[\w.+-]+$/u.test(segment))) return undefined;
+  const file = segments.join('/');
+  if (!/\.(?:[cm]?js|[cm]?ts|tsx)$/u.test(file)) return undefined;
+  const line = readSourcePosition(Number(pointer[2]));
+  if (line === undefined) return undefined;
+  const caret = /\n([ \t]*)\^+\r?\n?$/u.exec(sourcePrelude);
+  const column = pointer[3] === undefined ? (caret ? caret[1].length + 1 : undefined) : readSourcePosition(Number(pointer[3]));
+  return column === undefined ? { file, line } : { file, line, column };
+}
+
+function readFramelessModuleErrorLocation(error: unknown): PhaseErrorLocation | undefined {
+  try {
+    if (!(error instanceof SyntaxError)) return undefined;
+    const { stack, message } = error;
+    if (typeof stack !== 'string' || typeof message !== 'string') return undefined;
+    const header = `SyntaxError: ${message}\n`;
+    const headerStart = stack.startsWith(header) ? 0 : stack.lastIndexOf(`\n${header}`) + 1;
+    if (!stack.startsWith(header, headerStart)) return undefined;
+    const frame = stack.slice(headerStart + header.length).split('\n', 1)[0];
+    const sourcePrelude = stack.slice(0, headerStart);
+    if (/^ +at compileSourceTextModule \(node:internal\/modules\/esm\/utils:\d+:\d+\)$/u.test(frame)) {
+      const line = readSourcePosition('lineNumber' in error ? error.lineNumber : undefined);
+      const column = readSourcePosition('columnNumber' in error ? error.columnNumber : undefined);
+      return { kind: 'module_parse', ...(line === undefined ? {} : { line }), ...(column === undefined ? {} : { column }),
+        ...readModuleSourceLocation(sourcePrelude) };
+    }
+    if (!/^ +at (?:ModuleJob\.)?(?:#asyncInstantiate|#?_instantiate) \(node:internal\/modules\/esm\/module_job:\d+:\d+\)$/u.test(frame)) return undefined;
+    // The requested specifier can contain arbitrary URL/input data. Project
+    // only the source file under the running CLI root and an identifier.
+    const missingExport = /^The requested module '[^'\r\n]+' does not provide an export named '([\p{ID_Start}_$][\p{ID_Continue}$]*)'$/u.exec(message)?.[1];
+    const location = missingExport === undefined ? undefined : readModuleSourceLocation(sourcePrelude);
+    if (location && missingExport !== undefined) return { kind: 'module_link', ...location, missingExport };
+  } catch { /* Invalid URLs or hostile accessors leave the failure redacted. */ }
+  return undefined;
+}
+
 /** Private diagnostics must not serialize a thrown value, even a Zod or HTTP Error. */
 export function refuseExternalActionPhase(phase: string, machineId: string | undefined, error?: unknown,
   witness?: Readonly<{ requestId?: string; actionId?: string; refusalBranch?: string; httpStatus?: number;
@@ -158,8 +220,11 @@ export function refuseExternalActionPhase(phase: string, machineId: string | und
     ...(executionFailure ? { executionFailure } : {}) };
   // File-only: no terminal output or remote diagnostic payload. Logging cannot
   // change the existing public refusal if the filesystem is unavailable.
+  const errorLocation = diagnostic?.errorClass === 'SyntaxError' && diagnostic.stackFrames.length === 0
+    ? readFramelessModuleErrorLocation(error) : undefined;
   try { logger.warnLocalFile('[external-action-phase]', { ...(machineId !== undefined ? { machineId } : {}), phase, errorClass, message,
     ...diagnostic,
+    ...(errorLocation ? { errorLocation } : {}),
     ...(witness?.httpStatus !== undefined ? { httpStatus: witness.httpStatus } : {}),
     ...(witness?.actionId ? { actionId: witness.actionId } : {}),
     ...(witness?.requestId ? { requestId: witness.requestId } : {}),
