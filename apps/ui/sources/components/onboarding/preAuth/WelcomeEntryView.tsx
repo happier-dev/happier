@@ -27,8 +27,6 @@ export type WelcomeEntryViewInteraction = Readonly<{
     /** A notice's one way on (Try again, or the alternative choice), by its test id. */
     onNoticeAction: (testID: string) => void;
     onSelfHosting: () => void;
-    /** Marks the host puts first on the ways row (Approve: Back on a computer, then the recovery key). */
-    waysLeading?: React.ReactNode;
     onRetryRetention?: () => void;
     policySupportUrl?: string;
 }>;
@@ -43,11 +41,13 @@ const inertAdmission: WelcomeActionAdmission = { pendingActionId: null, run: asy
 
 /** The live Welcome and the opening replica share this presentation. */
 export const WelcomeEntryView = React.memo(function WelcomeEntryView({
-    model, compact, interaction,
+    model, compact, interaction, waysLeading,
 }: Readonly<{
     model: WelcomeEntryViewModel;
     compact: boolean;
     interaction?: WelcomeEntryViewInteraction;
+    /** Marks the host puts first on the ways row. They can remain visible during approval. */
+    waysLeading?: React.ReactNode;
 }>) {
     useUnistyles();
     const styles = stylesheet;
@@ -63,7 +63,6 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             subtitle={display.subtitle} iconName={display.iconName} disabled={!interaction}
             onPress={interaction ? () => interaction.onAction(index) : noAction} />;
     };
-    const waysLeading = interaction?.waysLeading;
     // A computer's shell takes the self-hosting door to its top-right corner; a phone keeps it under the column.
     const selfHostingInCorner = useShellCornerDoor(model.selfHosting ? {
         testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction?.onSelfHosting,

@@ -81,7 +81,7 @@ export function useStepRowBack(): (() => void) | null {
 }
 
 /** Back as a round well, the same object as the ways beside it; the reversed step morph keys on its test id. */
-export function StepRowBackButton(props: Readonly<{ onPress: () => void }>) {
+export function StepRowBackButton(props: Readonly<{ onPress: () => void; disabled?: boolean }>) {
   return (
     <StepRowWayButton
       testID={UNAUTH_BACK_TEST_ID}
@@ -89,6 +89,7 @@ export function StepRowBackButton(props: Readonly<{ onPress: () => void }>) {
       accessibilityLabel={t('common.back')}
       tooltip={t('common.back')}
       iconName="caret-left"
+      disabled={props.disabled}
       onPress={props.onPress}
     />
   );

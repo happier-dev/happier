@@ -18,7 +18,7 @@ import { getOrganizationPolicyFieldLock, readOrganizationPolicy } from '@/sync/d
 import { useReturningGreeting } from './useReturningGreeting';
 import type { WelcomeActionAdmission } from './WelcomeActionList';
 import { WelcomeEntryView } from './WelcomeEntryView';
-import { CHOOSE_ANOTHER_SERVICE_TEST_ID, projectWelcomeEntryViewModel } from './welcomeEntryViewModel';
+import { CHOOSE_ANOTHER_SERVICE_TEST_ID, projectWelcomeEntryViewModel, type WelcomeEntryViewModel } from './welcomeEntryViewModel';
 import {
     composeWelcomeEntryModel,
     type WelcomeAuthenticationMethod,
@@ -30,6 +30,8 @@ export type WelcomeDecisionPanelProps = Readonly<{
     showGreeting?: boolean;
     /** The Approve step uses the same admitted catalog for its alternative ways in. */
     restoreWays?: boolean;
+    /** Keep the last waiting presentation inert while the requester adopts credentials. */
+    restoreApprovalVisible?: boolean;
     onLeaveRestore?: () => void;
     onOpenTerminalLink?: () => void;
     /** Marks Approve puts first on the ways row (Back on a computer, the recovery key). */
@@ -138,7 +140,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 : accountServiceEntry?.status === 'unsupported'
                     ? { kind: 'unsupported' as const, hintName: serviceName ?? undefined }
                     : { kind: 'not_offered' as const };
-    const model = composeWelcomeEntryModel({
+    const heldRestoreView = React.useRef<WelcomeEntryViewModel | null>(null);
+    const approving = props.restoreWays === true && props.restoreApprovalVisible === true;
+    const frozenView = approving ? heldRestoreView.current : null;
+    const model = frozenView ? null : composeWelcomeEntryModel({
         target: accountServiceEntry?.selectedInWelcome
             ? { kind: 'selected_service', label: serviceName ?? t('welcome.yourSignInService') }
             : requestedHomeTarget
@@ -176,10 +181,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         },
         lastSignInMethodId,
     });
-    const returningGreeting = useReturningGreeting({ besideLogin: model.hasLoginDoor });
+    const returningGreeting = useReturningGreeting({ besideLogin: model?.hasLoginDoor ?? false });
     const policyField = homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome';
     const policyLock = homePolicy.lock ?? servicePolicy.lock ?? getOrganizationPolicyFieldLock('personalHome');
-    const viewModel = projectWelcomeEntryViewModel(model, {
+    const viewModel = model ? projectWelcomeEntryViewModel(model, {
         options,
         showGreeting: !props.restoreWays && props.showGreeting !== false,
         terminalWaiting,
@@ -193,8 +198,16 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             display: { organization: policyLock.organization, hasSupport: Boolean(policyLock.supportUrl) },
         } : readOrganizationPolicy().status === 'invalid' ? { kind: 'invalid' } : undefined,
         canChooseService: props.onChooseAccountService != null,
-    });
+    }) : frozenView;
+    React.useLayoutEffect(() => {
+        if (props.restoreWays && !approving) heldRestoreView.current = viewModel;
+    }, [approving, props.restoreWays, viewModel]);
     usePublishFirstOpenWelcomeModel(props.restoreWays ? null : viewModel);
+
+    if (!viewModel) return null;
+    if (approving || !model) {
+        return <WelcomeEntryView model={viewModel} compact={compactViewport} waysLeading={props.waysLeading} />;
+    }
 
     const onAction = (index: number) => {
         const action = model.actions[index]?.action;
@@ -225,13 +238,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         else if (testID === 'welcome-account-service-retry') accountServiceEntry?.retry();
         else options.retryServerCheck();
     };
-    return <WelcomeEntryView model={viewModel} compact={compactViewport} interaction={{
+    return <WelcomeEntryView model={viewModel} compact={compactViewport} waysLeading={props.waysLeading} interaction={{
         admission: actionAdmission,
         getActionId: (index) => model.actions[index]?.id,
         onAction,
         onNoticeAction,
         onSelfHosting: props.onChangeRelay,
-        waysLeading: props.waysLeading,
         onRetryRetention: options.retentionDisclosure?.kind === 'unreadable' ? options.retentionDisclosure.retry : undefined,
         policySupportUrl: policyLock?.supportUrl,
     }} />;

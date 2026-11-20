@@ -204,7 +204,12 @@ export type RestoreQrViewProps = Readonly<{
     onOpenSecretKeyLogin?: () => void;
     onOpenLostAccess?: () => void;
     /** The welcome model's ways for this step, following the controls for the active pairing. */
-    renderAdditionalSignInWays?: (onLeave?: () => void, leading?: React.ReactNode, onOpenTerminalLink?: () => void) => React.ReactNode;
+    renderAdditionalSignInWays?: (
+        onLeave?: () => void,
+        leading?: React.ReactNode,
+        onOpenTerminalLink?: () => void,
+        approvalVisible?: boolean,
+    ) => React.ReactNode;
     onOpenScanQr?: () => void;
     onOpenPairingLinkEntry?: () => void;
     onOpenTerminalLink?: () => void;
@@ -239,7 +244,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     const onApprovedSettled = React.useCallback(() => {
         if (shownCodeRef.current === approvedCode) setSettledCode(approvedCode);
     }, [approvedCode]);
-    const canLeaveApproved = approvedCode === null || approvedCode === settledCode;
+    const approvalVisible = approvedCode !== null;
+    const canLeaveApproved = !approvalVisible || approvedCode === settledCode;
     const openGenerationRef = React.useRef(0);
     const handledProfileIdRef = React.useRef<string | null>(null);
     const presentation = resolveHomeEnrollmentPresentation({
@@ -417,28 +423,31 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     ) : null}
                 </View>}
 
-                {!claimOwnsNavigation && (pairing.phase !== 'succeeded' || approvedCode !== null) && embedded ? (
-                    // Approved, the ways stay where they were (nothing below the code moves) but no longer act.
-                    <View style={styles.embeddedActions} pointerEvents={approvedCode !== null ? 'none' : 'auto'}>
+                {embedded && (approvalVisible || (!claimOwnsNavigation && pairing.phase !== 'succeeded')) ? (
+                    // Approved keeps the ways visible during credential adoption and the exit animation.
+                    <View style={styles.embeddedActions} pointerEvents={approvalVisible ? 'none' : 'auto'}
+                        aria-hidden={approvalVisible || undefined} accessibilityElementsHidden={approvalVisible}
+                        importantForAccessibility={approvalVisible ? 'no-hide-descendants' : 'auto'}>
                         {recoveryButton ? (
                             <View style={styles.embeddedPrimary}>
                                 <RoundButton {...recoveryButton} size="large" />
                             </View>
                         ) : null}
-                        {!props.targetProfileId ? (
+                        {!props.targetProfileId && !approvalVisible ? (
                             <TextLinkButton testID="restore-choose-home" label={t('connect.addPhoneChooseHomeTitle')} onPress={() => router.push('/server')} />
                         ) : null}
                         {/* The ways row (owner 2026-11-19): Back on a computer, the recovery key (with a pairing link
                             beside it), then the model's ways with "New account" last. Leaving cancels the code. */}
                         {(() => {
                             const leading = <>
-                                {rowBack ? <StepRowBackButton onPress={() => { void reversePairing.cancel(); rowBack(); }} /> : null}
+                                {rowBack ? <StepRowBackButton disabled={approvalVisible} onPress={() => { void reversePairing.cancel(); rowBack(); }} /> : null}
                                 <StepRowWayButton
                                     testID={RESTORE_MANUAL_TEST_ID}
                                     nativeID={Platform.OS === 'web' ? undefined : RESTORE_MANUAL_TEST_ID}
                                     accessibilityLabel={t('connect.secretKeyInputLabel')}
                                     tooltip={t('connect.secretKeyInputLabel')}
                                     iconName="key"
+                                    disabled={approvalVisible}
                                     onPress={props.onOpenPairingLinkEntry ?? openSecretKeyLogin}
                                 />
                                 {/* The link is the code's secret: it goes the moment the code is approved. */}
@@ -454,7 +463,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                 ) : null}
                             </>;
                             return props.renderAdditionalSignInWays
-                                ? props.renderAdditionalSignInWays(() => { void reversePairing.cancel(); }, leading, props.onOpenTerminalLink)
+                                ? props.renderAdditionalSignInWays(() => { void reversePairing.cancel(); }, leading, props.onOpenTerminalLink, approvalVisible)
                                 : <View style={styles.embeddedWays}>
                                     <StepOrDivider label={t('common.or')} />
                                     <View style={styles.embeddedWaysRow}>{leading}</View>

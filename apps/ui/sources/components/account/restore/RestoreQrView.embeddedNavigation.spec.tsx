@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import type { IModal } from '@/modal';
+import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { deriveHomeQrBindingKeyV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import { sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
@@ -213,6 +214,54 @@ describe('RestoreQrView known-target requester QR', () => {
         await act(async () => boundary.heldTiming.shift()?.(true));
         await vi.waitFor(() => expect(boundary.replace).toHaveBeenCalledWith('/'));
     });
+    it('keeps the admitted sign-in ways during approval even as the auth catalog reloads', async () => {
+        const { WelcomeDecisionPanel } = await import('@/components/onboarding/preAuth/WelcomeDecisionPanel');
+        const target = { kind: 'saved_profile', profileRef: profileId } as const;
+        const options: AuthEntryOptions = {
+            homeTarget: target, requestedHomeTarget: target, serverUrlForCopy: descriptor.canonicalServerUrl,
+            authEntryUnavailable: false, keyChallengeV2Available: true, serverAvailability: 'ready', showAuthActions: true,
+            retryServerCheck: () => {},
+            authenticationActions: [{
+                method: { id: 'github', enabledActions: [{ id: 'login', mode: 'keyless' }] },
+                action: { id: 'login', mode: 'keyless' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyless' },
+            }],
+        };
+        let reloadCatalog: () => void = () => {};
+        const Ways = ({ leading, approvalVisible }: { leading: React.ReactNode; approvalVisible?: boolean }) => {
+            const [reloading, setReloading] = React.useState(false);
+            reloadCatalog = () => setReloading(true);
+            return <WelcomeDecisionPanel showGreeting={false} restoreWays restoreApprovalVisible={approvalVisible} waysLeading={leading}
+                authEntryOptions={reloading ? { ...options, serverAvailability: 'loading', showAuthActions: false, authenticationActions: [] } : options}
+                onContinueWithHomeAuthentication={() => {}}
+                onChooseAccountService={() => {}} onOpenRestore={() => {}} onChangeRelay={() => {}} />;
+        };
+        const screen = await mount({
+            renderAdditionalSignInWays: (_leave, leading, _terminal, approvalVisible) => <Ways leading={leading} approvalVisible={approvalVisible} />,
+        });
+        const ways = ['restore-open-manual', 'restore-requester-link-details', 'welcome-provider-primary', 'welcome-account-service-choose'];
+        const wayIds = () => [...new Set(screen.findByTestId('welcome-quiet-ways')
+            ?.findAll(node => ways.includes(node.props.testID))
+            .map(node => node.props.testID as string) ?? [])];
+        expect(wayIds()).toEqual(ways);
+        const approvedWays = ways.filter(id => id !== 'restore-requester-link-details');
+
+        boundary.holdTiming = true;
+        const gate = createDeferred<void>();
+        const requestLock = navigator.locks.request.bind(navigator.locks);
+        vi.spyOn(navigator.locks, 'request').mockImplementation(async (...args: Parameters<typeof navigator.locks.request>) => {
+            await gate.promise;
+            return requestLock(...args);
+        });
+        try {
+            await act(async () => poll.resolve(authorized()));
+            await vi.waitFor(() => expect(boundary.preventRemove).toHaveBeenLastCalledWith(true));
+            expect(wayIds()).toEqual(approvedWays);
+            await act(async () => reloadCatalog());
+            expect(wayIds()).toEqual(approvedWays);
+        } finally { gate.resolve(); }
+        await vi.waitFor(() => expect(boundary.preventRemove).toHaveBeenLastCalledWith(false));
+        expect(wayIds()).toEqual(approvedWays);
+    });
     it('locks route removal only after trusted completion reaches credential adoption', async () => {
         const onNavigationLockChange = vi.fn();
         const screen = await mount({ onNavigationLockChange });
@@ -229,7 +278,7 @@ describe('RestoreQrView known-target requester QR', () => {
             expect(onNavigationLockChange).toHaveBeenCalledWith(true);
             expect(screen.findByTestId('restore-requester-cancel')).toBeNull();
             expect(screen.findByTestId('restore-open-scan-qr')).toBeNull();
-            expect(screen.findByTestId('restore-open-manual')).toBeNull();
+            expect(screen.findByTestId('restore-open-manual')?.props.disabled).toBe(true);
         } finally { gate.resolve(); }
         await vi.waitFor(() => expect(boundary.replace).toHaveBeenCalledWith('/'));
     });
