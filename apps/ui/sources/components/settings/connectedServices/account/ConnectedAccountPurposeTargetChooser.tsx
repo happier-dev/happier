@@ -74,6 +74,19 @@ type PurposeTargetPickerRefresh = Readonly<{
   onRefresh: () => void;
 }>;
 
+function usePurposeTargetProfile(
+  transport: ConnectedAccountPurposeTargetChoicesInput['sourceNegotiation'],
+  accountsOnly?: boolean,
+  teamResourcesOnly?: boolean,
+) {
+  const profileKeys = transport !== 'advertised-v4' || teamResourcesOnly
+    ? SUMMARY_NO_PROFILE_KEYS : accountsOnly ? SUMMARY_ACCOUNT_PROFILE_KEYS : SUMMARY_GROUP_PROFILE_KEYS;
+  return storage(useShallow(state => ({
+    accounts: profileKeys.length > 0 ? state.profile.connectedAccountsV4 ?? EMPTY_ACCOUNTS : EMPTY_ACCOUNTS,
+    groups: profileKeys === SUMMARY_GROUP_PROFILE_KEYS ? state.profile.connectedAccountGroupsV4 ?? EMPTY_GROUPS : EMPTY_GROUPS,
+  })), { profile: profileKeys });
+}
+
 type ConnectedAccountPurposeTargetPickerModalContentProps = Readonly<{
   choiceInput: Omit<ConnectedAccountPurposeTargetChoicesInput, 'accounts' | 'groups' | 'labelsByKey'>;
   accountsOnly?: boolean;
@@ -89,20 +102,14 @@ type ConnectedAccountPurposeTargetPickerModalContentProps = Readonly<{
 function ConnectedAccountPurposeTargetPickerModalContent(
   props: ConnectedAccountPurposeTargetPickerModalContentProps,
 ) {
-  const profile = storage(useShallow(state => ({
-    accounts: state.profile.connectedAccountsV4,
-    groups: state.profile.connectedAccountGroupsV4,
-  })), { profile: ['connectedAccountsV4', 'connectedAccountGroupsV4'] });
+  const profile = usePurposeTargetProfile(props.choiceInput.sourceNegotiation, props.accountsOnly, props.teamResourcesOnly);
   const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const locale = getPreferredLanguage();
   const choices = React.useMemo(() => buildConnectedAccountPurposeTargetChoices({
     ...props.choiceInput,
-    accounts: props.choiceInput.sourceNegotiation === 'advertised-v4' && !props.teamResourcesOnly
-      ? profile.accounts ?? EMPTY_ACCOUNTS : EMPTY_ACCOUNTS,
-    groups: props.choiceInput.sourceNegotiation === 'advertised-v4' && !props.accountsOnly && !props.teamResourcesOnly
-      ? profile.groups ?? EMPTY_GROUPS : EMPTY_GROUPS,
+    ...profile,
     labelsByKey,
-  }), [props.choiceInput, props.accountsOnly, props.teamResourcesOnly, profile.accounts, profile.groups, labelsByKey]);
+  }), [props.choiceInput, profile, labelsByKey]);
   const selected = choices.find(choice => choice.current);
   const rootStep = React.useMemo<SelectionListStep>(() => ({
     id: 'connected-account-purpose-targets',
@@ -200,6 +207,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
     teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null,
   ) => void;
+  /** Accept the sole eligible choice as the initial value after the inventory settles. */
+  onSelectSingleEligible?: (target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
+    teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null) => void;
   disabled?: boolean;
   disabledReason?: string;
   /** The row's label when the surface names what the choice decides ("Sign in with") rather than the purpose. */
@@ -296,6 +306,24 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     ...(teamCatalog ? { teamNameById: teamCatalog.teamNameById } : {}),
   }), [props.declaration, props.value, props.teamResourceValue, props.noneLabel, serviceTitle, locale,
     effectiveAccountTransport, registry, present, teamResources, teamCatalog]);
+  const { onSelectSingleEligible } = props;
+  const selectionMade = React.useRef(false);
+  const hasSelection = props.value !== null || Boolean(props.teamResourceValue);
+  const canPreselect = Boolean(onSelectSingleEligible) && !props.disabled && !hasSelection
+    && registry.status === 'ready' && (props.teamResourcesOnly || effectiveAccountTransport !== 'indeterminate');
+  const preselectionProfile = usePurposeTargetProfile(canPreselect ? effectiveAccountTransport : undefined,
+    props.accountsOnly, props.teamResourcesOnly);
+  React.useEffect(() => {
+    if (hasSelection) selectionMade.current = true;
+    if (selectionMade.current || !canPreselect || !onSelectSingleEligible) return;
+    const eligible = buildConnectedAccountPurposeTargetChoices({
+      ...choiceInput, ...preselectionProfile, labelsByKey: {},
+    }).filter(choice => choice.selectable && choice.kind !== 'none');
+    if (eligible.length !== 1) return;
+    const choice = eligible[0]!;
+    selectionMade.current = true;
+    onSelectSingleEligible(choice.target, choice.teamResource);
+  }, [canPreselect, choiceInput, hasSelection, onSelectSingleEligible, preselectionProfile]);
   const selectedInventory = !props.teamResourceValue && effectiveAccountTransport === 'advertised-v4'
     ? props.value?.kind ?? null : null;
   const summaryProfileKeys = selectedInventory === 'group' ? SUMMARY_GROUP_PROFILE_KEYS
@@ -394,6 +422,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       : null,
     onSelect: (target, teamResource) => {
       pickerModalIdRef.current = null;
+      selectionMade.current = true;
       onChangeRef.current(target, teamResource);
     },
   }), [canReload, choiceInput, props.accountsOnly, props.teamResourcesOnly, props.restriction, props.reloadSubtitle, props.testID, purposeTitle, reload, reloading]);

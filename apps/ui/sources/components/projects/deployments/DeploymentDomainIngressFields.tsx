@@ -8,6 +8,7 @@ import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploymen
 import { AccessProviderSelectionV1Schema } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
+import { readDeploymentDomainHostnameV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { DeploymentDomainDnsInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainDnsV1';
 
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
@@ -20,6 +21,7 @@ import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { t } from '@/text';
 
 import type { createDeploymentActions } from './deploymentActions';
@@ -43,9 +45,10 @@ const selectionAction = 'happier.deploy.cloudflare/actions/cloudflare-named/sele
 const binding = relayAccessProviderDescriptorsById.cloudflareNamed!.homeUi!.credentialBindings![0]!;
 const id = 'project-deployments.environment.domains.add.ingress';
 
-/** Read provider-owned choices only on a deliberate press. Input edits retire the old choice locally. */
+/** The sole automatic account choice can start the first read after the hostname is entered. Edits retire old results. */
 export function useDeploymentDomainIngressFields(props: Readonly<{
   hostname: string;
+  committedHostname?: string;
   busy: boolean;
   inspect?: DomainIngressInspection;
   enabled: boolean;
@@ -54,6 +57,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   /** Select DNS placement for retained provider records, without tunnel configuration. */
   dnsRecordsOnly?: boolean;
 }>) {
+  const preselectedCredential = React.useRef<QualifiedConnectedAccountRef | null>(null);
   const [credentialRef, setCredentialRef] = React.useState<QualifiedConnectedAccountRef | null>(null);
   const [accountId, setAccountId] = React.useState('');
   const [explicitZoneId, setExplicitZoneId] = React.useState('');
@@ -97,7 +101,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const zonesNeed = reading !== null ? null : !selectedCredential ? t('projects.deployments.editors.zonesNeedAccount')
     : !props.hostname ? t('projects.deployments.editors.zonesNeedDomain') : null;
   const stopRead = React.useCallback(() => { flight.current?.abort(); flight.current = null; }, []);
-  React.useEffect(() => stopRead, [stopRead, credentialKey, tunnelChoice, props.enabled]);
+  React.useEffect(() => stopRead, [stopRead, credentialKey, props.hostname, tunnelChoice, props.enabled]);
   const canRead = !!props.inspect && !!selectedCredential && !!props.hostname
     && (zonesOnly || !connectorOverride || !!connectorOverride.imageRef && !!connectorOverride.version) && !props.busy && !reading;
   const inspect = async (kind: 'zones' | 'tunnels', chainedZoneId?: string): Promise<void> => {
@@ -192,6 +196,16 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       setReading(current => (flight.current === null ? null : current));
     }
   };
+  const readPreselectedZones = useEventCallback(() => {
+    if (!props.enabled || zonesOnly || !canRead || flight.current
+      || preselectedCredential.current === null || preselectedCredential.current !== selectedCredential
+      || props.committedHostname !== props.hostname || !readDeploymentDomainHostnameV1(props.hostname)) return;
+    preselectedCredential.current = null;
+    if (!currentZones) void inspect('zones');
+  });
+  React.useEffect(() => {
+    readPreselectedZones();
+  }, [canRead, credentialKey, props.committedHostname, props.enabled, props.hostname, readPreselectedZones]);
   const cancelRead = (kind: 'zones' | 'tunnels') => {
     stopRead();
     setReading(null);
@@ -242,7 +256,15 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         localizedTextPluginId={binding.service.pluginId}
         declaration={{ purpose: props.dnsRecordsOnly ? 'deploy.manage' : binding.purpose, service: binding.service, required: true }}
         value={credentialRef ? { kind: 'account', account: credentialRef } : null}
-        onChange={target => setCredentialRef(target?.kind === 'account' ? target.account : null)}
+        onChange={target => {
+          preselectedCredential.current = null;
+          setCredentialRef(target?.kind === 'account' ? target.account : null);
+        }}
+        onSelectSingleEligible={zonesOnly ? undefined : target => {
+          if (target?.kind !== 'account') return;
+          preselectedCredential.current = target.account;
+          setCredentialRef(target.account);
+        }}
         accountsOnly
         disabled={props.busy}
       />}

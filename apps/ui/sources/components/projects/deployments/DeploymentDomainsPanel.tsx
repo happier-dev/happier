@@ -438,6 +438,8 @@ function DomainAddForm(
   }>,
 ) {
   const [hostname, setHostname] = React.useState('');
+  const host = hostname.trim().toLowerCase();
+  const [committedHostname, setCommittedHostname] = React.useState(host);
   const initialService = props.services.length === 0 || props.services.includes(props.initialService ?? '')
     ? props.initialService ?? '' : '';
   const [target, setTarget] = React.useState<Readonly<{
@@ -476,9 +478,8 @@ function DomainAddForm(
     && props.provider?.providerIdentity ? { credentialRef: principal.target.account, accountId: props.provider.providerIdentity.providerAccountId } : null : undefined;
   const needsSelection = !provider && (props.recordedIngress?.kind === 'cloudflareTunnel' || ingressMode === 'cloudflare');
   const { selection: ingress, zone, fields: ingressFields, advancedFields: ingressAdvanced } = useDeploymentDomainIngressFields({
-    hostname: hostname.trim().toLowerCase(), busy: props.busy, inspect: props.inspect, enabled: needsSelection || needsZone, linkedZone,
+    hostname: host, committedHostname, busy: props.busy, inspect: props.inspect, enabled: needsSelection || needsZone, linkedZone,
   });
-  const host = hostname.trim().toLowerCase();
   const containerPort = Number(port);
   const portValid = /^\d+$/.test(port) && containerPort >= 1 && containerPort <= 65535;
   const routePath = path.trim();
@@ -548,6 +549,7 @@ function DomainAddForm(
             testID="project-deployments.environment.domains.add.host"
             value={hostname}
             onChangeText={setHostname}
+            onBlur={() => setCommittedHostname(host)}
             autoCapitalize="none"
             autoFocus
             accessibilityLabel={t('projects.deployments.domainFieldHost')}

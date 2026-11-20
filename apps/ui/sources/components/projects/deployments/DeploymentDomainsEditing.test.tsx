@@ -1219,7 +1219,7 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
     credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const, account } }] });
   const created = selection({ kind: 'create', name: 'docs.happier.dev' });
   const adopted = selection({ kind: 'adopt', tunnelId: 'tunnel-1', name: 'office' });
-  async function findChoices(existing: readonly unknown[]) {
+  async function findChoices(existing: readonly unknown[], automaticSelection = false) {
     const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async (_action, input) => (input as { zoneId?: string }).zoneId
       ? { ok: true, value: { kind: 'ready', options: existing, createOption: { label: 'docs.happier.dev', selection: created } } }
       : { ok: true, value: { kind: 'ready', zones: [{ zoneId: 'zone-1', name: 'happier.dev' }], options: [] } } as never);
@@ -1234,10 +1234,21 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
       rendered.screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
       rendered.screen.changeTextByTestId(`${id}.service`, 'web');
       rendered.screen.changeTextByTestId(`${id}.port`, '3000');
-      rendered.screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account }, null);
+      const chooser = rendered.screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!;
+      if (automaticSelection) {
+        const callback = Reflect.get(chooser.props, 'onSelectSingleEligible');
+        expect(callback).toBeTypeOf('function');
+        callback({ kind: 'account', account }, null);
+      } else {
+        chooser.props.onChange({ kind: 'account', account }, null);
+      }
     });
-    // One deliberate press finds the zone and, with the zone settled, the tunnels in it.
-    await rendered.screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+    if (automaticSelection) {
+      expect(inspectPlatformTarget).not.toHaveBeenCalled();
+      await act(async () => rendered.screen.findByTestId(`${id}.host`)!.props.onBlur());
+    } else {
+      await rendered.screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+    }
     await vi.waitFor(() => expect(inspectPlatformTarget).toHaveBeenCalledTimes(2));
     expect(inspectPlatformTarget.mock.calls[1]![1]).toMatchObject({ zoneId: 'zone-1' });
     return { ...rendered, actions };
@@ -1246,6 +1257,14 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
     const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
     return screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.ingress.tunnel`);
   };
+
+  it('preselects only the unique eligible target and finds zones once the hostname is entered', async () => {
+    const { screen, controller, actions } = await findChoices([], true);
+    try {
+      expect(actions.inspectPlatformTarget.mock.calls[0]?.[1]).toMatchObject({ credentialRef: account, hostname: 'docs.happier.dev' });
+      expect((await tunnelSelect(screen))?.props.selectedId).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
 
   it('offers a new tunnel Happier manages when the zone has none, already chosen, and adds the Domain with it', async () => {
     const { screen, controller, actions } = await findChoices([]);
