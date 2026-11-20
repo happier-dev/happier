@@ -65,6 +65,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
                     ? <Outgoing next={() => runStepMove({ layer: 'workflow', kind: 'step', commit: () => setStep('ready'), onSettled: motionEnd })} />
                     : <>
                         <h1 data-testid="ready-heading">Ready</h1>
+                        <div data-testid="step-decoration" />
                         <button data-testid="next" onClick={destinationClick}>Continue</button>
                     </>}
             </StepMotionLayer>
@@ -87,6 +88,14 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         click(find('next'), 2);
         expect(destinationClick).not.toHaveBeenCalled();
         expect(motionEnd).not.toHaveBeenCalled();
+
+        // Chromium blurs the new focal target on the second mouse-down over the decoration.
+        const repeat = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 2 });
+        if (find('step-decoration').dispatchEvent(repeat)) find('ready-heading').blur();
+        expect(document.activeElement).toBe(find('ready-heading'));
+        expect(find('next').dispatchEvent(new MouseEvent('mousedown', {
+            bubbles: true, cancelable: true, detail: 2,
+        }))).toBe(true);
 
         pointerDown(find('next'), 3);
         click(find('next'), 3);

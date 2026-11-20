@@ -459,13 +459,10 @@ test('firstOpen.04.F1 and firstOpen.04.F2 keep a double-click on the Approve ste
     await expect(qr).toBeVisible();
     const destination = qr.or(page.getByTestId('onboarding-wizard-bare-title'));
     const focused = page.locator(':focus').and(destination);
-    const receivedFocus = await expect(focused).toHaveCount(1).then(() => true, () => false);
+    await expect(focused, 'the incoming Approve heading or QR receives focus').toHaveCount(1);
     await page.getByTestId('unauth-shell-back-chevron').click();
     await expect(login).toBeFocused();
     await expect(qr).toBeHidden();
-
-    test.fail(true, 'FO-L3-MOTION: after a rapid double-click the Approve step mounts but browser focus stays on the document');
-    expect(receivedFocus, 'the incoming Approve heading or QR receives focus').toBe(true);
 });
 
 test('firstOpen.04.F7 keeps Back usable and returns focus under the system reduced-motion preference', async ({ page }) => {

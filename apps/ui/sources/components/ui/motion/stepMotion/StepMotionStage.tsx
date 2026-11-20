@@ -9,7 +9,7 @@ import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 
 import { captureElementFlightRect } from '../rectFlight';
 import { readNativeStepAnchor } from './capturePressedElement.native';
-import { findPressedWebControl, readWebStepAnchor } from './capturePressedElement.web';
+import { findInteractiveWebStepTarget, findPressedWebControl, readWebStepAnchor } from './capturePressedElement.web';
 import type { StepGrammar } from './stepMotionChoreography';
 import type { StepAnimation } from './stepMotionScene';
 import { stepMotionTiming } from './stepMotionTiming';
@@ -318,6 +318,14 @@ function createStepMotionStage(
             webInput(event.target);
         };
         const cancelPointer = (event: PointerEvent) => { pointerCommits.delete(event.pointerId); };
+        const mouseDown = (event: MouseEvent) => {
+            if (event.button !== 0 || event.detail < 2) return;
+            const layer = layerFor(event.target);
+            if (layer && layer.focal() === document.activeElement && !findInteractiveWebStepTarget(event.target)) {
+                // A repeat on decoration would otherwise blur the newly focused step.
+                event.preventDefault();
+            }
+        };
         const click = (event: MouseEvent) => {
             if (event.detail === 0) return;
             const pointerID = 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : 1;
@@ -335,6 +343,7 @@ function createStepMotionStage(
         const visibility = () => { if (document.hidden) settle(); };
         document.addEventListener('pointerdown', pointer, true);
         document.addEventListener('pointercancel', cancelPointer, true);
+        document.addEventListener('mousedown', mouseDown, true);
         document.addEventListener('click', click, true);
         document.addEventListener('keydown', key, true);
         document.addEventListener('beforeinput', settle, true);
@@ -343,6 +352,7 @@ function createStepMotionStage(
         return () => {
             document.removeEventListener('pointerdown', pointer, true);
             document.removeEventListener('pointercancel', cancelPointer, true);
+            document.removeEventListener('mousedown', mouseDown, true);
             document.removeEventListener('click', click, true);
             document.removeEventListener('keydown', key, true);
             document.removeEventListener('beforeinput', settle, true);
