@@ -12,6 +12,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
 
 describe('Shared approval profiles: Team default', () => {
@@ -29,7 +30,11 @@ describe('Shared approval profiles: Team default', () => {
   it('AE.P03.F5-project-default captures the project profile over the Team default and preserves creation-time choices', async () => {
     const manager = await fixture.createAccount('project-manager');
     const reader = await fixture.createAccount('project-reader');
-    const machine = await fixture.enrollDaemon(manager);
+    const agent = await createIsolatedFakeClaudeControlShim({
+      testDir: await mkdtemp(join(tmpdir(), 'ae-p03-f5-native-agent-')),
+      invocationId: 'profile-project-default', captureEnvironmentKeys: [], logFullStdin: false,
+    });
+    const machine = await fixture.enrollDaemon(manager, { env: { HAPPIER_CLAUDE_PATH: agent.executablePath } });
     await fixture.assertKnownGoodSessionControl(manager, machine);
     const teamResult = await owner.executeAsPerson('teams.create', { v: 1, initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token), name: 'Project approval defaults', requestKey: randomUUID() },
       { presentUserConfirmation: { actionId: 'teams.create' } });
@@ -61,8 +66,10 @@ describe('Shared approval profiles: Team default', () => {
     expect(await owner.executeAsPerson('teams.policy.set', { v: 1, teamId,
       managedDefaults: { team: { approvalProfileId: teamProfileId }, groups: {} } },
     { presentUserConfirmation: { actionId: 'teams.policy.set' } })).toMatchObject({ ok: true });
-    expect(await manager.execute('actions.policy.set', { actionId: 'session.stop', audience: 'agent', mode: 'allowed' }))
-      .toMatchObject({ ok: true });
+    expect(await manager.executeAsPerson('actions.policy.set', { actionId: 'session.stop', audience: 'agent', mode: 'allowed' }))
+      .toMatchObject({ ok: true, result: { actionId: 'session.stop', mode: 'allowed' } });
+    expect(await manager.executeAsPerson('actions.policy.set', { actionId: 'session.spawn_new', audience: 'agent', mode: 'allowed' }))
+      .toMatchObject({ ok: true, result: { actionId: 'session.spawn_new', mode: 'allowed' } });
     const createdSource = await owner.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       requestKey: randomUUID(), name: 'Shared project approvals', owner: { kind: 'team', teamId } });
     expect(createdSource.ok, JSON.stringify(createdSource)).toBe(true);
@@ -81,10 +88,10 @@ describe('Shared approval profiles: Team default', () => {
     if (!savedSource.ok || !savedSource.sessionDefaults) throw new Error('Project defaults leaf missing');
     const defaultsRevision = savedSource.sessionDefaults.revision;
     // A visible Source does not confer its manager's write authority.
-    const refused = await reader.executeReviewed('projects.sources.update', { ...sourceAddress,
+    const refused = await reader.executeAsPerson('projects.sources.update', { ...sourceAddress,
       expectedRevision: source.source.revision, patch: { sessionDefaults: { expectedRevision: defaultsRevision,
         defaults: { approvalProfileId: teamProfileId } } } });
-    expect(refused).toMatchObject({ ok: true, result: { ok: false, error: 'source_access_denied' } });
+    expect(refused, JSON.stringify(refused)).toMatchObject({ ok: true, result: { ok: false, error: 'source_access_denied' } });
     expect(await reader.execute('projects.sources.read', sourceAddress)).toMatchObject({ ok: true, result: {
       canManage: false, sessionDefaults: { revision: defaultsRevision, defaults: { approvalProfileId: projectProfileId } },
     } });
@@ -115,31 +122,44 @@ describe('Shared approval profiles: Team default', () => {
     expect(await manager.readSessionMetadata(projectSession.sessionId)).toMatchObject({
       approvalProfileId: projectProfileId, approvalProfileTeamOrGroupDerived: true,
     });
-    const stopAsAgent = async (sessionId: string) => {
-      const result = await manager.execute('session.stop', { sessionId }, {
-        surface: 'mcp', authority: 'account_automation', defaultSessionId: sessionId,
+    const stopAsAgent = async (parentSessionId: string) => {
+      const nativeSession = { sessionId: parentSessionId, logPath: agent.logPath };
+      // Each captured parent profile controls its own real MCP call and server-proved child relation.
+      const spawned = await fixture.executeSessionMcpAction(manager, nativeSession, 'session.spawn_new', {
+        executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        terminal: { mode: 'plain' },
       });
+      expect(spawned.ok, JSON.stringify(spawned)).toBe(true);
+      if (!spawned.ok) throw createActionExecuteFailureError(spawned);
+      const child = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
+      if (child.type !== 'success') throw new Error('Native profile parent did not create its child');
+      expect(await fetchSessionV2(fixture.server.baseUrl, manager.credentials.token, child.sessionId))
+        .toMatchObject({ manager: { sessionId: parentSessionId }, active: true });
+      const result = await fixture.executeSessionMcpAction(manager, nativeSession, 'session.stop', { sessionId: child.sessionId });
       if (!result.ok) throw createActionExecuteFailureError(result);
-      return result;
+      return { ...result, childSessionId: child.sessionId };
     };
-    expect(await stopAsAgent(projectSession.sessionId)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const projectStop = await stopAsAgent(projectSession.sessionId);
+    expect(projectStop, JSON.stringify(projectStop)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
 
     // The carrier waiver cannot waive changing everybody's project profile (M4).
-    expect(await manager.execute('actions.policy.set', { actionId: 'projects.sources.update', audience: 'agent', mode: 'allowed' }))
-      .toMatchObject({ ok: true });
-    expect(await manager.execute('actions.policy.set', { actionId: 'session.approval_profile.set', audience: 'agent', mode: 'ask_first' }))
-      .toMatchObject({ ok: true });
-    expect(await manager.execute('projects.sources.update', { ...sourceAddress,
+    expect(await manager.executeAsPerson('actions.policy.set', { actionId: 'projects.sources.update', audience: 'agent', mode: 'allowed' }))
+      .toMatchObject({ ok: true, result: { actionId: 'projects.sources.update', mode: 'allowed' } });
+    expect(await manager.executeAsPerson('actions.policy.set', { actionId: 'session.approval_profile.set', audience: 'agent', mode: 'ask_first' }))
+      .toMatchObject({ ok: true, result: { actionId: 'session.approval_profile.set', mode: 'ask_first' } });
+    const sourceWrite = await fixture.executeSessionMcpAction(manager, { sessionId: projectSession.sessionId, logPath: agent.logPath },
+      'projects.sources.update', { ...sourceAddress,
       expectedRevision: source.source.revision, patch: { sessionDefaults: { expectedRevision: defaultsRevision,
-        defaults: { approvalProfileId: teamProfileId } } } },
-    { surface: 'mcp', authority: 'account_automation', defaultSessionId: projectSession.sessionId }))
+        defaults: { approvalProfileId: teamProfileId } } } });
+    expect(sourceWrite, JSON.stringify(sourceWrite))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(await manager.execute('projects.sources.read', sourceAddress)).toMatchObject({ ok: true, result: {
       sessionDefaults: { revision: defaultsRevision, defaults: { approvalProfileId: projectProfileId } },
     } });
 
-    // OWNER-1915: a shared Account-owned Source uses the same defaults leaf,
-    // existing manager admission and tighten-only application; no Move is needed.
+    // OWNER-1915: the Account owner sets its shared Source's defaults;
+    // the audience's Team admin can read them without acquiring owner authority.
     const personalSourceResult = await owner.executeReviewed('projects.sources.create', { serverId: fixture.serverId,
       requestKey: randomUUID(), name: 'Shared personal project approvals',
       audience: [{ principal: { kind: 'team', teamId }, level: 'view' }] });
@@ -148,9 +168,11 @@ describe('Shared approval profiles: Team default', () => {
     const personalSource = ProjectSourcesReadOutputV1Schema.parse(personalSourceResult.result);
     if (!personalSource.ok) throw new Error(personalSource.error);
     const personalAddress = { serverId: fixture.serverId, sourceId: personalSource.source.id };
-    expect(await manager.executeReviewed('projects.sources.update', { ...personalAddress,
+    const personalDefaults = await owner.executeAsPerson('projects.sources.update', { ...personalAddress,
       expectedRevision: personalSource.source.revision, patch: { sessionDefaults: { expectedRevision: 'absent',
-        defaults: { approvalProfileId: projectProfileId } } } })).toMatchObject({ ok: true, result: {
+        defaults: { approvalProfileId: projectProfileId } } } });
+    if (!personalDefaults.ok) throw createActionExecuteFailureError(personalDefaults);
+    expect(personalDefaults).toMatchObject({ ok: true, result: {
       ok: true, source: { owner: { kind: 'account', accountId: readAccountIdFromToken(owner.credentials.token) } },
       sessionDefaults: { defaults: { approvalProfileId: projectProfileId } },
     } });
@@ -161,14 +183,17 @@ describe('Shared approval profiles: Team default', () => {
     expect(await manager.readSessionMetadata(personalProjectSession.sessionId)).toMatchObject({
       approvalProfileId: projectProfileId, approvalProfileTeamOrGroupDerived: true,
     });
-    expect(await stopAsAgent(personalProjectSession.sessionId))
+    const personalProjectStop = await stopAsAgent(personalProjectSession.sessionId);
+    expect(personalProjectStop, JSON.stringify(personalProjectStop))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
 
     // F6: a Machine preference is captured at birth; later edits cannot become
     // an admission-time picker for either an old id or an explicit Account choice.
     const machineDefault = async (id: string) => {
-      expect(await manager.execute('actions.policy.set', { profileChange: { kind: 'machine_default',
-        machineId: machine.target.machineId, id } })).toMatchObject({ ok: true });
+      expect(await manager.executeAsPerson('actions.policy.set', { profileChange: { kind: 'machine_default',
+        machineId: machine.target.machineId, id } })).toMatchObject({ ok: true, result: {
+        profileChange: { kind: 'machine_default', machineId: machine.target.machineId, id },
+      } });
     };
     await machineDefault(teamProfileId);
     const machineSession = await spawn(undefined, false);
@@ -189,9 +214,11 @@ describe('Shared approval profiles: Team default', () => {
     for (const oldSession of [machineSession, accountSession]) {
       const stopped = await stopAsAgent(oldSession.sessionId);
       expect(stopped.ok, JSON.stringify(stopped)).toBe(true);
-      if (!stopped.ok) throw new Error(stopped.errorCode);
-      expect(stopped.result).not.toMatchObject({ kind: 'approval_request_created' });
+      expect(stopped.result, JSON.stringify(stopped)).toMatchObject({ stopped: true });
+      expect(await fetchSessionV2(fixture.server.baseUrl, manager.credentials.token, stopped.childSessionId))
+        .toMatchObject({ active: false });
     }
-    expect(await stopAsAgent(newMachineSession.sessionId)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const newMachineStop = await stopAsAgent(newMachineSession.sessionId);
+    expect(newMachineStop, JSON.stringify(newMachineStop)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
   }, 0);
 });
