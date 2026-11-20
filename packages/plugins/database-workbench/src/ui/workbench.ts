@@ -272,9 +272,9 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             await client.navigate(next);
             local.set('location', next);
         },
-        /** A link straight to a place: reopen it from the database's root so the host's Back reaches the rail. */
-        async openFromRoot() {
-            await client.navigate(local.get('location'), { fromRoot: true });
+        /** Go to the database's root, where a link straight to a place reopens from, so Back reaches the rail. */
+        async openRoot() {
+            await client.openRoot();
         },
         /** The host moved the page (its Back, Forward or a link): take its place without writing it back. */
         adopt(place: Pick<WorkbenchLocation, 'mode' | 'relation'>) {

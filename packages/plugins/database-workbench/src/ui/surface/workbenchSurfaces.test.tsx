@@ -26,6 +26,7 @@ import {
 } from '@happier-dev/plugin-sdk/testing';
 import { encodeBase64, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
 import { renderSurface as renderPage } from './WorkbenchPage.js';
 import { renderSurface as renderRail } from './DatabaseRailTab.js';
@@ -374,6 +375,26 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('writes nothing when the page it opens already has a way back (a place the host pushed)', async () => {
+    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
+    // The host's push mounts the place on a screen whose navigation already goes back (phone Back, lab tablesp).
+    const pushedChrome = { showsTitle: true, renderBack: () => null };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'pushed-place', mountNonce: 'pushed-place' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <HappierPageChromeProvider chrome={pushedChrome}>{renderPage(context)}</HappierPageChromeProvider>,
+      subPath: `${savedDatabasePath}/data/public/invoices`,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation },
+    });
+    try {
+      await settle(20);
+      expect(replacePageLocation).not.toHaveBeenCalled();
+      expect(await fixture.findByRole('button', { name: '48212' })).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it('opens a table picked at the root, and writes nothing but that place', async () => {
     const written: string[] = [];
     let deliver: (subPath: string) => Promise<void> = async () => undefined;
@@ -402,8 +423,13 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('declares the root as the way back on a cold page, and follows the host back to it', async () => {
-    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
+  it('opens a cold place from the root it has reached, then follows the host back to it', async () => {
+    let deliver: (subPath: string) => Promise<void> = async () => undefined;
+    let delivering = false;
+    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => {
+      if (delivering) queueMicrotask(() => { void deliver(subPath); });
+      return subPath;
+    });
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'cold-back', mountNonce: 'cold-back' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
@@ -412,19 +438,27 @@ describe('Database workbench surfaces', () => {
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation },
     });
+    deliver = (subPath) => fixture.updatePageLocation(subPath);
+    const writes = () => replacePageLocation.mock.calls.map(([request]) => request);
     try {
       await settle(20);
-      // A link straight to a place opens it from the database's root, as the rail would: the host's Back then
-      // has a step to return to the rail (lab tablesp).
-      expect(replacePageLocation.mock.calls.map(([request]) => request)).toEqual([
+      // A link straight to a place first goes to the database's root; until the page is there, nothing else is written.
+      expect(writes()).toEqual([expect.objectContaining({ subPath: savedDatabasePath })]);
+      // Once the host delivers the root, the place opens from it as the rail would (lab tablesp), so Back has a step.
+      delivering = true;
+      await fixture.updatePageLocation(savedDatabasePath);
+      await settle(30);
+      expect(writes()).toEqual([
         expect.objectContaining({ subPath: savedDatabasePath }),
         expect.objectContaining({ subPath: `${savedDatabasePath}/data/public/invoices`, backLocation: savedDatabasePath }),
       ]);
       expect(await fixture.findByRole('button', { name: '48212' })).toBeTruthy();
-      // The host's Back delivers the root; the page follows it rather than keeping the table.
+      // The host's Back delivers the root; the page follows it rather than keeping the table, and writes nothing.
+      delivering = false;
       await fixture.updatePageLocation(savedDatabasePath);
       await settle(20);
       expect(await fixture.queryByRole('button', { name: '48212' })).toBeUndefined();
+      expect(writes()).toHaveLength(2);
       await settle(20);
       // The Overview's table directory, which the root shows beside the rail.
       expect(document.body.textContent).toContain('Biggest first.');

@@ -148,16 +148,17 @@ export function createHostWorkbenchClient(
         dispose();
       };
     },
-    async navigate(location, navigation) {
+    async navigate(location) {
       if (!options.pageLocation) return;
-      const root = encodeWorkbenchRootSubPath(options.pageTarget);
-      // Opening from the root is what gives the host's Back its step there (a cold link to a place).
-      if (navigation?.fromRoot) await hostApi.replacePageLocation(root, { preserveUnsavedChanges: true });
       await hostApi.replacePageLocation(encodeWorkbenchSubPath(location, options.pageTarget), {
         // Every place goes back to the database's root, which a phone shows as the rail (lab tablesp).
-        backLocation: root,
+        backLocation: encodeWorkbenchRootSubPath(options.pageTarget),
         preserveUnsavedChanges: true,
       });
+    },
+    async openRoot() {
+      if (!options.pageLocation) return;
+      await hostApi.replacePageLocation(encodeWorkbenchRootSubPath(options.pageTarget), { preserveUnsavedChanges: true });
     },
     async setUnsavedChanges(value) {
       await hostApi.setUnsavedChanges(value);

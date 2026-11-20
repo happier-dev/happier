@@ -17,7 +17,7 @@ it('keeps selected insight demand pending, shares its native read, and distingui
             await held;
             const { connection } = await native.resolve();
             try { return await connection.execute(input); } finally { await connection.close(); }
-        }, subscribeOwnWrites: () => () => {}, navigate: async () => {}, setUnsavedChanges: async () => {},
+        }, subscribeOwnWrites: () => () => {}, navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {},
         presentDeviceStorageError(error) { throw error; } };
     const location: WorkbenchLocation = { targetKey, mode: 'overview', sort: [], columns: [], page: { rows: 20, offset: 0 }, fkTrail: [] };
     const instance = createWorkbenchInstance({ client, selectedTarget: descriptor, location, cataloguePageRows: 20,

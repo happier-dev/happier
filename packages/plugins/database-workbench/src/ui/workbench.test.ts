@@ -32,7 +32,7 @@ it('reads only demanded catalogue pages, retains held row identity, and scopes o
         },
         access: async () => { throw new Error('Read caching does not read policy'); },
         subscribeOwnWrites(listener) { ownWrite = listener; return () => { ownWrite = undefined; }; },
-        navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); },
+        navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); },
     };
     const location: WorkbenchLocation = { targetKey, relation, mode: 'data', sort: [], columns: ['id'], page: { rows: 40, offset: 0 }, fkTrail: [] };
     const instance = createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
@@ -80,7 +80,7 @@ it('merges navigation intent into the local location and clears the previous pag
     const navigations: WorkbenchLocation[] = [];
     const unexpected = async (): Promise<never> => { throw new Error('Navigation does not read or write a database'); };
     const client: WorkbenchClient = { targets: unexpected, operation: unexpected, access: unexpected,
-        subscribeOwnWrites: () => () => {}, navigate: async value => { navigations.push(value); },
+        subscribeOwnWrites: () => () => {}, navigate: async value => { navigations.push(value); }, openRoot: async () => {},
         setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); } };
     const instance = createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
         workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } }, location, selectedTarget: descriptor,
@@ -103,7 +103,7 @@ it('prepares Apply for a host gesture and retains proposals edited while the sub
     const unexpected = async (): Promise<never> => { throw new Error('Staging performs no database reads'); };
     const client: WorkbenchClient & { commit(): Promise<DatabaseOperationResultV1> } = { targets: unexpected, operation: unexpected, access: unexpected,
         commit: async () => { commits++; return { ok: true, operation: 'edits.apply', status: 'committed', inserted: '0', updated: '0', deleted: '1' }; },
-        subscribeOwnWrites: () => () => {}, navigate: async () => {},
+        subscribeOwnWrites: () => () => {}, navigate: async () => {}, openRoot: async () => {},
         setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); } };
     const instance = createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
         workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } }, location, selectedTarget: descriptor,
@@ -133,7 +133,7 @@ it('keeps typed filters, full FK Back state and loaded-only export on the same c
     let rowReads = 0;
     const unexpected = async (): Promise<never> => { throw new Error('Only demanded reads may execute'); };
     const client: WorkbenchClient = { targets: unexpected, access: unexpected, subscribeOwnWrites: () => () => {},
-        navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); },
+        navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); },
         operation: async input => {
             if (input.operation === 'relation.structure') return { ok: true, operation: input.operation, structure: { relation, kind: 'table', columns,
                 primaryKey: ['id'], indexes: [], capabilities: [], foreignKeys: [{ name: 'parent_fk', columns: ['parent'], target: { schema: 'public', name: 'parents' }, targetColumns: ['id'] }] } };
@@ -177,7 +177,7 @@ it('projects target facts from the connection and Machine owners without inventi
         targets: async () => ({ targets: [known ? selected : descriptor], completeness: { complete: true } }),
         machineDisplayName: async () => known ? { status: 'ready', displayName: 'MacBook Pro' } : { status: 'unavailable' },
         operation: unexpected, access: unexpected, subscribeOwnWrites: () => () => {},
-        navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError: unexpected, saveExport: unexpected,
+        navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError: unexpected, saveExport: unexpected,
     };
     const scope = { kind: 'project' as const, accountId: 'account', installationId: 'installation', projectKey: 'project' };
     const instance = createWorkbenchInstance({ client, scope,

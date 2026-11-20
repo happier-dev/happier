@@ -16,7 +16,7 @@ const location: WorkbenchLocation = { targetKey, relation, mode: 'data', sort: [
 function workbench(operation?: WorkbenchClient['operation']) {
     const unexpected = async (): Promise<never> => { throw new Error('Draft intents do not execute database operations'); };
     const client: WorkbenchClient = { targets: unexpected, operation: operation ?? unexpected, access: unexpected,
-        subscribeOwnWrites: () => () => {}, navigate: async () => {}, setUnsavedChanges: async () => {},
+        subscribeOwnWrites: () => () => {}, navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {},
         presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); } };
     return createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
         workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } }, location, selectedTarget: descriptor,
