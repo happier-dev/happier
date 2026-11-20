@@ -8,13 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
@@ -54,12 +54,18 @@ const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 const { LocalServicesSurfaceHost } = await import('./LocalServicesSurfaceHost');
 
 /** The Home Project and daemon runtime transports share this fixture; admission stays real. */
-function createRuntimeBoundary(transport: RuntimeActionExecute) {
-  return createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
-
-    projectAction: ({ actionId, input, context }) => transport({ actionId, input, context }),
+function createRuntimeBoundary(transport: RuntimeActionExecute, options: Readonly<{
+  actionsSettings?: ActionExecutorContext['actionsSettings'];
+  presentUserActionConfirmation?: ActionExecutorDeps['presentUserActionConfirmation'];
+  projectAction?: ActionExecutorDeps['projectAction'];
+  actionOperationAction?: ActionExecutorDeps['actionOperationAction'];
+}> = {}) {
+  return createFrontDoorRuntimeActionExecutor(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+    projectAction: options.projectAction ?? (({ actionId, input, context }) => transport({ actionId, input, context })),
     runtimeActionExecute: transport,
-  })));
+    ...(options.presentUserActionConfirmation ? { presentUserActionConfirmation: options.presentUserActionConfirmation } : {}),
+    ...(options.actionOperationAction ? { actionOperationAction: options.actionOperationAction } : {}),
+  }), 'initiating-account', options.actionsSettings));
 }
 
 const pluginProjectionState = vi.hoisted(() => ({
@@ -202,7 +208,7 @@ describe('LocalServicesSurfaceHost', () => {
     const native = createDeferred<void>();
     let running = false;
     let starts = 0;
-    let push: (() => void) | undefined;
+    const pushes = new Set<() => void>();
     const target: LocalServiceLaunchTarget = { id: 'managed:web', source: 'managed_service',
       sourceClass: { kind: 'managed_service', managedServiceId: 'web' }, machineId: 'machine-a',
       sessionId: 'session-a', title: 'Web', confidence: 'high', state: 'available',
@@ -217,11 +223,16 @@ describe('LocalServicesSurfaceHost', () => {
         starts++;
         await native.promise;
         running = true;
-        push?.();
+        for (const push of pushes) push();
         response = { protocolVersion: 1, machineId: 'machine-a', targetId: target.id, status: 'succeeded', snapshot: snapshot() };
       } else if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
         return await new Promise<Response>((resolve, reject) => {
-          push = () => resolve({ protocolVersion: 1, changed: true, snapshot: inventory() } as Response);
+          const push = () => {
+            pushes.delete(push);
+            resolve({ protocolVersion: 1, changed: true,
+              snapshot: request.payload && typeof request.payload === 'object' && 'launcherProjection' in request.payload ? snapshot() : inventory() } as Response);
+          };
+          pushes.add(push);
           request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
         });
       } else if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
@@ -242,7 +253,8 @@ describe('LocalServicesSurfaceHost', () => {
       const before = home.requests.filter(request => request.path === '/v2/account/settings').length;
       act(() => first.pressByTestId('start-custody-row:managed:web-start'));
       await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === '/v2/account/settings').length).toBeGreaterThan(before));
-      expect(first.getTextContent()).toContain('Starting');
+      expect(first.findAllByTestId('start-custody-row:managed:web-start')
+        .some(node => node.props.accessibilityState?.busy === true)).toBe(true);
       expect(starts).toBe(0);
       act(() => first.tree.unmount());
       const reopened = await render();
@@ -265,17 +277,25 @@ describe('LocalServicesSurfaceHost', () => {
     let scans = 0;
     let newServiceObserved = false;
     let deliverNext: ((next: typeof snapshot) => void) | undefined;
+    let deliverLauncher: (() => void) | undefined;
     let boundaryAvailable = false;
     const rpc = vi.spyOn(operationMachineRpc, 'machineRpcWithServerScope').mockImplementation(async <Response,>(request: Parameters<typeof operationMachineRpc.machineRpcWithServerScope>[0]) => {
       let response: unknown;
       if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
         if (!boundaryAvailable) throw new Error('inventory transport unavailable');
         return await new Promise<Response>((resolve, reject) => {
-          deliverNext = next => {
-            // A genuine daemon watch response enters the real strict consumer.
-            newServiceObserved = true;
-            resolve({ protocolVersion: 1, changed: true, snapshot: next } as Response);
-          };
+          if (request.payload && typeof request.payload === 'object' && 'launcherProjection' in request.payload) {
+            deliverLauncher = () => resolve({ protocolVersion: 1, changed: true, snapshot: {
+              v: 1, machineId: 'machine-a', updatedAt: 124, targets: [startedTarget],
+            } } as Response);
+          } else {
+            deliverNext = next => {
+              // A genuine daemon watch response enters the real strict consumer.
+              newServiceObserved = true;
+              resolve({ protocolVersion: 1, changed: true, snapshot: next } as Response);
+              deliverLauncher?.();
+            };
+          }
           request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
         });
       }
@@ -308,27 +328,30 @@ describe('LocalServicesSurfaceHost', () => {
   });
 
   it.each(['accept', 'acceptOnce', 'decline', 'retire', 'askFirstReject'] as const)('continues an untrusted Service Start through the shared Setup decision owner only after observed completion (%s)', async decision => {
-    const serverId = await home.addHome({ localServicesEnabled: true, name: 'Service Setup Home', serverUrl: `https://services-setup-${decision}.test`,
-      accountId: 'initiating-account', currentAccount: true });
+    const homeId = await home.addHome({ localServicesEnabled: true, name: 'Service Setup Home', serverUrl: `https://services-setup-${decision}.test`,
+      serverIdentityId: `srv_${'5'.repeat(32)}`, accountId: 'initiating-account', currentAccount: true });
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const serverId = resolveServerProfileScopeIdForIdentifier(homeId);
     const scope = { serverId, accountId: 'initiating-account' };
     const workspace = { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
     const previous = storage.getState();
     storage.setState({ profileScope: scope, projectAccountRows: createProjectAccountRowsFixture(scope, { workspaceRefs: [
       { id: workspace.workspaceId, serverId, machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1, projectKey: 'accepted-project' },
     ] }) });
+    // projects.prepare follows UI Ask policy (a19e097f70b); ordinary UI Ask uses
+    // the native confirmation before the Project transport, not an Inbox proposal.
+    const actionsSettings = setActionApprovalOverride({
+      settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } }),
+      actionId: 'projects.prepare', surface: 'ui', approvalRequired: decision === 'askFirstReject',
+    });
     home.answer(serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
-      actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } },
+      actionsSettingsV1: actionsSettings,
     } } } });
     home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     home.answer(serverId, '/v1/account/project-trust/read', { body: { status: 'absent' } });
+    home.answer(serverId, '/v1/projects/execution/config/read', { body: { status: 'absent' } });
     home.answer(serverId, '/v1/account/project-trust/mutate', { body: { status: 'updated', revision: 1, cursor: 1 } });
-    if (decision === 'askFirstReject') {
-      await home.requireUiApproval(serverId, 'projects.prepare');
-      // Real approval admission reads the addressed Machine from its Home census.
-      home.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({
-        id: workspace.machineId, accountId: scope.accountId,
-      })] });
-    }
+    const confirmSetup = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(async () => decision === 'accept');
     const consent: ProjectSetupConsentFailureDetailsV1 = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup-digest',
       reviewedEffect: { v: 1, purpose: 'setup', commands: [{ source: { kind: 'command', command: 'prepare-project' }, executable: 'prepare-project', args: [] }] } };
     const held: ActionOperationSnapshotV1 = { version: 1, operationId: 'held-service-setup', revision: 1,
@@ -347,27 +370,27 @@ describe('LocalServicesSurfaceHost', () => {
       return response as Response;
     });
     const requests: Parameters<RuntimeActionExecute>[0][] = [];
-    let prepareApprovalId: string | undefined;
-    let prepareApprovalOutcome: { artifactId: string } | { error: unknown } | undefined;
     const target: LocalServiceLaunchTarget = { id: 'project-service:web', source: 'managed_service',
       sourceClass: { kind: 'managed_service', managedServiceId: 'declared-web' }, machineId: 'machine-a', workspaceId: 'accepted',
       workspace, cwd: '/repo', declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } },
       title: 'Web', confidence: 'high', state: 'available', actions: ['start'] };
+    const [{ answerExternalActionAccountForHome }, { captureLazyActionAccountContext }, { createUiProjectAction },
+      { executeActionOperationActionV1 }] = await Promise.all([
+      import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
+      import('@/sync/ops/actions/actionAccountContext'),
+      import('@/sync/ops/actions/projectActionDeps'),
+      import('@happier-dev/protocol/actions/executor/actionOperationActions'),
+    ]);
+    let nativePrepares = 0;
+    const native = await answerExternalActionAccountForHome(home, serverId, {
+      machineId: workspace.machineId, actionId: 'projects.prepare', tokenEpoch: 0, requesterInvocation: 'optional',
+      execute: () => ({ operation: ++nativePrepares > 1 ? running : held }),
+    });
+    home.answer(serverId, '/v1/machines', { body: [native.machine] });
+    const account = await captureLazyActionAccountContext(serverId);
+    const projectAction = createUiProjectAction(account);
     const runtimeActionExecute: RuntimeActionExecute = async request => {
       requests.push(request);
-      if (request.actionId === 'projects.prepare') {
-        if (decision === 'askFirstReject') {
-          prepareApprovalId = await createUiApprovalRequest({ serverId, actionId: request.actionId,
-            actionInput: request.input, actionRequestId: 'service-setup-prepare' }).catch((error: unknown) => {
-              prepareApprovalOutcome = { error };
-              throw error;
-            });
-          prepareApprovalOutcome = { artifactId: prepareApprovalId };
-          return { kind: 'approval_request_created', actionId: request.actionId, artifactId: prepareApprovalId };
-        }
-        // The decided retry returns the same held setup after consent clears.
-        return { operation: requests.filter(value => value.actionId === 'projects.prepare').length > 1 ? running : held };
-      }
       const serviceStarts = requests.filter(value => value.actionId === 'localServices.launcher.start');
       if (serviceStarts.length === 1) return { ok: false, errorCode: consent.code, error: consent.code, details: consent };
       return { protocolVersion: 1, machineId: 'machine-a', targetId: target.id, status: 'succeeded',
@@ -377,28 +400,33 @@ describe('LocalServicesSurfaceHost', () => {
       const screen = await renderScreen(<LocalServicesSurfaceHost machineId="machine-a" serverId={serverId} workspaceRoot="/repo"
         inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(),
           { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [target] })}
-        runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute)} testID="service-setup" />);
+        runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute, { actionsSettings,
+          presentUserActionConfirmation: confirmSetup,
+          projectAction: args => {
+            requests.push({ actionId: args.actionId, input: args.input, context: args.context });
+            return projectAction(args);
+          },
+          actionOperationAction: args => executeActionOperationActionV1({ ...args,
+            transport: request => operationMachineRpc.machineRpcWithServerScope({ ...request, accountId: scope.accountId }),
+          }),
+        })} testID="service-setup" />);
       await flushHookEffects();
       act(() => { screen.pressByTestId('service-setup-row:project-service:web-start'); });
       await waitForHomeGovernance(() => expect(requests[0]?.actionId).toBe('localServices.launcher.start'));
       await flushHookEffects();
-      expect(requests.map(value => value.actionId)).toEqual(['localServices.launcher.start', 'projects.prepare']);
-      expect(requests[1]?.input).toEqual({ workspace, phase: 'setup' });
       if (decision === 'askFirstReject') {
-        // Observe completion first so a refused fixture reports its real error instead of
-        // waiting for an approval id that the production executor could never create.
-        await waitForHomeGovernance(() => expect(prepareApprovalOutcome).toBeDefined());
-        expect(prepareApprovalOutcome).toEqual({ artifactId: expect.any(String) });
+        await waitForHomeGovernance(() => expect(confirmSetup).toHaveBeenCalledOnce());
+        expect(confirmSetup.mock.calls[0]?.[0]).toMatchObject({ actionId: 'projects.prepare', input: { workspace, phase: 'setup' } });
         await flushHookEffects();
-        expect(screen.findByTestId('service-setup-setup-approval')).toBeTruthy();
-        // The shared approval-pending notice, with its one way in (PATTERN-AUDIT-UI-1111 E), not a local banner.
-        expect(screen.findByTestId('service-setup-setup-approval.open')).toBeTruthy();
-        await expect(decideApprovalAsInbox(serverId, prepareApprovalId!, 'reject')).resolves.toMatchObject({ ok: true });
-        await waitForHomeGovernance(async () => {
-          await flushHookEffects();
-          expect(screen.findAllByTestId('service-setup-setup-approval')).toHaveLength(0);
-        });
+        expect(requests.map(value => value.actionId)).toEqual(['localServices.launcher.start']);
+        expect(nativePrepares).toBe(0);
+        expect(screen.findAllByTestId('service-setup-setup-approval')).toHaveLength(0);
+        expect(screen.findAllByTestId('service-setup-setup-review-approve')).toHaveLength(0);
       } else {
+        await waitForHomeGovernance(() => expect(requests.map(value => value.actionId))
+          .toEqual(['localServices.launcher.start', 'projects.prepare']));
+        expect(requests[1]?.input).toEqual({ workspace, phase: 'setup' });
+        expect(confirmSetup).not.toHaveBeenCalled();
         await waitForHomeGovernance(() => expect(screen.findByTestId('service-setup-setup-review-approve')).toBeTruthy());
       }
       if (decision === 'retire') {
@@ -421,10 +449,10 @@ describe('LocalServicesSurfaceHost', () => {
           JSON.stringify({ rpc: rpc.mock.calls.map(([request]) => ({ method: request.method, payload: request.payload })),
             paths: home.requests.map(value => value.path) })).toHaveLength(decision === 'accept' ? 1 : 0);
         await flushHookEffects();
-        // This time explicitly resumes the held setup; remembering wakes its existing wait.
-        expect(requests.map(value => value.actionId)).toEqual(decision === 'accept'
-          ? ['localServices.launcher.start', 'projects.prepare']
-          : ['localServices.launcher.start', 'projects.prepare', 'projects.prepare']);
+        // Both choices re-enter projects.prepare; Until changed writes Trust at its
+        // Account owner, while This time resumes the daemon's existing operation.
+        expect(requests.map(value => value.actionId)).toEqual(['localServices.launcher.start', 'projects.prepare', 'projects.prepare']);
+        expect(nativePrepares).toBe(decision === 'accept' ? 1 : 2);
         if (decision === 'acceptOnce') expect(requests[2]?.input).toEqual({ workspace, phase: 'setup',
           expectedEffectDigest: consent.reviewedEffectDigest, consentScope: 'thisTime', heldOperationId: held.operationId });
         const afterDecision = requests.length;
@@ -450,6 +478,7 @@ describe('LocalServicesSurfaceHost', () => {
       }
       expect(requests.every(value => Reflect.get(value.context, 'expectedAccountId') === scope.accountId)).toBe(true);
     } finally {
+      account.dispose();
       rpc.mockRestore();
       storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
     }
@@ -661,6 +690,7 @@ describe('LocalServicesSurfaceHost', () => {
       accountId: 'initiating-account',
       currentAccount: true,
     });
+    home.answer(serverId, '/v1/projects/execution/config/read', { body: { status: 'absent' } });
     const runtimeActionExecute = vi.fn<RuntimeActionExecute>(
       async (request) => ({
         protocolVersion: 1,
@@ -721,8 +751,8 @@ describe('LocalServicesSurfaceHost', () => {
       screen.pressByTestId('service-retirement-row:project-service:jobs-start');
     });
     await flushHookEffects();
-    expect(runtimeActionExecute).toHaveBeenCalledOnce();
-    expect(screen.findByTestId('service-retirement-effect-review')).toBeTruthy();
+    await waitForHomeGovernance(() => expect(runtimeActionExecute).toHaveBeenCalledOnce());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('service-retirement-effect-review')).toBeTruthy());
     await act(async () => {
       await home.switchAccount(serverId, 'replacement-account');
     });
@@ -746,6 +776,7 @@ describe('LocalServicesSurfaceHost', () => {
       accountId: 'initiating-account',
       currentAccount: true,
     });
+    home.answer(serverId, '/v1/projects/execution/config/read', { body: { status: 'absent' } });
     const digest = 'b'.repeat(64);
     const runtimeActionExecute = vi.fn<RuntimeActionExecute>(
       async (request) => {
@@ -1120,7 +1151,7 @@ describe('LocalServicesSurfaceHost', () => {
       expect(source).not.toContain('createLocalServiceInventoryState');
     }
   });
-  it('shows a service that starts after mount, by re-reading the launcher feed the inventory watch reported changed', async () => {
+  it('shows a service that starts after mount through the daemon launcher projection watch', async () => {
     // The regression this pins: the pane's rows are built from LAUNCH TARGETS, and inventory
     // entries only enrich them. Making the inventory fresh while leaving the launcher feed on
     // its mount-time read renders nothing new, which a store-level assertion cannot see.
@@ -1173,11 +1204,16 @@ describe('LocalServicesSurfaceHost', () => {
     });
 
     let answerWatch: ((snapshot: ReturnType<typeof inventorySnapshotAt>) => void) | undefined;
+    let answerLauncherWatch: (() => void) | undefined;
     const watchSpy = vi.spyOn(operationMachineRpc, 'machineRpcWithServerScope').mockImplementation(async <Response,>(request: Parameters<typeof operationMachineRpc.machineRpcWithServerScope>[0]) => {
       if (request.method !== RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) throw new Error(`Unexpected RPC ${request.method}`);
       return await new Promise<Response>((resolve, reject) => {
         // Only the daemon transport is replaced; the watch adapter validates its real wire DTO.
-        answerWatch = snapshot => resolve({ protocolVersion: 1, changed: true, snapshot } as Response);
+        if (request.payload && typeof request.payload === 'object' && 'launcherProjection' in request.payload) {
+          answerLauncherWatch = () => resolve({ protocolVersion: 1, changed: true, snapshot: {
+            v: 1, machineId: 'machine-a', sessionId: 'session-a', updatedAt: 4_000, targets: [startedTarget],
+          } } as Response);
+        } else answerWatch = snapshot => resolve({ protocolVersion: 1, changed: true, snapshot } as Response);
         request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
       });
     });
@@ -1202,11 +1238,12 @@ describe('LocalServicesSurfaceHost', () => {
     await act(async () => {
       serviceStarted = true;
       answerWatch?.(inventorySnapshotAt(2_000, []));
+      answerLauncherWatch?.();
       await Promise.resolve();
     });
     await flushHookEffects({ cycles: 4, turns: 4 });
 
-    expect(launcherSnapshotClient.mock.calls.length).toBeGreaterThan(1);
+    expect(launcherSnapshotClient.mock.calls.length).toBe(1);
     expect(
       screen.findByTestId('surface-host-services-row:inventory:vite-5199'),
     ).toBeTruthy();
