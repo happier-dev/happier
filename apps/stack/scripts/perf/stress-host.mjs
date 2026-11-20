@@ -46,16 +46,23 @@ export async function createLinuxFootprintReader() {
   const clockTicks = await exec('getconf', ['CLK_TCK']).then(({ stdout }) => Number(stdout.trim()), () => 0);
   if (!Number.isSafeInteger(clockTicks) || clockTicks <= 0) return null;
   return async (roles, during, { rates = false } = {}) => {
-    const snapshot = async () => new Map(await Promise.all([...new Set(Object.values(roles).flat().filter(pid => Number.isSafeInteger(pid) && pid > 1))]
-      .map(async pid => [pid, await readProcessFootprint(pid)])));
+    const snapshot = async () => {
+      const rolePids = Object.fromEntries(await Promise.all(Object.entries(roles).map(async ([role, pids]) =>
+        [role, typeof pids === 'function' ? await pids() : pids])));
+      const pids = [...new Set(Object.values(rolePids).flat().filter(pid => Number.isSafeInteger(pid) && pid > 1))];
+      const processes = new Map(await Promise.all(pids.map(async pid => [pid, await readProcessFootprint(pid)])));
+      return { rolePids, processes };
+    };
     const before = await snapshot();
     const startedAt = performance.now();
     await during();
     const elapsedMs = performance.now() - startedAt;
     const after = await snapshot();
-    return Object.fromEntries(Object.entries(roles).map(([role, pids]) => {
-      const processes = pids?.map(pid => [before.get(pid), after.get(pid)]);
-      if (!processes?.length || new Set(pids).size !== pids.length
+    return Object.fromEntries(Object.entries(before.rolePids).map(([role, pids]) => {
+      const endPids = new Set(after.rolePids[role]);
+      const processes = pids?.map(pid => [before.processes.get(pid), after.processes.get(pid)]);
+      if (!processes?.length || new Set(pids).size !== pids.length || endPids.size !== pids.length
+        || pids.some(pid => !endPids.has(pid))
         || processes.some(([first, last]) => !first || !last || first.start !== last.start)) return [role, null];
       const cpuMs = sum(processes.map(([first, last]) =>
         first.cpuTicks !== null && last.cpuTicks !== null && last.cpuTicks >= first.cpuTicks ? (last.cpuTicks - first.cpuTicks) * 1_000 / clockTicks : null));
@@ -87,7 +94,7 @@ async function localHolderPids(runnerPid) {
 
 const settledMs = 15_000;
 const idleWindowMs = 15_000;
-const baseRoles = ['api', 'worker', 'daemon', 'runner', 'holder'];
+const baseRoles = ['api', 'worker', 'daemon', 'runner', 'holder', 'ui'];
 const phaseNames = ['idle0', 'idle1', 'idle3', 'active3', 'marginal1To3'];
 const unavailableRoles = () => Object.fromEntries(baseRoles.map(role => [role, null]));
 
@@ -151,11 +158,12 @@ export async function createStressHostObserver({ context, inspect, sqlStatements
         ...(daemon ? [] : ['No daemon was started for this journey'])],
     };
   };
-  const captureFootprint = async ({ fixture, startSession, runTurn, readServerHeap, signal }) => {
+  const captureFootprint = async ({ fixture, startSession, runTurn, readServerHeap, readUiPids, signal }) => {
     const measure = await createLinuxFootprintReader();
     const phases = Object.fromEntries(phaseNames.map(phase => [phase, unavailableRoles()]));
-    const footprint = { workload: measure ? JSON.stringify(['full-compose-fake-claude-v1', fixture, process.platform,
-      process.arch, process.versions.node, settledMs, idleWindowMs]) : null, phases, completedTurns: {} };
+    const cpus = os.cpus();
+    const footprint = { workload: measure ? JSON.stringify(['full-compose-fake-claude-v2', fixture, process.platform,
+      process.arch, process.versions.node, cpus.length, cpus[0]?.model, settledMs, idleWindowMs]) : null, phases, completedTurns: {} };
     if (!measure) return footprint;
 
     const pause = (ms) => wait(ms, undefined, { signal });
@@ -179,7 +187,7 @@ export async function createStressHostObserver({ context, inspect, sqlStatements
         return pids.length === count ? pids : [null];
       }));
       const roles = { api: [], worker: [], daemon: [context.daemonPid],
-        runner: [...sessionCountsByRunner.keys()], holder: holdersByRunner.flat() };
+        runner: [...sessionCountsByRunner.keys()], holder: holdersByRunner.flat(), ui: readUiPids ?? [] };
       for (const [role, pid] of entries) roles[role].push(pid);
       return roles;
     };

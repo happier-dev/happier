@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { chromium, expect } from '@playwright/test';
+import { chromium, expect, type Browser, type Page } from '@playwright/test';
 import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
 import { createTestAuth } from '../../auth';
 import { buildTestAccountCliAuthCredentials, seedCliAuthForTestAccount } from '../../cliAuth';
@@ -149,15 +149,22 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
     const port = await reserveAvailablePort();
     const browser = await chromium.launch({ headless: true, args: [`--remote-debugging-port=${port}`] });
     cleanup.unshift(() => browser.close());
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-    const page = await context.newPage();
-    await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({ serverUrl: target.baseUrl, auth, mode: 'dataKey', storageScope: 'perf' }));
-    const home = '[data-testid="home-header-start-new-session"], [data-testid="session-list-view-options-trigger"]';
-    const homeReady = async () => {
-      await page.locator(home).first().waitFor();
-      await expect(page.getByTestId(sessionListRowTestId(serverId, streamSessions[0]!.sessionId))).toContainText(streamSessions[0]!.title);
+    const openPage = async (owner: Browser) => {
+      const context = await owner.newContext({ viewport: { width: 1440, height: 1000 } });
+      const page = await context.newPage();
+      await installAuthBootstrapStorageSnapshot(page, buildAuthBootstrapStorageSnapshot({ serverUrl: target.baseUrl, auth, mode: 'dataKey', storageScope: 'perf' }));
+      return page;
     };
-    const goHome = async () => { await page.goto(ui.baseUrl, { waitUntil: 'domcontentloaded' }); await homeReady(); };
+    const page = await openPage(browser);
+    const home = '[data-testid="home-header-start-new-session"], [data-testid="session-list-view-options-trigger"]';
+    const homeReady = async (currentPage: Page = page) => {
+      await currentPage.locator(home).first().waitFor();
+      await expect(currentPage.getByTestId(sessionListRowTestId(serverId, streamSessions[0]!.sessionId))).toContainText(streamSessions[0]!.title);
+    };
+    const goHome = async (currentPage: Page = page) => {
+      await currentPage.goto(ui.baseUrl, { waitUntil: 'domcontentloaded' });
+      await homeReady(currentPage);
+    };
     const prepare: JourneyStep[] = options.journey === 'J1' && options.cache === 'cold' ? [] : [{ op: 'open' }, { op: 'home' }];
     const steps: JourneyStep[] = options.journey === 'J1' ? [{ op: 'open' }, { op: 'home' }]
       : options.journey === 'J13' ? [{ op: 'idle', ms: 300_000 }]
@@ -282,8 +289,8 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
     if (bundle.status === 'FAILED') throw new Error('Canonical performance journey failed');
     if (options.journey !== 'J4-stream' || options.mode !== 'counts') return;
 
-    // The caller runs this after the browser and transcript publishers close,
-    // so their activity never enters the process windows or the web capture.
+    // The caller closes the instrumented journey before running the same export
+    // in a fresh browser for the idle and active process windows.
     return async () => {
       const observer = await createObserver({ context: observerContext }).catch(() => null);
       if (!observer) {
@@ -304,14 +311,31 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
         if (!selectedSecret || !selectedUsesDataKeyVariant) throw new Error('Footprint Session data key unavailable');
         return { ...sessionAccess, sessionId, runnerPid, secret: selectedSecret, encryptionVariant: 'dataKey' as const };
       };
+      let footprintBrowser: Browser | undefined;
       try {
+        signal.throwIfAborted();
+        footprintBrowser = await chromium.launch({ headless: true });
+        const footprintPage = await openPage(footprintBrowser);
+        await goHome(footprintPage);
+        const browserCdp = await footprintBrowser.newBrowserCDPSession();
         const footprint: unknown = await observer.captureFootprint({
-          fixture: footprintFixture, signal,
+          fixture: { ...footprintFixture, chromium: footprintBrowser.version() }, signal,
           startSession: startFootprintSession,
+          readUiPids: async () => {
+            const result = await browserCdp.send('SystemInfo.getProcessInfo').catch(() => null);
+            return result?.processInfo.map(row => row.id) ?? [];
+          },
           runTurn: async (session: Awaited<ReturnType<typeof startFootprintSession>>, turn: number) => {
             signal.throwIfAborted();
             await enqueueSessionPromptForScenario({ ...session, text: 'Describe the deterministic footprint fixture.' });
-            await waitForAssistantMessageContaining({ ...session, requiredSubstring: 'FAKE_CLAUDE_OK_' + turn, timeoutMs: 30_000 });
+            const response = 'FAKE_CLAUDE_OK_' + turn;
+            await waitForAssistantMessageContaining({ ...session, requiredSubstring: response, timeoutMs: 30_000 });
+            if (session.sessionId === sessions[0]) {
+              if (turn === 1) {
+                await footprintPage.goto(new URL('/session/' + session.sessionId, ui.baseUrl).href, { waitUntil: 'domcontentloaded' });
+              }
+              await expect(footprintPage.getByTestId('transcript-chat-list')).toContainText(response, { timeout: 30_000 });
+            }
           },
           readServerHeap: async (role: 'api' | 'worker') => {
             const metrics = await readServiceMetricsViaNodeFetch(target, role);
@@ -321,14 +345,14 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
         });
         await writeFile(join(options.out, 'bundle.json'), JSON.stringify({ ...bundle, footprint }, null, 2) + '\n');
       } finally {
-        const stopped = await Promise.allSettled(sessions.map(async sessionId => {
+        const cleanup = await Promise.allSettled([footprintBrowser?.close(), ...sessions.map(async sessionId => {
           const result = await daemonControlPostJson<{ status: string }>({ ...daemonAccess, path: '/stop-session', body: { sessionId } });
           if (result.status !== 200 || !['stopped', 'requested', 'not_found'].includes(result.data.status)) throw new Error('Footprint Session cleanup failed');
           await waitFor(async () => (await fetchSessionV2(target.baseUrl, auth.token, sessionId)).active === false,
             { timeoutMs: 30_000, context: 'stopped footprint Session inactive' });
-        }));
+        })]);
         await observer.stop();
-        if (stopped.some(result => result.status === 'rejected')) throw new Error('Footprint Session cleanup failed');
+        if (cleanup.some(result => result.status === 'rejected')) throw new Error('Footprint browser or Session cleanup failed');
       }
     };
   } catch (error) {

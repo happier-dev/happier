@@ -252,3 +252,24 @@ test('footprint shows measured zero, unavailable roles and only compatible infor
   const oldBase = assess([pair(run(), candidate)]);
   assert.equal(value(oldBase, 'daemon.rssBytes').delta, null);
 });
+
+test('footprint alerts above the observed base spread for the same workload, phase, role and metric', () => {
+  const capture = (rssBytes, cpuMs, workload = 'fake-claude-v2:42') =>
+    run('counts', { journey: 'J4-stream', footprint: { workload, phases: { active3: { ui: { rssBytes, cpuMs } } } } });
+  const first = pair(capture(100, 0), capture(109, 0));
+  const second = pair(capture(108, 0), capture(116, 1));
+  const report = assess([first, second, pair(capture(1000, 500, 'different'), capture(1000, 500, 'different'))]);
+  const pick = (report, index, metric) => report.observations.find(row => row.pair === index && row.metric === 'footprint.active3.ui.' + metric);
+  assert.deepEqual([pick(report, 0, 'rssBytes').delta, pick(report, 0, 'rssBytes').noise, pick(report, 0, 'rssBytes').changedNotably], [9, 8, true]);
+  assert.deepEqual([pick(report, 1, 'rssBytes').delta, pick(report, 1, 'rssBytes').noise, pick(report, 1, 'rssBytes').changedNotably], [8, 8, false]);
+  assert.deepEqual([pick(report, 1, 'cpuMs').noise, pick(report, 1, 'cpuMs').changedNotably], [0, true]);
+  assert.equal(pick(report, 2, 'rssBytes').noise, null);
+  assert.equal(pick(report, 2, 'rssBytes').changedNotably, false);
+  assert.equal(report.status, 'ALERT');
+  assert.match(regression.renderPerfComparison(report), /footprint.active3.ui.rssBytes.*100.*109.*9.*baseline spread 8/);
+  const single = assess([first]);
+  assert.equal(single.status, 'PASS');
+  assert.equal(pick(single, 0, 'rssBytes').noise, null);
+  assert.equal(pick(single, 0, 'rssBytes').changedNotably, false);
+  assert.match(regression.renderPerfComparison(single), /footprint.active3.ui.rssBytes.*baseline spread unavailable/);
+});

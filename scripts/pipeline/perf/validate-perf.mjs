@@ -55,7 +55,9 @@ export function resolvePerfValidationPlan({ baselineRef, candidateRef, out, repe
   const selected = profile === 'pr' ? journeys.filter(row => row.journey === 'J1' && row.cache === 'warm' || row.journey === 'J4-stream') : journeys;
   const runs = [];
   for (const scenario of selected) for (const mode of profile === 'full' && scenario.journey === 'J1' ? ['counts', 'timing'] : ['counts']) {
-    for (let repeat = 0; repeat < (mode === 'timing' ? repeats : 1); repeat++) {
+    // Two complete J4 captures are the minimum that observes a base range.
+    const captures = mode === 'timing' ? repeats : scenario.journey === 'J4-stream' ? 2 : 1;
+    for (let repeat = 0; repeat < captures; repeat++) {
       const pairId = `${scenario.journey}-${scenario.cache}-${mode}-${repeat}`;
       // Alternate AB / BA on this process's host; separate jobs are not pairs.
       for (const side of repeat % 2 ? ['candidate', 'baseline'] : ['baseline', 'candidate']) {

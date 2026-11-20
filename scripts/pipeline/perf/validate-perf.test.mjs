@@ -85,14 +85,18 @@ test('setup failure writes the same informational comparison files without imply
   assert.ok(json.elapsedMs >= 0);
 });
 
-test('PR plan is four short count captures and does not repeat fixed five-minute idle timing windows', () => {
+test('PR and baseline producers repeat J4 for measured footprint spread without adding the five-minute idle timing journey to PRs', () => {
   const pr = perf.resolvePerfValidationPlan({ baselineRef: 'HEAD', profile: 'pr' });
-  assert.equal(pr.runs.length, 4);
+  assert.equal(pr.runs.length, 6);
+  assert.deepEqual(pr.runs.filter(run => run.journey === 'J4-stream').map(run => [run.side, run.repeat]),
+    [['baseline', 0], ['candidate', 0], ['candidate', 1], ['baseline', 1]]);
   assert.ok(pr.runs.every(run => run.mode === 'counts'));
   const full = perf.resolvePerfValidationPlan({ baselineRef: 'HEAD' });
   assert.equal(full.runs.filter(run => run.journey === 'J13').length, 2);
   const candidate = perf.resolvePerfValidationPlan({ baselineRef: 'HEAD', profile: 'pr', candidateOnly: true });
-  assert.equal(candidate.runs.length, 2);
+  assert.equal(candidate.runs.length, 3);
+  const producer = perf.resolvePerfValidationPlan({ baselineRef: 'HEAD', profile: 'full', candidateOnly: true });
+  assert.deepEqual(producer.runs.filter(run => run.journey === 'J4-stream').map(run => run.repeat), [0, 1]);
   assert.ok(candidate.runs.every(run => run.side === 'candidate'));
   assert.throws(() => perf.resolvePerfValidationPlan({ baselineRef: 'HEAD', candidateOnly: true, baselineResultsDir: '/tmp/base' }));
 });

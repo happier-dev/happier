@@ -35,6 +35,26 @@ function diagnosticMetrics(run) {
   return values;
 }
 
+const footprintCost = /^footprint\.(?:idle[013]|active3)\.[^.]+\.(?:[rpu]ssBytes|cpuMs(?:PerMinute)?)$/u;
+const footprintGroup = run => JSON.stringify([groupKey(run), run.footprint.workload]);
+
+function baselineFootprintSamples(pairs) {
+  const groups = new Map();
+  for (const { baseline } of pairs) {
+    if (baseline?.status !== 'CAPTURED' || !baseline.footprint?.workload) continue;
+    const key = footprintGroup(baseline);
+    const metrics = groups.get(key) ?? new Map();
+    for (const [metric, value] of Object.entries(diagnosticMetrics(baseline))) {
+      if (!footprintCost.test(metric) || !finite(value)) continue;
+      const samples = metrics.get(metric) ?? [];
+      samples.push(value);
+      metrics.set(metric, samples);
+    }
+    groups.set(key, metrics);
+  }
+  return groups;
+}
+
 function heapSlope(heap) {
   const rows = heap?.samples;
   if (!Array.isArray(rows) || rows.length < 3 || rows.some(row => row.forcedGc !== true || !finite(row.cycle) || !finite(row.usedBytes))) return null;
@@ -52,6 +72,7 @@ function heapSlope(heap) {
 // earned a 10/10 runner stability proof; existing tier-1 tests own CI gating.
 export function assessRegressionPairs(pairs, { requiredCounts = countSignals } = {}) {
   const counts = [], timings = [], heap = [], observations = [], gaps = [], groups = new Map();
+  const footprintSamples = baselineFootprintSamples(pairs);
   if (!pairs.length) gaps.push('No paired captures');
   for (const [index, pair] of pairs.entries()) {
     const { baseline, candidate } = pair;
@@ -72,10 +93,17 @@ export function assessRegressionPairs(pairs, { requiredCounts = countSignals } =
     }
     for (const metric of new Set([...Object.keys(beforeDiagnostics), ...Object.keys(afterDiagnostics)])) {
       const a = beforeDiagnostics[metric], b = afterDiagnostics[metric];
-      const paired = finite(a) && finite(b) && (!metric.startsWith('footprint.') || sameFootprintWorkload);
+      const footprint = metric.startsWith('footprint.');
+      const paired = finite(a) && finite(b) && (!footprint || sameFootprintWorkload);
+      const delta = paired ? b - a : null;
+      const cost = footprintCost.test(metric);
+      const samples = cost && paired && baseline.status === 'CAPTURED' && candidate.status === 'CAPTURED'
+        && groupKey(baseline) === groupKey(candidate) ? footprintSamples.get(footprintGroup(baseline))?.get(metric) : null;
+      const noise = samples?.length >= 2 ? Math.max(...samples) - Math.min(...samples) : null;
       observations.push({ pair: index, journey: run.journey, cache: run.cache, mode, metric,
-        before: a ?? null, after: b ?? null, delta: paired ? b - a : null,
-        changedNotably: paired && a !== b, noisy: true, gating: false });
+        before: a ?? null, after: b ?? null, delta,
+        ...(cost ? { noise, note: 'baseline spread ' + (noise ?? 'unavailable') } : {}),
+        changedNotably: cost ? noise !== null && delta > noise : paired && a !== b, noisy: true, gating: false });
     }
     if (baseline && candidate) {
       const group = groupKey(baseline);
@@ -124,7 +152,7 @@ export function assessRegressionPairs(pairs, { requiredCounts = countSignals } =
     timings.push({ group: JSON.parse(group), pairs: pairs.length, pairedRatio, noiseRatio,
       changedNotably: pairedRatio > noiseRatio, noisy: true, gating: false });
   }
-  const changed = counts.some(row => row.mode === 'counts' && row.delta > 0) || timings.some(row => row.changedNotably) || heap.some(row => row.changedNotably);
+  const changed = counts.some(row => row.mode === 'counts' && row.delta > 0) || timings.some(row => row.changedNotably) || heap.some(row => row.changedNotably) || observations.some(row => row.noise != null && row.changedNotably);
   return { status: gaps.length ? 'BLOCKED' : counts.some(row => row.mode === 'counts' && row.delta > 0) ? 'FAIL' : changed ? 'ALERT' : 'PASS',
     policy: 'Informational comparison; only independently proven tier-1 contract tests gate CI. BLOCKED/FAIL describe observations, not release admission.',
     comparison: compareRuns(pairs.filter(p => p.baseline).map(p => p.baseline), pairs.filter(p => p.candidate).map(p => p.candidate)),
