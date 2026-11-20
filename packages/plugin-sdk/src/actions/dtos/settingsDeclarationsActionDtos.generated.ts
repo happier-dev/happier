@@ -926,6 +926,19 @@ export type SettingsDeclarationsActionInputById = {
         actionId: string;
         audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
     } | {
+        actionId: string;
+        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        session: {
+            sessionId: string;
+        };
+        scope?: undefined | {
+            kind: 'environment';
+            environmentId: string;
+        } | {
+            kind: 'machine';
+            machineId: string;
+        };
+    } | {
         audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
         scope: {
             kind: 'environment';
@@ -937,6 +950,10 @@ export type SettingsDeclarationsActionInputById = {
         actionId: string;
     } | {
         profiles: true;
+    } | {
+        session: {
+            sessionId: string;
+        };
     };
     readonly "actions.policy.set": {
         actionId: 'capture.view';
@@ -983,6 +1000,20 @@ export type SettingsDeclarationsActionInputById = {
         mode: 'allowed' | 'ask_first' | 'default' | 'off';
         actionId: string;
         audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+    } | {
+        mode: 'allowed' | 'ask_first' | 'default';
+        actionId: string;
+        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        session: {
+            sessionId: string;
+        };
+        scope?: undefined | {
+            kind: 'environment';
+            environmentId: string;
+        } | {
+            kind: 'machine';
+            machineId: string;
+        };
     } | {
         mode: 'allowed' | 'ask_first' | 'default';
         audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
@@ -1034,10 +1065,28 @@ export type SettingsDeclarationsActionInputById = {
                 approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
             };
         };
+    } | {
+        sessionConsentsMove: {
+            fromSessionId: string;
+            toSessionId: string;
+        };
     };
     readonly "actions.policy.reset": {
         actionId: string;
         audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+    } | {
+        actionId: string;
+        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        session: {
+            sessionId: string;
+        };
+        scope?: undefined | {
+            kind: 'environment';
+            environmentId: string;
+        } | {
+            kind: 'machine';
+            machineId: string;
+        };
     } | {
         audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
         scope: {
@@ -1197,6 +1246,20 @@ export type SettingsDeclarationsActionResultById = {
             machineId: string;
         };
     } | {
+        mode: 'allowed' | 'ask_first' | 'default';
+        actionId: string;
+        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        session: {
+            sessionId: string;
+        };
+        scope?: undefined | {
+            kind: 'environment';
+            environmentId: string;
+        } | {
+            kind: 'machine';
+            machineId: string;
+        };
+    } | {
         profiles: {
             id: string;
             profile: {
@@ -1216,6 +1279,22 @@ export type SettingsDeclarationsActionResultById = {
             };
             ownerAccountId?: string | undefined;
             ownerDisplayName?: null | string | undefined;
+        }[];
+    } | {
+        session: {
+            sessionId: string;
+        };
+        rows: {
+            actionId: string;
+            audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+            mode: 'allowed' | 'ask_first';
+            scope?: undefined | {
+                kind: 'environment';
+                environmentId: string;
+            } | {
+                kind: 'machine';
+                machineId: string;
+            };
         }[];
     };
     readonly "actions.policy.set": {
@@ -1273,6 +1352,20 @@ export type SettingsDeclarationsActionResultById = {
             machineId: string;
         };
     } | {
+        mode: 'allowed' | 'ask_first' | 'default';
+        actionId: string;
+        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        session: {
+            sessionId: string;
+        };
+        scope?: undefined | {
+            kind: 'environment';
+            environmentId: string;
+        } | {
+            kind: 'machine';
+            machineId: string;
+        };
+    } | {
         profileChange: {
             kind: 'create' | 'delete' | 'update';
             id: string;
@@ -1285,6 +1378,12 @@ export type SettingsDeclarationsActionResultById = {
             machineId: string;
             id: null | string;
         };
+    } | {
+        sessionConsentsMove: {
+            fromSessionId: string;
+            toSessionId: string;
+        };
+        moved: boolean;
     };
     readonly "actions.policy.reset": {
         mode: 'allowed' | 'ask_first' | 'default' | 'off';
@@ -1292,6 +1391,20 @@ export type SettingsDeclarationsActionResultById = {
         enabled: boolean;
         actionId: string;
         audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        scope?: undefined | {
+            kind: 'environment';
+            environmentId: string;
+        } | {
+            kind: 'machine';
+            machineId: string;
+        };
+    } | {
+        mode: 'allowed' | 'ask_first' | 'default';
+        actionId: string;
+        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
+        session: {
+            sessionId: string;
+        };
         scope?: undefined | {
             kind: 'environment';
             environmentId: string;
