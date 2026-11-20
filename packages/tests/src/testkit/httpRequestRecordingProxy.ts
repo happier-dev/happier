@@ -115,6 +115,8 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
    */
   onRequestStart?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
   captureRequestBody?: boolean | ((request: RecordedHttpProxyRequest) => boolean);
+  /** Opt in to the observed endpoint's body bound when the default capture would truncate it. */
+  requestBodyMaxBytes?: number;
   /**
    * Retain the upstream response bytes each proxied request observed. Off by default so
    * ordinary proxy use keeps streaming responses without buffering credential material.
@@ -197,7 +199,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
     req.on('data', (chunk: Buffer | string) => {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       body.byteLength += bytes.byteLength;
-      const remaining = RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES
+      const remaining = (params.requestBodyMaxBytes ?? RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES)
         - recordedBodyByteLength;
       if (remaining > 0) {
         const recorded = bytes.subarray(0, remaining);
@@ -205,7 +207,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
         recordedBodyByteLength += recorded.byteLength;
       }
       body.truncated =
-        body.byteLength > RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES;
+        body.byteLength > (params.requestBodyMaxBytes ?? RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES);
     });
     req.once('end', () => {
       body.text = Buffer.concat(bodyChunks).toString('utf8');
@@ -394,6 +396,12 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
           upstreamRes.once('error', (error) => finish(entry, { error: error.message }));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          // A fixture hook failure becomes the client's 502; record why so the journey's
+          // downstream refusal can be traced to it. Bodies are never logged.
+          console.error('[http-recording-proxy] beforeForwardResponse failed; answering 502', {
+            method: entry.method, path: entry.path, upstreamStatus: statusCode, message,
+            stack: error instanceof Error ? error.stack : undefined,
+          });
           upstreamRes.destroy();
           if (!res.headersSent) {
             res.statusCode = 502;
