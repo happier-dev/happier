@@ -208,6 +208,13 @@ export function useSessionListRowInteractions({
     // The active drag snapshot is held in a ref for the hot resolve path so the
     // resolver never depends on React state timing.
     const activeDragSnapshotRef = React.useRef<SessionListDragSnapshot | null>(null);
+    type GeometryRefresh = {
+        snapshot: SessionListDragSnapshot;
+        running: boolean;
+        pending: boolean;
+        includeSource: boolean;
+    };
+    const geometryRefreshRef = React.useRef<GeometryRefresh | null>(null);
     const lastResolvedEventRef = React.useRef<UseSessionInlineDragResolveDropResultEvent | null>(null);
     // Measurement replies and scroll events must use the latest resolver, just
     // as pointer events do, without introducing list-wide React state.
@@ -354,39 +361,44 @@ export function useSessionListRowInteractions({
         // cover the stationary targets we are trying to hit.
         const rows = Array.from(measuredRowRefsRef.current).filter(([rowId]) => includeSource || rowId !== snapshot.source.sourceRowId);
         await Promise.all(rows.map(([rowId, ref]) => registerRowContentGeometry(rowId, ref)));
-        refreshDropOverlayRef.current();
+        if (activeDragSnapshotRef.current === snapshot) refreshDropOverlayRef.current();
     }, [registerRowContentGeometry]);
 
     // One re-measure pass runs at a time per drag. Notifications that arrive
     // while it measures (native measurement is async; autoscroll recycles cells
     // every few frames) collapse into a single trailing pass.
-    const geometryRefreshRef = React.useRef<{ running: SessionListDragSnapshot | null; pending: boolean }>({
-        running: null,
-        pending: false,
-    });
-    const runGeometryRefresh = React.useCallback(async () => {
-        const state = geometryRefreshRef.current;
-        const snapshot = activeDragSnapshotRef.current;
+    const runGeometryRefresh = React.useCallback(async (state: GeometryRefresh) => {
+        if (geometryRefreshRef.current !== state || activeDragSnapshotRef.current !== state.snapshot) return;
         state.pending = false;
-        if (!snapshot) return;
-        state.running = snapshot;
+        state.running = true;
+        const includeSource = state.includeSource;
+        state.includeSource = false;
         try {
-            await remeasureAllRegisteredRows();
+            await remeasureAllRegisteredRows(includeSource);
         } finally {
-            if (state.running === snapshot) state.running = null;
+            state.running = false;
         }
-        if (state.pending && activeDragSnapshotRef.current === snapshot) queueMicrotask(() => void runGeometryRefresh());
+        if (state.pending && geometryRefreshRef.current === state && activeDragSnapshotRef.current === state.snapshot) {
+            queueMicrotask(() => void runGeometryRefresh(state));
+        }
     }, [remeasureAllRegisteredRows]);
-    const scheduleGeometryRefresh = React.useCallback(() => {
+    const scheduleGeometryRefresh = React.useCallback((includeSource = false) => {
         const snapshot = activeDragSnapshotRef.current;
+        if (!snapshot) return;
+        // Each frozen snapshot owns its queue, including its initial pass.
+        // Pending work from an ended drag cannot reserve the next drag's slot.
+        if (geometryRefreshRef.current?.snapshot !== snapshot) {
+            geometryRefreshRef.current = { snapshot, running: false, pending: false, includeSource: false };
+        }
         const state = geometryRefreshRef.current;
-        if (!snapshot || state.pending) return;
+        state.includeSource ||= includeSource;
+        if (state.pending) return;
         state.pending = true;
         // A pass for this drag is measuring; it schedules the trailing pass.
         // A pass left over from an earlier drag never holds this one.
-        if (state.running === snapshot) return;
+        if (state.running) return;
         // Coalesce the layout/ref notifications from a single React commit.
-        queueMicrotask(() => void runGeometryRefresh());
+        queueMicrotask(() => void runGeometryRefresh(state));
     }, [runGeometryRefresh]);
 
     const registerTreeRowBounds = React.useCallback<RegisterSessionListTreeRowBounds>((rowId, ref) => {
@@ -688,10 +700,10 @@ export function useSessionListRowInteractions({
         setDraggingSessionKey(sessionKey);
         // Re-measure every mounted row so the registry has fresh, scroll-stable
         // content bounds for the frozen surface.
-        void remeasureAllRegisteredRows(true);
+        scheduleGeometryRefresh(true);
         autoscrollActive.value = true;
         autoscrollPointerY.value = null;
-    }, [autoscrollActive, autoscrollPointerY, folderActionsEnabled, folderSortMode, listItemsRef, remeasureAllRegisteredRows, sessionListIndexRef]);
+    }, [autoscrollActive, autoscrollPointerY, folderActionsEnabled, folderSortMode, listItemsRef, scheduleGeometryRefresh, sessionListIndexRef]);
 
     return {
         activeDragSnapshot,
