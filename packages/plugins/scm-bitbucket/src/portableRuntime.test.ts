@@ -2,19 +2,24 @@ import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
+import { BITBUCKET_EVENT_ACTION_IDS } from './eventActionIds.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS as SOURCE_ACTION_IDS } from './triage/source/actions.js';
 
 describe('Account source runtime portability', () => {
-  it('places finite Account reads together and keeps local workspaces on the daemon', () => {
-    const nativeIds = new Set<string>([SOURCE_ACTION_IDS.prepareReviewWorkspace, SOURCE_ACTION_IDS.verifyReviewWorkspace]);
-    for (const { id } of PLUGIN_MANIFEST.contributes.actions.filter(({ id }) => !nativeIds.has(id))) {
-      expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === id)?.execution).toEqual({
+  it('keeps event handlers and local workspaces on the daemon and other actions on the Account runtime', () => {
+    const nativeIds = new Set<string>([
+      ...Object.values(BITBUCKET_EVENT_ACTION_IDS),
+      SOURCE_ACTION_IDS.prepareReviewWorkspace,
+      SOURCE_ACTION_IDS.verifyReviewWorkspace,
+    ]);
+    for (const { id, execution } of PLUGIN_MANIFEST.contributes.actions.filter(({ id }) => !nativeIds.has(id))) {
+      expect(execution, id).toEqual({
         target: 'account', account: { artifactId: 'bitbucket-account-runtime', exportName: 'activate' },
       });
     }
-    for (const id of [SOURCE_ACTION_IDS.prepareReviewWorkspace, SOURCE_ACTION_IDS.verifyReviewWorkspace]) {
-      expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === id)?.execution).toEqual({ target: 'daemon' });
+    for (const id of nativeIds) {
+      expect(PLUGIN_MANIFEST.contributes.actions.find((action) => action.id === id)?.execution, id).toEqual({ target: 'daemon' });
     }
   });
 

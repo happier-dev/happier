@@ -183,7 +183,7 @@ export function describeTriageEntrySessionPhaseV1(
             case 'rejected':
               return Object.freeze({
                 ...notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.'),
-                failureCode: result.result.code,
+                ...(typeof result.result.code === 'string' ? { failureCode: result.result.code } : {}),
               });
             case 'failed':
             case 'cancelled':

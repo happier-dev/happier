@@ -175,6 +175,16 @@ describe('entry existing Session handoff', () => {
             .toMatchObject({ tone: 'warning', failureCode: 'session_input_target_update_required' });
     });
 
+    it('retains the Send warning when the host result has no string recovery code', () => {
+        const notice = describeTriageEntrySessionPhaseV1({
+            kind: 'handoffSettled',
+            result: { v: 1, handoff: { kind: 'sendResult', session: { serverId: 'home-b', sessionId: 'same-session' },
+                result: { status: 'rejected', code: 42 } } },
+        });
+        expect(notice).toMatchObject({ tone: 'warning' });
+        expect(notice).not.toHaveProperty('failureCode');
+    });
+
     it('echoes canonical recovery after an uncertain send instead of minting a second delivery', async () => {
         const f = fixture('send', false, true);
         const session = { serverId: 'home-b', sessionId: 'same-session' };
