@@ -1,8 +1,11 @@
 import 'fake-indexeddb/auto';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { PluginAutomationSubjectPicker } from '@/components/plugins/surfaces/PluginAutomationSubjectPicker';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -196,5 +199,25 @@ it.each([{ query: 'fix' }, { query: 'fix', limit: 3 }])('uses contributed page d
         expect(hook.getCurrent().items).toBe(loaded);
         expect(pages).toEqual([page, { ...page, cursor: 'next-ticket' }]);
         await hook.unmount();
+
+        // App pages have no addressed resource Machine. Their host's selected
+        // execution target still owns the contributed list Action and its catalog.
+        const onChange = vi.fn();
+        const screen = await renderScreen(<PluginAutomationSubjectPicker
+            kind={{ kind: 'plugin', pluginId, subjectKindId: 'ticket' }} page={page}
+            value={null} onChange={onChange} target={{ kind: 'app' }} context={context}
+            accountLifetime={account.accountLifetime} isCurrent={account.accountLifetime.isCurrent} />);
+        expect(pages).toHaveLength(2);
+        const menu = () => screen.findByType(DropdownMenu);
+        await act(async () => { menu().props.onOpenChange(true); });
+        await vi.waitFor(() => expect(menu().props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ title: 'First ticket' }),
+        ])));
+        const first = menu().props.items.find((item: { title: string }) => item.title === 'First ticket');
+        await act(async () => { menu().props.onSelect(first.id); });
+        expect(onChange).toHaveBeenCalledWith({ kind: 'plugin', serverId: home.homes.addressed!.id,
+            pluginId, subjectKindId: 'ticket', identity: { ticketId: 'ticket-a' } });
+        expect(pages).toEqual([page, { ...page, cursor: 'next-ticket' }, page]);
+        await screen.unmount();
     } finally { withdraw(); account.dispose(); await home.dispose(); }
 });
