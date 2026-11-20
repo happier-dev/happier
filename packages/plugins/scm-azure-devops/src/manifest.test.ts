@@ -24,7 +24,7 @@ describe('Azure DevOps network authority', () => {
     const discovery = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances);
     expect(discovery?.hostAccess).toEqual([AZURE_DEVOPS_TRIAGE_PURPOSE]);
     for (const action of PLUGIN_MANIFEST.contributes.actions) {
-      expect(action.hostAccess, action.id).not.toContain(AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID);
+      expect(action.hostAccess ?? [], action.id).not.toContain(AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID);
     }
   });
   it('grants exactly the verbs its declared Actions consume, and no others', () => {
