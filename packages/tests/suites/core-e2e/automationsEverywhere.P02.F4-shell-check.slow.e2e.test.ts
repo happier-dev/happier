@@ -26,14 +26,13 @@ describe('AE.P02.F4-shell-check: command input through the real Machine', () => 
     const account = await fixture.createAccount('actor');
     const machine = await fixture.enrollDaemon(account);
     const payload = { actionId: 'example.deploy', phase: 'before', value: '$(touch injected); "quoted" & literal\nnext line' };
-    const result = await account.execute('machines.command.run', {
+    const result = await account.executeReviewed('machines.command.run', {
       command: process.platform === 'win32'
         ? 'powershell -NoProfile -Command "$inputText = [Console]::In.ReadToEnd(); [Console]::Out.Write($inputText); [Console]::Error.Write($env:HAPPIER_ACTION_ID)"'
         : 'cat; printf "%s" "$HAPPIER_ACTION_ID" >&2',
       stdin: payload,
       env: { HAPPIER_ACTION_ID: payload.actionId },
-    }, { presentUserConfirmation: { actionId: 'machines.command.run' },
-      externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
+    }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
       project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } });
     expect(result).toMatchObject({ ok: true, result: { exitCode: 0, stdout: JSON.stringify(payload), stderr: payload.actionId } });
 
@@ -43,34 +42,21 @@ describe('AE.P02.F4-shell-check: command input through the real Machine', () => 
         : 'printf partial; cat >&2; exit 7',
       stdin: payload,
     };
-    const cli = (label: string, args: string[], echoStderrLine?: (line: string) => boolean) => runCliJson({ testDir, cliHomeDir: machine.homeDir,
+    const cli = (label: string, args: string[]) => runCliJson({ testDir, cliHomeDir: machine.homeDir,
       serverUrl: fixture!.server.baseUrl, webappUrl: fixture!.server.baseUrl, label,
       env: { ...process.env, NODE_OPTIONS: fixture!.sourceOptions,
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' },
-      launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true }, acceptedExitCodes: [1], echoStderrLine,
+      launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true }, acceptedExitCodes: [1],
       args: ['--server-url', fixture!.server.baseUrl, ...args] });
-    // The original CLI keeps custody until the person answers its Inbox Ask.
-    // Progress is on stderr; stdout is reserved for the terminal command result.
-    let artifactId: string | undefined;
-    let decision: ReturnType<typeof account.executeAsPerson> | undefined;
-    const execution = await cli('shell-failure-request', ['actions', 'invoke', 'machines.command.run',
+    // The noninteractive CLI hands this deferred request to the app. The
+    // deciding person executes it; the original CLI returns its durable receipt.
+    const pending = await cli('shell-failure-request', ['actions', 'invoke', 'machines.command.run',
       '--machine-id', machine.target.machineId, '--project-directory', machine.workspaceDir,
-      '--input-json', JSON.stringify(failedInput), '--json'], line => {
-      if (line.startsWith('{')) {
-        const envelope: unknown = JSON.parse(line);
-        const pending = ActionApprovalRequestCreatedResultSchema.safeParse(
-          envelope && typeof envelope === 'object' && 'data' in envelope ? envelope.data : undefined);
-        if (pending.success && !decision) {
-          artifactId = pending.data.artifactId;
-          decision = account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
-        }
-      }
-      return false;
-    });
-    if (!artifactId) throw new Error('Original CLI did not publish its live Inbox Ask');
-    expect(await decision).toMatchObject({ ok: true });
-    expect(execution).toMatchObject({ ok: false, error: { code: 'command_failed',
-      details: { exitCode: 7, stdout: 'partial', stderr: JSON.stringify(payload) } } });
+      '--input-json', JSON.stringify(failedInput), '--json']);
+    expect(pending).toMatchObject({ ok: true });
+    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(pending.data);
+    expect(await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }))
+      .toMatchObject({ ok: true });
     let retained: unknown;
     await waitFor(async () => {
       const read = await account.execute('approval.request.get', { artifactId });
@@ -100,6 +86,7 @@ describe('AE.P02.F4-shell-check: command input through the real Machine', () => 
       ? 'powershell -NoProfile -Command "[IO.File]::WriteAllText(\'f4.stdin.json\', [Console]::In.ReadToEnd()); [IO.File]::WriteAllText(\'f4.action\', $env:HAPPIER_ACTION_ID); [IO.File]::WriteAllText(\'f4.phase\', $env:HAPPIER_PHASE); [Console]::Error.Write(\'PRIVATE-COMMAND-STDERR\'); exit 7"'
       : 'cat > f4.stdin.json; printf "%s" "$HAPPIER_ACTION_ID" > f4.action; printf "%s" "$HAPPIER_PHASE" > f4.phase; printf PRIVATE-COMMAND-STDERR >&2; exit 7';
     const saved = WorkflowTriggerWriteResultV1Schema.parse(await invoke('workflow.trigger.add', {
+      actionApproval: 'automatic',
       project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
       target: { kind: 'inline', definition: { version: 1,
         inputs: [],
