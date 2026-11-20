@@ -264,6 +264,7 @@ describe('Session open → settled turns and read cursor → transcript markers'
       function OpenTranscript() {
         useHydrateSessionForRoute(sessionId, 'UI-TRANSCRIPT.open', {
           serverId,
+          includeTurnsProjection: turnsAtOpen,
         });
         const session = useSessionViewShellSession(sessionId, serverId);
         return session ? (
@@ -278,13 +279,18 @@ describe('Session open → settled turns and read cursor → transcript markers'
           </AppSessionTranscriptSourceProvider>
         ) : null;
       }
-      // A Session opened again has its turn facts from the earlier visit; a cold open gets them after first paint.
+      // The late-arrival case opens its rows before explicitly requesting turn facts.
       if (turnsAtOpen) await sync.ensureSessionVisibleForMessageRoute(sessionId, { serverId, includeTurnsProjection: true });
       const screen = await renderScreen(<OpenTranscript />);
       await flushHookEffects({ cycles: 40 });
       await act(async () => {
         await sync.refreshSessionMessages(sessionId);
       });
+      if (!turnsAtOpen) {
+        const openingRows = rowShape(chatListHarnessState.legendListProps?.data as readonly Row[] | undefined);
+        expect(openingRows.filter((row) => !row.startsWith('marker:'))).toHaveLength(4);
+        expect(storage.getState().sessions[sessionId]?.sessionTurns).toBeUndefined();
+      }
       await sync.ensureSessionVisibleForMessageRoute(sessionId, {
         serverId,
         includeTurnsProjection: true,

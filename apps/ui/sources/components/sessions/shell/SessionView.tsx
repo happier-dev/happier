@@ -1131,7 +1131,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     }, [router]);
     const acceptedSessionId = session ? sessionId : '';
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(
-        acceptedSessionId,
+        session?.metadataProjection === 'displayOnly' ? '' : acceptedSessionId,
         executionRunServerId,
     );
     const approvalSessionAddress = normalizeSessionAddress(

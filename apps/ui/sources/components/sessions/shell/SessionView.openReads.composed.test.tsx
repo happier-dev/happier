@@ -4,7 +4,9 @@ import { expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -26,6 +28,21 @@ import type { Socket } from 'socket.io-client';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+const legendViewport = vi.hoisted(() => ({ renderAllRows: false }));
+vi.mock('@legendapp/list/react-native', async importOriginal => {
+    const original = await importOriginal<typeof import('@legendapp/list/react-native')>();
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    const fixture = createCapturingLegendListMock().module;
+    return {
+        ...original,
+        LegendList: React.forwardRef<React.ComponentRef<typeof original.LegendList>, React.ComponentPropsWithoutRef<typeof original.LegendList>>(
+          function SessionOpenLegendList(props, ref) {
+            const List = legendViewport.renderAllRows ? fixture.LegendList : original.LegendList;
+            return <List {...props} ref={ref} />;
+          },
+        ),
+    };
+});
 // Only platform/transport boundaries are replaced; route hydration, navigation
 // backfill, the composer, transcript and live-consumption admission stay real.
 vi.mock('react-native', async () =>
@@ -43,13 +60,28 @@ vi.mock('react-native-safe-area-context', () => ({
 
 const reads: string[] = [];
 const httpRequests: string[] = [];
+const coldOpenId = 'cold-open-settled-turn';
+const coldOpenRead = createDeferred<void>();
+const coldOpenRequests: string[] = [];
 const machineRequests: string[] = [];
 const socketRequests: string[] = [];
 const physicalSockets = new Set<Socket>();
 const recordSocketRequest = (event: string) => { socketRequests.push(event); };
 const runtime = installSessionPaneRuntimeTestHarness({
     rpc: async method => { machineRequests.push(method); return null; },
-    onHttpRequest: input => { httpRequests.push(String(input)); },
+    onHttpRequest: (input, init) => {
+        httpRequests.push(String(input));
+        const path = new URL(String(input)).pathname;
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && (path === `/v1/sessions/${coldOpenId}/turns` || path === `/v2/sessions/${coldOpenId}`)) {
+            coldOpenRequests.push(`GET ${path}`);
+        } else if (method === 'POST' && path === '/v2/sessions/read-batch') {
+            const batch = JSON.parse(String(init?.body));
+            if (batch.includeSnapshot && batch.sessionIds.includes(coldOpenId)) {
+                coldOpenRequests.push(batch.includeTurns ? 'snapshot with turns' : 'snapshot without turns');
+            }
+        }
+    },
     configureSocket: socket => {
         socket.offAnyOutgoing(recordSocketRequest);
         socket.onAnyOutgoing(recordSocketRequest);
@@ -67,6 +99,17 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
     request: async (input, init) => {
         const url = new URL(String(input));
+        if (url.pathname === `/v2/sessions/${coldOpenId}` && (init?.method ?? 'GET') === 'GET') {
+            await coldOpenRead.promise;
+            return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: coldOpenId, seq: 3 }) });
+        }
+        if (url.pathname === `/v1/sessions/${coldOpenId}/turns`) {
+            await coldOpenRead.promise;
+            return Response.json(buildSessionTurnsProjectionV1({ sessionId: coldOpenId, updatedAt: 4001, turns: [{
+                turnId: 'settled', status: 'completed', startedAt: 1, updatedAt: 4001, terminalAt: 4001,
+                transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 },
+            }] }));
+        }
         if (/^\/v1\/sessions\/[^/]+\/messages$/.test(url.pathname) && (init?.method ?? 'GET') === 'GET') {
             reads.push(url.pathname + url.search);
             return Response.json({ messages: url.searchParams.has('afterSeq') ? [] : [1, 2, 3].map(seq => ({
@@ -85,6 +128,48 @@ const runtime = installSessionPaneRuntimeTestHarness({
         }
         return null;
     },
+});
+
+it('includes settled turn markers in the first populated cold transcript commit with one open read', async () => {
+    const id = coldOpenId;
+    storage.getState().applyServerScopedSessionListRows(runtime.serverId, [
+        createSessionListRenderableSessionFixture({ id, serverId: runtime.serverId, seq: 3 }),
+    ], { source: 'rowOnly', mode: 'append' });
+    expect(storage.getState().sessions[id]).toBeUndefined();
+
+    // All three rows fit in the test viewport. Keep Session and the row renderer real.
+    legendViewport.renderAllRows = true;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    let firstPaintMarkerCount: number | undefined;
+    let observeFirstPaint: (() => void) | undefined;
+    try {
+        const mounted = await renderScreen(<React.Profiler id="cold-open" onRender={() => observeFirstPaint?.()}>
+            <DestinationInstanceHost tabId={id}
+                ref={{ kind: 'session', params: { id, serverId: runtime.serverId } }} pathname={`/session/${id}`} focused visible
+                navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+                <SessionDestinationBody />
+            </DestinationInstanceHost>
+        </React.Profiler>, { wrapper: runtime.Wrapper });
+        screen = mounted;
+        observeFirstPaint = () => {
+            if (firstPaintMarkerCount === undefined && mounted.getTextContent().includes('Turn 1')) {
+                firstPaintMarkerCount = mounted.findAllHostsByTestId('transcript-turn-duration').length;
+            }
+        };
+        await act(async () => {
+            coldOpenRead.resolve();
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+            await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect.soft(coldOpenRequests).toEqual(['snapshot with turns']);
+        expect.soft(reads.filter(path => path.startsWith(`/v1/sessions/${id}/messages`))).toHaveLength(1);
+        expect(screen.getTextContent()).toContain('Turn 1');
+        expect(firstPaintMarkerCount).toBe(1);
+    } finally {
+        await screen?.unmount();
+        legendViewport.renderAllRows = false;
+    }
 });
 
 it('muse.experience.pc14 keeps a settled Session idle for 60 seconds without timers or requests', async () => {

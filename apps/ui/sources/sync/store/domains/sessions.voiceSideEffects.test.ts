@@ -45,7 +45,7 @@ describe('sessions domain: no voice side effects', () => {
             ...(publication === 'stale-projection' ? { sessionTurns: { v: 1 as const, sessionId: 's1', updatedAt: 1, turns: [] } } : {}),
         };
         domain.applySessions([incoming], publication === 'omitted-full' ? 'full' : 'projection');
-        expect(get().sessions.s1?.sessionTurns).toEqual(sessionTurns);
+        expect(get().sessions.s1?.sessionTurns).toBe(sessionTurns);
     });
 
     it.each(['empty', 'undefined', 'null', 'foreign', 'encrypted', 'locked', 'access'] as const)(

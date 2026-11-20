@@ -87,7 +87,7 @@ export function useSessionSubagents(params: Readonly<{
     const runningExecutionRuns = useSessionRunningExecutionRuns({
         sessionId: normalizedSessionId,
         serverId: sessionServerId,
-        enabled: executionRunPollingEnabled,
+        enabled: executionRunPollingEnabled && params.session !== null && params.session.metadataProjection !== 'displayOnly',
         refreshKey: executionRunPollingRefreshKey,
     });
     const internalExternalSessionRuntime = useSessionExternalSessionRuntime({
