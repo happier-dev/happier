@@ -18,6 +18,55 @@ import { createExternalSessionsInvocationFixture } from '@/testkit/backends/exte
 import { createExternalSessionObservationReconciler } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
 
 describe('consented native accounting collector', () => {
+    it('keeps the old capture running when saving its replacement fails', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-root-replacement-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const durable = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        const replacementRoot = join(directory, 'replacement');
+        let rejectReplacement = true;
+        let reads = 0;
+        let notify: (() => void) | undefined;
+        const descriptor = (root: string) => ({ agent: { pluginId: 'fixture.agent', localId: 'agent' },
+            source: { kind: 'fixture' }, sourceKey: root, root, supported: true });
+        const collector = createNativeUsageCollector({ authority, storage,
+            store: { load: durable.load, async save(state) {
+                if (rejectReplacement && state.sources.some(source => source.root === replacementRoot)) throw new Error('Write failed');
+                await durable.save(state);
+            } },
+            budgetRegistry: new ExecutionBudgetRegistry(), discoverSources: async () => [descriptor(directory)],
+            resolveRoot: async () => descriptor(replacementRoot),
+            readAccounting: async () => { reads++; return { ok: true, value: { outcome: 'unchanged' } }; },
+            subscribeSource: async (_source, onChange) => {
+                notify = () => onChange();
+                return { dispose() { notify = undefined; } };
+            },
+            publisher: { publish: async () => { throw new Error('No observations'); } },
+            deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
+        });
+        try {
+            const [source] = await collector.discover();
+            await collector.setConsent(source.sourceId, true);
+            await collector.flushPending();
+            const readsBefore = reads;
+            await expect(collector.setRoot(source.sourceId, replacementRoot)).rejects.toThrow('Write failed');
+            expect((await durable.load()).sources).toMatchObject([{ sourceId: source.sourceId, consented: true }]);
+            expect((await collector.get(source.sourceId))[0]?.consent).toBe('enabled');
+            notify?.();
+            await collector.flushPending();
+            expect(reads).toBe(readsBefore + 1);
+
+            rejectReplacement = false;
+            const replacement = await collector.setRoot(source.sourceId, replacementRoot);
+            expect(replacement).toMatchObject({ consent: 'disabled', root: { path: replacementRoot } });
+            expect((await durable.load()).sources).toMatchObject([
+                { sourceId: source.sourceId, consented: false },
+                { sourceId: replacement.sourceId, consented: false },
+            ]);
+            expect(notify).toBeUndefined();
+        } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
+    });
+
     it('wakes mounted readers once after a disabled source root changes durably', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-root-push-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });

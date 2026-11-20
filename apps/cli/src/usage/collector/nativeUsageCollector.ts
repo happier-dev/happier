@@ -365,10 +365,9 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 const previous = sources.map(view);
                 const descriptor = projectCaptureSourceDescriptor(await input.resolveRoot(old, root));
                 checkSignal(signal);
-                await retire(sourceId);
-                await commit(next => { next.find(source => source.sourceId === sourceId)!.consented = false; });
                 const replacementId = identity(descriptor).sourceRootKey;
                 await commit(next => {
+                    next.find(source => source.sourceId === sourceId)!.consented = false;
                     const current = next.find(source => source.sourceId === replacementId);
                     if (current) {
                         applyCaptureSourceDescriptor(current, descriptor, true);
@@ -376,6 +375,8 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                     }
                     else next.push({ ...descriptor, sourceId: replacementId, consented: false, pending: [] });
                 });
+                await retire(sourceId);
+                if (replacementId !== sourceId) await retire(replacementId);
                 // Disabled roots have no capture task to publish their settled metadata.
                 if (!isDeepStrictEqual(previous, sources.map(view))) input.onSourceSettled?.();
                 return view(requireSource(replacementId));
