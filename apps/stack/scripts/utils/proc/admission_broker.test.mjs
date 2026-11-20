@@ -365,7 +365,7 @@ test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure
   const { root, broker } = await fixture(t, { cpuCores: 12, readCpuPressure: () => pressure });
   const waiters = [];
   for (let index = 0; index < 9; index++) {
-    waiters.push(await acquire(root, 1, t, { className: 'package-dist' }));
+    waiters.push(await acquire(root, 1, t, { className: 'package-dist', requestedCpuCores: 4 }));
   }
   const snapshot = await requestAdmissionSample(root);
   assert.equal(snapshot.activeCount, 2);
@@ -376,16 +376,62 @@ test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure
   for (const waiter of waiters.slice(0, 2)) {
     assert.equal((await waiter.admit()).admitted.cpuCores, 4);
   }
-  const check = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', cpuCost: 'host' });
+  const check = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', requestedCpuCores: 4, cpuCost: 'host' });
   assert.equal((await check.next()).reason, 'HSTACK_CPU_BUSY');
   check.socket.destroy();
   pressure = 0;
-  const afterPressureDrop = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', cpuCost: 'host' });
+  const afterPressureDrop = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', requestedCpuCores: 4, cpuCost: 'host' });
   assert.equal((await afterPressureDrop.next()).kind, 'admitted');
   afterPressureDrop.socket.destroy();
   await clock.tick();
   await waiters[2].admit();
   assert.equal(broker.status().reservedCpuCores, 12);
+});
+
+test('admitted scope runnable threads leave remaining cores available', linux, async t => {
+  const uid = process.getuid();
+  const scope = `/user.slice/user-${uid}.slice/user@${uid}.service/happier.slice/happier-jobs.slice/happier-jobs-${process.pid}-fixture.scope`;
+  let hostPressure = 0;
+  const threads = [101, 103, 107, 109, 113, 117];
+  const proc = new Map([
+    [`/proc/${process.pid}/cgroup`, `0::${scope}\n`],
+    ['/proc/self/cgroup', '0::/\n'],
+    [`/sys/fs/cgroup${scope}/cgroup.threads`, [...threads, 123].join('\n') + '\n'],
+    ...threads.map(tid => [`/proc/${tid}/stat`, `${tid} (cmd ) label) R 0 0`]),
+    ['/proc/123/stat', '123 (sleeping) S 0 0'],
+  ]);
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => proc.get(path) ?? read(path, ...args));
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+
+  const { root } = await fixture(t, { cpuCores: 12, readCpuPressure: () => hostPressure });
+  await (await acquire(root, 1, t, { requestedCpuCores: 4 })).admit();
+  await (await acquire(root, 1, t, { requestedCpuCores: 2 })).admit();
+  hostPressure = 6;
+  const next = await acquire(root, 1, t, { requestedCpuCores: 6 });
+  const snapshot = await requestAdmissionSample(root);
+  assert.equal(snapshot.activeCount, 3, 'the holder’s own runnable threads must not block the remaining six cores');
+  assert.equal(snapshot.cpuPressureCores, 0);
+  const held = await next.admit();
+  await held.release();
+
+  hostPressure = 8;
+  const check = await request(root, { kind: 'check', floorKiB: 1, requestedCpuCores: 6 });
+  const outcome = await check.next();
+  check.socket.destroy();
+  assert.equal(outcome.cpuPressureCores, 2, 'shared scope members count only once and outside pressure remains charged');
+  assert.equal(outcome.reason, 'HSTACK_CPU_BUSY');
+});
+
+test('cold preparers use their completed class CPU observations', linux, async t => {
+  const { root } = await fixture(t);
+  for (const className of ['package-dist', 'dependency-install', 'source-reload']) {
+    const waiter = await acquire(root, 1, t, { className });
+    const slot = await waiter.admit();
+    assert.equal(slot.admitted.cpuCores, 3, className);
+    await slot.release();
+  }
 });
 
 test('small validation jobs stay concurrent on a large host', { ...linux, timeout: 6000 }, async t => {

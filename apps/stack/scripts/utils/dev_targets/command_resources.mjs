@@ -120,19 +120,22 @@ export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
 // Cold core charges for commands without a worker declaration. Short cgroup
 // cpu.stat deltas (2026-11-19 22:16Z, controller, nl1, nl3, windows2-linux):
 // compilation 1.124 (earlier nested UI 1.38), UI 1.135, server 0.746,
-// package-dist 2.552, source-bundle 1.079, and tsrs 11.153. Use 1.5×,
-// rounded up. Ordinary validation was 1.202–1.374, with one run at 2.709;
-// 3 cores covers that upper observation with 11% slack. For unsampled
-// compound builds/installers use the 4-core package preparation envelope;
-// entry-loads use the validation envelope. Completed local identities replace
-// these estimates. Fixed worker classes and dynamic exports use their declarations.
+// source-bundle 1.079, and tsrs 11.153. Use 1.5×, rounded up. Generic
+// validation keeps 3 cores against the completed 2.946-core maximum.
+// Completed cgroup averages (2026-11-20 01:14Z, nl1/nl3/windows2-linux):
+// dependency-install 1.590 max (7 runs) and source-reload 1.856 max
+// (4 runs), also 1.5×. Package-dist completed p95 was 2.050 cores (111
+// nl3 rows, 1.308 nl1, 1.099 windows2-linux). Three cores covers p95 × 1.4
+// and both the 2.547 completed max and earlier 2.552 short delta.
+// Entry-loads use the validation envelope. Completed local identities replace
+// cold estimates. Fixed worker classes and dynamic exports use their declarations.
 export const COLD_ADMISSION_CPU_CORES = Object.freeze({
-  [SOURCE_RELOAD_ADMISSION_CLASS]: 4,
+  [SOURCE_RELOAD_ADMISSION_CLASS]: 3,
   validation: 3,
   'entry-loads': 3,
   'source-bundle': 2,
-  'dependency-install': 4,
-  'package-dist': 4,
+  'dependency-install': 3,
+  'package-dist': 3,
   'runtime-build': 4,
   compilation: 2,
   'compilation-ui': 2,

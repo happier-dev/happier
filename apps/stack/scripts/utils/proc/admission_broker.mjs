@@ -13,7 +13,7 @@ import { readLinuxWorkerProcesses } from './service_memory.mjs';
 import { createWorkspaceBuildResourceObservation } from './workspace_build_admission.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.mjs';
-import { isInAdmissionJobsSlice, readLinuxAdmissionMemory, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
+import { isInAdmissionJobsSlice, readAdmittedRunnableThreads, readLinuxAdmissionMemory, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 export { brokerAddress } from './admission_socket.mjs';
 
 // Nearest-rank p95 of 63,482 successful targeted-validation wrapper durations
@@ -94,11 +94,9 @@ const CPU_HISTORY_PREFIX = 'cpu-millicores/';
 const cpuHistoryKey = key => key?.replace(/^\["/, `["${CPU_HISTORY_PREFIX}`) ?? null;
 const MAX_COLD_CPU_CORES = Math.max(...Object.values(COLD_ADMISSION_CPU_CORES));
 
-function readLinuxCpuPressure() {
+function readLinuxHostRunnable() {
   const runnable = Number(/^\S+ +\S+ +\S+ +(\d+)\/\d+ /.exec(readFileSync('/proc/loadavg', 'utf8'))?.[1]);
-  // The broker itself is runnable while it reads /proc. Budget the remaining
-  // runnable tasks conservatively, including work outside the broker. Some
-  // admitted tasks can also appear in this count.
+  // The broker itself is runnable while it reads /proc.
   return runnable - 1;
 }
 
@@ -215,7 +213,7 @@ const HOST_LEGACY_LOCK_PATH = '/tmp/happier-heavyweight-admission-v3/lock';
 export function createAdmissionBroker({ root,
   oldLockPath = root === HOST_ADMISSION_ROOT ? HOST_LEGACY_LOCK_PATH : join(root, 'old-admission.lock'),
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
-  readCpuPressure = sampleResources === readAdmissionMemorySample ? readLinuxCpuPressure : () => 0,
+  readCpuPressure = sampleResources === readAdmissionMemorySample ? readLinuxHostRunnable : () => 0,
   readSlotWorkingSetKiB = readProcessJobScopeWorkingSetKiB,
   readRecoveredSlotMemoryKiB = readSlotWorkingSetKiB,
   admitDisk = request => request.cacheBaseDir
@@ -443,7 +441,8 @@ export function createAdmissionBroker({ root,
       if (!Number.isSafeInteger(pressure) || pressure < 0) {
         throw Object.assign(new Error('Invalid runnable CPU observation'), { code: 'HSTACK_CPU_OBSERVATION_UNAVAILABLE' });
       }
-      return pressure;
+      const admittedPids = [...slots.values()].filter(slot => slot.admitted || slot.recovered).map(slot => slot.pid);
+      return pressure - readAdmittedRunnableThreads(admittedPids, pressure);
     } catch (error) {
       recordFailure(error);
       return totalCpuCores;

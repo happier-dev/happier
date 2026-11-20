@@ -21,14 +21,47 @@ export function readJobScopePeakKiB() {
   return null;
 }
 
+const readProcessCgroup = (pid, read) => read(`/proc/${pid ?? 'self'}/cgroup`, 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
+
+function readJobScopePath(pid, read) {
+  const path = readProcessCgroup(pid, read);
+  return path.startsWith(`${jobsSlice(process.getuid())}/`)
+    && /\/happier-jobs-\d+-[^/]+\.scope$/.test(path) ? path : null;
+}
+
 /** Read resources only from a dedicated scope attributable to this workload. */
 function readJobScopeStat(pid, name, read) {
-  const scope = file => read(file, 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
-  const path = scope(`/proc/${pid ?? 'self'}/cgroup`);
-  if (!path.startsWith(`${jobsSlice(process.getuid())}/`)
-    || !/\/happier-jobs-\d+-[^/]+\.scope$/.test(path)
-    || (pid !== undefined && path === scope('/proc/self/cgroup'))) return null;
+  const path = readJobScopePath(pid, read);
+  if (!path || (pid !== undefined && path === readProcessCgroup(undefined, read))) return null;
   return read(`/sys/fs/cgroup${path}/${name}`, 'utf8');
+}
+
+/** Count runnable threads in admitted per-dispatch scopes. These are leaf
+ * scopes created without delegation. Unattributable work stays in host load. */
+export function readAdmittedRunnableThreads(pids, hostRunnable, read = readFileSync) {
+  if (hostRunnable === 0) return 0;
+  const ownScope = readProcessCgroup(undefined, read);
+  const counted = new Set();
+  let runnable = 0;
+  for (const pid of pids) {
+    let threads;
+    try {
+      const scope = readJobScopePath(pid, read);
+      if (!scope || scope === ownScope || counted.has(scope)) continue;
+      counted.add(scope);
+      threads = read(`/sys/fs/cgroup${scope}/cgroup.threads`, 'utf8').trim().split('\n');
+    } catch { continue; }
+    for (const tid of threads) {
+      if (!tid) continue;
+      try {
+        const stat = read(`/proc/${tid}/stat`, 'utf8');
+        // comm can contain spaces and parentheses. State follows the last ') '.
+        const end = stat.lastIndexOf(') ');
+        if (end >= 0 && stat[end + 2] === 'R' && ++runnable === hostRunnable) return runnable;
+      } catch { /* A thread can exit between the membership and stat reads. */ }
+    }
+  }
+  return runnable;
 }
 
 /** File cache is reclaimable. shmem is separate from anon and stays charged. */
