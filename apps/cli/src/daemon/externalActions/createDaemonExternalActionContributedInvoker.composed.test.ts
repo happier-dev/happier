@@ -2501,6 +2501,71 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     },
   );
 
+  it('asks the Person again when the same Ask-first write repeats after an approved replay', async () => {
+    const pluginId = 'acme.cli-review';
+    const localId = 'github/pull-request/close';
+    const input = { localRef: { localKey: 'pull/6186' } };
+    const approvals = new Map<string, TargetActionApprovalRequestV1>();
+    const effects: unknown[] = [];
+    const runtime = createExternalActionRuntime('global', pluginId,
+      undefined, undefined, undefined, undefined, undefined, 'writesRemote', undefined,
+      { localId, surfaces: ['cli'], onInput: value => effects.push(value) });
+    const acquireRuntimeRegistryLease = async (): Promise<PluginRuntimeRegistryLease> => ({
+      registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {},
+    });
+    const read = async ({ artifactId }: Readonly<{ artifactId: string }>) => approvals.get(artifactId) ?? null;
+    const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease,
+      requestCurrentIntent: createTargetActionCurrentIntentAdapter({
+        create: async request => {
+          const artifactId = `cli-close-approval-${approvals.size + 1}`;
+          approvals.set(artifactId, request);
+          return { artifactId };
+        },
+        read: async artifactId => approvals.get(artifactId) ?? null,
+      }),
+    });
+    const replay = createDaemonExternalActionContributedApprovalReplay({
+      credentials: { token: 'fixture', encryption: null }, acquireRuntimeRegistryLease,
+      isApprovalExecutionOriginCurrent: async () => true,
+      targetActionApprovals: {
+        targetActionApprovalsGet: read,
+        targetActionApprovalsUpdate: async ({ artifactId, request }) => {
+          approvals.set(artifactId, TargetActionApprovalRequestV1Schema.parse(request));
+          return { ok: true };
+        },
+      },
+    });
+    const executor = createActionExecutor({ invokeContributedAction: invoke, approvalsGet: read, targetActionApprovalReplay: replay });
+    const action = { action: { pluginId, localId }, input };
+    const cliContext = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'server-external', serverIdentityId: 'srv_home', runtimeAccountId: 'account-1',
+      executionRunTargetMachineId: 'machine-local' } as const;
+    const appContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'account-1' } as const;
+    try {
+      await expect(executor.execute('action.invoke', action, cliContext)).resolves.toMatchObject({
+        ok: true, result: { kind: 'approval_request_created', artifactId: 'cli-close-approval-1' },
+      });
+      await expect(executor.execute('approval.request.decide', { artifactId: 'cli-close-approval-1', decision: 'approve' }, appContext))
+        .resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(effects).toEqual([input]);
+      const settled = approvals.get('cli-close-approval-1');
+
+      // Identical operands, no new Person decision: the settled Ask is not proof.
+      await expect(executor.execute('action.invoke', action, cliContext)).resolves.toMatchObject({
+        ok: true, result: { kind: 'approval_request_created', artifactId: 'cli-close-approval-2' },
+      });
+      expect(approvals.get('cli-close-approval-2')).toMatchObject({ status: 'open', input });
+      // Re-deciding the settled Ask returns its receipt and never replays it.
+      await expect(executor.execute('approval.request.decide', { artifactId: 'cli-close-approval-1', decision: 'approve' }, appContext))
+        .resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(approvals.get('cli-close-approval-1')).toEqual(settled);
+      expect(effects).toEqual([input]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it('returns a deferred generic approval artifact for an API Ask-first contributed Action', async () => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
