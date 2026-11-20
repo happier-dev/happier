@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, it } from 'vitest';
 
@@ -19,75 +17,19 @@ import {
     CORPUS_USER_MARKS_FIELD,
 } from './corpus/collections/ids.js';
 
-/**
- * The packaged artifact, not the source module.
- *
- * `src/manifest.ts` being right proves nothing about what a host installs: the
- * host reads `.happier-plugin/plugin.json`, and this package shipped one with
- * `ui.views`, `ui.renderers`, `composerAttachments` and `composerControls` all
- * empty while every source test was green. Importing the TypeScript manifest
- * here would reproduce exactly that blindness, so this file reads the generated
- * bytes and nothing else.
- */
-
-type PackagedManifest = Readonly<{
-    contributes: Readonly<{
-        ui: Readonly<{
-            views: readonly Readonly<{ id: string; container: string; renderer: string; column?: Readonly<{ renderer: string }> }>[];
-            renderers: readonly Readonly<{ id: string; kind: string; artifact?: string }>[];
-        }>;
-        composerAttachments: readonly Readonly<{
-            id: string;
-            picker?: Readonly<{ renderer: string }>;
-            runtime?: Readonly<Record<string, boolean>>;
-        }>[];
-        composerControls: readonly Readonly<{
-            id: string;
-            interaction: Readonly<{ kind: string; attachment?: string }>;
-            compactRenderer?: Readonly<{ renderer: string }>;
-        }>[];
-        pluginContributionPoints: readonly Readonly<{ id: string }>[];
-        actions: readonly Readonly<{ id: string }>[];
-        settings: readonly Readonly<{
-            id: string;
-            fields: readonly Readonly<{ id: string; presentation?: Readonly<{ hidden?: boolean }> }>[];
-        }>[];
-        accountCollections: readonly Readonly<{
-            id: string;
-            identityFields?: readonly string[];
-        }>[];
-    }>;
-}>;
-
-function readPackagedManifest(): PackagedManifest {
-    return JSON.parse(
-        readFileSync(new URL('../.happier-plugin/plugin.json', import.meta.url), 'utf8'),
-    ) as PackagedManifest;
+// CLI projection governance owns authored-to-packaged manifest equivalence.
+function readManifest() {
+    const projected = parsePluginManifest(PLUGIN_MANIFEST);
+    if (!projected.ok) {
+        throw new Error(projected.diagnostics.map((diagnostic) => diagnostic.message).join('; '));
+    }
+    return projected.manifest;
 }
 
-describe('packaged PRs & Issues manifest', () => {
-    it('ships exactly what the source manifest projects, fact for fact', () => {
-        // The package-local half of `yarn test:migration:bundled-plugin-projections`.
-        // That governance lane regenerates every bundled artifact and owns the
-        // repository verdict, but it runs neither in this package's suite nor in
-        // seconds — so an author changing the manifest, or moving the package
-        // onto a different author path, learns nothing here until CI.
-        //
-        // Every other assertion in this file names one hand-picked fact and is
-        // therefore blind to the rest. This one is the whole artifact: it fails
-        // for any fact the source projection adds, drops or renames, which is
-        // what makes it evidence that an author-path migration changed nothing
-        // the host installs.
-        const projected = parsePluginManifest(PLUGIN_MANIFEST);
-        if (!projected.ok) {
-            throw new Error(projected.diagnostics.map((diagnostic) => diagnostic.message).join('; '));
-        }
-
-        expect(projected.manifest).toEqual(readPackagedManifest());
-    });
+describe('PRs & Issues manifest', () => {
 
     it('ships the aggregate app page and the Session-targeted panel', () => {
-        const views = readPackagedManifest().contributes.ui.views;
+        const views = readManifest().contributes.ui.views;
 
         expect(views).toContainEqual(expect.objectContaining({
             id: TRIAGE_APP_PAGE_LOCAL_ID_V1,
@@ -102,7 +44,7 @@ describe('packaged PRs & Issues manifest', () => {
     });
 
     it('ships one built artifact for every renderer a declaration names', () => {
-        const contributes = readPackagedManifest().contributes;
+        const contributes = readManifest().contributes;
         const artifactByRenderer = new Map(
             contributes.ui.renderers.map((renderer) => [renderer.id, renderer.artifact] as const),
         );
@@ -132,7 +74,7 @@ describe('packaged PRs & Issues manifest', () => {
     });
 
     it('ships the Composer attachment, its picker and the control that opens it', () => {
-        const contributes = readPackagedManifest().contributes;
+        const contributes = readManifest().contributes;
 
         expect(contributes.composerAttachments).toContainEqual(expect.objectContaining({
             id: TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1,
@@ -153,14 +95,12 @@ describe('packaged PRs & Issues manifest', () => {
 
     it('ships the mode-derived identity declaration of all three durable Collections', () => {
         // The Account encryption-transition owner refuses to relocate a live
-        // row only for a Collection whose *admitted* contract declares
-        // `identityFields`, and the admitted contract comes from these bytes.
-        // A packaged manifest that omits the declaration admits a contract the
+        // row only for a Collection whose admitted contract declares
+        // `identityFields`. A manifest that omits the declaration admits a contract the
         // transition owner reads as ordinary, so a mode change rekeys past a
         // pin, a Session link and a configured source and strands all three at
-        // addresses the plugin can no longer derive. `src/corpus/collections/
-        // definitions.ts` being right is not evidence about this file.
-        const collections = readPackagedManifest().contributes.accountCollections;
+        // addresses the plugin can no longer derive.
+        const collections = readManifest().contributes.accountCollections;
         const identityFieldsById = new Map(
             collections.map((collection) => [collection.id, collection.identityFields] as const),
         );
@@ -177,7 +117,7 @@ describe('packaged PRs & Issues manifest', () => {
     });
 
     it('ships Account-KV-backed catalog Actions without a competing Settings contribution', () => {
-        const contributes = readPackagedManifest().contributes;
+        const contributes = readManifest().contributes;
         expect(contributes.settings).toEqual([]);
         expect(contributes.actions.map((action) => action.id))
             .toEqual(expect.arrayContaining([
@@ -189,11 +129,10 @@ describe('packaged PRs & Issues manifest', () => {
     it('owns the source contribution point and contributes the built-in personal task source', () => {
         // The aggregate owns the point; personal Account tasks use the same
         // admitted source contract as external trackers, not a bypass.
-        const contributes = readPackagedManifest().contributes as PackagedManifest['contributes']
-            & Readonly<{ targetedPluginContributions: readonly unknown[] }>;
+        const contributes = readManifest().contributes;
 
         // Sources, and the agent-actions point plugins declare agent action records at.
-        expect((contributes.pluginContributionPoints as readonly Readonly<{ id: string }>[]).map((point) => point.id))
+        expect(contributes.pluginContributionPoints.map((point) => point.id))
             .toEqual(['sources', 'agent-actions']);
         expect(contributes.targetedPluginContributions).toMatchObject([{
             id: 'internal',
