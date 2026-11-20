@@ -639,9 +639,9 @@ selected private backend. For S3, provision `S3_PRIVATE_BUCKET` separately from
 `S3_BUCKET` and leave anonymous access disabled. A binary Artifact upload on a
 Home with no private bucket returns HTTP 503 with `private_storage_unavailable`
 and reason `s3_private_bucket_missing`. Public uploads remain available.
-Existing Account Pet locators created before backend selection still refer to
-private disk paths. Keep that volume available for reads and erasure while those
-locators exist.
+Pets imported while the Home uses local storage keep disk-owned locators,
+including after a switch to S3. Keep the original private volume available
+for reads and erasure.
 
 Ordinary binary Artifact uploads by the owning Account use a read snapshot to
 refuse an over-budget upload before private storage IO when limits are set.

@@ -1,5 +1,5 @@
 import { readPetsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { accountPetPrivateFiles } from "@/storage/blob/files";
+import { accountPetPrivateFiles, createAccountPetPrivateFileKey } from "@/storage/blob/files";
 
 import { createPrismaAccountPetLibraryPersistence } from "./accountPetLibraryPersistence";
 import { createAccountPetLibraryServices, type AccountPetLibraryServices } from "./accountPetLibraryService";
@@ -37,6 +37,7 @@ export function getDefaultAccountPetLibraryServices() {
 
     const services = createAccountPetLibraryServices({
         privateFiles: accountPetPrivateFiles,
+        createPrivateFileKey: createAccountPetPrivateFileKey,
         persistence: createPrismaAccountPetLibraryPersistence(),
         maxManifestBytes: petsFeatureEnv.maxManifestBytes,
         maxSpritesheetBytes: petsFeatureEnv.maxCanonicalSpritesheetBytes,

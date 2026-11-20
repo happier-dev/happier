@@ -3,7 +3,7 @@ import { PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1, type PrivateBinaryStorageUn
 
 import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, resolveLightPublicFilesDir, writeLightPublicFile } from '@/flavors/light/files';
 import { createLocalPrivateFilesBackendFromEnv, resolveLocalPrivateFilesDir } from '@/storage/privateFiles/privateFilesLocal';
-import { LEGACY_ACCOUNT_PET_PRIVATE_FILE_PREFIX, normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
+import { ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX, ACCOUNT_PET_S3_PRIVATE_FILE_PREFIX, normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import type { PrivateFilesBackend } from '@/storage/privateFiles/privateFiles';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, sep } from 'node:path';
@@ -25,7 +25,7 @@ export type PublicFilesBackend = {
 
 let backend: PublicFilesBackend | null = null;
 let initializePrivateBackend: (() => Promise<void>) | undefined;
-let legacyAccountPetFiles: PrivateFilesBackend | undefined;
+let diskAccountPetFiles: PrivateFilesBackend | undefined;
 
 export class PrivateStorageUnavailableError extends Error {
     readonly code = PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1;
@@ -33,9 +33,10 @@ export class PrivateStorageUnavailableError extends Error {
 }
 
 type PrivateFileOperations = Omit<PrivateFilesBackend, 'init'>;
-let privateBackend: PrivateFileOperations | PrivateStorageUnavailableError = new PrivateStorageUnavailableError('backend_unavailable');
+type ConfiguredPrivateFiles = PrivateFileOperations & { accountPetKeyPrefix: string };
+let privateBackend: ConfiguredPrivateFiles | PrivateStorageUnavailableError = new PrivateStorageUnavailableError('backend_unavailable');
 
-function configurePrivateBackend(candidate: PrivateFileOperations, isAvailable: () => Promise<boolean>): void {
+function configurePrivateBackend(candidate: ConfiguredPrivateFiles, isAvailable: () => Promise<boolean>): void {
     privateBackend = new PrivateStorageUnavailableError('backend_unavailable');
     initializePrivateBackend = async () => {
         privateBackend = await isAvailable() ? candidate : new PrivateStorageUnavailableError('backend_unavailable');
@@ -100,12 +101,13 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
         },
         async deletePublicFile(path: string) { await s3client.removeObject(s3bucket, path); },
     };
-    // Pre-backend-selection Pet locators always referred to private disk files.
-    legacyAccountPetFiles = createLocalPrivateFilesBackendFromEnv(env);
+    // Disk-owned Pet locators remain on the original volume when the Home selects S3.
+    diskAccountPetFiles = createLocalPrivateFilesBackendFromEnv(env);
     privateBackend = new PrivateStorageUnavailableError('s3_private_bucket_missing');
     initializePrivateBackend = undefined;
     if (privateBucket) {
         configurePrivateBackend({
+            accountPetKeyPrefix: ACCOUNT_PET_S3_PRIVATE_FILE_PREFIX,
             async writePrivateFile(key, data) {
                 await s3client.putObject(privateBucket, normalizePrivateFileKey(key), Buffer.from(data));
             },
@@ -154,8 +156,8 @@ function resolveS3Credentials(
 
 export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): void {
     const localPrivate = createLocalPrivateFilesBackendFromEnv(env);
-    legacyAccountPetFiles = undefined;
-    configurePrivateBackend(localPrivate, async () => {
+    diskAccountPetFiles = undefined;
+    configurePrivateBackend({ ...localPrivate, accountPetKeyPrefix: ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX }, async () => {
         try {
             await localPrivate.init();
             const publicRoot = await realpath(resolveLightPublicFilesDir(env));
@@ -221,7 +223,7 @@ export async function deletePublicFile(path: string): Promise<void> {
     await backend.deletePublicFile(path);
 }
 
-function requirePrivateFilesBackend(): PrivateFileOperations {
+function requirePrivateFilesBackend(): ConfiguredPrivateFiles {
     if (privateBackend instanceof PrivateStorageUnavailableError) throw privateBackend;
     return privateBackend;
 }
@@ -256,11 +258,14 @@ async function deleteFromPrivateBackend(files: PrivateFileOperations, key: strin
 }
 
 function accountPetBackendForExistingLocator(key: string): PrivateFileOperations {
-    return legacyAccountPetFiles && key.startsWith(LEGACY_ACCOUNT_PET_PRIVATE_FILE_PREFIX)
-        ? legacyAccountPetFiles : requirePrivateFilesBackend();
+    return diskAccountPetFiles && key.startsWith(ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX)
+        ? diskAccountPetFiles : requirePrivateFilesBackend();
 }
 
-/** All new Pet writes follow the selected backend. Only historical locators route to disk on S3 Homes. */
+export function createAccountPetPrivateFileKey(path: string): string {
+    return `${requirePrivateFilesBackend().accountPetKeyPrefix}${path}`;
+}
+
 export const accountPetPrivateFiles = {
     init: loadFiles,
     writePrivateFile,

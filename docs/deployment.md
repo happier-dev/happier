@@ -5095,8 +5095,9 @@ database locally; selecting the adapter does not turn it into an API/worker spli
   policies or fall back to the public bucket. Binary Artifact uploads return
   HTTP 503 with `private_storage_unavailable` when the private store is unavailable.
   The reason `s3_private_bucket_missing` identifies an unset or blank bucket.
-- Existing Account Pet locators continue to use their private disk paths. Keep
-  the original private files volume attached when upgrading an S3-backed Home.
+- Pets imported to local storage keep their private disk paths. Keep the
+  original private files volume attached when switching to S3 so the Home can
+  read and erase those Pets.
 - The local files backend defaults to the existing private-files directory,
   separate from the public file root. Its development guard resolves both roots
   and refuses private IO when either contains the other, including symlinked

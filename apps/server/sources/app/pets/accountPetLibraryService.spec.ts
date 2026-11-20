@@ -7,7 +7,8 @@ import { Readable } from "node:stream";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
-import { initFilesS3FromEnv, loadFiles } from "@/storage/blob/files";
+import { initFilesLocalFromEnv, initFilesS3FromEnv, loadFiles } from "@/storage/blob/files";
+import { ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX } from "@/storage/privateFiles/privateFileKeys";
 import { createLocalPrivateFilesBackend } from "@/storage/privateFiles/privateFilesLocal";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -21,11 +22,18 @@ import {
     type PrismaAccountPetLibraryPersistenceOptions,
     type PersistedAccountPet,
 } from "./accountPetLibraryPersistence";
-import { createAccountPetLibraryServices } from "./accountPetLibraryService";
+import { createAccountPetLibraryServices as createServices, type AccountPetLibraryServiceOptions } from "./accountPetLibraryService";
 import { deleteDefaultAccountPetPrivateObject, getDefaultAccountPetLibraryServices } from "./accountPetLibraryRuntime";
 import { webpAtlasHeader } from "./accountPetAtlas.testkit";
 
 const WEBP_BYTES = webpAtlasHeader(PET_ATLAS_V1);
+
+function createAccountPetLibraryServices(options: Omit<AccountPetLibraryServiceOptions, "createPrivateFileKey">) {
+    return createServices({
+        ...options,
+        createPrivateFileKey: path => `${ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX}${path}`,
+    });
+}
 
 function digest(bytes: Uint8Array): string {
     return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -283,15 +291,20 @@ describe("account pet library services", () => {
         });
     }
 
-    it("writes and erases new Pets in private S3 and keeps pre-upgrade disk locators readable and erasable", async () => {
-        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-legacy-"));
+    it("keeps Pets on their original backend when an existing Home switches from local to S3", async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-backend-"));
         tempDirs.push(rootDir);
-        const env = harness.resetEnv({ HAPPIER_FILES_BACKEND: 's3', HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR: rootDir,
+        const localEnv = harness.resetEnv({ HAPPIER_FILES_BACKEND: 'local', HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR: rootDir });
+        const s3Env = { ...localEnv, HAPPIER_FILES_BACKEND: 's3',
             S3_HOST: 'example.com', S3_PUBLIC_URL: 'https://cdn.example.com', S3_BUCKET: 'public',
-            S3_PRIVATE_BUCKET: 'private-pets', S3_ACCESS_KEY: 'key', S3_SECRET_KEY: 'secret' });
+            S3_PRIVATE_BUCKET: 'private-pets', S3_ACCESS_KEY: 'key', S3_SECRET_KEY: 'secret' };
         const objects = new Map<string, Buffer>();
         const putObject = vi.fn(async (bucket: string, key: string, bytes: Buffer) => { objects.set(`${bucket}/${key}`, bytes); });
-        const getObject = vi.fn(async (bucket: string, key: string) => Readable.from([objects.get(`${bucket}/${key}`)!]));
+        const getObject = vi.fn(async (bucket: string, key: string) => {
+            const bytes = objects.get(`${bucket}/${key}`);
+            if (!bytes) throw Object.assign(new Error('S3 object is missing'), { code: 'NoSuchKey' });
+            return Readable.from([bytes]);
+        });
         const removeObject = vi.fn(async (bucket: string, key: string) => { objects.delete(`${bucket}/${key}`); });
         vi.doMock('minio', () => ({ Client: class {
             bucketExists = async () => true;
@@ -300,12 +313,10 @@ describe("account pet library services", () => {
             getObject = getObject;
             removeObject = removeObject;
         } }));
-        try {
-            await initFilesS3FromEnv(env);
-            await loadFiles();
-            const accountId = 'account-s3-pets';
+        const services = getDefaultAccountPetLibraryServices();
+        const disk = createLocalPrivateFilesBackend({ rootDir });
+        const importPet = async (accountId: string) => {
             await db.account.create({ data: { id: accountId, encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
-            const services = getDefaultAccountPetLibraryServices();
             const validated = await validateAccountPetCreateRequestV1(requestFor(WEBP_BYTES), {
                 inspectAtlas: async () => ({ width: PET_ATLAS_V1.width, height: PET_ATLAS_V1.height, hasAlpha: true }),
             });
@@ -318,30 +329,42 @@ describe("account pet library services", () => {
             if (!created.ok) throw new Error(created.errorCode);
             const petId = created.pet.accountPetId;
             const row = await db.accountPetAsset.findFirstOrThrow({ where: { accountId, petPackageId: petId } });
-            const remoteKey = `private-pets/${row.objectKey}`;
+            return { objectKey: row.objectKey,
+                read: () => services.readAccountPetAssetForAccount({ accountId, accountEncryptionMode: 'e2ee', petId, assetId: null }),
+                remove: () => services.deleteAccountPetForAccount({ accountId, petId }) };
+        };
+        try {
+            initFilesLocalFromEnv(localEnv);
+            await loadFiles();
+            const localOnly = await importPet('account-local-pets');
+            const localBytes = await disk.readPrivateFile(localOnly.objectKey);
+            expect(await localOnly.read()).toMatchObject({ ok: true, bytes: localBytes });
+            expect(await localOnly.remove()).toMatchObject({ ok: true });
+            await expect(disk.readPrivateFile(localOnly.objectKey)).rejects.toMatchObject({ code: 'ENOENT' });
+
+            const retained = await importPet('account-transition-pets');
+            const retainedAsset = await retained.read();
+            expect(retainedAsset).toMatchObject({ ok: true, bytes: await disk.readPrivateFile(retained.objectKey) });
+            await initFilesS3FromEnv(s3Env);
+            await loadFiles();
+            await expect(retained.read()).resolves.toEqual(retainedAsset);
+            expect(await retained.remove()).toMatchObject({ ok: true });
+            await expect(disk.readPrivateFile(retained.objectKey)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(getObject).not.toHaveBeenCalled();
+            expect(removeObject).not.toHaveBeenCalled();
+
+            const remote = await importPet('account-s3-pets');
+            const remoteKey = `private-pets/${remote.objectKey}`;
             expect([...objects.keys()]).toEqual([remoteKey]);
             expect(putObject).toHaveBeenCalledTimes(1);
-            const read = () => services.readAccountPetAssetForAccount({ accountId, accountEncryptionMode: 'e2ee', petId, assetId: null });
-            const asset = await read();
-            expect(asset).toMatchObject({ ok: true, bytes: new Uint8Array(objects.get(remoteKey)!) });
+            expect(await remote.read()).toMatchObject({ ok: true, bytes: new Uint8Array(objects.get(remoteKey)!) });
             expect(getObject).toHaveBeenCalledTimes(1);
-            await deleteDefaultAccountPetPrivateObject(row.objectKey);
+            await deleteDefaultAccountPetPrivateObject(remote.objectKey);
             expect(objects.size).toBe(0);
-            expect(removeObject).toHaveBeenCalledTimes(1);
-
-            // An installed server already has this legacy locator and file when upgrading.
-            if (!asset?.ok) throw new Error('Expected to open the sealed asset');
-            const legacyKey = `private/accounts/${accountId}/pets/${petId}/sha256/legacy.bin`;
-            const legacy = createLocalPrivateFilesBackend({ rootDir });
-            await legacy.writePrivateFile(legacyKey, asset.bytes);
-            await db.accountPetAsset.update({ where: { id: row.id }, data: { objectKey: legacyKey } });
-            expect(await read()).toEqual(asset);
-            expect((await services.deleteAccountPetForAccount({ accountId, petId })).ok).toBe(true);
-            await expect(legacy.readPrivateFile(legacyKey)).rejects.toMatchObject({ code: 'ENOENT' });
-            expect(getObject).toHaveBeenCalledTimes(1);
             expect(removeObject).toHaveBeenCalledTimes(1);
         } finally {
             vi.doUnmock('minio');
+            initFilesLocalFromEnv(localEnv);
         }
     });
 

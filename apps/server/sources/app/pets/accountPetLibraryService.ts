@@ -5,7 +5,6 @@ import { isAccountPetEncryptedLibraryEntryV1, type AccountPetCreateResponseV1, t
 import { admitAccountPetEncryptedCreateRequestV1, isAccountPetEncryptedCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
 
 import type { PrivateFilesBackend } from "@/storage/privateFiles/privateFiles";
-import { ACCOUNT_PET_PRIVATE_FILE_PREFIX } from "@/storage/privateFiles/privateFileKeys";
 
 import {
     inspectPetAtlasWithSharp,
@@ -59,6 +58,7 @@ export type AccountPetLibraryServices = Readonly<{
 
 export type AccountPetLibraryServiceOptions = Readonly<{
     privateFiles: PrivateFilesBackend;
+    createPrivateFileKey: (path: string) => string;
     persistence?: AccountPetLibraryPersistence;
     maxManifestBytes?: number;
     maxSpritesheetBytes?: number;
@@ -118,14 +118,13 @@ function extensionForMediaType(mediaType: PetAssetMediaTypeV1 | typeof ACCOUNT_P
     return mediaType === ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE ? "bin" : mediaType === "image/png" ? "png" : "webp";
 }
 
-function createPrivateObjectKey(params: {
+function createPrivateAssetPath(params: {
     accountId: string;
     petId: string;
     assetDigest: string;
     mediaType: PetAssetMediaTypeV1 | typeof ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE;
 }): string {
     return [
-        ACCOUNT_PET_PRIVATE_FILE_PREFIX,
         keySegment(params.accountId),
         "pets",
         keySegment(params.petId),
@@ -298,16 +297,17 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
     async function persistWithPrivateFile(params: Readonly<{
         accountId: string;
         entry: AccountPetStoredLibraryEntryV1;
-        objectKey: string;
+        assetPath: string;
         bytes: Uint8Array;
     }>): Promise<AccountPetCreateResponseV1> {
-        await options.privateFiles.writePrivateFile(params.objectKey, params.bytes);
+        const objectKey = options.createPrivateFileKey(params.assetPath);
+        await options.privateFiles.writePrivateFile(objectKey, params.bytes);
         let refusal: AccountPetCreateResponseV1;
         try {
             const persisted = await persistence.persistAccountPet({
                 accountId: params.accountId,
                 entry: params.entry,
-                objectKey: params.objectKey,
+                objectKey,
                 quotaLimits: quotaLimits(),
             });
             if (persisted.ok) return { ok: true, pet: params.entry };
@@ -318,7 +318,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             refusal = internalCreateResponse();
         }
         try {
-            await deletePrivateFileOrThrow(options.privateFiles, params.objectKey);
+            await deletePrivateFileOrThrow(options.privateFiles, objectKey);
         } catch {
             return internalCreateResponse();
         }
@@ -335,7 +335,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
         const petId = createId();
         const assetId = createId();
         const timestamp = nowMs();
-        const objectKey = createPrivateObjectKey({
+        const assetPath = createPrivateAssetPath({
             accountId,
             petId,
             assetDigest: admitted.spritesheetDigest,
@@ -357,7 +357,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             updatedAt: timestamp,
         };
         return await withCreateLock(accountId, () => persistWithPrivateFile({
-            accountId, entry, objectKey, bytes: admitted.spritesheetCiphertext,
+            accountId, entry, assetPath, bytes: admitted.spritesheetCiphertext,
         }));
     }
 
@@ -393,7 +393,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             const assetId = createId();
             const timestamp = nowMs();
             const spritesheet = validated.request.spritesheet;
-            const objectKey = createPrivateObjectKey({
+            const assetPath = createPrivateAssetPath({
                 accountId: params.accountId,
                 petId,
                 assetDigest: spritesheet.digest,
@@ -428,7 +428,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                         : internalCreateResponse();
                 }
                 return await persistWithPrivateFile({
-                    accountId: params.accountId, entry, objectKey, bytes: validated.spritesheetBytes,
+                    accountId: params.accountId, entry, assetPath, bytes: validated.spritesheetBytes,
                 });
             });
         },
