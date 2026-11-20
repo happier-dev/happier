@@ -1902,11 +1902,10 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
     </HappierPressable>
   ) : <View aria-hidden style={chevronStyle} />;
   // A collection whose rows carry their own controls reserves that place on every row (the header already does):
-  // a row without them keeps its figures under the columns' titles. A resting list has no columns to keep.
-  const rowAccessory = actions.accessory === undefined && stage.useRowActions !== undefined && actions.secondaryActions === undefined
-    && !stage.wrapTitles
-    ? <View aria-hidden style={rowActionPlaceholderStyle} />
-    : actions.accessory;
+  // a row without them keeps its figures under the columns' titles. A resting list without list columns has none to keep.
+  const reservesRowActions = actions.accessory === undefined && stage.useRowActions !== undefined
+    && actions.secondaryActions === undefined && (!stage.wrapTitles || stage.listColumns.length > 0);
+  const rowAccessory = reservesRowActions ? <View aria-hidden style={rowActionPlaceholderStyle} /> : actions.accessory;
   // On a narrow resting row a wrapping accessory goes under the title, on the text column (`ListCells`), so it never
   // squeezes the name nor wraps with the `⋯` onto a line of its own under the mark. Its cell stays (empty), so the
   // `⋯` keeps the title line's end and the row its press target.
@@ -2037,6 +2036,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
       {...(actions.busy === undefined ? {} : { busy: actions.busy })}
       {...(actions.accessoryWraps === undefined || beneath !== null ? {} : { accessoryWraps: actions.accessoryWraps })}
       {...(accessory === null ? {} : { accessory })}
+      // The reserved place stands where a ⋯ would: in the trailing cell beside the press target, on the row's inset.
+      {...(reservesRowActions && accessory !== null ? { accessoryOutsidePressable: true } : {})}
       {...(hasRowControls(anatomy) || beneath !== null ? { contentBesidePressable: true } : {})}
     >
       {rowContents}

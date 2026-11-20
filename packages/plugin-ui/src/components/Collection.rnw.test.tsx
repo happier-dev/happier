@@ -2051,6 +2051,43 @@ describe('Collection table', () => {
     view.unmount();
   });
 
+  // TH-VISUAL-ACCEPT-17 N1 (Machines → Presets, live 1440): a row whose owner offers no actions reserved no ⋯ place
+  // in a list that draws columns, so its figures started 40 px right of the header and of the rows that carry a ⋯.
+  it("keeps a row without actions on the ⋯ rows' grid: its reserved place stands in the same trailing cell", () => {
+    const { peek: _peek, ...rowWithoutPeek } = anatomy;
+    const view = mount({
+      presentation: 'list', scroll: 'page', detail: 'none',
+      anatomy: { ...rowWithoutPeek, byline: (entry) => entry.repo,
+        fields: [{ key: 'age', title: 'Age', render: (entry) => entry.age, minWidth: 64, priority: 1, align: 'end', listColumn: true }] },
+      grouping: { ...groups, axis: groups.axis.map((group) => ({ ...group, section: { key: 'all', title: 'All work' } })) },
+      useRowActions: (entry) => entry.id === 'a'
+        ? { secondaryActions: [{ id: 'pin', label: 'Pin' }], onSecondaryAction: () => undefined }
+        : {},
+    });
+    try {
+      view.measure(1200);
+      const trigger = view.query('row:a:cell')!.querySelector<HTMLElement>('[aria-label="More actions"]')!;
+      const reserved = [...view.query('row:b:cell')!.querySelectorAll<HTMLElement>('[aria-hidden="true"]')]
+        .find((node) => getComputedStyle(node).width === '28px')!;
+      expect(trigger).not.toBeNull();
+      expect(reserved).toBeDefined();
+      // Both trailing places stand beside the row's press target, not inside it.
+      expect(view.query('row:a')!.contains(trigger)).toBe(false);
+      expect(view.query('row:b')!.contains(reserved)).toBe(false);
+      // And both keep the row's trailing inset, so the cells before them end on one edge.
+      const trailingInset = (node: HTMLElement, row: HTMLElement) => {
+        for (let cell: HTMLElement | null = node; cell !== null && !cell.contains(row); cell = cell.parentElement) {
+          const inset = getComputedStyle(cell).paddingInlineEnd || getComputedStyle(cell).paddingRight;
+          if (inset !== '' && inset !== '0px') return inset;
+        }
+        return '0px';
+      };
+      expect(trailingInset(reserved, view.query('row:b')!)).toBe(trailingInset(trigger, view.query('row:a')!));
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("draws a board card's actions inside the card at its title line, not beside it", () => {
     const view = mount({
       presentation: 'board',
