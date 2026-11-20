@@ -7409,7 +7409,7 @@ deps: {
                 toolArtifactImageA11y: ({ name }: { name: string }) => `Obre la imatge d'artefacte d'eina ${name}`,
                 imageUnavailable: 'La imatge no està disponible',
                 title: "Contingut multimèdia de la sessió",
-                jumpToMessage: "Mostra al xat",
+                jumpToMessage: "Mostra a la sessió",
                 showMore: "Mostra'n més",
                 showAll: "Mostra-ho tot",
                 empty: "Encara no hi ha contingut multimèdia en aquesta sessió",

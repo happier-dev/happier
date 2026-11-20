@@ -7645,7 +7645,7 @@ export const zhHans: TranslationStructure = {
           toolArtifactImageA11y: ({ name }: { name: string }) => `打开工具产物图片 ${name}`,
           imageUnavailable: '图像不可用',
           title: "会话媒体",
-          jumpToMessage: "在聊天中显示",
+          jumpToMessage: "在会话中显示",
           showMore: "显示更多",
           showAll: "显示全部",
           empty: "此会话中还没有媒体",

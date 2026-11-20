@@ -6,6 +6,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { IconAction } from '@/components/ui/buttons/IconAction';
 import { Typography } from '@/constants/Typography';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
@@ -20,18 +21,18 @@ import { resolveSessionMediaImageMimeType, toSessionMediaPreviewImage } from './
 
 const PAGE_SIZE = 8;
 const MIN_CELL_WIDTH = 150;
-const CELL_HEIGHT = 200;
 const CELL_HORIZONTAL_PADDING = 6;
-// Cell height less its padding, gap and the jump row, so a thumbnail never covers the jump button.
+const CELL_TOP_PADDING = 6;
 const THUMBNAIL_MAX_HEIGHT = 140;
+// Nothing sits below the thumbnail: the jump arrow overlays its corner instead of taking a row.
+const CELL_HEIGHT = THUMBNAIL_MAX_HEIGHT + CELL_TOP_PADDING;
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: { flex: 1 },
     cell: {
         height: CELL_HEIGHT,
         paddingHorizontal: CELL_HORIZONTAL_PADDING,
-        paddingVertical: 6,
-        gap: 6,
+        paddingTop: CELL_TOP_PADDING,
         alignItems: 'center',
     },
     thumbnailArea: {
@@ -58,10 +59,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     jump: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingVertical: 2,
+        position: 'absolute',
+        right: 4,
+        bottom: 4,
+        backgroundColor: theme.colors.surface.elevated,
     },
     loading: {
         flexDirection: 'row',
@@ -196,25 +197,25 @@ export const SessionMediaGrid = React.memo(function SessionMediaGrid(props: Read
                             <Text numberOfLines={2} style={styles.caption}>{media.name}</Text>
                         </Pressable>
                     )}
+                    {seq !== null ? (
+                        <IconAction
+                            testID={`session-media-grid-jump:${messageId}`}
+                            size="sm"
+                            hitSlop={8}
+                            accessibilityLabel={t('files.sessionMedia.jumpToMessage')}
+                            tooltipContent={t('files.sessionMedia.jumpToMessage')}
+                            tooltipPlacement="top"
+                            onPress={() => {
+                                // On the mobile cockpit the route alone keeps Files on screen; reveal chat first.
+                                cockpit?.switchSurface('chat');
+                                void navigateToSession(props.sessionId, { query: { jumpSeq: seq } });
+                            }}
+                            style={styles.jump}
+                        >
+                            <Icon name="arrow-right" size={16} color={theme.colors.text.link} />
+                        </IconAction>
+                    ) : null}
                 </View>
-                {seq !== null ? (
-                    <Pressable
-                        testID={`session-media-grid-jump:${messageId}`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('files.sessionMedia.jumpToMessage')}
-                        onPress={() => {
-                            // On the mobile cockpit the route alone keeps Files on screen; reveal chat first.
-                            cockpit?.switchSurface('chat');
-                            void navigateToSession(props.sessionId, { query: { jumpSeq: seq } });
-                        }}
-                        style={styles.jump}
-                    >
-                        <Icon name="chats-circle" size={14} color={theme.colors.text.link} />
-                        <Text style={[styles.caption, { color: theme.colors.text.link }]}>
-                            {t('files.sessionMedia.jumpToMessage')}
-                        </Text>
-                    </Pressable>
-                ) : null}
             </View>
         );
     }, [cockpit, maxThumbnailSize, navigateToSession, openPreview, props.onOpenFile, props.sessionId, showMore, styles, theme.colors.text.link, theme.colors.text.primary, theme.colors.text.secondary]);

@@ -8003,7 +8003,7 @@ export const pt: TranslationStructure = {
           toolArtifactImageA11y: ({ name }: { name: string }) => `Abrir imagem de artefato da ferramenta ${name}`,
           imageUnavailable: 'A imagem não está disponível',
           title: "Mídia da sessão",
-          jumpToMessage: "Mostrar no chat",
+          jumpToMessage: "Mostrar na sessão",
           showMore: "Mostrar mais",
           showAll: "Mostrar tudo",
           empty: "Ainda não há mídia nesta sessão",

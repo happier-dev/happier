@@ -7869,7 +7869,7 @@ export const ru: TranslationStructure = {
           toolArtifactImageA11y: ({ name }: { name: string }) => `Открыть изображение артефакта инструмента ${name}`,
           imageUnavailable: 'Изображение недоступно',
           title: "Медиа сессии",
-          jumpToMessage: "Показать в чате",
+          jumpToMessage: "Показать в сессии",
           showMore: "Показать ещё",
           showAll: "Показать все",
           empty: "В этой сессии пока нет медиафайлов",

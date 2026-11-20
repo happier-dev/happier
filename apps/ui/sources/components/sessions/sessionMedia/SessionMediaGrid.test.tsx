@@ -129,8 +129,10 @@ describe('SessionMediaGrid', () => {
         state.messages = Array.from({ length: 10 }, (_, index) =>
             imageMessage(`m${index + 1}`, index + 1, `.happier/uploads/generated/m${index + 1}/img.png`));
         const screen = await renderGrid();
-        const tileCount = () => screen.root
-            .findAll((node) => String(node.props?.testID ?? '').startsWith('session-media-grid-jump:')).length;
+        // The icon action forwards its testID to nested nodes, so count distinct tiles.
+        const tileCount = () => new Set(screen.root
+            .findAll((node) => String(node.props?.testID ?? '').startsWith('session-media-grid-jump:'))
+            .map((node) => node.props.testID)).size;
 
         expect(tileCount()).toBe(8);
         expect(screen.findByTestId('session-media-grid-jump:m10')).not.toBeNull();

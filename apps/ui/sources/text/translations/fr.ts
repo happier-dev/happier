@@ -7396,7 +7396,7 @@ export const fr: TranslationStructure = {
                 toolArtifactImageA11y: ({ name }: { name: string }) => `Ouvrir l’image produite par l’outil ${name}`,
                 imageUnavailable: 'Image indisponible',
                 title: "Médias de la session",
-                jumpToMessage: "Afficher dans le chat",
+                jumpToMessage: "Afficher dans la session",
                 showMore: "Afficher plus",
                 showAll: "Tout afficher",
                 empty: "Aucun média dans cette session pour l’instant",
