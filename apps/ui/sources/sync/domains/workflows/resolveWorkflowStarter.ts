@@ -1,9 +1,19 @@
 import type { WorkflowStarterExampleKeyV1, WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
-import { WorkflowStartersResolveResultV1Schema } from '@happier-dev/protocol/workflows/builtins/starterActionsV1';
+import { WorkflowStartersListResultV1Schema, WorkflowStartersResolveResultV1Schema } from '@happier-dev/protocol/workflows/builtins/starterActionsV1';
 
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { callWorkflowAction } from './callWorkflowAction';
+
+export function listWorkflowStarters(accountLifetime: ServerAccountScopeLifetime | null | undefined, signal: AbortSignal) {
+    return callWorkflowAction({
+        actionId: 'workflow.starters.list',
+        input: {},
+        parseResult: WorkflowStartersListResultV1Schema.parse,
+        accountLifetime,
+        signal,
+    });
+}
 
 export function resolveWorkflowStarter(params: Readonly<{
     key: WorkflowStarterExampleKeyV1;

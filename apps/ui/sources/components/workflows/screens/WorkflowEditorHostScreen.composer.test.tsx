@@ -1317,6 +1317,25 @@ describe('editor workflow composer', () => {
         }
     });
 
+    it('applies the starter list Action policy before exposing example choices', async () => {
+        const { WorkflowExamplesSection } = await import('../library/WorkflowExamplesSection');
+        const store = getStorage();
+        const settings = store.getState().settings;
+        await act(async () => home.setActionPolicy(appliedHome.serverId, 'workflow.starters.list', 'ui', 'off'));
+        const screen = await renderScreen(<AppPaneProvider>
+            <WorkflowExamplesSection presentation="list" session={{ sessionId: 'session-1', machineId: 'machine-1' }} />
+        </AppPaneProvider>);
+        try {
+            expect(screen.findByTestId('workflow-examples:ask-once:use')).toBeNull();
+            await waitForHomeGovernance(() => {
+                expect(screen.findByTestId('workflow-examples-load-failed')).not.toBeNull();
+            });
+        } finally {
+            await screen.unmount();
+            store.setState({ settings });
+        }
+    });
+
     it('reopens the catalog composer with recovery enabled and rejoins its exact unresolved admission', async () => {
         const [{ getBuiltinWorkflowCatalogV1}, { WorkflowRunStartRequestV1Schema, WorkflowRunGetResultV1Schema}] = await Promise.all([import('@happier-dev/protocol/workflows/builtins/catalog'), import('@happier-dev/protocol/workflows/actionsV1')]);
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');

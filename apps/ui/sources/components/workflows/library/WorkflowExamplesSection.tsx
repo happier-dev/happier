@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { WORKFLOW_STARTER_EXAMPLES_V1, workflowStarterRequiresSession, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { workflowStarterRequiresSession, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -25,11 +25,11 @@ import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { Modal } from '@/modal';
 import { getPreferredLanguage, t, tLoose } from '@/text';
 import { en } from '@/text/translations/en';
-import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
-import { resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
+import { listWorkflowStarters, resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
 import { formatWorkflowProblemMessage } from '../presentation/workflowProblemPresentation';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState } from '../presentation/workflowSessionChoice';
@@ -37,6 +37,7 @@ import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionR
 import { readDeviceTimeZone } from '../triggers/sessionTriggerForm';
 import { WorkflowFlowView } from '../flow/WorkflowFlowView';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
+import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import { WorkflowExamplesPopover } from './WorkflowExamplesPopover';
 
 /**
@@ -82,7 +83,35 @@ export function WorkflowExamplesSection(props: Readonly<{
 }>): React.ReactElement {
     const router = useRouter();
     const mounted = useMountedRef();
+    const routeLifetime = useWorkflowAccountLifetime();
+    const homeLifetime = useActiveServerAccountScopeLifetime();
+    const accountLifetime = routeLifetime === undefined ? homeLifetime ?? undefined : routeLifetime;
     const [choice, setChoice] = React.useState<Readonly<{ key: string; lifetime: ActiveServerAccountScopeLifetime | null }> | null>(null);
+    const [attempt, retry] = React.useReducer(current => current + 1, 0);
+    const [catalog, setCatalog] = React.useState<Readonly<{
+        accountLifetime: typeof accountLifetime;
+        attempt: number;
+        outcome: { examples: readonly WorkflowStarterExampleV1[] } | { error: unknown };
+    }> | null>(null);
+    React.useEffect(() => {
+        const controller = new AbortController();
+        void listWorkflowStarters(accountLifetime, controller.signal).then(outcome => {
+            if (!controller.signal.aborted) setCatalog({ accountLifetime, attempt, outcome });
+        }, error => {
+            if (!controller.signal.aborted) setCatalog({ accountLifetime, attempt, outcome: { error } });
+        });
+        return () => controller.abort();
+    }, [accountLifetime, attempt]);
+    const outcome = catalog?.accountLifetime === accountLifetime && catalog?.attempt === attempt
+        && accountLifetime?.isCurrent() !== false ? catalog.outcome : null;
+    if (outcome === null) {
+        return <EmptyState layout="line" title={t('common.loading')} loading />;
+    }
+    if ('error' in outcome) {
+        return <EmptyState testID="workflow-examples-load-failed" layout="line" iconName="warning"
+            title={formatWorkflowProblemMessage(outcome.error)}
+            primaryAction={{ label: t('common.retry'), onPress: retry }} />;
+    }
     const useExample = (example: WorkflowStarterExampleSelection) => {
         if (props.onUse) props.onUse(example);
         else {
@@ -98,16 +127,16 @@ export function WorkflowExamplesSection(props: Readonly<{
     const session = props.session;
     // Event recipes need their own When setup. The block-only and inline pickers leave the receiving triggers alone.
     const opensEventDraft = props.opensDraft !== false && (props.onUse === undefined || session !== undefined);
-    const examples = opensEventDraft ? WORKFLOW_STARTER_EXAMPLES_V1
-        : WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.eventSeed === undefined
+    const examples = opensEventDraft ? outcome.examples
+        : outcome.examples.filter(example => example.eventSeed === undefined
             && (props.opensDraft !== false || !workflowStarterRequiresSession(example)));
     const choose = (example: WorkflowStarterExampleV1) => {
-        const lifetime = captureActiveServerAccountScopeLifetime();
+        const lifetime = accountLifetime;
         void resolveWorkflowStarter({ key: example.key, session, timezone: readDeviceTimeZone(), accountLifetime: lifetime }).then(selection => {
             if (!mounted.current || lifetime?.isCurrent() === false) return;
             // Added into a draft, a template brings its steps and leaves that draft's triggers alone.
             if (selection.status === 'ready') useExample(props.opensDraft === false ? withoutTrigger(selection.example) : selection.example);
-            else if (session === undefined) setChoice({ key: example.key, lifetime });
+            else if (session === undefined) setChoice({ key: example.key, lifetime: lifetime ?? null });
         }, error => {
             if (mounted.current && lifetime?.isCurrent() !== false) void Modal.alert(t('common.error'), formatWorkflowProblemMessage(error));
         });
