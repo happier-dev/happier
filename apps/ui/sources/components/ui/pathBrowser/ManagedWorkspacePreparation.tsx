@@ -52,7 +52,9 @@ export type ManagedWorkspacePreparationRequest = Readonly<{
 
 const styles = StyleSheet.create((theme) => ({
   // The card's own edge inset (ModalCardFrame), so the step lines up with the title and footer.
+  // Fills the card as the tree will, so Preparing → tree never resizes it (lab NOTES scene specs).
   body: {
+    flex: 1,
     minHeight: 420,
     paddingTop: theme.space.s8,
     paddingHorizontal: theme.space.s16,
@@ -164,6 +166,7 @@ export function ManagedWorkspacePreparation(
         : t('files.pane.serverFolderHelperNote', { workspace: request.name }),
       testID: PATH_BROWSER_MODAL_TEST_ID,
       footer,
+      scrollHost: 'body' as const,
       dimensions: {
         width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide,
         maxHeightRatio: 0.96,
