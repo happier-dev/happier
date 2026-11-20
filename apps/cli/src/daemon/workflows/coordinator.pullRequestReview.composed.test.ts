@@ -14,6 +14,9 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createCommittedContributedActionSchemaReader } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/triage/src/manifest';
 import { createTriagePullRequestReviewActionTestkit, TESTKIT_OBSERVED_REVISION } from '../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
+import { normalizeGithubRepositoryEventForAutomation } from '../../../../../packages/plugins/scm-github/src/observations/githubRepositoryEventNormalization';
+import { capturedRepositoryPullRequestEvent } from '../../../../../packages/plugins/scm-github/src/observations/testkit/githubRepositoryPullRequestEvent.fixture';
+import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from '../../../../../packages/plugins/scm-github/src/githubAutomationEvents';
 import { createWorkflowCoordinator, WORKFLOW_CANCEL_REQUESTED_ABORT_REASON } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import { buildWorkflowActionContext } from './workflowActionContext';
@@ -58,11 +61,26 @@ async function createPrWorkflow() {
   }).map(([key, value]) => [key, projectNativeJsonValueForTransport(value)]));
   const admitted = async (runId: string, authorAssociation: string, headSha = TESTKIT_OBSERVED_REVISION.headSha, number = 17,
     action: typeof SCM_HOSTING_PULL_REQUEST_LIFECYCLE_ACTIONS_V1[number] = 'opened') => {
+    // The provider HTTP boundary supplies native facts. Keep its real classifier
+    // and normalization on the path into the workflow's author-approval branch.
+    const nativeAssociation = authorAssociation === 'internal' ? 'MEMBER'
+      : authorAssociation === 'external' ? 'CONTRIBUTOR' : undefined;
+    const providerEvent = { ...capturedRepositoryPullRequestEvent, payload: {
+      ...capturedRepositoryPullRequestEvent.payload, action: action === 'merged' ? 'closed' : action,
+      pull_request: { ...capturedRepositoryPullRequestEvent.payload.pull_request, number,
+        ...(nativeAssociation === undefined ? {} : { author_association: nativeAssociation }),
+        merged: action === 'merged',
+        head: { ...capturedRepositoryPullRequestEvent.payload.pull_request.head, sha: headSha } },
+    } };
+    const normalized = normalizeGithubRepositoryEventForAutomation(providerEvent, {
+      v: 1, repositoryId: '77', owner: 'acme', name: 'widgets', nameWithOwner: 'acme/widgets',
+    }, GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle).observation;
+    if (!normalized || !('pullRequest' in normalized.payload)) throw new Error('Provider emitted no PR lifecycle occurrence');
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
       context: { source: { kind: 'inline' }, inputs, machineId: workspace.machineId, executionTarget: { kind: 'session' },
         workspaceTarget: { project: workspace }, authorization: { principal: { kind: 'host' } } },
       admission: { kind: 'trigger', workDepth: 0, admitLeaf: async () => { throw new Error('No native leaf admission'); },
-        eventOccurrence: { event, payload: { pullRequest: { action, authorAssociation, headSha }, reviewTarget: {
+        eventOccurrence: { event, payload: { pullRequest: projectNativeJsonValueForTransport(normalized.payload.pullRequest), reviewTarget: {
           ...reviewTarget, entryRef: { ...reviewTarget.entryRef, entryId: String(number) },
           comparisonSource: { ...reviewTarget.comparisonSource, locator: { ...reviewTarget.comparisonSource.locator, number, headOid: headSha } },
         } } } },
