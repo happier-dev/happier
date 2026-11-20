@@ -658,8 +658,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const structureProjector = React.useMemo(() => props.invocationStructureProjector
         ?? createWorkflowInvocationStructureProjector({ definition: props.definition,
             frozenChildren: props.frozenChildren, materializedLeaves: props.materializedLeaves,
-            inputs: props.inputs, serverId: props.serverId }),
-    [props.invocationStructureProjector, props.definition, props.frozenChildren, props.materializedLeaves, props.inputs, props.serverId]);
+            inputs: props.inputs, serverId: props.serverId,
+            resolveAgentLabel: targetKey => presentEngine({ agentTargetKey: targetKey }).label }),
+    [presentEngine, props.invocationStructureProjector, props.definition, props.frozenChildren, props.materializedLeaves, props.inputs, props.serverId]);
     const derivedStructure = React.useMemo(
         () => (props.invocationStructure !== undefined
             ? props.invocationStructure

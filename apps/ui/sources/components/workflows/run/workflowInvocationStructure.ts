@@ -7,6 +7,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readWorkflowValuePathV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { projectWorkflowLoopItemDisplayLabelV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { normalizeExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { BackendTargetKeyV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type {
     WorkflowInvocationPathV1,
@@ -437,6 +438,7 @@ export type WorkflowInvocationStructureInputs = Readonly<{
     invocationEvidenceById?: ReadonlyMap<string, Readonly<{ index: WorkflowRunInvocationIndexV1; progress: WorkflowProgressEnvelopeV1 }>>;
     /** Home-qualified Session titles from the canonical display-name projection; no private reads. */
     sessionDisplayLabelsById?: Pick<ReadonlyMap<string, string>, 'get'>;
+    resolveAgentLabel?: (targetKey: string) => string | null;
     /** Immutable accepted inputs can name cold occurrences without opening private invocation bodies. */
     inputs?: Readonly<Record<string, JsonValue>>;
     serverId?: string | null;
@@ -578,6 +580,16 @@ export function createWorkflowInvocationStructureProjector(context: Omit<Workflo
                 const displayLabel = acceptedItemLabel ?? label ?? (recorded === 'session' || recorded === 'model' || recorded === 'bot' ? undefined : recorded);
                 return { kind: 'item', blockId: coordinate.blockId, index: coordinate.index,
                     ...(displayLabel === undefined ? {} : { displayLabel }) };
+            });
+        }
+        if (params.resolveAgentLabel) {
+            const resolveAgentLabel = params.resolveAgentLabel;
+            occurrence = occurrence.map(coordinate => {
+                if (coordinate.kind !== 'item' || coordinate.displayLabel === undefined) return coordinate;
+                const target = BackendTargetKeyV2Schema.safeParse(coordinate.displayLabel);
+                if (!target.success) return coordinate;
+                const displayLabel = resolveAgentLabel(target.data);
+                return displayLabel === null ? coordinate : { ...coordinate, displayLabel };
             });
         }
         entries.set(invocationId, {

@@ -38,6 +38,30 @@ function child(overrides: Readonly<{ id: string; parentRecordId: string; memberO
 }
 
 describe('projectWorkflowInvocationStructure', () => {
+    it('names a recorded Agent target on the Map through the catalog', () => {
+        const agentTargetKey = 'agent:happier.agent.muse/muse';
+        const definition = definitionOf([{ kind: 'loop', id: 'agents', repetition: { kind: 'items',
+            items: { kind: 'literal', value: [agentTargetKey] }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+            body: [step('inspect')] }]);
+        const loop = child({ id: 'loop', parentRecordId: root.id, memberOrdinal: '0', sequence: '1' });
+        const frame = child({ id: 'frame', parentRecordId: loop.id, memberOrdinal: '0', sequence: '2' });
+        const leaf = child({ id: 'leaf', parentRecordId: frame.id, memberOrdinal: '0', sequence: '3' });
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'loop', attempt: '0',
+            logicalInvocationRecordId: frame.id, invocationPath: { blockId: 'agents', scope: [{ kind: 'iteration', blockId: 'agents', index: 0 }] },
+            frame: { ownerBlockId: 'agents', source: { kind: 'item', index: '0', displayLabel: agentTargetKey } } };
+        const invocations = [root, loop, frame, leaf];
+        const projection = projectWorkflowFlow(definition);
+        const structure = projectWorkflowInvocationStructure({ definition, invocations,
+            progressByInvocationId: new Map([[frame.id, progress]]),
+            invocationEvidenceById: new Map([[frame.id, { progress, index: frame }]]),
+            resolveAgentLabel: (key: string) => key === agentTargetKey ? 'Muse' : null,
+        });
+        const state = projectWorkflowFlowRunStates({ invocations, structure, projection,
+            formatOccurrence: occurrence => formatWorkflowOccurrenceLabel(occurrence, projection) }).get('inspect')?.[0];
+        expect(state?.occurrenceLabel).toBe('Muse');
+        expect(state?.repetitions?.[0]?.label).toBe('Muse');
+    });
+
     it('names cold item participants from accepted inputs without opening invocation bodies', () => {
         const definition = definitionOf([{ kind: 'loop', id: 'panel', repetition: { kind: 'items',
             items: { kind: 'input', name: 'participants' }, execution: 'parallel', failurePolicy: 'collect_outcomes' },

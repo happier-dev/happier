@@ -1,4 +1,5 @@
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import * as React from 'react';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { resolveManagedMachineWorkStatus } from '@/components/work/status/resolveWorkStatusTone';
@@ -1059,13 +1060,15 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
         const title = isSessionVisible(address) ? invocationSessionTitles[index] : t('message.sessionReferenceUnavailable');
         return title == null ? [] : [[address.sessionId, title] as const];
     })), [invocationSessionAddresses, invocationSessionTitles, isSessionVisible]);
+    const presentEngine = useRoleEnginePresentation(activeAccountScope?.serverId);
     const invocationStructureProjector = React.useMemo(() => createWorkflowInvocationStructureProjector({
         definition: visibleDefinition,
         frozenChildren: visibleAcceptedContext?.frozenChildren,
         materializedLeaves: visibleAcceptedContext?.materializedLeaves,
         inputs: visibleAcceptedContext?.inputs,
         serverId: activeAccountScope?.serverId,
-    }), [activeAccountScope?.serverId, visibleAcceptedContext?.frozenChildren, visibleAcceptedContext?.inputs, visibleAcceptedContext?.materializedLeaves, visibleDefinition]);
+        resolveAgentLabel: targetKey => presentEngine({ agentTargetKey: targetKey }).label,
+    }), [activeAccountScope?.serverId, presentEngine, visibleAcceptedContext?.frozenChildren, visibleAcceptedContext?.inputs, visibleAcceptedContext?.materializedLeaves, visibleDefinition]);
     const invocationStructure = React.useMemo(() => invocationStructureProjector({
         invocations: allInvocations,
         progressByInvocationId: visibleProgressByInvocationId,
