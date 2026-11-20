@@ -1,5 +1,5 @@
 import { PLUGIN_MANIFEST, GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../manifest.js';
-import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
+import { PluginActionContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { TriageSourceDescriptorV1Schema, type TriageSourceScopeSelectionV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -127,8 +127,7 @@ it.each([
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose,
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen,
 ])('skips only the present person UI prompt for %s', id => {
-  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
-  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
   for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
     expect(pluginActionRequiresPresentUserIntent(action, surface, undefined, 'account_automation')).toBe(true);
   }
@@ -140,7 +139,6 @@ it.each([
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge,
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview,
 ])('retains the present person UI confirmation for %s', id => {
-  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
-  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
   expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(true);
 });

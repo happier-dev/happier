@@ -1,4 +1,4 @@
-import { ingestPluginManifestV2, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
+import { ingestPluginManifestV2, PluginActionContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -330,8 +330,7 @@ it.each([
   AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.reactivate,
   AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadStatus,
 ])('skips only the present person UI prompt for %s', id => {
-  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
-  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
   for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
     expect(pluginActionRequiresPresentUserIntent(action, surface, undefined, 'account_automation')).toBe(true);
   }
@@ -343,7 +342,6 @@ it.each([
   AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.complete,
   AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.submitReview,
 ])('retains the present person UI confirmation for %s', id => {
-  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
-  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
   expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(true);
 });

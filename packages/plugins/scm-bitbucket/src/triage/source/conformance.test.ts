@@ -1,4 +1,4 @@
-import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
+import { PluginActionContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
@@ -269,8 +269,7 @@ it.each([
   BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.resolveComment,
   BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.unresolveComment,
 ])('skips only the present person UI prompt for %s', id => {
-  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
-  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
   for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
     expect(pluginActionRequiresPresentUserIntent(action, surface, undefined, 'account_automation')).toBe(true);
   }
@@ -283,7 +282,6 @@ it.each([
   BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline,
   BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview,
 ])('retains the present person UI confirmation for %s', id => {
-  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
-  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === id));
   expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(true);
 });
