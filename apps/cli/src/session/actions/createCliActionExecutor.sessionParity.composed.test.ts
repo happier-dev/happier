@@ -101,14 +101,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function installConfigSession() {
-  const metadata = { path: '/checkout', host: 'test', flavor: 'opencode', machineId,
+function installConfigSession(metadata: NonNullable<ReturnType<typeof createSessionFixture>['metadata']> = { path: '/checkout', host: 'test', flavor: 'opencode', machineId,
     sessionModelsV1: { v: 1 as const, agentId: 'opencode', updatedAt: 1, currentModelId: 'vendor/model',
       availableModels: [{ id: 'vendor/model', name: 'Current model', modelOptions: [
         { id: 'enabled', name: 'Enabled', type: 'boolean' as const, currentValue: false },
       ] }] },
     sessionConfigOptionsV1: { v: 1 as const, agentId: 'opencode', updatedAt: 1, configOptions: [{ id: 'effort',
-      name: 'Thinking', type: 'select' as const, currentValue: 'medium', options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }] }] } };
+      name: 'Thinking', type: 'select' as const, currentValue: 'medium', options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }] }] } }) {
   const session = createSessionFixture({ id: sessionId, serverId, active: true, metadata });
   storage.setState({ sessions: { [sessionId]: session } });
   let row = SessionCurrentProjectionRecordV1Schema.parse({ ...session, metadataLayoutVersion: 0, metadata: JSON.stringify(metadata),
@@ -174,6 +173,50 @@ describe('CLI current-Session control owners', () => {
     expect(writes.length).toBeGreaterThan(0);
     expect(reads.length).toBeGreaterThan(0);
     expect({ reads: reads.every(Boolean), writes: writes.every(Boolean) }).toEqual({ reads: true, writes: true });
+  });
+
+  it.each([
+    ['muse', 'meta/muse-spark-1.3-contributor', 'meta/muse-spark-1.2-contributor'],
+    ['opencode', 'vendor/previous', 'vendor/next'],
+  ])('admits the next %s model option through the Agent Action while the previous model is reported', async (agentId, before, after) => {
+    const agentTargetKey = `agent:happier.agent.${agentId}/${agentId}`;
+    const configId = 'reasoning_effort';
+    const readRow = installConfigSession({
+      path: '/checkout', host: 'test', flavor: agentId, machineId,
+      modelSelectionIntentV1: { v: 1, updatedAt: 12, selection: { agentTargetKey, providerConnectionId: null, modelId: after } },
+      sessionModelsV1: { v: 1, agentId, updatedAt: 11, currentModelId: before, availableModels: [
+        { id: before, name: 'Previous', modelOptions: [
+          { id: configId, name: 'Thinking', type: 'select', currentValue: 'low', options: [{ value: 'low', name: 'Low' }] },
+        ] },
+        { id: after, name: 'Next', modelOptions: [
+          { id: configId, name: 'Thinking', type: 'select', currentValue: 'high', options: [{ value: 'high', name: 'High' }] },
+        ] },
+      ] },
+    });
+    const handlers = new Map<string, RpcHandler>();
+    registerMachineSessionConfigOptionRpcHandlers({
+      withEnvironment: async (_sessionId, context, operation) => operation({ credentials, machineId, signal: context?.signal }),
+      rpcHandlerManager: { registerHandler: (method, handler) => handlers.set(`${machineId}:${method}`, handler as RpcHandler) },
+    });
+    daemonAnswer = (method, raw, context) => runWithServerHttpBaseUrl('https://session-parity.test',
+      () => Promise.resolve(handlers.get(method)!(raw, context)));
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_session_parity' } } });
+    const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: 'https://session-parity.test',
+      pluginActionExecutionOwner: 'current_process', serverIdentityId: 'srv_session_parity',
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: storage.getState().settings }) });
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const, defaultSessionId: sessionId };
+    const config = { sessionId, configId, valueId: 'high' };
+    expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, config, context))
+      .toMatchObject({ ok: true, result: config });
+    const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(readRow().ownerMetadata);
+    if (owner.t !== 'plain') throw new Error('Expected plain Account metadata');
+    const visible = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(readRow().metadata), ownerMetadata: owner.v });
+    expect(visible.acpConfigOptionOverridesV1).toMatchObject({ overrides: { [configId]: { value: 'high' } } });
+    const acceptedVersion = readRow().metadataVersion;
+    expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { ...config, valueId: 'low' }, context))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(readRow().metadataVersion).toBe(acceptedVersion);
   });
 
   it.each(['agent', 'mcp'] as const)('writes Session configuration and connected-account routing without an app on %s', async surface => {

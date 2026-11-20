@@ -4097,12 +4097,22 @@ export function useSessionComposerController({
     const existingSessionNativeModels = React.useMemo(() => (
         agentId ? getModelOptionsForSession(agentId, composerOptionsInput) : []
     ), [agentId, composerOptionsInput]);
+    // The runner has accepted this intent for the next prompt. Use its receipt
+    // until the existing transition bridge yields to the durable metadata echo.
+    const armedPickerSelection = visibleLocalModelTransitionActionRequired?.status === 'armed'
+        ? visibleLocalModelTransitionActionRequired.requestedSelection
+        : null;
+    const armedModelRef = armedPickerSelection && !isTeamCredentialProviderModelPickerValue(armedPickerSelection)
+        ? armedPickerSelection
+        : null;
+    const pickerTeamCredentialModel = armedModelRef ? null : selectedTeamCredentialModel;
     const existingSessionSelectedModelRef = React.useMemo<ProviderBoundModelRef | null>(() => (
-        providerModelSelection?.ref
+        armedModelRef
+        ?? providerModelSelection?.ref
         ?? (providerAgentTargetKey && modelMode !== 'default'
             ? { agentTargetKey: providerAgentTargetKey, providerConnectionId: null, modelId: modelMode }
             : null)
-    ), [modelMode, providerAgentTargetKey, providerModelSelection?.ref]);
+    ), [armedModelRef, modelMode, providerAgentTargetKey, providerModelSelection?.ref]);
     const existingSessionReportedModel = React.useMemo(() => {
         const reportedSelection = modelSelectionDisposition?.reportedSelection ?? null;
         const reportedStatus = modelSelectionDisposition?.reportedSelectionStatus ?? null;
@@ -4268,7 +4278,7 @@ export function useSessionComposerController({
                             // first allowed one (the outgoing record applies the same protocol rule).
                             ? readEffectiveAllowedModelRef(embedded.allowedModels, selectedRef, modelPickerAgentTargetKey)
                             : selectedRef ?? null}
-                        selectedTeamCredentialModel={selectedTeamCredentialModel}
+                        selectedTeamCredentialModel={pickerTeamCredentialModel}
                         reportedModel={existingSessionReportedModel}
                         canEnterCustomNativeValue={canEnterCustomModel}
                         onSelectFavoriteModel={canSelectModel ? selectModel : undefined}
@@ -4309,7 +4319,7 @@ export function useSessionComposerController({
         existingSessionReportedModel,
         existingSessionSelectedModelRef,
         existingSessionSourceBrowse,
-        selectedTeamCredentialModel,
+        pickerTeamCredentialModel,
         modelMode,
         modelPickerAgentTargetKey,
         providerAgentTargetKey,

@@ -5431,6 +5431,48 @@ describe('SessionView (direct sessions)', () => {
     expect(homes.requests.filter(({ input }) => SessionMetadataTuplePatchV1Schema.safeParse(input).success)).toEqual([]);
   });
 
+  it.each([
+    ['muse', 'meta/muse-spark-1.3-contributor', 'meta/muse-spark-1.2-contributor'],
+    ['codex', 'gpt-6.1-luna', 'gpt-6-luna'],
+  ])('checks the next model in a settled %s Session as soon as the runner arms it', async (agentId, before, after) => {
+    const agentTargetKey = `agent:happier.agent.${agentId}/${agentId}`;
+    const activeSelection = { agentTargetKey, providerConnectionId: null, modelId: before };
+    const requestedSelection = { ...activeSelection, modelId: after };
+    const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      latestTurnStatus: 'completed',
+      latestTurnStatusObservedAt: 12,
+      runtimeActivityState: 'idle',
+      runtimeActivityActiveCount: 0,
+      runtimeActivityObservedAt: 12,
+      runtimeActivityRevision: 1,
+      metadata: {
+        ...metadata,
+        flavor: agentId,
+        modelSelectionIntentV2: { v: 2, updatedAt: 10, ref: { source: 'native', agentTargetKey, modelId: before } },
+        sessionModelsV1: { v: 1, agentId, updatedAt: 11, currentModelId: before, availableModels: [
+          { id: before, name: 'Previous model' },
+          { id: after, name: 'Next model' },
+        ] },
+      },
+    };
+    modelTransitionReply = async request => {
+      expect(request).toMatchObject({ selection: requestedSelection, applyTiming: 'next_prompt' });
+      return { ok: true, status: 'armed', activeSelection, requestedSelection };
+    };
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const picker = await mountSessionModelPicker(screen);
+    expect(picker.props.selected).toEqual(activeSelection);
+    await act(async () => { expect(await picker.props.onSelect(requestedSelection)).toBe(true); });
+
+    const reopened = await mountSessionModelPicker(screen);
+    expect(reopened.props.selected).toEqual(requestedSelection);
+    expect(reopened.props.reportedModel).toMatchObject({ ref: activeSelection });
+    expect(findAgentInput(screen).props.armedRouteContinuation).toBeTruthy();
+  });
+
   describe('model card options in an existing Session', () => {
     const providerRef = {
       agentTargetKey: 'agent:happier.agent.codex/codex',
