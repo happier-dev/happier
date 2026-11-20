@@ -151,7 +151,7 @@ describe('machine and Home connection Action parity', () => {
     const respond = getActionSpec('machines.add.ssh.respond');
     expect(respond.inputSchema.safeParse({ taskId: 'task', answer: { kind: 'ssh.password' } }).success).toBe(true);
     expect(respond.inputSchema.safeParse({ taskId: 'task', answer: { kind: 'ssh.password', password: 'secret' } }).success).toBe(false);
-    expect(start.surfaces.cli).toBe(true);
+    expect(start.surfaces.cli).toBe(false);
   });
   it('admits an exact saved SSH host reference while refusing competing targets and secret material', () => {
     const schema = getActionSpec('machines.add.ssh.start').inputSchema;

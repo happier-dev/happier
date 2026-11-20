@@ -8,7 +8,9 @@ import { PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActi
 describe('creating a personal Home', () => {
   it.each([
     { input: { method: 'this_computer' }, result: { status: 'setup_started' } },
-    { input: { method: 'ssh', host: 'home-box', username: 'owner', port: 2222 },
+    { input: { method: 'ssh', host: 'home-box', username: 'owner', port: 2222, authMode: 'password' },
+      result: { status: 'created', address: 'https://home.example.test' } },
+    { input: { method: 'ssh', savedHostId: 'saved-box', expectedHostRevision: 4 },
       result: { status: 'created', address: 'https://home.example.test' } },
   ] as const)('requires approval for $input.method before invoking the answering client', async ({ input, result }) => {
     const actionId = PERSONAL_HOME_CREATE_ACTION_ID_V1;

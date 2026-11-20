@@ -11,6 +11,7 @@ import { SCOPED_RPC_SOCKET_CONNECTION_PHASES } from '../../rpc/errors.js';
 import { InstallableCapabilityIdSchema } from '../../installables/descriptor.js';
 import { ManagedMachineBootstrapApprovalPromptV1Schema } from '../operations/v1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '../../machines/managed/enrollmentIdentityV1.js';
+import { RemoteHostAuthModeV1Schema } from '../../remoteHosts/remoteHostSchemasV1.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { actionInputServerId } from './definition.js';
 export { MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from './machineTerminal.js';
@@ -94,10 +95,16 @@ export const MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS = {
 export type MachinePageActionInput = z.infer<(typeof MACHINE_PAGE_ACTION_INPUT_SCHEMAS)[MachinePageActionId]>;
 export const HomeReconnectInputSchema = lazyZodSchema(() => z.strictObject({ serverId: id }));
 export const HomeReconnectOutputSchema = HomeReconnectInputSchema;
-export const PersonalHomeCreateInputSchema = lazyZodSchema(() => z.discriminatedUnion('method', [
+const savedSshHost = {
+  savedHostId: id,
+  expectedHostRevision: z.union([z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)), z.literal('absent')]),
+};
+export const PersonalHomeCreateInputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ method: z.literal('this_computer') }),
   z.strictObject({ method: z.literal('ssh'), host: id, username: z.optional(id),
-    port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))) }),
+    port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
+    authMode: z.optional(RemoteHostAuthModeV1Schema), identityFilePath: z.optional(id) }),
+  z.strictObject({ method: z.literal('ssh'), ...savedSshHost }),
 ]));
 export const PersonalHomeCreateOutputSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('setup_started') }),
@@ -135,10 +142,9 @@ export const MachineAddLocalStartInputSchema = lazyZodSchema(() => z.union([
 export const MachinePairingCreateOutputSchema = lazyZodSchema(() => z.strictObject({ pairId: id, link: id, expiresAtMs: z.number().check(z.int(), z.nonnegative()) }));
 export type MachineAddSshActionId = typeof MACHINE_ADD_SSH_ACTION_IDS[number];
 export const MachineAddSshStartInputSchema = lazyZodSchema(() => z.union([z.strictObject({ serverId: id, host: id, username: z._default(z.string(), ''),
-  port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))), authMode: z._default(z.enum(['agent', 'keyfile', 'password']), 'agent'),
+  port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))), authMode: z._default(RemoteHostAuthModeV1Schema, 'agent'),
   identityFilePath: z.optional(z.string()), enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
-}), z.strictObject({ serverId: id, savedHostId: id,
-  expectedHostRevision: z.union([z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)), z.literal('absent')]),
+}), z.strictObject({ serverId: id, ...savedSshHost,
   enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
 })]));
 export const MachineAddSshTaskInputSchema = lazyZodSchema(() => z.strictObject({ taskId: id }));
@@ -351,7 +357,7 @@ function createMachineConnectionActionSpecs() {
   },
   {
     id: PERSONAL_HOME_CREATE_ACTION_ID_V1, title: 'Create a personal Home',
-    description: 'Start Personal Home setup on the answering desktop or install it over SSH. For SSH use a configured host alias or address. The desktop handles any SSH trust or credential prompts.',
+    description: 'Start Personal Home setup on the answering desktop or install it over SSH. Use a saved SSH host and its catalog revision, or enter an SSH alias or address and choose an authentication method. The desktop handles SSH trust and credential prompts.',
     approval: { result: 'required' }, approvalPolicy: { agentDefault: 'authority' },
     safety: 'danger', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
     bindings: { mcpToolName: 'homes_personal_create' },
@@ -360,9 +366,14 @@ function createMachineConnectionActionSpecs() {
     inputHints: { fields: [
       { path: 'method', title: 'Install on', widget: 'select', required: true,
         options: [{ value: 'this_computer', label: 'This computer' }, { value: 'ssh', label: 'Over SSH' }] },
-      { path: 'host', title: 'SSH host or alias', widget: 'text', required: true, visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+      { path: 'savedHostId', title: 'Saved host ID', widget: 'text', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+      { path: 'expectedHostRevision', title: 'Saved host catalog revision', widget: 'number', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+      { path: 'host', title: 'SSH host or alias', widget: 'text', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
       { path: 'username', title: 'SSH user', widget: 'text', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
       { path: 'port', title: 'SSH port', widget: 'number', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+      { path: 'authMode', title: 'SSH authentication', widget: 'select', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' },
+        options: [{ value: 'agent', label: 'SSH agent' }, { value: 'keyfile', label: 'Key file' }, { value: 'password', label: 'Password prompt' }] },
+      { path: 'identityFilePath', title: 'SSH identity file path', widget: 'text', visibleWhen: { op: 'eq', path: 'authMode', value: 'keyfile' } },
     ] },
   },
   {

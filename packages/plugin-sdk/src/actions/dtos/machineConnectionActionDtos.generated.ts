@@ -237,12 +237,9 @@ export type MachineConnectionActionInputById = {
         clientId?: string | undefined;
     };
     readonly "machines.add.ssh.start": ({
+        savedHostId: string;
+        expectedHostRevision: 'absent' | number;
         serverId: string;
-        host: string;
-        username?: string | undefined;
-        port?: number | undefined;
-        authMode?: 'agent' | 'keyfile' | 'password' | undefined;
-        identityFilePath?: string | undefined;
         enrollmentIdentity?: undefined | {
             kind: 'dedicatedDaemonUser';
             username: 'happier';
@@ -261,8 +258,11 @@ export type MachineConnectionActionInputById = {
         };
     } | {
         serverId: string;
-        savedHostId: string;
-        expectedHostRevision: 'absent' | number;
+        host: string;
+        username?: string | undefined;
+        port?: number | undefined;
+        authMode?: 'agent' | 'keyfile' | 'password' | undefined;
+        identityFilePath?: string | undefined;
         enrollmentIdentity?: undefined | {
             kind: 'dedicatedDaemonUser';
             username: 'happier';
@@ -336,8 +336,14 @@ export type MachineConnectionActionInputById = {
         host: string;
         username?: string | undefined;
         port?: number | undefined;
+        authMode?: 'agent' | 'keyfile' | 'password' | undefined;
+        identityFilePath?: string | undefined;
     } | {
         method: 'this_computer';
+    } | {
+        savedHostId: string;
+        expectedHostRevision: 'absent' | number;
+        method: 'ssh';
     }) & {
         clientId?: string | undefined;
     };
