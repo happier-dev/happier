@@ -198,9 +198,11 @@ describe('Saved Secret Environment Used-by census', () => {
             installationId: crypto.randomUUID(), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             metadata: encodePlainMachineStoredContent({ host: 'Census', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }) } });
+        // 263571943a8a requires an opaque address on each persisted variable binding.
+        const grantRef = crypto.randomUUID();
         const stored = async (bound: boolean) => {
             const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Private Environment', retainPreviousDeployments: 1,
-                definition: { kind: 'repository', ref: 'main' }, bindings: bound ? [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN',
+                definition: { kind: 'repository', ref: 'main' }, bindings: bound ? [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', grantRef,
                     source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }] : [] });
             const artifact = await createArtifact({ actorUserId: environmentOwner.id, artifactId: crypto.randomUUID(),
                 kind: 'v1:other:deployment-environment.v1',
