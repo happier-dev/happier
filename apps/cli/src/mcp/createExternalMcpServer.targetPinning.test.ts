@@ -143,9 +143,16 @@ describe('createExternalMcpServer target pinning', () => {
         expect(selectedRequests.every(request => request.authorization === `Bearer ${credentials.token}`)).toBe(true);
         await writeStoredCredentialsForServerId(capturedServerId, { ...credentials,
           token: `header.${Buffer.from(JSON.stringify({ sub: 'replacement-account' })).toString('base64url')}.signature` });
-        const retired = await invoke('echo');
-        expect(retired.isError).toBe(true);
-        expect(resultValue(retired)).toMatchObject({ errorCode: 'plugin_action_generation_retired' });
+        // This host retains its captured credentials; replacing the saved login
+        // affects a later host, while this invocation keeps its original Account.
+        const requestsBeforeReplacementRead = selectedRequests.length;
+        const readAfterReplacement = await invoke('read');
+        expect(readAfterReplacement.isError, JSON.stringify(readAfterReplacement)).not.toBe(true);
+        expect(resultValue(readAfterReplacement)).toEqual({ value: 'selected Account value' });
+        expect(selectedRequests.slice(requestsBeforeReplacementRead)).toContainEqual(expect.objectContaining({
+          path: `/v1/account/plugin-storage/${pluginId}`, authorization: `Bearer ${credentials.token}`,
+        }));
+        expect(selectedRequests.every(request => request.authorization === `Bearer ${credentials.token}`)).toBe(true);
         expect(attackerRequests).toEqual([]);
         expect(daemonPost).not.toHaveBeenCalled();
       } finally {

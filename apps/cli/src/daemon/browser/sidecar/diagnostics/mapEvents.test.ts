@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 describe('daemon browser sidecar diagnostics mapping', () => {
-    it('carries actual safe-header clipping on the canonical event', async () => {
+    it('preserves complete safe-header values on the canonical event', async () => {
         const { mapSidecarCdpDiagnosticEvent } = await import('./mapEvents');
         const event = mapSidecarCdpDiagnosticEvent({ browserSessionId: 'b', viewId: 'v', navigationGeneration: 0,
             capturedAtMs: 1, eventOrdinal: 1, event: { kind: 'network.requestWillBeSent', requestId: 'r',
                 method: 'GET', url: 'https://example.test/', headers: { Accept: 'x'.repeat(300) } } });
-        expect(event.redaction.truncated).toBe(true);
-        expect(event.data.requestHeaders).toEqual({ accept: `${'x'.repeat(253)}...` });
+        expect(event.redaction.truncated).toBe(false);
+        expect(event.data.requestHeaders).toEqual({ accept: 'x'.repeat(300) });
     });
     it('preserves owner console/error values and reports actual clipping', async () => {
         const { mapSidecarCdpDiagnosticEvent } = await import('./mapEvents');

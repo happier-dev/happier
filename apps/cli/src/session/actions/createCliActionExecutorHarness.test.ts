@@ -190,7 +190,7 @@ it.each(['live', 'recorded', 'rejected', 'native'] as const)('finishes an approv
         : { ...request, status: 'executed', execution: { executedAtMs: 3, ok: true, result: output } });
       for (const socket of wire.sockets) socket.update({ t: 'update-artifact', artifactId: 'workflow-approval' });
     }
-    expect(await pending).toMatchObject(mode === 'rejected' ? { state: 'failed', reason: 'approval_rejected' } : { state: 'succeeded' });
+    expect(await pending).toMatchObject(mode === 'rejected' ? { state: 'interrupted', reason: 'approval_rejected' } : { state: 'succeeded' });
     expect(store.list().find(row => row.blockId === 'list')).toMatchObject(mode === 'rejected'
       ? { lifecycle: 'failed', reason: 'approval_rejected' }
       : { lifecycle: 'completed', result: mode === 'native'
@@ -694,6 +694,7 @@ describe('createCliActionExecutorHarness', () => {
     // approval waiter, Account invalidation, tool bridge and MCP codec stay real.
     const harness = createCliActionExecutorHarness({ token: 'session-token', credentials: { token: 'account-token', encryption: null }, sessionId: 'pdf-agent',
       serverId: 'pdf-home', serverHttpBaseUrl: 'https://pdf-home.test', mode: 'plain', ctx: null,
+      getCurrentSessionMetadata: () => ({ machineId: 'pdf-machine' }),
     }, {
       approvalsCreate: async args => { request = ApprovalRequestV2Schema.parse(args.request); return { artifactId: 'pdf-approval' }; },
       approvalsGet: async () => request,
@@ -1061,16 +1062,21 @@ describe('createCliActionExecutorHarness', () => {
       request: { v: 1, kind: 'targeted_action_rpc', input: confirmed, target: { kind: 'machine', machineId } } }]);
   });
   it.each(['agent', 'cli'] as const)('places default browser diagnostics on the authenticated daemon through %s and consumes its result', async (surface) => {
-    // Daemon discovery reads the filesystem, and fetch crosses the local HTTP boundary.
+    // Daemon discovery is the filesystem boundary; HTTP uses the real bundled dispatcher.
+    const daemon = fastify();
+    daemon.post('/browser/runtime-actions/execute', async request => {
+      expect(request.headers['x-happier-daemon-token']).toBe('browser-control-token');
+      expect(request.body).toMatchObject({ actionId: 'browser.diagnostics.snapshot', sessionId: 'session_browser' });
+      return { result: { v: 1, machineId: 'machine_browser', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] } };
+    });
+    const address = await daemon.listen({ host: '127.0.0.1', port: 0 });
     const state = vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({
-      pid: 123, httpPort: 12345, controlToken: 'browser-control-token',
+      pid: 123, httpPort: Number(new URL(address).port), controlToken: 'browser-control-token',
       startedAt: 1, startedWithCliVersion: '0.3.0',
     });
-    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      result: { v: 1, machineId: 'machine_browser', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] },
-    }), { status: 200 }));
     const harness = createCliActionExecutorHarness({
       token: 'token', sessionId: 'session_browser', mode: 'plain', ctx: null,
+      getCurrentSessionMetadata: () => ({ machineId: 'machine_browser' }),
     });
     try {
       const result = await harness.executor.execute('browser.diagnostics.snapshot', {
@@ -1080,8 +1086,8 @@ describe('createCliActionExecutorHarness', () => {
         v: 1, machineId: 'machine_browser', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [],
       } });
     } finally {
-      fetch.mockRestore();
       state.mockRestore();
+      await daemon.close();
     }
   });
 
@@ -1094,7 +1100,11 @@ describe('createCliActionExecutorHarness', () => {
         serverId: 'server-1',
         serverHttpBaseUrl: 'https://server-1.example.test',
         sessionId: 'sess_1',
+        getCurrentSessionMetadata: () => ({ machineId: 'machine-1' }),
         mode: 'e2ee',
+        actionsSettingsProvider: {
+          getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.title.set']: { approvalRequiredSurfaces: ['agent'] } } }),
+        },
         ctx: {
           encryptionKey: new Uint8Array(32).fill(1),
           encryptionVariant: 'legacy',
@@ -1103,7 +1113,6 @@ describe('createCliActionExecutorHarness', () => {
       {
         approvalsCreate,
         sessionStateFieldSet,
-        readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['session.title.set']: { approvalRequiredSurfaces: ['agent'] } } }),
       },
     );
 

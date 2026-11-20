@@ -160,16 +160,17 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
                 request: DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse({ machineId: 'machine-a', ...input }) })
             : await ui.revokeLocalServicePreviewViaMachineRpc({
                 request: DaemonLocalServicePreviewRevokeRequestV1Schema.parse({ machineId: 'machine-a', ...input }) });
-        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}`, reasonCode: errorCode });
         const typedFailure = ActionExecuteFailureSchema.parse(rawResponse);
         // Before this correction, the lifecycle handler threw an uncoded Error
         // with this exact message. Keep the real RpcHandlerManager serializer as
         // the producer of that legacy response, rather than constructing its DTO.
         rpc.registerHandler('legacy.preview.refusal', async () => { throw new Error(typedFailure.error); });
         const legacy = await rpc.handleRequest({ method: 'machine-a:legacy.preview.refusal', params: {} });
-        expect(legacy).toEqual({ error: typedFailure.error });
+        const failureCause = { phase: 'rpc.handler', errorClass: 'Error', errorCode: null, httpStatus: null };
+        expect(legacy).toEqual({ error: typedFailure.error, failureCause });
         uiPreviewRpc.mockResolvedValue(legacy);
-        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}`, reasonCode: 'action_failed', failureCause });
         uiPreviewRpc.mockRejectedValue(new Error(typedFailure.error));
         expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
         expect(registry.previewsById.get('registered-preview')?.resource).toEqual(registered.resource);

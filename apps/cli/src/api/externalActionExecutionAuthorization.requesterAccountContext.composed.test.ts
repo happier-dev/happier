@@ -1576,14 +1576,15 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       Object.assign(configuration, { serversDir: join(taskDir, 'servers') });
       try {
         const events: string[] = [];
-        const credentials: StoredCredentials = { token: token(), encryption: mode === 'plain' ? null
+        const credentials: StoredCredentials = { token: token('terminal'), encryption: mode === 'plain' ? null
           : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
         await writeStoredCredentialsForServerId('home', credentials);
         const credentialFileReads = vi.spyOn(fsPromises, 'readFile');
         const readCredentials = vi.fn(() => readStoredCredentialsForServerId('home'));
         const sentAuthorizations: Array<string | undefined> = [];
-        const replacement = { ...credentials, token: token('terminal') };
+        const replacement = { ...credentials, token: token() };
         const target = await home(mode, events, { custodianAccountId: 'bob', originalOwnAction: 'agents.models.list',
+          authenticationKind: 'terminal',
           beforeInventoryRead: () => writeStoredCredentialsForServerId('home', replacement),
           onRequestAuthorization: authorization => { sentAuthorizations.push(authorization); } });
         const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
