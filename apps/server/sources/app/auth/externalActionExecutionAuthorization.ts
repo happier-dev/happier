@@ -156,7 +156,7 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { ManagedControllerCurrentnessV1Schema, type ManagedControllerCurrentnessV1, ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
 import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1, ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import { ManagedMachineError, hasBoundManagedLifecycle, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine,
@@ -1532,7 +1532,7 @@ async function isReviewedManagedAcquirePurpose(binding: ExternalActionExecutionA
     const parsed = ManagedAdmissionInputV1Schema.safeParse(proof.body);
     if (!parsed.success) return false;
     const { input, originalActionEnvelope: root } = parsed.data;
-    if (input.selection.kind !== 'preset' || input.selection.homeId !== binding.serverIdentityId
+    if (!isManagedPresetAcquireInputV1(input) || input.selection.homeId !== binding.serverIdentityId
         || !input.controller || input.controller.machineId !== binding.machineId || input.controller.installationId !== binding.installationId
         || root === undefined
         || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope: root })
