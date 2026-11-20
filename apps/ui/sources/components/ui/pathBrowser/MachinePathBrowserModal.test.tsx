@@ -243,13 +243,14 @@ const machineRequests = installSessionActionRpcBoundary(async (request, context)
                 return listMachineFileBrowserRootsMock({ machineId, serverId: home.serverId });
             case RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY: {
                 const payload = DaemonFilesystemListDirectoryRequestSchema.parse(request.params);
+                const path = typeof payload.path === 'string' ? payload.path : payload.path.directory;
                 const response = await listMachineFileBrowserDirectoryEntriesMock({
-                    directoryPath: payload.path,
+                    directoryPath: path,
                     includeFiles: payload.includeFiles,
                     machineId,
                     serverId: home.serverId,
                 });
-                return response.ok ? { ...response, path: payload.path } : response;
+                return response.ok ? { ...response, path } : response;
             }
             default:
                 throw Object.assign(new Error('Fixture daemon method is unavailable'), { code: 'RPC_METHOD_NOT_AVAILABLE' });
@@ -315,9 +316,10 @@ async function addPathHome(options: Readonly<{ serverUrl: string; name: string; 
                         { serverId: id, accountId: 'target-account', signal: context.signal });
                 }
                 const payload = DaemonFilesystemListDirectoryRequestSchema.parse(input);
-                const response = await listMachineFileBrowserDirectoryEntriesMock({ directoryPath: payload.path,
+                const path = typeof payload.path === 'string' ? payload.path : payload.path.directory;
+                const response = await listMachineFileBrowserDirectoryEntriesMock({ directoryPath: path,
                     includeFiles: payload.includeFiles, machineId: context.target.machineId, serverId: id });
-                return response.ok ? { ...response, path: payload.path } : response;
+                return response.ok ? { ...response, path } : response;
             },
         });
         for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
@@ -526,6 +528,39 @@ describe('MachinePathBrowserModal', () => {
         ]));
         expect(onResolve).toHaveBeenCalledWith('/Users', 'machine-1');
         expect(onClose).toHaveBeenCalled();
+    });
+
+    it('picks a folder in the attached workspace before a Project reference exists', async () => {
+        const scope = await setFolderActionPolicy('allowed');
+        const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, managedId: 'attached',
+            controller: { machineId: 'machine-1', installationId: 'installation' }, rootPath: '/guest' } as const;
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async input => input.directoryPath === '/guest'
+            ? { ok: true, entries: [{ name: 'repo', path: '/guest/repo', type: 'directory' }], truncated: false }
+            : await defaultDirectoryEntries(input));
+        const onResolve = vi.fn();
+        const attachment = { workspace };
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" serverId={scope.serverId}
+            {...attachment} selectionMode="directory" onResolve={onResolve} onClose={vi.fn()} />);
+        await waitForTestId(screen, getPathBrowserRowTestId('/guest/repo'));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/guest/repo'));
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(onResolve).toHaveBeenCalledWith('/guest/repo', workspace.controller.machineId);
+        expect(listMachineFileBrowserRootsMock).not.toHaveBeenCalled();
+        expect(readActionRequests.filter(request => request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory))
+            .toEqual([expect.objectContaining({ input: expect.objectContaining({ path: { workspace, directory: '/guest' } }) })]);
+    });
+
+    it('can select the attached root itself when the guest directory is empty', async () => {
+        const scope = await setFolderActionPolicy('allowed');
+        const workspace = { v: 2, kind: 'managed', serverId: scope.serverId, managedId: 'attached',
+            controller: { machineId: 'machine-1', installationId: 'installation' }, rootPath: '/guest' } as const;
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({ ok: true, entries: [], truncated: false });
+        const onResolve = vi.fn();
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" workspace={workspace}
+            selectionMode="directory" onResolve={onResolve} onClose={vi.fn()} />);
+        await vi.waitFor(() => expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(onResolve).toHaveBeenCalledWith('/guest', workspace.controller.machineId);
     });
 
     it('keeps a native agent directory retry behind browseDirectory Action policy', async () => {

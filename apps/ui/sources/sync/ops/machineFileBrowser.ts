@@ -90,7 +90,9 @@ export async function machineFilesystemListDirectory(
 ): Promise<DaemonFilesystemListDirectoryResponse> {
     const payload = DaemonFilesystemListDirectoryRequestSchema.parse(input);
     try {
-        const result = await invokeWorkspaceFileSystemAction({ machineId, serverId: opts?.serverId, rootPath: payload.path },
+        const route = typeof payload.path === 'string' ? { machineId, serverId: opts?.serverId, rootPath: payload.path }
+            : { kind: 'managed' as const, workspace: payload.path.workspace };
+        const result = await invokeWorkspaceFileSystemAction(route,
             FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory, payload, { ...opts, accountId: opts?.accountId ?? undefined });
         if (!result.ok) {
             const failure = projectWorkspaceFileSystemActionFailure(result);

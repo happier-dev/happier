@@ -3,6 +3,7 @@ import {
     machineFilesystemListRoots,
 } from '@/sync/ops/machineFileBrowser';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ManagedWorkspaceLocatorV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { readHomeAccountDepartures, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
@@ -226,19 +227,21 @@ export async function warmMachineFileBrowserRoots(input: {
 
 export async function listMachineFileBrowserDirectoryEntries(input: {
         machineId: string;
+        workspace?: ManagedWorkspaceLocatorV2;
         directoryPath: string;
         includeFiles: boolean;
         serverId?: string | null;
         signal?: AbortSignal;
         callerContext?: ActionExecutorContext;
 }): Promise<ListMachineFileBrowserDirectoryEntriesResult> {
-    const departures = captureListingDepartures(input.serverId);
+    const serverId = input.workspace?.serverId ?? input.serverId;
+    const departures = captureListingDepartures(serverId);
     const response = await machineFilesystemListDirectory(input.machineId, {
-        path: input.directoryPath,
+        path: input.workspace ? { workspace: input.workspace, directory: input.directoryPath } : input.directoryPath,
         includeFiles: input.includeFiles,
-    }, { serverId: input.serverId, signal: input.signal, callerContext: input.callerContext });
+    }, { serverId, signal: input.signal, callerContext: input.callerContext });
     input.signal?.throwIfAborted();
-    if (departures !== readHomeAccountDepartures(input.serverId)) return { ok: false, error: 'unknown_error' };
+    if (departures !== readHomeAccountDepartures(serverId)) return { ok: false, error: 'unknown_error' };
 
     if (!response.ok) {
         const error = typeof response.error === 'string' ? response.error.trim() : '';
@@ -260,14 +263,16 @@ export async function listMachineFileBrowserDirectoryEntries(input: {
         } satisfies MachineFileBrowserEntry];
     }));
 
-    setCachedMachineFileBrowserEntries({
-        machineId: input.machineId,
-        serverId: input.serverId,
-        directoryPath: input.directoryPath,
-        includeFiles: input.includeFiles,
-        entries,
-        truncated: response.truncated === true,
-    });
+    if (!input.workspace) {
+        setCachedMachineFileBrowserEntries({
+            machineId: input.machineId,
+            serverId,
+            directoryPath: input.directoryPath,
+            includeFiles: input.includeFiles,
+            entries,
+            truncated: response.truncated === true,
+        });
+    }
     return { ok: true, entries, truncated: response.truncated === true };
 }
 

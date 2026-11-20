@@ -257,7 +257,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   }
 
   function opened(result: Extract<OpenProjectResultV1, { kind: 'opened' }>) {
-      const machineName = sentenceMachineName(result.workspace.machineId);
+      const workspace = result.workspace;
+      const machineName = sentenceMachineName('controller' in workspace ? workspace.controller.machineId : workspace.machineId);
       const projectName = result.directory.split(/[\\/]/u).filter(Boolean).pop() ?? result.directory;
       // One notice says what is true where the person lands: no agent runs, and setup's own state.
       publishPresentationNotice({
@@ -284,13 +285,22 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
     const lifetime = captureActiveServerAccountScopeLifetime();
     const capturedDraft = open.draft;
     if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.scope.serverId) return;
-    const path = await openMachinePathBrowserModal({
-      machineId,
-      serverId: props.scope.serverId,
-      title: t('projects.open.aFolder'),
-      initialPath: machineHomeDir,
-      selectionMode: 'directory',
-    });
+    const targetManaged = capturedDraft?.materialization?.kind === 'attach'
+      ? capturedDraft.materialization.targetManaged : undefined;
+    const title = t('projects.open.aFolder');
+    let path: string | null;
+    if (targetManaged) {
+      const initialPath = capturedDraft?.source?.kind === 'folder' ? capturedDraft.source.path : null;
+      if (!initialPath) return;
+      const picked = await openMachinePathBrowserModal({
+        workspace: { ...targetManaged, serverId: props.scope.serverId },
+        title,
+        initialPath,
+      });
+      path = picked?.path ?? null;
+    } else {
+      path = await openMachinePathBrowserModal({ machineId, serverId: props.scope.serverId, title, initialPath: machineHomeDir });
+    }
     if (path && lifetime.isCurrent() && draftRef.current === capturedDraft) {
       setSubjectRef.current({ kind: 'folder', path });
     }

@@ -44,6 +44,7 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ManagedWorkspaceLocatorV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useMachinePathBrowserCommands } from './useMachinePathBrowserCommands';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
@@ -52,6 +53,7 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     currentUiContextCommandScope?: string;
     callerContext?: ActionExecutorContext;
     machineId: string;
+    workspace?: ManagedWorkspaceLocatorV2;
     serverId?: string | null;
     title?: string;
     initialPath?: string | null;
@@ -67,6 +69,7 @@ export type MachinePathBrowserViewProps = Readonly<{
     currentUiContextCommandScope?: string;
     callerContext?: ActionExecutorContext;
     machineId: string;
+    workspace?: ManagedWorkspaceLocatorV2;
     serverId?: string | null;
     /**
      * When set, the browser is scoped to this absolute directory and will not list machine roots.
@@ -294,8 +297,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const browserListRef = React.useRef<VirtualizedListRef | null>(null);
     const lastScrolledSelectionRef = React.useRef<string | null>(null);
     const shouldAutoScrollInitialSelectionRef = React.useRef(false);
-    const rootDirectoryPath = React.useMemo(() => normalizeAbsolutePath(props.rootDirectoryPath ?? null) ?? '', [props.rootDirectoryPath]);
-    const usesRootsListing = rootDirectoryPath === '';
+    const workspace = props.workspace;
+    const rootInput = workspace?.rootPath ?? props.rootDirectoryPath ?? null;
+    const rootDirectoryPath = React.useMemo(() => normalizeAbsolutePath(rootInput) ?? '', [rootInput]);
+    const usesRootsListing = !workspace && rootDirectoryPath === '';
     const [searchQuery, setSearchQuery] = React.useState('');
     const [showHidden, setShowHidden] = React.useState(true);
     const [treeRead, setTreeRead] = React.useState(() => ({ nonce: 0, callerContext: props.callerContext }));
@@ -308,18 +313,15 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     // A modal browser always renders inside the shared card: its title band, actions and footer are the
     // card chrome (`useModalCardChrome`), never a header of its own.
     const useCardChrome = variant === 'modal';
-    const enableContextMenu = variant === 'modal';
+    const enableContextMenu = !workspace && variant === 'modal';
     const initialExpandedPaths = React.useMemo(() => (
         usesRootsListing
             ? buildInitialExpandedPaths(initialPath)
             : buildInitialExpandedPathsWithinRoot(rootDirectoryPath, initialPath)
     ), [initialPath, rootDirectoryPath, usesRootsListing]);
     const initialSelectionCandidates = React.useMemo(() => initialExpandedPaths.slice().reverse(), [initialExpandedPaths]);
-    const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
+    const [pickedPath, setSelectedPath] = React.useState<string | null>(null);
     const machineHomeDir = useServerScopedMachine(props.serverId, props.machineId)?.metadata?.homeDir ?? undefined;
-    // The selection is shown once: beside the confirm button when there is one, else under the title.
-    const selectedPathLabel = selectedPath ? formatPathRelativeToHome(selectedPath, machineHomeDir) : null;
-    const headerSelectedPathLabel = interaction === 'confirm' ? null : selectedPathLabel;
     const [expandedPaths, setExpandedPaths] = React.useState<string[]>(() => initialExpandedPaths);
     const shouldAutoSelectInitialPathRef = React.useRef(true);
     const [isCreatingFolder, setIsCreatingFolder] = React.useState(false);
@@ -345,6 +347,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }, [props.maxHeight]);
 
     const getCachedEntries = React.useCallback((directoryPath: string) => {
+        if (workspace) return null;
         if (usesRootsListing) {
             const previewEntries = buildInitialPathPreviewEntries({
                 directoryPath,
@@ -369,9 +372,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             sizeBytes: entry.sizeBytes,
             modifiedMs: entry.modifiedMs,
         })) ?? null;
-    }, [includeFiles, initialExpandedPaths, props.machineId, props.serverId, usesRootsListing]);
+    }, [includeFiles, initialExpandedPaths, props.machineId, props.serverId, usesRootsListing, workspace]);
 
     const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => {
+        if (workspace) return null;
         if (usesRootsListing && directoryPath === '') {
             return { truncated: false };
         }
@@ -381,7 +385,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             directoryPath,
             includeFiles,
         });
-    }, [includeFiles, props.machineId, props.serverId, usesRootsListing]);
+    }, [includeFiles, props.machineId, props.serverId, usesRootsListing, workspace]);
 
     const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, callerContext?: ActionExecutorContext): Promise<LazyDirectoryTreeLoadResult> => {
         if (usesRootsListing && directoryPath === '') {
@@ -399,6 +403,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         }
         const result = await listMachineFileBrowserDirectoryEntries({
             machineId: props.machineId,
+            workspace,
             directoryPath,
             includeFiles,
             serverId: props.serverId,
@@ -418,7 +423,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             })),
             truncated: result.truncated,
         };
-    }, [includeFiles, props.machineId, props.serverId, usesRootsListing]);
+    }, [includeFiles, props.machineId, props.serverId, usesRootsListing, workspace]);
 
     const warmDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, callerContext?: ActionExecutorContext): Promise<LazyDirectoryTreeLoadResult> => {
         if (usesRootsListing && directoryPath === '') {
@@ -459,13 +464,15 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const {
         nodes: rawNodes,
+        rootLoaded,
         rootLoading,
         rootError,
         retryRoot,
         retryDirectory,
         toggleDirectory,
     } = useLazyDirectoryTree<ActionExecutorContext>({
-        scopeKey: `${props.machineId}:${props.serverId ?? ''}:${includeFiles ? 'all' : 'dirs'}:${rootDirectoryPath}`,
+        scopeKey: JSON.stringify([props.machineId, props.serverId, workspace?.controller.installationId,
+            workspace?.managedId, includeFiles, rootDirectoryPath]),
         enabled: true,
         rootDirectoryPath: usesRootsListing ? '' : rootDirectoryPath,
         expandedPaths,
@@ -475,9 +482,15 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         getCachedEntries,
         getCachedDirectoryMetadata,
         loadDirectoryEntries,
-        warmDirectoryEntries,
-        warmChildDirectoriesLimit: 2,
+        ...(workspace ? {} : { warmDirectoryEntries, warmChildDirectoriesLimit: 2 }),
     });
+
+    const canPickLoadedRoot = workspace && rootLoaded && !rootError && selectionMode === 'directory'
+        && (!initialPath || initialPath === rootDirectoryPath);
+    const selectedPath = pickedPath ?? (canPickLoadedRoot ? rootDirectoryPath : null);
+    // The selection is shown once: beside the confirm button when there is one, else under the title.
+    const selectedPathLabel = selectedPath ? formatPathRelativeToHome(selectedPath, workspace ? undefined : machineHomeDir) : null;
+    const headerSelectedPathLabel = interaction === 'confirm' ? null : selectedPathLabel;
 
     const nodesByPath = React.useMemo(() => {
         return new Map(rawNodes.map((node) => [node.path, node] as const));
@@ -514,12 +527,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }, [nodesByPath, rootDirectoryPath, selectedPath]);
 
     const typedPath = React.useMemo(() => readTypedMachinePath(searchQuery), [searchQuery]);
-    const deepSearchEnabled = typedPath === null && deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
+    const deepSearchEnabled = !workspace && typedPath === null && deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
     // A typed name in a folder whose listing is capped may sit past the first page: ask the Machine for
     // that name among the folder's children instead of filtering the capped page (QA-BREADTH Q11).
     const typedDirectoryCapped = typedPath !== null && rawNodes.some((node) => node.type === 'info'
         && node.infoKind === 'truncated' && node.parentDirectoryPath === typedPath.directory);
-    const typedLookup = typedPath !== null && typedPath.prefix !== '' && typedDirectoryCapped ? typedPath : null;
+    const typedLookup = !workspace && typedPath !== null && typedPath.prefix !== '' && typedDirectoryCapped ? typedPath : null;
     const enableRowLongPressContextMenu = enableContextMenu && Platform.OS !== 'web';
 
     const activeServer = useActiveServerSnapshot(props.serverId == null);
@@ -624,9 +637,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     // Typing or pasting a path opens the folders on the way to it, and picks it once it is there.
     React.useEffect(() => {
         if (!typedPath) return;
-        const way = buildInitialExpandedPaths(typedPath.directory);
+        const way = workspace ? buildInitialExpandedPathsWithinRoot(rootDirectoryPath, typedPath.directory)
+            : buildInitialExpandedPaths(typedPath.directory);
         setExpandedPaths((current) => way.every((path) => current.includes(path)) ? current : [...new Set([...current, ...way])]);
-    }, [typedPath]);
+    }, [rootDirectoryPath, typedPath, workspace]);
     const typedTarget = typedPath ? (typedPath.prefix ? joinMachinePath(typedPath.directory, typedPath.prefix) : typedPath.directory) : null;
     const typedTargetNode = typedTarget
         ? nodesByPath.get(typedTarget) ?? typedLookupNodes.find((node) => node.path === typedTarget) : undefined;
@@ -637,11 +651,13 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }, [typedTarget, typedTargetPickable]);
 
     const refresh = React.useCallback((callerContext?: ActionExecutorContext) => {
-        clearCachedMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId });
-        clearCachedMachineFileBrowserEntries({ machineId: props.machineId, serverId: props.serverId });
+        if (!workspace) {
+            clearCachedMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId });
+            clearCachedMachineFileBrowserEntries({ machineId: props.machineId, serverId: props.serverId });
+        }
         setTreeRead(previous => ({ nonce: previous.nonce + 1, callerContext }));
         setQueryRead(previous => ({ nonce: previous.nonce + 1, callerContext }));
-    }, [props.machineId, props.serverId]);
+    }, [props.machineId, props.serverId, workspace]);
 
     const collapseAll = React.useCallback(() => {
         setExpandedPaths([]);
@@ -1166,7 +1182,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
 export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): React.ReactElement {
     // The Machine being browsed; it changes only for a caller that takes the Machine back.
-    const [machineId, setMachineId] = React.useState(props.machineId);
+    const [selectedMachineId, setMachineId] = React.useState(props.machineId);
+    const machineId = props.workspace?.controller.machineId ?? selectedMachineId;
     const handlePickPath = React.useCallback((path: string) => {
         props.onResolve(path, machineId);
         props.onClose();
@@ -1184,8 +1201,9 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             currentUiContextCommandScope={props.currentUiContextCommandScope}
             callerContext={props.callerContext}
             machineId={machineId}
-            onMachineChange={props.allowMachineChange ? setMachineId : undefined}
-            serverId={props.serverId}
+            workspace={props.workspace}
+            onMachineChange={!props.workspace && props.allowMachineChange ? setMachineId : undefined}
+            serverId={props.workspace?.serverId ?? props.serverId}
             title={props.title}
             initialPath={props.initialPath}
             includeFiles={props.includeFiles}
