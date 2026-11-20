@@ -7,6 +7,7 @@ import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientC
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { ApprovalRequestV2Schema, buildApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createLiveCliApprovalOrigin } from '@/session/actions/approvals/liveOrigin';
@@ -137,7 +138,10 @@ describe('authenticated requester approval transport from the app to its origina
   it.each([
     { decision: 'approve', surface: 'ui' }, { decision: 'reject', surface: 'ui' }, { decision: 'cancel', surface: 'ui' },
     { decision: 'approve', surface: 'voice' }, { decision: 'reject', surface: 'voice' },
-  ] as const)('settles $surface $decision without editing the viewer Artifact or replacing requester custody', async ({ decision, surface }) => {
+    { decision: 'approve', surface: 'ui', approvalUnavailable: true },
+  ] as const)('returns the original Bot’s $surface $decision outcome without editing the viewer Artifact', async (scenario) => {
+    const { decision, surface } = scenario;
+    const approvalUnavailable = 'approvalUnavailable' in scenario;
     const actionId = 'session.message.send';
     const actionArgs = { sessionId: 'destination', message: 'exact preview' };
     const caller = { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 };
@@ -188,7 +192,11 @@ describe('authenticated requester approval transport from the app to its origina
     outgoing.length = 0;
     let remoteStored = request;
     const remote = createActionExecutor(createActionExecutorBoundaryFixture({
-      approvalsGet: async () => remoteStored,
+      actionAutomations: createActionAutomationPortV1({ accountId: 'bot-owner', seed: async () => ({ v: 1, rows: [] }) }),
+      approvalsGet: async () => {
+        if (approvalUnavailable) throw new Error('Approval storage unavailable');
+        return remoteStored;
+      },
       approvalsUpdate: async ({ request: next }) => {
         remoteStored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(next)));
         return { ok: true };
@@ -208,8 +216,9 @@ describe('authenticated requester approval transport from the app to its origina
       params, callerAuthority: 'present_user', authorization: { kind: 'session.permission.respond', sessionId: 's1',
         authentication: { tokenEpoch: 1 }, actor: { kind: 'accountUser', accountId: 'account-a', relationship: 'sharedApprover' } } });
     const settled = await executor.execute('approval.request.decide', { artifactId: 'requester-preview', decision }, { surface, serverId: homeId });
-    expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true,
-      result: { status: decision === 'approve' ? 'executed' : decision === 'reject' ? 'rejected' : 'canceled' } });
+    expect(settled, JSON.stringify(settled)).toMatchObject(approvalUnavailable
+      ? { ok: false, errorCode: 'approval_context_unavailable' }
+      : { ok: true, result: { status: decision === 'approve' ? 'executed' : decision === 'reject' ? 'rejected' : 'canceled' } });
     expect(outgoing).toEqual([expect.objectContaining({ method: 's1:' + RPC_METHODS.APPROVAL_REQUEST_DECIDE,
       params: { artifactId: 'requester-preview', sessionId: 's1', decision,
         ...(surface === 'voice' ? { decisionSource: 'voice' } : {}) } })]);
@@ -217,10 +226,15 @@ describe('authenticated requester approval transport from the app to its origina
     expect(homes.requestsFor('/v1/artifacts/requester-preview')).toHaveLength(1);
     expect(remoteStored.executionOriginV1).toEqual(executionOriginV1);
     expect(remoteStored.requesterConfirmation).toEqual(requesterConfirmation);
-    if (decision !== 'cancel') expect(remoteStored.decision).toMatchObject({ kind: decision, decidingAccountId: 'account-a',
-      ...(surface === 'voice' ? { decidedVia: 'voice' } : {}) });
-    if (decision === 'cancel') expect(remoteStored.decision).toBeUndefined();
-    else if (surface === 'ui') expect(remoteStored.decision).not.toHaveProperty('decidedVia');
+    if (approvalUnavailable) {
+      expect(remoteStored).toEqual(request);
+    } else if (decision === 'cancel') {
+      expect(remoteStored.decision).toBeUndefined();
+    } else {
+      expect(remoteStored.decision).toMatchObject({ kind: decision, decidingAccountId: 'account-a',
+        ...(surface === 'voice' ? { decidedVia: 'voice' } : {}) });
+      if (surface === 'ui') expect(remoteStored.decision).not.toHaveProperty('decidedVia');
+    }
   });
 });
 

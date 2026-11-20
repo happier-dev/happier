@@ -3484,10 +3484,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(signal ? { signal } : {}),
         });
         accountContext.assertResultCurrent(getActionSpec('approval.request.decide').sideEffectClass);
+        const failure = ActionExecuteFailureSchema.safeParse(result);
+        if (failure.success) return failure.data;
         const settled = getActionSpec('approval.request.decide').outputSchema?.safeParse(result);
         if (settled?.success) return { ok: true, result: settled.data };
-        const failure = ActionExecuteFailureSchema.safeParse(result);
-        return failure.success ? failure.data : { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
+        return { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
       }
       if (request.v !== 2) return null;
       const executor = resolveApprovalExecutor(request);
