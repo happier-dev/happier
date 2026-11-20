@@ -49,10 +49,14 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             const sourcesById = new Map(selected.sources.map(source => [source.id, source]));
             const repositories = run.plan.repositories.flatMap(repository => {
                 const inputSource = repository.input.source;
-                if (inputSource.kind !== 'source') return [];
-                const source = sourcesById.get(inputSource.id);
-                if (!source) throw new Error('Selected Team repository is missing its Source identity');
-                return [{ repositoryId: repository.id, source: { id: source.id, revision: inputSource.revision, name: source.name, ...(source.owner ? { owner: source.owner } : {}) }, requestId: randomUUID() }];
+                // An adopted existing clone opens as a Folder attach; its row still belongs to the Team Source.
+                const source = sourcesById.get(inputSource.kind === 'source' ? inputSource.id : repository.id);
+                if (!source) {
+                    if (inputSource.kind !== 'source') return [];
+                    throw new Error('Selected Team repository is missing its Source identity');
+                }
+                const revision = inputSource.kind === 'source' ? inputSource.revision : source.revision;
+                return [{ repositoryId: repository.id, source: { id: source.id, revision, name: source.name, ...(source.owner ? { owner: source.owner } : {}) }, requestId: randomUUID() }];
             });
             const selection: TeamSetupBatch['selection'] = {
                 team: selected.team, lifetime: selected.lifetime, target: run.plan.target, repositories,

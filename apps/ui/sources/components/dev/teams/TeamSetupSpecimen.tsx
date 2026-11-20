@@ -35,6 +35,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
  * Get set up with a "Set up for {team}" block. `?frame=disclosure`: the confirmation before sharing a
  * vault reference with a Team. `?frame=invitation`: the open invitation a signed-in invitee sees.
  * `?frame=setup`: "Set up for {team}" with a preset review, three repositories and two shared keys.
+ * `?frame=setupDone`: the same page once set up, offering the Team's first task.
  * `?frame=newMembers`: an administrator's "What new members get" Sources and first task (the
  * member-defaults editor reads live settings and is not drawn here). Never linked from product surfaces.
  */
@@ -149,7 +150,10 @@ const MACHINE_PLAN = {
 const NO_EXCLUSIONS: ReadonlySet<string> = new Set();
 const SOURCES_READY = { loading: false, failure: null, onRetry: noop };
 
-function SetupFrame() {
+/** `setup`: the plan as a returning member sees it after the Team's preset moved on and one clone was found. */
+const ADOPTED: ReadonlyMap<string, string> = new Map([['acme-api', '/Users/leo/code/acme-api']]);
+
+function SetupFrame(props: Readonly<{ done?: boolean }>) {
   return (
     <ItemList pageColumn="wide">
       <TeamSetupPageView
@@ -159,8 +163,8 @@ function SetupFrame() {
         machineId={MACHINE_ID}
         machineLabel={MACHINE_LABEL}
         homeDir="/Users/leo"
-        run={{ kind: 'idle' }}
-        canRun
+        run={props.done ? { kind: 'done', operationId: null } : { kind: 'idle' }}
+        canRun={!props.done}
         onRun={noop}
         onOpenOperation={noop}
         sources={SOURCES_READY}
@@ -173,6 +177,14 @@ function SetupFrame() {
         batch={null}
         sharedKeys={SHARED_KEYS}
         keyDisplayNames={KEY_NAMES}
+        firstTask={props.done ? {
+          title: 'Fix the flaky cart test',
+          markdown: 'Read through acme/web’s checkout flow and fix the flaky “cart keeps its items after sign-in” test. The failing run is linked in #1482.',
+          repositoryName: 'acme/web',
+          onOpen: noop,
+        } : null}
+        presetChange={props.done ? null : { revision: 7, onReview: noop }}
+        clones={{ onFind: noop, searching: false, folder: '/Users/leo/code', adopted: ADOPTED, failure: null }}
       />
     </ItemList>
   );
@@ -243,6 +255,7 @@ export function TeamSetupSpecimen(props: Readonly<{ frame?: string }>) {
     case 'disclosure': return <DisclosureFrame />;
     case 'invitation': return <InvitationFrame />;
     case 'setup': return <SetupFrame />;
+    case 'setupDone': return <SetupFrame done />;
     case 'newMembers': return <NewMembersFrame />;
     default: return <JoinedFrame />;
   }

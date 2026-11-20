@@ -3,17 +3,17 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import {
-  buildProjectOpenDraft,
-  buildProjectOpenInput,
-  suggestProjectOpenDestination,
-} from '@/components/projects/activation/projectOpenChoices';
+import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { suggestProjectOpenDestination } from '@/components/projects/activation/projectOpenChoices';
+import { useMachinePresetUpdates } from '@/components/machines/setup/useMachinePresetUpdates';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
 import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { MachineSetupContents } from '@/components/settings/machines/managed/MachineSetupContents';
 import { MachineSetupPlanReview } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { TeamHeaderAvatar } from '@/components/settings/teams/TeamHeaderAvatar';
 import {
@@ -49,11 +49,17 @@ import {
   useActiveServerAccountScopeLifetime,
   useServerScopedMachine,
   useServerScopedMachineLabel,
+  useWorkspaceRefsSelector,
 } from '@/sync/store/hooks';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
-import type { TeamSetupPlan, TeamSetupRepository } from './teamSetupPlan';
+import type { TeamSetupPlan } from './teamSetupPlan';
+import { buildTeamSetupRepository } from './teamSetupRepositories';
+import { useTeamSetupExistingClones, type TeamSetupExistingClones } from './useTeamSetupExistingClones';
+import { useTeamSetupFirstTask } from './useTeamSetupFirstTask';
+import { findTeamSetupSourceCheckout, TeamSetupSourceChange } from './TeamSetupSourceChange';
 import { useTeamSetupPlan, type TeamSetupBatch } from './useTeamSetupPlan';
 import { useTeamSetupBatchProgress, type TeamSetupRepositoryPhase } from './useTeamSetupBatchProgress';
 import {
@@ -88,37 +94,21 @@ function readHomeDir(
   return typeof homeDir === 'string' && homeDir ? homeDir : null;
 }
 
-/** A fresh clone of the Source into the suggested checkout folder, through the ordinary Open owner. */
-function buildFreshCloneRepository(
-  source: ProjectSourceV1,
-  serverId: string,
-  machineId: string,
-  homeDir: string | null,
-): TeamSetupRepository | null {
-  const subject = { kind: 'source' as const, source };
-  const destination = suggestProjectOpenDestination({
-    machineId,
-    machineHomeDir: homeDir,
-    subject,
-    checkouts: [],
-  });
-  if (!destination) return null;
-  const draft = buildProjectOpenDraft({
-    serverId,
-    machineId,
-    machineHomeDir: homeDir,
-    subject,
-    ref: source.defaultRef ?? null,
-    use: 'clone',
-    branch: '',
-    destination,
-    checkouts: [],
-  });
-  const input = buildProjectOpenInput(draft, []);
-  if (!input) return null;
-  const { serverId: _serverId, machineId: _machineId, ...rest } = input;
-  return { id: source.id, input: rest };
+type OpenedProject = Extract<OpenProjectResultV1, { kind: 'opened' }>;
+
+/** The Open owner's own answer for one repository of the settled batch, once it opened. */
+function readOpenedProject(batch: TeamSetupBatch | null, sourceId: string): OpenedProject | null {
+  const row = batch?.selection.repositories.find((repository) => repository.source.id === sourceId);
+  const result = row ? batch?.settlement?.repositories.find((repository) => repository.id === row.repositoryId)?.result : null;
+  return result?.ok && 'kind' in result.result && result.result.kind === 'opened' ? result.result : null;
 }
+
+export type TeamSetupFirstTaskView = Readonly<{
+  title: string;
+  markdown: string;
+  repositoryName: string;
+  onOpen: () => void;
+}>;
 
 /**
  * Set up for a Team (plan D, L2): everything the Team expects on one of the member's Machines, in one
@@ -126,7 +116,15 @@ function buildFreshCloneRepository(
  * Open owner do the work; this page only chooses the Machine and which shared repositories to include.
  */
 export const TeamSetupScreen = React.memo(function TeamSetupScreen(
-  props: Readonly<{ serverId: string; teamId: string }>,
+  props: Readonly<{
+    serverId: string;
+    teamId: string;
+    /**
+     * Preview as a member (plan D, L5): the same page from the same Team, Source, preset and key reads a member
+     * makes, with no Machine chosen and nothing to run. Opened from What new members get.
+     */
+    preview?: boolean;
+  }>,
 ) {
   return (
     <TeamSection
@@ -136,7 +134,7 @@ export const TeamSetupScreen = React.memo(function TeamSetupScreen(
       pageColumn="wide"
     >
       {(context, conditions) =>
-        context.archived ? null : <TeamSetupBody context={context} conditions={conditions} />
+        context.archived ? null : <TeamSetupBody context={context} conditions={conditions} preview={props.preview === true} />
       }
     </TeamSection>
   );
@@ -146,6 +144,7 @@ export const TeamSetupScreen = React.memo(function TeamSetupScreen(
 export function TeamSetupHeader(props: Readonly<{
   context: Pick<TeamSectionContext, 'team' | 'address' | 'homeName'>;
   lead: boolean;
+  preview?: boolean;
 }>) {
   const { team, address, homeName } = props.context;
   const title = t('teams.join.setUpForTeam', { team: team.name });
@@ -157,14 +156,16 @@ export function TeamSetupHeader(props: Readonly<{
       testID="team-setup-header"
       alwaysShowTitle
       title={title}
-      description={props.lead ? t('teams.join.setupPage.lead', { team: team.name }) : undefined}
+      description={props.lead
+        ? t(props.preview ? 'teams.join.setupPage.previewLead' : 'teams.join.setupPage.lead', { team: team.name })
+        : undefined}
       leading={<TeamHeaderAvatar address={address} team={team} />}
       meta={props.lead ? [...facts, { key: 'suggested', text: t('teams.join.setupPage.suggestedBy', { team: team.name }) }] : facts}
     />
   );
 }
 
-function TeamSetupBody(props: Readonly<{ context: TeamSectionContext; conditions?: React.ReactNode }>) {
+function TeamSetupBody(props: Readonly<{ context: TeamSectionContext; conditions?: React.ReactNode; preview: boolean }>) {
   const lifetime = useActiveServerAccountScopeLifetime();
   if (
     !lifetime ||
@@ -183,7 +184,7 @@ function TeamSetupBody(props: Readonly<{ context: TeamSectionContext; conditions
       </>
     );
   }
-  return <TeamSetupPlanPage context={props.context} conditions={props.conditions} lifetime={lifetime} />;
+  return <TeamSetupPlanPage context={props.context} conditions={props.conditions} lifetime={lifetime} preview={props.preview} />;
 }
 
 function TeamSetupPlanPage(
@@ -191,6 +192,7 @@ function TeamSetupPlanPage(
     context: TeamSectionContext;
     conditions?: React.ReactNode;
     lifetime: ServerAccountScopeLifetime;
+    preview: boolean;
   }>,
 ) {
   const { context } = props;
@@ -208,7 +210,8 @@ function TeamSetupPlanPage(
       accountScope: context.scope,
     },
   );
-  const machineId = selection.selectedTarget?.machineId ?? null;
+  // A preview stands for a new member's own machine: none of the viewer's Machines is read or planned against.
+  const machineId = props.preview ? null : selection.selectedTarget?.machineId ?? null;
   const machineName = useServerScopedMachineLabel(
     context.scope.serverId,
     machineId,
@@ -284,14 +287,21 @@ function TeamSetupPlanPage(
     (!hasPreset || !!machinePlan?.plan) &&
     (hasPreset || included.length > 0);
 
+  const clones = useTeamSetupExistingClones({
+    execute,
+    context: actionContext,
+    machineId,
+    homeDir,
+    sources: repositories,
+  });
+
   const start = React.useCallback(async () => {
     if (!machineId || !homeId) return;
     const repositoryInputs = included.flatMap((source) => {
-      const repository = buildFreshCloneRepository(
+      const repository = buildTeamSetupRepository(
         source,
-        context.scope.serverId,
-        machineId,
-        homeDir,
+        { serverId: context.scope.serverId, machineId, homeDir },
+        clones.adopted.get(source.id) ?? null,
       );
       return repository ? [repository] : [];
     });
@@ -334,6 +344,7 @@ function TeamSetupPlanPage(
     context.address,
     context.scope.serverId,
     props.lifetime,
+    clones.adopted,
     homeDir,
     homeId,
     included,
@@ -341,6 +352,38 @@ function TeamSetupPlanPage(
     plan,
     presetValue,
   ]);
+
+  // The Machine owner decides whether the Team's preset moved on since this Machine applied it.
+  const presetUpdates = useMachinePresetUpdates({
+    serverId: context.scope.serverId,
+    machineId: machineId ?? '',
+    active: !!machineId && !!presetValue,
+  });
+  const presetUpdate = presetValue
+    ? presetUpdates.find((update) => update.presetId === presetValue.id && update.kind === 'changed') ?? null
+    : null;
+  const presetChange = React.useMemo(() => presetUpdate?.kind === 'changed' && machineId ? {
+    revision: presetUpdate.presetRevision,
+    onReview: () => router.push(machinePageHref({ door: 'rail',
+      target: { machineId, serverId: context.scope.serverId }, tab: { id: 'setup' } }) as never),
+  } : null, [context.scope.serverId, machineId, presetUpdate, router]);
+
+  const done = run.kind === 'done';
+  const suggestedTask = useTeamSetupFirstTask({ serverId: context.scope.serverId, sources: included, enabled: done });
+  const openTask = React.useCallback(async (project: OpenedProject, prompt: string) => {
+    if (!machineId) return;
+    const result = await plan.openFirstTask({ project, machineId, prompt });
+    if (!result.ok) Modal.alert(t('common.error'), result.error);
+  }, [machineId, plan]);
+  const taskProject = suggestedTask ? readOpenedProject(plan.batch, suggestedTask.sourceId) : null;
+  const firstTask = React.useMemo<TeamSetupFirstTaskView | null>(() => suggestedTask && taskProject ? {
+    title: suggestedTask.title,
+    markdown: suggestedTask.markdown,
+    repositoryName: repositories.find((source) => source.id === suggestedTask.sourceId)?.repository?.repository.nameWithOwner
+      ?? suggestedTask.sourceName,
+    onOpen: () => { void openTask(taskProject, suggestedTask.markdown); },
+  } : null, [openTask, repositories, suggestedTask, taskProject]);
+  const startSession = React.useCallback((project: OpenedProject) => { void openTask(project, ''); }, [openTask]);
 
   const sourcesState = resources.sources.state;
   const sourcesLoading = sourcesState.status === 'initial' || sourcesState.status === 'loading';
@@ -385,7 +428,12 @@ function TeamSetupPlanPage(
 
   return (
     <TeamSetupPageView
-      header={<TeamSetupHeader context={context} lead />}
+      header={<TeamSetupHeader context={context} lead preview={props.preview} />}
+      preview={props.preview ? {
+        onClose: () => router.back(),
+        presetSetup: presetValue?.setup,
+        scope: context.scope,
+      } : undefined}
       conditions={props.conditions}
       teamName={teamName}
       selection={selection}
@@ -413,6 +461,10 @@ function TeamSetupPlanPage(
       batch={plan.batch}
       sharedKeys={sharedKeys}
       keyDisplayNames={resources.credentialDisplayNames}
+      firstTask={firstTask}
+      onStartSession={startSession}
+      presetChange={presetChange}
+      clones={clones}
     />
   );
 }
@@ -450,6 +502,18 @@ export function TeamSetupPageView(
     batch: TeamSetupBatch | null;
     sharedKeys: TeamSetupResources['credentials']['resources'];
     keyDisplayNames: Readonly<Record<string, string | null>>;
+    /** The Team's suggested task, offered once setup is done; it opens the ordinary composer, never a launch. */
+    firstTask: TeamSetupFirstTaskView | null;
+    onStartSession?: (project: OpenedProject) => void;
+    /** The Machine owner found the Team's preset newer than what this Machine applied. */
+    presetChange: Readonly<{ revision: number; onReview: () => void }> | null;
+    clones: TeamSetupExistingClones;
+    /** Preview as a member: a new member's own machine stands in for the selector, and nothing runs. */
+    preview?: Readonly<{
+      onClose: () => void;
+      presetSetup: React.ComponentProps<typeof MachineSetupContents>['setup'];
+      scope: React.ComponentProps<typeof MachineSetupContents>['scope'];
+    }>;
   }>,
 ) {
   const { teamName, machineId, machineLabel, run, repositories } = props;
@@ -464,7 +528,29 @@ export function TeamSetupPageView(
     onPress: () => props.onOpenOperation(stoppedOperation),
   } : undefined;
   // The selector draws its own card, so the heading stands alone above it, as the plan review's do below.
-  const aside = (
+  const aside = props.preview ? (
+    <>
+      <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')}>
+        <Item
+          testID="team-setup-preview-machine"
+          icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
+          title={t('teams.join.setupPage.previewMachineTitle')}
+          subtitle={t('teams.join.setupPage.previewMachine')}
+          showChevron={false}
+        />
+      </ItemGroup>
+      <ItemGroup surface="none" description={t('teams.join.setupPage.previewNote')}>
+        <BareSectionContent>
+          <RoundButton
+            testID="team-setup-preview-close"
+            size="large"
+            title={t('teams.join.setupPage.closePreview')}
+            onPress={props.preview.onClose}
+          />
+        </BareSectionContent>
+      </ItemGroup>
+    </>
+  ) : (
     <>
       <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')} />
       <MachineAdministrationTargetSelector
@@ -525,6 +611,33 @@ export function TeamSetupPageView(
           secondaryAction={props.onRetryFailedSetup ? seeWhatRan : undefined}
         />
       ) : null}
+      {run.kind === 'done' && props.firstTask ? (
+        <ItemGroup
+          testID="team-setup-first-task"
+          title={t('teams.join.setupPage.firstTaskTitle')}
+          description={t('teams.join.setupPage.firstTaskDescription', {
+            team: teamName,
+            repository: props.firstTask.repositoryName,
+          })}
+        >
+          <Item
+            testID="team-setup-first-task-prompt"
+            title={props.firstTask.title}
+            subtitle={props.firstTask.markdown}
+            subtitleLines={4}
+            showChevron={false}
+            accessoryLayout={compact ? 'stacked' : 'adaptive'}
+            rightElement={
+              <RoundButton
+                testID="team-setup-first-task-open"
+                size="small"
+                title={t('teams.join.setupPage.firstTaskOpen')}
+                onPress={props.firstTask.onOpen}
+              />
+            }
+          />
+        </ItemGroup>
+      ) : null}
       {props.hasPreset ? (
         <>
           {/* Rows sit in this section's card; the plan review and its failure are sections and cards of their
@@ -538,6 +651,23 @@ export function TeamSetupPageView(
             }
             description={t('teams.join.setupPage.toolsDescription', { team: teamName })}
           >
+            {props.presetChange && !toolsOperation ? (
+              <Item
+                testID="team-setup-preset-changed"
+                title={t('teams.join.setupPage.presetChanged', { team: teamName })}
+                subtitle={t('machinePresets.setup.tab.newerRevision', { revision: props.presetChange.revision })}
+                showChevron={false}
+                rightElement={
+                  <RoundButton
+                    testID="team-setup-preset-changed-review"
+                    size="small"
+                    display="secondary"
+                    title={t('machinePresets.setup.tab.reviewChanges')}
+                    onPress={props.presetChange.onReview}
+                  />
+                }
+              />
+            ) : null}
             {toolsOperation ? (
               <Item
                 testID="team-setup-tools-operation"
@@ -550,7 +680,7 @@ export function TeamSetupPageView(
                 }
                 onPress={() => props.onOpenOperation(toolsOperation)}
               />
-            ) : !machineId ? (
+            ) : !machineId && props.preview ? null : !machineId ? (
               <Item
                 testID="team-setup-tools-choose"
                 title={t('teams.join.setupPage.toolsChooseMachine')}
@@ -560,6 +690,13 @@ export function TeamSetupPageView(
               <PageLoadingRows testID="team-setup-tools-loading" />
             )}
           </ItemGroup>
+          {props.preview ? (
+            <MachineSetupContents
+              testID="team-setup-preview-tools"
+              setup={props.preview.presetSetup}
+              scope={props.preview.scope}
+            />
+          ) : null}
           {toolsOperation || !machineId ? null : props.machinePlan?.failure ? (
             <SurfaceStateCard
               testID="team-setup-tools-failed"
@@ -591,6 +728,17 @@ export function TeamSetupPageView(
                 })
               : t('teams.join.setupPage.repositoriesDescriptionNoMachine')
           }
+          action={
+            <RoundButton
+              testID="team-setup-find-clones"
+              size="small"
+              display="secondary"
+              title={t('teams.join.setupPage.findClones')}
+              loading={props.clones.searching}
+              disabled={!props.clones.onFind || running || run.kind === 'done'}
+              onPress={() => props.clones.onFind?.()}
+            />
+          }
         >
           {repositories.map((source) => (
             <TeamSetupRepositoryRow
@@ -599,6 +747,10 @@ export function TeamSetupPageView(
               machineId={machineId}
               homeDir={props.homeDir}
               included={!props.excluded.has(source.id)}
+              adoptedPath={props.clones.adopted.get(source.id) ?? null}
+              serverId={props.selection.selectedTarget?.serverId ?? null}
+              teamName={teamName}
+              onStartSession={props.onStartSession}
               batch={props.batch}
               disabled={running || run.kind === 'done'}
               iconColor={theme.colors.text.secondary}
@@ -606,6 +758,15 @@ export function TeamSetupPageView(
             />
           ))}
         </ItemGroup>
+      ) : null}
+      {props.clones.failure && props.clones.folder ? (
+        <SurfaceStateCard
+          testID="team-setup-clones-failed"
+          kind="error"
+          size="line"
+          title={t('teams.join.setupPage.clonesFailed', { folder: props.clones.folder })}
+          reason={props.clones.failure}
+        />
       ) : null}
       {props.repositoryFreeSources.length > 0 ? (
         <ItemGroup testID="team-setup-sources" title={t('projects.sources.title')}>
@@ -666,6 +827,11 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     machineId: string | null;
     homeDir: string | null;
     included: boolean;
+    /** A clone the member already has, found by Find existing clones; it is attached as it is. */
+    adoptedPath: string | null;
+    serverId: string | null;
+    teamName: string;
+    onStartSession?: (project: OpenedProject) => void;
     batch: TeamSetupBatch | null;
     disabled: boolean;
     iconColor: string;
@@ -673,7 +839,13 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   }>,
 ) {
   const progress = useTeamSetupBatchProgress(props.batch, props.source.id);
-  const destination = props.machineId
+  const opened = progress?.ready ? readOpenedProject(props.batch, props.source.id) : null;
+  // The member's existing checkout of this Source on the chosen Machine, whose owner says if its shared setup moved on.
+  const { serverId, machineId, source } = props;
+  const checkout = useWorkspaceRefsSelector(React.useCallback((refs) => serverId
+    ? findTeamSetupSourceCheckout(refs, { serverId, machineId, sourceId: source.id, revision: source.revision }) : null,
+  [machineId, serverId, source.id, source.revision]));
+  const destination = props.adoptedPath ? null : props.machineId
     ? suggestProjectOpenDestination({
         machineId: props.machineId,
         machineHomeDir: props.homeDir,
@@ -684,19 +856,30 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   const nameWithOwner =
     props.source.repository?.repository.nameWithOwner ?? props.source.name;
   return (
+    <>
     <Item
       testID={`team-setup-repository:${props.source.id}`}
       icon={<Icon name="git-branch" size={20} color={props.iconColor} />}
       title={nameWithOwner}
       subtitle={
-        destination
-          ? t('teams.join.setupPage.repositoryInto', { path: destination })
-          : undefined
+        props.adoptedPath
+          ? t('teams.join.setupPage.repositoryExisting', { path: props.adoptedPath })
+          : destination
+            ? t('teams.join.setupPage.repositoryInto', { path: destination })
+            : undefined
       }
       showChevron={false}
-      detail={progress ? STATUS_WORD[progress.phase]() : undefined}
+      detail={progress && !(opened && props.onStartSession) ? STATUS_WORD[progress.phase]() : undefined}
       rightElement={
-        progress ? undefined : (
+        opened && props.onStartSession ? (
+          <RoundButton
+            testID={`team-setup-repository-start:${props.source.id}`}
+            size="small"
+            display="secondary"
+            title={t('teams.join.setupPage.startSession')}
+            onPress={() => props.onStartSession?.(opened)}
+          />
+        ) : progress ? undefined : (
           <Switch
             testID={`team-setup-repository-include:${props.source.id}`}
             value={props.included}
@@ -707,5 +890,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
         )
       }
     />
+    {checkout ? <TeamSetupSourceChange sourceId={props.source.id} teamName={props.teamName} checkout={checkout} /> : null}
+    </>
   );
 });
