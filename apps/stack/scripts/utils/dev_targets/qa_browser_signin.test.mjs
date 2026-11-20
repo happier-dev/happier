@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { runQaBrowserSignin } from './qa_browser_signin.mjs';
@@ -10,10 +11,11 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false, compact = false } = {}) {
+async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false, compact = false, tourBeforeHome = false, tourOnHome = false } = {}) {
   let view = 'restore';
   let submitted = false;
   let aliasConfirmed = false;
+  let tourSkipped = false;
   let credentialFilled = false;
   const observers = new Set();
   const publish = () => { for (const observer of [...observers]) observer(); };
@@ -23,6 +25,20 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
   }
   const input = new Input();
   const confirm = { click() { aliasConfirmed = true; publish(); } };
+  const showHome = () => { view = 'home'; location.pathname = '/'; credentialFilled = false; };
+  const tour = {
+    getAttribute: () => null,
+    textContent: 'Ignorer Suivant',
+    querySelector: selector => selector === '[data-testid="onboarding-showcase-story-skip"]' ? {
+      click() {
+        queueMicrotask(() => {
+          tourSkipped = true;
+          if (tourBeforeHome) showHome();
+          publish();
+        });
+      },
+    } : null,
+  };
   const dialog = {
     getAttribute: name => name === 'aria-label' ? blockingDialog?.title ?? 'Error' : null,
     textContent: blockingDialog?.text ?? (migrationDeclined ? 'Error: Home canonical URL migration was not applied' : `Reached ${canonicalServerUrl}, previously ${aliasUrl}`),
@@ -32,6 +48,8 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
     documentElement: {},
     querySelector(selector) {
       if ((migrationDeclined || (blockingDialog && (!blockingAfterSubmit || submitted))) && selector === '[role="dialog"]') return dialog;
+      if (selector === '[role="dialog"]' && !tourSkipped
+        && ((tourBeforeHome && submitted) || (tourOnHome && view === 'home'))) return tour;
       if (alias && !aliasConfirmed && view === 'restore') {
         if (selector === '[role="dialog"]') return dialog;
         if (selector.includes('web-modal-confirm')) return confirm;
@@ -46,7 +64,7 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
       if (selector === '[data-testid="restore-manual-submit"]') return {
         click() {
           submitted = true;
-          if (!blockingAfterSubmit) { view = 'home'; location.pathname = '/'; credentialFilled = false; }
+          if (!blockingAfterSubmit && !tourBeforeHome) showHome();
           publish();
         },
       };
@@ -75,7 +93,7 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
     // No producer remains after this fixture's DOM settles. A stale selector
     // cannot satisfy the observable contract and must fail this assertion.
     const result = await Promise.race([pending, new Promise(resolve => setImmediate(() => resolve('no_dom_progress')))]);
-    return { result, aliasConfirmed, credentialFilled };
+    return { result, aliasConfirmed, credentialFilled, tourSkipped };
   } finally {
     for (const [name, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
@@ -118,6 +136,34 @@ test('the current Home address does not authorize a different saved alias', asyn
 
 test('restores normally when there is no Home alias warning', async () => {
   assert.equal((await observe()).result, 'home');
+});
+
+test('skips the onboarding showcase on the restore route after submission and reaches Home', async () => {
+  const observed = await observe({ tourBeforeHome: true });
+  assert.equal(observed.result, 'home');
+  assert.equal(observed.tourSkipped, true);
+  assert.equal(observed.credentialFilled, false);
+});
+
+for (const step of ['restore', 'account', 'home']) {
+  test(`dismisses the mounted onboarding showcase before reporting Home from ${step}`, async () => {
+    const observed = await observe({ tourOnHome: true, restored: true, step, compact: step === 'home' });
+    assert.equal(observed.result, 'home');
+    assert.equal(observed.tourSkipped, true);
+  });
+}
+
+test('an unrelated dialog with Skip and Next still blocks Home verification', async () => {
+  const observed = await observe({ restored: true, step: 'home', blockingDialog: { confirm: false, text: 'Skip Next' } });
+  assert.deepEqual(observed.result, { reason: 'blocking_dialog', title: 'Error' });
+  assert.equal(observed.tourSkipped, false);
+});
+
+test('never treats a prompt that omits the saved Home address as alias consent', async () => {
+  const observed = await observe({ blockingDialog: { title: 'Confirmation', text: `Reached ${canonicalServerUrl}` }, confirmHomeAliasUrl: aliasUrl });
+  assert.deepEqual(observed.result, { reason: 'blocking_dialog', title: 'Confirmation' });
+  assert.equal(observed.aliasConfirmed, false);
+  assert.equal(observed.credentialFilled, false);
 });
 
 test('settles restore and Home readiness on the compact phone shell without a desktop sidebar', async () => {

@@ -36,20 +36,24 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
         || document.querySelector('[data-testid="main-app-tabbar"]'))) return 'home';
     return null;
   };
-  if (step === 'home') return await waitFor(home);
-  if (step === 'account') return await waitFor(() => {
-    const homeState = home();
-    if (homeState === 'home_unavailable') return 'account_unavailable';
-    return homeState ?? (document.querySelector('[data-testid="settings-account-identity"]') ? 'account' : null);
-  });
   let confirmedDialog;
+  let skippedShowcase;
   const blockingDialog = () => {
     const dialog = document.querySelector('[role="dialog"]');
     if (!dialog || dialog === confirmedDialog) return null;
+    if (dialog === skippedShowcase) return false;
+    const skipShowcase = dialog.querySelector('[data-testid="onboarding-showcase-story-skip"]');
+    if (skipShowcase) {
+      skippedShowcase = dialog;
+      skipShowcase.click();
+      // Let the existing DOM observer see the dialog leave before reporting readiness.
+      return false;
+    }
     // Only public, fixed modal labels may leave the credential page. Other
     // titles and the message can contain input or credentials and stay here.
     const label = dialog.getAttribute('aria-label');
     const title = ['Error', 'Warning', 'Confirmation'].includes(label) ? label : null;
+    if (step !== 'restore') return { reason: 'blocking_dialog', title };
     if (dialog.textContent.includes('Home canonical URL migration was not applied')) {
       return { reason: 'home_migration_declined', title };
     }
@@ -77,10 +81,17 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
     confirm.click();
     return null;
   };
+  const waitForUnblocked = check => waitFor(() => blockingDialog() ?? check());
+  if (step === 'home') return await waitForUnblocked(home);
+  if (step === 'account') return await waitForUnblocked(() => {
+    const homeState = home();
+    if (homeState === 'home_unavailable') return 'account_unavailable';
+    return homeState ?? (document.querySelector('[data-testid="settings-account-identity"]') ? 'account' : null);
+  });
   const ready = await waitFor(() => {
     if (document.querySelector('[data-testid="home-unreachable"]')) return 'home_unavailable';
     const warning = blockingDialog();
-    if (warning) return warning;
+    if (warning !== null) return warning;
     if (home() === 'home') return 'home';
     if (location.pathname !== '/restore/manual') return 'restore_entry_unavailable';
     return document.querySelector('[data-testid="restore-manual-wizard"] input');
@@ -96,9 +107,7 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
     key = '';
     // Separate the fill and click like user input, allowing React to commit.
     await new Promise(requestAnimationFrame);
-    const outcome = waitFor(() => {
-      const warning = blockingDialog();
-      if (warning) return warning;
+    const outcome = waitForUnblocked(() => {
       if (document.querySelector('[data-testid="restore-manual-wizard"] [role="alert"]')) return 'restore_failed';
       return home();
     });
@@ -304,7 +313,11 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         value = '';
         const result = await pending;
         if (result.exceptionDetails) throw failure('restore_failed');
-        return result.result?.value;
+        const outcome = result.result?.value;
+        if (outcome?.reason === 'home_reachability_failed' || outcome?.reason === 'blocking_dialog') {
+          throw Object.assign(failure(outcome.reason), { title: outcome.title });
+        }
+        return outcome;
       };
       signinRequests = new Map();
       await navigate('/restore/manual');
@@ -314,9 +327,6 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       const signinFailure = [...signinRequests.values()].find(request => request.failed
         || (Number.isInteger(request.status) && (request.status < 200 || request.status >= 300)));
       signinRequests = null;
-      if (outcome?.reason === 'home_reachability_failed' || outcome?.reason === 'blocking_dialog') {
-        throw Object.assign(failure(outcome.reason), { title: outcome.title });
-      }
       if (outcome?.reason === 'home_migration_declined') {
         const revisions = await step('home-revisions');
         throw Object.assign(failure(outcome.reason), revisions, { title: outcome.title, expectedOrigin,
