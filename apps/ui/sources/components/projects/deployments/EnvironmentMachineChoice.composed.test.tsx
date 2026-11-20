@@ -2,6 +2,7 @@ import * as React from 'react';
 import { expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -30,6 +31,69 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { SoftwareInputFields } = await import('@/components/store/StoreSoftwareInputs');
 const { MachineSetupRecipeInputs } = await import('@/components/settings/machines/managed/MachineSetupRecipeInputs');
 const { DEPLOY_HOST_DOCKER_ITEM } = await import('@happier-dev/protocol/deployments/deployHostReadiness');
+
+it('tells Where when the last inspected repository root had no Compose file', async () => {
+  const serverIdentityId = `srv_${'6'.repeat(32)}`;
+  const serverId = await homes.addHome({ name: 'Static app', serverUrl: 'https://deploy-host-static-app.test',
+    accountId: 'alice', serverIdentityId, currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const previous = storage.getState();
+  try {
+    storage.setState({ profileScope: account.accountLifetime.scope });
+    homes.answer(serverId, 'GET /v1/projects/sources/static-app', { body: { ok: true, canManage: true, source: {
+      id: 'static-app', revision: 3, name: 'Bakery', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+      createdByAccountId: 'alice', defaultRef: 'main', repository: {
+        provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'alice/bakery', cloneUrl: 'https://github.com/alice/bakery.git' }, protocol: 'https',
+      },
+    } } });
+    const source = { sourceId: 'static-app', revision: 3 };
+    applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: 'bakery-checkout', serverId: serverIdentityId,
+      machineId: 'host', rootPath: '/work/bakery', createdAtMs: 1, source, repositoryObservation: {
+        source, observedAtMs: 2, coverage: 'complete', rootFiles: { dockerfile: 'absent', compose: 'absent' }, applications: [],
+      },
+    }] });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'host',
+      installationId: 'host-installation', activeAt: Date.now() })]);
+    const onFrame = vi.fn();
+    const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="static-app"
+      phone={false} actions={null} steps={{ onFrame, onExit: () => {} }}
+      onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+    try {
+      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({
+        step: 'where', source: { title: 'Bakery', note: null },
+      })));
+      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({
+        step: 'where', ownServerSourceCompose: { kind: 'noRootComposeObserved', projectSourceId: 'static-app' },
+      })));
+    } finally { await screen.unmount(); }
+  } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+});
+
+it.each(['catalogTemplate', 'generatedFromImage'] as const)('publishes the %s Compose source for Where', async kind => {
+  const serverId = await homes.addHome({ name: 'Prepared app', serverUrl: `https://deploy-host-${kind}.test`,
+    accountId: 'alice', serverIdentityId: `srv_${'7'.repeat(32)}`, currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const previous = storage.getState();
+  const source = kind === 'catalogTemplate' ? { catalogApp: { title: 'Bakery', domains: [],
+    templateRef: { sourceId: 'catalog', itemId: 'bakery', version: '1', ref: { kind: 'version' as const, version: '1' } } } }
+    : { definitionKind: 'image' as const };
+  const onFrame = vi.fn();
+  try {
+    storage.setState({ profileScope: account.accountLifetime.scope });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
+      id: 'host', installationId: 'host-installation', activeAt: Date.now(),
+    })]);
+    const screen = await renderScreen(<DeploymentEnvironmentDraft {...source} lifetime={account.accountLifetime} sourceId={null}
+      phone={false} actions={null} steps={{ onFrame, onExit: () => {} }}
+      onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+    try {
+      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({
+        step: 'where', ownServerSourceCompose: { kind },
+      })));
+    } finally { await screen.unmount(); }
+  } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+});
 
 it('says a ready Machine is ready to host deploys in its Where card (journey-deploy whereM)', async () => {
   const serverId = await homes.addHome({ name: 'Host ready', serverUrl: 'https://deploy-host-ready-card.test',

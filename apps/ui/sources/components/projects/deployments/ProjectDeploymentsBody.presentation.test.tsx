@@ -38,6 +38,39 @@ function Page(props: Readonly<{ controller: ReturnType<typeof createDeploymentRe
 }
 
 describe('Environment detail in a split pane', () => {
+    it('withholds the Environment count until the first collection response', async () => {
+        const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+        const detail = createDeploymentEnvironmentDetailV1();
+        const response = { ok: true as const, value: { items: [{ environment: detail.environment, title: 'Staging' }], nextCursor: null } };
+        let answer: (value: typeof response) => void = () => {};
+        const pending = new Promise<typeof response>(resolve => { answer = resolve; });
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport: {
+            listEnvironments: async () => pending,
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        } });
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+            <DestinationInstanceContext.Provider value={{ tabId: 'pane-a', ref: { kind: 'route', params: { deploymentEnvironment: detail.environment.id } } as never,
+                pathname: '/deployments/source-app', focused: true, visible: true, isFocused: () => true, navigation }}>
+                <Page controller={controller} />
+            </DestinationInstanceContext.Provider>
+        </AccountNoticeInvestigationBoundary>);
+        const rail = () => screen.findAllByType(CollectionList).find(node => node.props.testID === 'project-deployments.rail');
+        try {
+            expect(rail(), 'the selected Environment keeps the collection rail mounted').toBeDefined();
+            expect(rail()?.props.count ?? null).toBeNull();
+            await act(async () => answer(response));
+            expect(rail()?.props.count).toBe(1);
+        } finally {
+            answer(response);
+            await screen.unmount();
+            controller.retire();
+        }
+    });
+
     it.each(['outcome_unknown', 'running_unverified', 'failed'] as const)('uses the shared needs-you treatment for a troubled Environment (%s), and removes it when the receipt recovers', async (trouble) => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const previousLocalSettings = storage.getState().localSettings;

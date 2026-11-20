@@ -269,6 +269,43 @@ it('makes an unavailable starter supplier visible instead of an empty gallery', 
   }
 });
 
+it('shows a single starter state while a search replaces an unavailable Machine supplier', async () => {
+  const { BUILT_IN_REGISTRY_SOURCES_V1 } = await import('@happier-dev/protocol/registries');
+  const { deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
+  const serverUrl = 'https://new-app-starters-retry-state.test';
+  const url = serverUrl + '/starters.json';
+  let release: (response: Response) => void = () => {};
+  const response = new Promise<Response>(resolve => { release = resolve; });
+  let retrying = false;
+  const fetchStarters = vi.fn(async () => {
+    if (!retrying) throw new TypeError('Browser cannot read this source');
+    return response;
+  });
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+    key: 'registry-sources', value: { v: 2,
+      disabledSourceIds: BUILT_IN_REGISTRY_SOURCES_V1.map(source => source.id),
+      sources: [{ id: deriveMarketplaceSourceId(url), title: 'Project starters', format: 'happier-catalog',
+        kinds: ['starter'], url, enabled: true, addedAt: 1 }],
+    },
+  }, 'updated', { handleRequest: async path => path === '/starters.json' ? fetchStarters() : null });
+  const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.needsMachine')).not.toBeNull());
+    retrying = true;
+    await act(async () => screen.changeTextByTestId('newApp.code.address', 'Expo'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.loading')).not.toBeNull());
+    expect(screen.findByTestId('newApp.needsMachine')).toBeNull();
+    const catalog = JSON.parse(readFileSync(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8'));
+    await act(async () => release(Response.json(catalog)));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:expo-blank')).not.toBeNull());
+    expect(screen.findByTestId('newApp.loading')).toBeNull();
+  } finally {
+    release(Response.json({}));
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
+
 it('leaves Back with the Machine owner once a managed creation draft exists', async () => {
   const fixture = await starterHome('https://new-app-starter-managed-back.test');
   try {

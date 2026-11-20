@@ -20,6 +20,7 @@ import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIden
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ProjectRefSelect } from '@/components/projects/ProjectRefSelect';
+import { projectSourceRepositoryFacts } from '@/components/projects/sources/projectSourceRepositoryFacts';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
@@ -48,7 +49,8 @@ import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { readProjectAccountWorkspaceRefs, useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -110,6 +112,10 @@ export type DeploymentDraftFrame = Readonly<{
   runsOn: Readonly<{ kind: 'machine' | 'platform'; title: string | null }> | null;
   /** The Project's repository and branch, once its Source is read. */
   source: Readonly<{ title: string; note: string | null }> | null;
+  /** Where obtains Compose for the Machine choice, or what the selected repository still needs. */
+  ownServerSourceCompose?:
+    | Readonly<{ kind: 'catalogTemplate' | 'generatedFromImage' }>
+    | Readonly<{ kind: 'noRootComposeObserved' | 'composeUnverified'; projectSourceId: string }>;
   appName: string | null;
   /** Review after Create refused: nothing was created (journey-deploy revFail). */
   refused: boolean;
@@ -479,6 +485,20 @@ export const DeploymentEnvironmentDraft = React.memo(
     };
 
     const draftStep: DeploymentDraftStep = stepReview || prepared || partial ? 'review' : formStep;
+    const whereScope = props.lifetime?.scope;
+    const ownServerWhere = stepped && draftStep === 'where' && targetKey === OWN_SERVER_TARGET && !props.copyFrom;
+    const catalogProvidesCompose = ownServerWhere && props.catalogApp != null;
+    const generatesComposeFromImage = ownServerWhere && definitionKind === 'image' && !catalogProvidesCompose;
+    const whereRepository = ownServerWhere && !storedDefinition && !catalogProvidesCompose
+      && !generatesComposeFromImage && source?.repository ? source : null;
+    const whereProjectRefs = useProjectAccountRows(rows => areServerAccountScopesEqual(rows?.scope, whereScope)
+      ? readProjectAccountWorkspaceRefs({ projectAccountRows: rows }) : undefined, whereRepository !== null);
+    const rootCompose = React.useMemo(() => {
+      if (!whereRepository || !whereScope || !whereProjectRefs) return 'unknown';
+      const facts = projectSourceRepositoryFacts(whereScope.serverId, [whereRepository], whereProjectRefs).get(whereRepository.id);
+      return facts?.status === 'observed' ? facts.observation.rootFiles.compose : 'unknown';
+    }, [whereRepository, whereScope, whereProjectRefs]);
+    const whereRepositoryId = whereRepository?.id;
     // Where continues only on a Machine that answers (whereErr): an away one says so in its tile instead.
     const whereReady = chosen !== null && answers(chosen) && platformDefinitionAccepted;
     const pressStep = useEventCallback(() => {
@@ -516,12 +536,19 @@ export const DeploymentEnvironmentDraft = React.memo(
       step: draftStep,
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
       source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
+      ownServerSourceCompose: catalogProvidesCompose ? { kind: 'catalogTemplate' }
+        : generatesComposeFromImage ? { kind: 'generatedFromImage' }
+        : whereRepositoryId && rootCompose !== 'present' ? {
+          kind: rootCompose === 'absent' ? 'noRootComposeObserved' : 'composeUnverified',
+          projectSourceId: whereRepositoryId,
+        } : undefined,
       appName,
       refused: draftStep === 'review' && !partial && refusal?.kind === 'refused',
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, sourceNote, branch, appName, partial, refusal, primary.title, primary.disabled, primary.loading,
-      primary.testID, pressStep, backStep, toWhere]);
+    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, sourceNote, branch, rootCompose, whereRepositoryId,
+      catalogProvidesCompose, generatesComposeFromImage, appName, partial, refusal, primary.title, primary.disabled,
+      primary.loading, primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
     stepsHost.current = props.steps;
     React.useEffect(() => { stepsHost.current?.onFrame(frame); }, [frame]);

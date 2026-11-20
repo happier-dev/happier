@@ -34,6 +34,7 @@ import { deploymentStepCaption } from './DeploymentStepStrip';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
+const EMPTY_ENVIRONMENTS: readonly EnvironmentItem[] = [];
 
 /** Selection belongs to the keyed row producer: unchanged rows keep their handler, changed rows select current data. */
 export function useDeploymentEnvironmentRowSelection<T extends object>(items: readonly T[],
@@ -62,7 +63,8 @@ export function useDeploymentEnvironmentRowSelection<T extends object>(items: re
 export const DeploymentEnvironmentCollection = React.memo(
   function DeploymentEnvironmentCollection(
     props: Readonly<{
-      items: readonly EnvironmentItem[];
+      /** Null while the collection has no settled value. */
+      items: readonly EnvironmentItem[] | null;
       selectedId: string | null;
       /** Retained rows while the Home is not answering: the reason and Retry. */
       stale: Readonly<{ reason: string; onRetry: () => void }> | null;
@@ -81,7 +83,7 @@ export const DeploymentEnvironmentCollection = React.memo(
   ) {
     const { theme } = useUnistyles();
     const draftTitle = useCollectionDraftTitle();
-    const parts = useDeploymentEnvironmentRowParts(props.items, 'project-deployments.rail.row', props.lifetime ?? null, 'rail');
+    const parts = useDeploymentEnvironmentRowParts(props.items ?? EMPTY_ENVIRONMENTS, 'project-deployments.rail.row', props.lifetime ?? null, 'rail');
     const onSelect = props.onSelect;
     const selectRow = React.useCallback((row: typeof parts[number]) => onSelect(row.environmentId), [onSelect]);
     const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
@@ -109,7 +111,7 @@ export const DeploymentEnvironmentCollection = React.memo(
       <CollectionList
         testID="project-deployments.rail"
         title={t('projects.deployments.environments')}
-        count={environmentRows.length}
+        count={props.items === null ? null : environmentRows.length}
         headerAction={props.onAdd || props.onSettings ? <View style={{ flexDirection: 'row' }}>
           {props.onSettings ? <IconButton testID="project-deployments.rail.settings" iconName="sliders-horizontal" variant="plain"
             accessibilityLabel={t('projects.deployments.defaultsEditor.projectTitle')}

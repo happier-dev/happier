@@ -656,7 +656,7 @@ const ProjectDeploymentsPage = React.memo(
                 }
               />
               <DeploymentEnvironmentCollection
-                items={items}
+                items={collection.snapshot.value?.items ?? null}
                 preparation={preparation}
                 selectedId={environmentId}
                 stale={stale}

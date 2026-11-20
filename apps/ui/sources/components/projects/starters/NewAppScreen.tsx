@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
-import { useAppList, useStarterList } from '@/components/store/catalog/storeRegistryLists';
+import { useAppList, useDeploymentStarterList, type useStarterList } from '@/components/store/catalog/storeRegistryLists';
 import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { registrySourceFailureLine } from '@/registries/describeRegistrySourceStatus';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
@@ -179,17 +179,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [query, setQuery] = React.useState('');
   // A pasted repository link is read by Your code, not searched for: starters and the catalog stay as they were.
   const search = isRepositoryAddressCandidate(query) ? '' : query.trim();
-  const starterCatalog = useStarterList({ query: search }, { presented: true });
-  // Only app starters: the starter owner marks one by its app deploy shape (`starterDeploy`); a workspace template
-  // such as Coder's declares none and is not a way to deploy an app.
-  const starters = React.useMemo(() => starterCatalog.items.filter((item) => item.starterDeploy !== undefined),
-    [starterCatalog.items]);
-  const startersSettledEmpty = !search && starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error
-    && starterCatalog.sourceFailures.length === 0 && starters.length === 0;
-  // Starters are package content an online Machine reads: a source that says so, or a settled empty list while no
-  // Machine is online (nothing supplies the package yet, AUTO-LIVE F2), is that one cause and gets its next step.
-  const startersNeedMachine = starters.length === 0 && (starterCatalog.sourceFailures.some((failure) => failure.status.state === 'needs_machine')
-    || (startersSettledEmpty && machines.length === 0));
+  const { read: starterCatalog, items: starters, state: starterState } =
+    useDeploymentStarterList({ query: search }, { presented: true }, machines.length > 0);
 
   const [step, setStep] = React.useState<Step>(props.suggestion || props.startOn === 'describe' ? 'auto' : 'start');
   // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
@@ -752,8 +743,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
             ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
         <View>
-        {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0
-          && starterCatalog.sourceFailures.length === 0 && !starterCatalog.error ? null : (
+        {starterState === 'noMatches' ? null : (
         <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label"
           action={<TextLinkButton testID="newApp.allStarters" size="meta" label={t('newApp.allStarters')} onPress={browseStarters} />}>
         {/* Describe your app sits a tile gap above the starters (lab .jd-descopt), not flush against them. */}
@@ -770,12 +760,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           options={[{ id: 'describe', testID: 'newApp.describeApp', icon: 'sparkle',
             title: t('newApp.auto.entryTitle'), subtitle: t('newApp.auto.entrySubtitle') }]}
         />
-        {(starterCatalog.loading || !starterCatalog.hasValue) && !starterCatalog.error && starters.length === 0 ? (
+        {starterState === 'loading' ? (
           <SurfaceStateCard testID="newApp.loading" kind="loading" layout="inline" title={t('common.loading')} />
         ) : null}
         {/* One cause, one line: starters are read on a Machine, so a person without one online is offered the
             Add a computer flow that keeps this draft, instead of one Retry card per source. */}
-        {startersNeedMachine ? (
+        {starterState === 'needsMachine' ? (
           <SurfaceStateCard
             testID="newApp.needsMachine"
             kind="unavailable"
@@ -785,9 +775,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             action={{ label: t('newApp.auto.addMachine'), onPress: addComputer }}
           />
         ) : null}
-        <NewAppCatalogReadFailure read={starterCatalog} hasVisibleItems={starters.length > 0}
-          omitNeedsMachine={startersNeedMachine} testID="newApp.catalogFailure" />
-        {startersSettledEmpty && !startersNeedMachine ? (
+        {starterState === 'results' ? <NewAppCatalogReadFailure read={starterCatalog}
+          hasVisibleItems={starters.length > 0} testID="newApp.catalogFailure" /> : null}
+        {starterState === 'empty' ? (
           // Inside the picker an empty group is one quiet line; Describe your app above stays the way to start.
           <EmptyState testID="newApp.startersEmpty" layout="line" title={t('newApp.noStarters')} />
         ) : null}
@@ -1234,16 +1224,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 function NewAppCatalogReadFailure(props: Readonly<{
   read: ReturnType<typeof useStarterList>;
   hasVisibleItems: boolean;
-  omitNeedsMachine?: boolean;
   testID: string;
 }>) {
   const { read } = props;
   // The listing already carries the failing source's name. The rows it still serves take precedence over empty-state copy.
   if (read.loading) return null;
-  const failures = read.sourceFailures
-    .filter(failure => !props.omitNeedsMachine || failure.status.state !== 'needs_machine')
-    .map(failure => ({ key: failure.sourceId,
-      ...registrySourceFailureLine(failure, failure.sourceTitle ?? t('capabilities.store.unnamedCatalog')), onRetry: failure.onRetry }));
+  const failures = read.sourceFailures.map(failure => ({ key: failure.sourceId,
+    ...registrySourceFailureLine(failure, failure.sourceTitle ?? t('capabilities.store.unnamedCatalog')), onRetry: failure.onRetry }));
   if (failures.length > 0) return <RegistrySourcesUnavailable size="line" failures={failures} showHiddenNote={!props.hasVisibleItems}
     testID={failures.length === 1 ? `${props.testID}:${failures[0]!.key}` : props.testID} />;
   // A failed refresh over items still shown hides nothing: the line would say their items are hidden above them
