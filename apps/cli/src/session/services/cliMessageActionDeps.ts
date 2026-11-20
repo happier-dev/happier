@@ -59,7 +59,13 @@ type MessageActionDeps = Required<Pick<ActionExecutorDeps, 'sessionSendMessage'>
 function projectSessionMessageSendActionResult(
   result: SendSessionMessageResult,
 ): SessionMessageSendResultV1 | null {
-  if (!result.ok && result.settlementResult) return result.settlementResult;
+  if (!result.ok && result.settlementResult) {
+    if (result.admissionResult?.status === 'outcomeUnknown'
+      && result.settlementResult.code === 'session_input_turn_failed') {
+      return { ...result.admissionResult, settlementResult: result.settlementResult };
+    }
+    return result.settlementResult;
+  }
   // An admitted input remains in custody when observation times out, but its
   // receipt must not hide the waiting caller's timeout or cancellation.
   if (!result.ok && (result.code === 'timeout' || result.code === 'cancelled')
@@ -646,6 +652,11 @@ export function createCliMessageActionDeps(
             ...(signal ? { signal } : {}),
           });
           if (!observed.ok) return failObservation(observed.code);
+          const blocked = observed.blockedSend && projectSessionMessageSendActionResult(observed.blockedSend);
+          if (blocked) {
+            await release();
+            return blocked;
+          }
           const result = observed.result;
           const saved = observed.replyOutcome;
           const outcome = result.kind === 'final_text' && result.messageRef

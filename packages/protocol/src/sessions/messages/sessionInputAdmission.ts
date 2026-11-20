@@ -1124,6 +1124,12 @@ export type SessionInputRequestEnvelopeDigestV1 = z.infer<typeof SessionInputReq
 export const SessionInputRequestEqualityEvidenceV1Schema = SessionMutationEqualityEvidenceV1Schema;
 export type SessionInputRequestEqualityEvidenceV1 = z.infer<typeof SessionInputRequestEqualityEvidenceV1Schema>;
 
+const SessionInputOutcomeUnknownV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('outcomeUnknown'),
+  localId: PendingLocalIdSchema,
+  code: preservedBoundedNfcString(128, 'Admission outcome codes'),
+}));
+
 /** Initial Pending custody; receiver policy holds belong to later settlement. */
 export const SessionInputEnqueueResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({
@@ -1138,11 +1144,7 @@ export const SessionInputEnqueueResultV1Schema = lazyZodSchema(() => z.discrimin
     status: z.literal('rejected'),
     code: SessionInputAdmissionRejectionCodeV1Schema,
   }),
-  z.strictObject({
-    status: z.literal('outcomeUnknown'),
-    localId: PendingLocalIdSchema,
-    code: preservedBoundedNfcString(128, 'Admission outcome codes'),
-  }),
+  SessionInputOutcomeUnknownV1Schema,
 ]));
 export type SessionInputEnqueueResultV1 = z.infer<typeof SessionInputEnqueueResultV1Schema>;
 
@@ -1156,6 +1158,13 @@ export const SessionInputAdmissionResultV1Schema = lazyZodSchema(() => z.discrim
 ]));
 export type SessionInputAdmissionResultV1 = z.infer<typeof SessionInputAdmissionResultV1Schema>;
 
+const SessionMessageSendTurnFailureV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('failed'),
+  localId: PendingLocalIdSchema,
+  code: z.literal('session_input_turn_failed'),
+  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
+}));
+
 /**
  * Public result for `session.message.send`. Admission remains owned by the
  * canonical admission result above. Waiting can fail while an admitted input
@@ -1163,18 +1172,14 @@ export type SessionInputAdmissionResultV1 = z.infer<typeof SessionInputAdmission
  */
 export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
   SessionInputAdmissionResultV1Schema,
+  z.extend(SessionInputOutcomeUnknownV1Schema, { settlementResult: SessionMessageSendTurnFailureV1Schema }),
   z.strictObject({
     status: z.literal('replied'),
     localId: PendingLocalIdSchema,
     inputMessageRef: z.optional(SessionMessageRefV1Schema),
     outcome: SessionMessageReplyResolvedOutcomeV1Schema,
   }),
-  z.strictObject({
-    status: z.literal('failed'),
-    localId: PendingLocalIdSchema,
-    code: z.literal('session_input_turn_failed'),
-    runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
-  }),
+  SessionMessageSendTurnFailureV1Schema,
   z.strictObject({
     status: z.literal('failed'),
     localId: PendingLocalIdSchema,

@@ -5,6 +5,10 @@
 The exact committed message read by local ID can include optional
 `message.inputDeliveryIssue`, using the existing Session runtime issue shape.
 The original input result consumes this issue through `runtimeIssueV1`.
+Send with reply observation carries the same issue in
+`settlementResult.runtimeIssueV1` while preserving the admission receipt's
+`outcomeUnknown` status. The `session.message.send` Action and SDK types
+carry both facts in the same result for matching 0.3 development clients.
 Older exact-message readers ignore the field, and updated clients accept
 earlier responses without it. The Pending record format is unchanged.
 

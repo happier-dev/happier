@@ -170,6 +170,7 @@ export type WaitForSessionInputResult =
 export type WaitForSessionInputReplyResult = Exclude<WaitForSessionInputResult, { ok: true }> | Readonly<{
   ok: true; sessionId: string; localId: string; inputMessageRef?: SessionMessageRefV1;
   result: SessionInputResultV1 | Readonly<{ kind: 'fulfilled'; outcome: SessionMessageReplyOutcomeV1 }>;
+  blockedSend?: Extract<SendSessionMessageResult, { ok: false }>;
   replyOutcome?: SessionMessageReplyOutcomeV1;
   replyObservation?: 'no_obligation';
 }>;
@@ -663,6 +664,31 @@ function projectBlockedPromptDeliveryAdmissionResult(reason: PendingQueueDeliver
 function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
   if (reason === 'team_access_removed') return 'Team access was withdrawn before Home published the Turn. The native Agent may have acted on the input.';
   return `Current input delivery blocked (${reason})`;
+}
+
+function projectBlockedPromptDelivery(
+  delivery: Pick<Extract<CurrentPromptDeliveryOutcome, { kind: 'blocked' }>, 'reason' | 'inputDeliveryIssue'>,
+  localId: string,
+) {
+  const { reason, inputDeliveryIssue } = delivery;
+  const admissionResult = projectBlockedPromptDeliveryAdmissionResult(reason, localId);
+  const message = formatBlockedPromptDeliveryFailure(reason);
+  const result: SessionInputResultV1 = !inputDeliveryIssue && admissionResult.status === 'outcomeUnknown'
+    ? { kind: 'pending' }
+    : { kind: 'failed', message, ...(inputDeliveryIssue ? { runtimeIssueV1: inputDeliveryIssue } : {}) };
+  const sendResult: Extract<SendSessionMessageResult, { ok: false }> = {
+    ok: false,
+    code: 'wait_failed',
+    message,
+    admissionResult,
+    ...(inputDeliveryIssue ? { settlementResult: {
+      status: 'failed',
+      code: 'session_input_turn_failed',
+      localId,
+      runtimeIssueV1: inputDeliveryIssue,
+    } } : {}),
+  };
+  return { result, sendResult };
 }
 
 async function readPromptDeliveryStatus(params: Readonly<{
@@ -1185,9 +1211,9 @@ export async function readSessionInputResult(params: Readonly<{
       ...(message.acceptedTurnId ? { acceptedTurnId: message.acceptedTurnId } : {}),
       ...(message.turnStartWitnessId ? { turnStartWitnessId: message.turnStartWitnessId } : {}),
       ...(message.turn ? { turnStatus: message.turn.status } : {}),
-      result: message.inputDeliveryIssue && !message.turn ? {
-        kind: 'failed', message: formatBlockedPromptDeliveryFailure('team_access_removed'), runtimeIssueV1: message.inputDeliveryIssue,
-      } : resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
+      result: message.inputDeliveryIssue && !message.turn
+        ? projectBlockedPromptDelivery({ reason: 'team_access_removed', inputDeliveryIssue: message.inputDeliveryIssue }, localId).result
+        : resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
     };
   } catch (error) {
     if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
@@ -1465,18 +1491,15 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
         result: { kind: 'cancelled', message: formatStructuredTurnFailureMessage('cancelled') } };
     }
     if (promptDelivery.kind === 'blocked') {
+      const { result, sendResult } = projectBlockedPromptDelivery(promptDelivery, localId);
       return {
         ok: true,
         sessionId: sessionTarget.sessionId,
         localId,
         // A definitive Home publication refusal settles this observation even
         // though it cannot establish what the native Agent did with the input.
-        result: !promptDelivery.inputDeliveryIssue
-          && isPendingDeliveryProviderEffectPossibleV1({ status: 'blocked', reason: promptDelivery.reason }) ? { kind: 'pending' } : {
-          kind: 'failed',
-          message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
-          ...(promptDelivery.inputDeliveryIssue ? { runtimeIssueV1: promptDelivery.inputDeliveryIssue } : {}),
-        },
+        result,
+        ...(params.observeReply && sendResult.settlementResult ? { blockedSend: sendResult } : {}),
       };
     }
     if (promptDelivery.kind === 'missing') {
@@ -2322,12 +2345,7 @@ export async function sendSessionMessage(
       };
     }
     if (typeof turnOutcome === 'object' && turnOutcome?.kind === 'blocked') {
-      return {
-        ok: false,
-        code: 'wait_failed',
-        message: formatBlockedPromptDeliveryFailure(turnOutcome.reason),
-        admissionResult: projectBlockedPromptDeliveryAdmissionResult(turnOutcome.reason, localId),
-      };
+      return projectBlockedPromptDelivery(turnOutcome, localId).sendResult;
     }
     if (turnOutcome === 'failed' || turnOutcome === 'cancelled') {
       // A proven exact-turn failure is a wait outcome, not an admission
@@ -2372,12 +2390,7 @@ export async function sendSessionMessage(
         ...(admissionResult ? { admissionResult } : {}) };
     }
     if (promptDelivery.kind === 'blocked') {
-      return {
-        ok: false,
-        code: 'wait_failed',
-        message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
-        admissionResult: projectBlockedPromptDeliveryAdmissionResult(promptDelivery.reason, localId),
-      };
+      return projectBlockedPromptDelivery(promptDelivery, localId).sendResult;
     }
     if (promptDelivery.kind === 'rejected') {
       return { ok: false, code: 'wait_failed', admissionResult: { status: 'rejected', code: promptDelivery.code } };
