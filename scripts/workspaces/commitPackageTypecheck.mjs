@@ -413,8 +413,8 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
   };
   /** Rows for several trees; with a worker, every tree's missing packages travel in one request (one dispatch, one
    * admission: about 70 s of dispatch per request on nl1, 2026-11-18, against a 10-30 s Protocol compile). */
-  const rowsAtMany = requests => {
-    if (!remote) return requests.map(({ treeId, packages, side }) => rowsAt(treeId, packages, side));
+  const rowsAtMany = (requests, { cachedOnly = false } = {}) => {
+    if (!remote && !cachedOnly) return requests.map(({ treeId, packages, side }) => rowsAt(treeId, packages, side));
     const cached = requests.map(({ treeId, packages, side }) => {
       const rows = new Map();
       const missing = [];
@@ -424,7 +424,7 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       return { treeId, side, rows, missing };
     });
     const pending = cached.filter(entry => entry.missing.length);
-    if (pending.length) {
+    if (pending.length && !cachedOnly) {
       const started = Date.now();
       const dirs = [...new Set(pending.flatMap(entry => entry.missing))];
       const fetched = remote(pending.map(entry => entry.treeId), dirs, pending.map(entry => entry.side));
@@ -493,7 +493,7 @@ function freshBetween(git, baseTree, headTree, packages, baseRows, headRows) {
  * candidate adds. The caller must already hold compiler admission (the CLI acquires it).
  */
 export async function commitPackageTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`),
-  packages, remote = null }) {
+  packages, remote = null, cachedOnly = false }) {
   const started = Date.now();
   const git = gitAt(repo);
   const selection = packages ? { touched: packages, packages } : commitTypecheckPackages({ repo, base, tree });
@@ -507,7 +507,7 @@ export async function commitPackageTypecheck({ repo, base, tree, env = process.e
     const lockWaitMs = Date.now() - started;
     const { rowsAtMany, timings } = treeTypechecker({ repo, state, env, log, remote });
     const [baseRows, headRows] = rowsAtMany([{ treeId: trees.base, packages: selection.packages, side: 'base' },
-      { treeId: trees.head, packages: selection.packages, side: 'head' }]);
+      { treeId: trees.head, packages: selection.packages, side: 'head' }], { cachedOnly });
     const compared = freshBetween(git, trees.base, trees.head, selection.packages, baseRows, headRows);
     const fresh = compared.fresh.map(({ dir, row }) => ({ ...row, package: dir }));
     // A candidate no worker judged (unreachable, no rows) is not the candidate's doing: unavailable, never refused.
@@ -554,14 +554,15 @@ export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypeche
  * the gate's worker lane. Only diagnostics new against the parent count (freshBetween). A worker that cannot judge
  * leaves the scope `unavailable`, which never refuses: the rolling HEAD typecheck still covers it. Touched apps are
  * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
+ * A cached-only comparison uses existing rows and returns unavailable for any missing side.
  */
-export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages, workers }) {
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages, workers, cachedOnly = false }) {
   const plan = packages ? { blocking: packages, detached: [] } : commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
-  const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
+  const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly,
     remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY,
       workers }) });
-  if (!result.skipped && record) {
+  if (!result.skipped && record && !cachedOnly) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
   }

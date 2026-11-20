@@ -162,11 +162,13 @@ replay() { # new HEAD -> fresh tree and parent; never reuse an old tree with a n
 # With P03_CP_GATED="<candidate> <its head>" the packet's passed gate carries over too: the loop rechecks it on the
 # moved HEAD instead of running the full gate again (20 wrappers re-gating at once on an install would cost ~5 GB each).
 resumed=""
+rechecked_after_release=0
 if [ -n "${P03_CP_FROZEN:-}" ] && [ -s "$P03_CP_FROZEN" ]; then
   [ "$P03_CP_FROZEN" = "$packet" ] || mv -f "$P03_CP_FROZEN" "$packet"
   unset P03_CP_FROZEN
   if [ -n "${P03_CP_GATED:-}" ] && git cat-file -e "${P03_CP_GATED%% *}^{commit}" 2>/dev/null; then
     commit=${P03_CP_GATED%% *}; head=${P03_CP_GATED#* }; resumed=1
+    rechecked_after_release=${P03_CP_RECHECKED_AFTER_RELEASE:-0}
   else head=$(git rev-parse HEAD); replay "$head"; fi
   unset P03_CP_GATED
   expected=$(git diff --no-renames --name-only "$head" "$commit" | sort -u)
@@ -212,13 +214,15 @@ replay_onto_now() {
 }
 resume_frozen_packet() {
   exec 9>&-
-  P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" exec bash "$SELF" "${ARGS[@]}"
+  P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
+    exec bash "$SELF" "${ARGS[@]}"
 }
 requeue_after_full_gate() {
   unlock
   P03_GATE_PRIOR=${1:-} check_gate "$now"
   head=$now
   gated=$commit
+  rechecked_after_release=1
   resume_frozen_packet
 }
 locked_recheck() {
@@ -228,7 +232,8 @@ locked_recheck() {
     echo "both sides edited a package manifest or the lockfile; releasing the commit lock for the full gate"
     requeue_after_full_gate
   fi
-  P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$gated rungate "$GATE" "$now" "$commit" || rc=$?
+  P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$gated P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
+    rungate "$GATE" "$now" "$commit" || rc=$?
   case $rc in
     0) ;;
     10) echo "candidate refused by the gate; abort"; exit 1;;

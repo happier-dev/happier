@@ -85,9 +85,9 @@ async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = p
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
   // The package typecheck waits for a worker compile, so it runs beside the checks below and is collected after them.
-  const checkTypes = packages => judge('package typecheck', async () => {
+  const checkTypes = (packages, cachedOnly) => judge('package typecheck', async () => {
     const owner = await import('./commitPackageTypecheck.mjs');
-    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages });
+    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages, cachedOnly });
     return { ...result, refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
   });
   const typecheck = typecheckMode === 'block' && !prior && !cheapOnly ? checkTypes() : null;
@@ -124,9 +124,12 @@ async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = p
     ? P03_DECLARATION_PACKAGES.filter(dir => closure.changedSources.some(({ path }) => path.startsWith(`${dir}/src/`)))
     : [];
   const checkDeclarations = declarationPackages.length > 0 && (!prior || declarationInputsMoved(repo, prior, tree));
-  if (checkDeclarations && cheapOnly) return { verdict: 'needs-full', check: 'package declarations', findings: [], notes };
   if (typecheck || checkDeclarations) {
-    const result = await (typecheck ?? checkTypes(declarationPackages));
+    // After one unlocked recheck, compute a cache miss for the touched declaration scopes here.
+    // HEAD can move again before every lock acquisition, leaving a different pair of trees each time.
+    const cachedOnly = cheapOnly && env.P03_CP_RECHECKED_AFTER_RELEASE !== '1';
+    const result = await (typecheck ?? checkTypes(declarationPackages, cachedOnly));
+    if (cachedOnly && result.unavailable.length) return { verdict: 'needs-full', check: 'package declarations', findings: [], notes };
     notes.push(...result.lines);
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
     if (checkDeclarations) {
