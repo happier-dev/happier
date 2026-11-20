@@ -65,7 +65,7 @@ afterEach(async () => {
     resetRuntimeFetch();
 });
 
-it('offers Retry while Welcome discovery is pending and replaces its abandoned observation', async () => {
+it('keeps one Welcome discovery in flight until it can present actions or a failure', async () => {
     resetServerProfilesRuntimeForTests();
     const origin = 'https://welcome-retry.example.test';
     await upsertAndActivateServer({ serverUrl: origin, name: 'Retry Home' });
@@ -88,12 +88,10 @@ it('offers Retry while Welcome discovery is pending and replaces its abandoned o
     try {
         await vi.waitFor(() => expect(featureSignals).toHaveLength(1));
         expect(screen.findHostByTestId('welcome-auth-loading')).not.toBeNull();
-        const retry = screen.findByTestId('welcome-auth-loading-retry');
-        expect(retry).not.toBeNull();
-        await screen.pressByTestIdAsync('welcome-auth-loading-retry');
-        await vi.waitFor(() => expect(featureSignals).toHaveLength(2));
-        expect(featureSignals[0]?.aborted).toBe(true);
+        expect(screen.findByTestId('welcome-auth-loading-retry')).toBeNull();
+        firstFeatures.resolve(Response.json(createRootLayoutFeaturesResponse()));
         await vi.waitFor(() => expect(screen.findHostByTestId('welcome-auth-loading')).toBeNull());
+        expect(featureSignals).toHaveLength(1);
     } finally {
         firstFeatures.resolve(new Response('', { status: 503 }));
         await screen.unmount();
@@ -148,7 +146,7 @@ it('uses the descriptor carrier for exact Home discovery and the actual sign-in 
     await vi.waitFor(() => expect(hook.getCurrent().serverAvailability).toBe('ready'));
     expect(hook.getCurrent().homeTransport).toMatchObject({ runtimeOrigin: origin });
     expect(hook.getCurrent().observedHomeServerIdentityId).toBe(home.homeServerIdentityId);
-    expect(hook.getCurrent().retentionDisclosure).toMatchObject({ kind: 'unreadable' });
+    expect(hook.getCurrent().retentionDisclosure).toBeNull();
     expect(await authGetTokenAtEndpoint({
         endpointUrl: home.canonicalServerUrl, serverIdentityId: home.homeServerIdentityId,
         secret: new Uint8Array(32).fill(3), requireKeyChallengeV2: false,
@@ -159,6 +157,7 @@ it('uses the descriptor carrier for exact Home discovery and the actual sign-in 
         `${origin}/v1/features`, `${origin}/v1/auth/entry`, `${origin}/v1/auth`,
     ]));
     expect(boundary.fetch.mock.calls.some(([url]) => String(url).startsWith(home.canonicalServerUrl))).toBe(false);
+    expect(boundary.fetch.mock.calls.some(([url]) => String(url).endsWith('/v2/retention-policy'))).toBe(false);
     await hook.unmount();
 });
 

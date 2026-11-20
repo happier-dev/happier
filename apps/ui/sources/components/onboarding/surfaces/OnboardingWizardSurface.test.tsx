@@ -1286,20 +1286,11 @@ describe('OnboardingWizardSurface', () => {
                 layout: 'portrait',
                 isDesktopShell: true,
                 authEntryOptions: baseAuthOptions,
+                initialStepId: 'relay_select',
             }),
         );
 
-        const startButton = screen.findByTestId('welcome-use-different-home')!;
-
-        await act(async () => {
-            await startButton.props.onPress?.();
-        });
-
-        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
-
-        await act(async () => {
-            await continueButton.props.onPress?.();
-        });
+        await screen.pressByTestIdAsync('onboarding-wizard-primary');
 
         expect(getPendingSetupIntent()).toEqual({
             branch: 'thisComputer',
